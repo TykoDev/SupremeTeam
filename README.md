@@ -6,7 +6,7 @@
 
 # Supreme Team
 
-> **Author:** [TykoDev](https://github.com/TykoDev)
+![Supreme Team Architecture](docs/assets/architecture.jpg)
 
 Supreme Team is an AI skill system that drives a complete software lifecycle —
 design, build, adversarial review, and Azure deployment — through a single

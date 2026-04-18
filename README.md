@@ -12,7 +12,7 @@ Supreme Team is an AI skill system that drives a complete software lifecycle —
 design, build, adversarial review, and Azure deployment — through a single
 orchestrated pipeline. It runs inside AI coding assistants (Claude Code, Cursor,
 Windsurf, or any tool that loads Markdown skill files) and replaces manual
-back-and-forth with structured, gated delegation across 30 specialized skills.
+back-and-forth with structured, gated delegation across 35 specialized skills.
 
 ## Why Supreme Team
 
@@ -43,16 +43,17 @@ artifact is saved to disk for cross-session resume and audit.
 
 ## Skills and Orchestrators
 
-Supreme Team contains **30 skills** organized into four sub-pipelines, each
+Supreme Team contains **35 skills** organized into four sub-pipelines, each
 managed by its own orchestrator, with **admiral** as the top-level entry point.
 
 | Sub-Pipeline | Orchestrator | Skills | Purpose |
-|-------------|-------------|--------|---------|
+|-------------|-------------|--------|--------|
 | **Admiral Layer** | admiral | 2 | Top-level orchestration + cross-pipeline validation |
 | **Design** | commander | 7 + 14 templates | Requirements, architecture, API contracts, stack selection |
-| **Build** | build-management | 6 | Implementation, testing, security audit, completeness check |
-| **Review** | code-chief | 8 | Bug detection, code quality, security, penetration testing, frontend audit |
+| **Build** | build-management | 8 | Implementation, testing, security audit, debugging, health checks |
+| **Review** | code-chief | 10 | Bug detection, code quality, security, penetration testing, frontend audit, visual QA, DX audit |
 | **Azure** | azure-provisioner | 7 | Infrastructure design, deployment, configuration, verification |
+| **Session Memory** | — | 1 | Cross-session state checkpoints and accumulated learnings |
 
 Every sub-pipeline orchestrator delegates to its specialists in sequence
 and validates each phase through its own gatekeeper before advancing.

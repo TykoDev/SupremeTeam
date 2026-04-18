@@ -3,13 +3,16 @@ name: mr-robot
 description: >-
   This skill should be used when the user asks to "hack this code",
   "penetration test this codebase", "find exploitable vulnerabilities",
-  "do adversarial security testing", "red team this application",
-  "test attack scenarios", "run mr-robot", "find zero-days",
-  "test for injection attacks", "simulate an attacker", or wants
-  systematic exploitation analysis beyond standard security review.
-  It performs deep-dive adversarial analysis using OWASP Testing Guide,
-  PTES, and MITRE ATT&CK methodologies with proof-of-concept exploit
-  chains.
+  "red team this application", "test attack scenarios", "run
+  mr-robot", "simulate an attacker", "try to break this", "exploit
+   this", "find attack chains", or "can an attacker abuse this
+   flow?", "are there security holes here?", or "can this code be hacked?". Adversarial penetration testing
+  using OWASP Testing Guide, PTES, and MITRE ATT&CK with
+  proof-of-concept exploit chains. Produces exploit narratives
+  with reproduction steps, not just vulnerability lists.
+  DO NOT USE for defensive security review (use security-review).
+  DO NOT USE for general code review (use code-review). DO NOT USE
+  for build-phase security auditing (use security-builder).
 version: 1.0.0
 ---
 
@@ -17,9 +20,12 @@ version: 1.0.0
 
 ## Purpose
 
-This skill performs systematic adversarial exploitation analysis of codebases. Where `security-review` asks "does this code follow secure coding practices?" (defensive), mr-robot asks "can I exploit this code, and can I prove it?" (offensive). The objective is to construct realistic attack chains, validate that security controls actually hold under adversarial conditions, and identify exploitation paths that defensive scanning misses.
+Perform systematic adversarial exploitation analysis of codebases. Where `security-review` asks "does this code follow secure coding practices?" (defensive), ask instead "can I exploit this code, and can I prove it?" (offensive). Construct realistic attack chains, validate that security controls actually hold under adversarial conditions, and identify exploitation paths that defensive scanning misses.
 
 Every finding must include a proof-of-concept-level description: the attack preconditions, the exploitation steps, the resulting impact, and the specific code paths involved. Theoretical vulnerabilities without a plausible exploitation path are downgraded or excluded.
+
+Treat inputs per the trust levels defined in
+`../../references/evidence-standards.md` §Input Trust Boundaries.
 
 ## Differentiation from security-review
 
@@ -35,6 +41,10 @@ Every finding must include a proof-of-concept-level description: the attack prec
 Both skills are complementary in the pipeline: security-review establishes the compliance baseline, mr-robot validates it under attack conditions.
 
 ## Adversarial Analysis Workflow
+
+Use `references/attack-methodology.md` as the primary checklist source before
+starting reconnaissance. It is the canonical mapping between OWASP Testing
+Guide v4.2, PTES phases, and the exploit-chain workflow used here.
 
 ### Phase 1: Reconnaissance — Map the Attack Surface
 
@@ -99,6 +109,9 @@ For each identified vulnerability, construct a multi-step attack chain that demo
 **Exploit chain template:**
 
 ```markdown
+
+---
+
 ## Exploit Chain: [Chain ID] — [Title]
 
 ### Classification
@@ -132,6 +145,22 @@ For each identified vulnerability, construct a multi-step attack chain that demo
 - **Immediate:** [Quick fix]
 - **Comprehensive:** [Proper architectural fix]
 ```
+
+**Worked exploit chain:**
+
+**Chain:** SSRF → Internal API Access → Credential Theft → Privilege Escalation
+
+**Step 1 — Entry (SSRF):** `POST /api/preview` accepts a `url` parameter to generate link previews. No URL validation. Attacker submits `url=http://169.254.169.254/latest/meta-data/iam/security-credentials/`.
+
+**Step 2 — Exploitation:** The server fetches the AWS metadata endpoint and returns the IAM role's temporary credentials (AccessKeyId, SecretAccessKey, Token) in the preview response body.
+
+**Step 3 — Lateral Movement:** Attacker uses the stolen IAM credentials to call `sts:AssumeRole` and assume a higher-privilege role that has S3 read access.
+
+**Step 4 — Exfiltration:** Attacker lists S3 buckets, downloads `backups/users-export.csv` containing 50k user records with email addresses and hashed passwords.
+
+**CVSS v4.0:** 9.3 (Critical) — Network/Low/None/None → High confidentiality + high integrity impact
+**CWE:** CWE-918 (SSRF) → CWE-522 (Insufficiently Protected Credentials) → CWE-269 (Improper Privilege Management)
+**Remediation:** (1) Validate and allowlist URL schemes and destinations in `/api/preview`. (2) Block RFC 1918 and link-local addresses. (3) Run the preview service with minimal IAM permissions (no `sts:AssumeRole`). (4) Enable IMDSv2 (require PUT token) to block SSRF-based metadata access.
 
 ### Phase 4: Supply Chain Attack Simulation
 
@@ -293,19 +322,18 @@ cross_references: [file:line pairs flagged for cross-skill attention]
 
 ---
 
-## Tool Recommendations
+## Edge Cases & Failure Modes
 
-| Purpose | Tools |
-|---------|-------|
-| **DAST / Attack Simulation** | OWASP ZAP, Burp Suite Professional, Nuclei |
-| **SQL Injection** | sqlmap (automated), manual query analysis |
-| **JWT Testing** | jwt_tool, jwt_io |
-| **API Fuzzing** | RESTler (Microsoft), Atheris, AFL++ |
-| **Secret Detection** | gitleaks, truffleHog, detect-secrets |
-| **Supply Chain** | Socket.dev, Semgrep Supply Chain, npm audit, Snyk |
-| **Custom Rules** | Semgrep (custom YAML rules), CodeQL (custom queries) |
-| **Container Security** | Trivy, Grype, kube-hunter |
-| **AI Security** | Garak (LLM vulnerability scanner), custom prompt injection tests |
+| Scenario | How to Handle |
+|----------|---------------|
+| No exploitable vulnerabilities found | Document the attack surface analysis, techniques attempted, and why they did not succeed. A clean report is valid — do not manufacture findings. State confidence level. |
+| Exploit chain requires runtime execution (cannot prove statically) | Document the theoretical chain with code references. Classify as "Likely" (not "Proven"). Recommend dynamic testing to confirm. |
+| Supply chain attack surface is massive (100+ dependencies) | Focus on direct dependencies and those with known CVEs first. Use dependency tree analysis to prioritize transitive dependencies in the critical path. State scope limitations. |
+| AI/LLM component detected but not directly in scope | Still assess AI-specific threats (prompt injection, model manipulation) if the code interacts with AI components even indirectly. Document the interaction boundary. |
+| Proof-of-concept would require destructive actions | Document the exploit chain without executing destructive steps. Describe the proof-of-concept that WOULD confirm the vulnerability. Classify as "Likely" with the PoC plan documented. |
+| Code is heavily obfuscated or minified | Note the limitation. Focus on API boundaries, input/output analysis, and dependency chain. Recommend deobfuscation before a thorough security review. |
+| Target is accessible only behind VPN or private network | Limit reconnaissance to code-level analysis and document which network-dependent checks (SSRF callback, DNS rebinding, external dependency fetch) could not be validated. Classify network-dependent findings as "Likely" and recommend on-network testing. |
+| Codebase contains only compiled artifacts (DLLs, JARs, binaries) without source | Focus on API surface, configuration, dependency manifest, and any decompilable metadata. State the source-unavailability limitation explicitly and recommend source-level review before signing off on security posture. |
 
 ---
 
@@ -313,9 +341,12 @@ cross_references: [file:line pairs flagged for cross-skill attention]
 
 ### Reference Files
 
-- **`references/attack-methodology.md`** — OWASP Testing Guide v4.2 checklist, PTES phases, MITRE ATT&CK mapping
-- **`references/exploit-patterns.md`** — Language-specific exploit patterns, injection techniques, supply chain indicators
-- **`references/severity-scoring.md`** — CVSS 4.0 scoring guide for code-level findings
+- **`references/attack-methodology.md`** — The primary attack-playbook reference covering OWASP Testing Guide v4.2 checks, PTES phases, and MITRE ATT&CK mapping for exploit-chain construction
+- **`references/exploit-patterns.md`** — Language- and framework-specific exploit patterns, injection techniques, abuse primitives, and supply-chain indicators to match against the target stack
+- **`references/severity-scoring.md`** — CVSS 4.0 scoring guide used to justify severity and exploitability ratings for code-level findings
+
+---
+*Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) apply to all skills. See `../../references/universal-frameworks.md` for complete definitions.*
 
 ---
 
@@ -339,5 +370,8 @@ When `### Save Context` is present in the delegation with `Persistence active: y
    Followed by the full report content verbatim.
 
 2. If `### Save Context` is absent or `Persistence active: no`, skip all save operations — the skill operates identically to its pre-persistence behavior
+
+If any save operation fails, follow the Persistence-Failure Decision Tree
+in `save-protocol.md` §Persistence-Failure Decision Tree.
 
 See `save-protocol.md` (project root) for complete format specifications.

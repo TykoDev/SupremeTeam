@@ -1,24 +1,30 @@
 ---
 name: gatekeeper-code
 description: >-
-  This skill should be used when the user asks to "validate review reports",
-  "challenge findings", "verify review accuracy", "cross-check reports",
-  "gate the review", "quality-check the review output", "run the gatekeeper-code",
-  "verify the bug report", "challenge the security findings", or
-  "ensure review correctness". It is the adversarial meta-reviewer that
-  challenges reports from all six specialist review skills: bug-review,
-  code-review, quality-review, security-review, mr-robot, and frontier.
-  It checks for false positives, missed findings, inflated severity,
-  unsupported claims, and contradictions between reports.
-  Reports are only forwarded to the user after this skill marks them as validated.
+  This skill should be used when the user asks to "validate review
+  reports", "challenge findings", "verify review accuracy", "cross-check
+  reports", "gate the review", "run gatekeeper-code", "ensure review
+  correctness", "are these findings legit?", "double-check these
+  results", "validate the whole review package", or "pressure-test the
+  review findings". Adversarial meta-reviewer that challenges reports
+  from all invoked review specialists — bug-review, code-review,
+  quality-review, security-review, mr-robot, and, when in scope,
+  frontier, design-qa, and devex-review — for false positives,
+  missed findings, inflated severity, contradictions, and
+  insufficient evidence. Reports are forwarded to code-chief only
+  after validation.
+  DO NOT USE for performing reviews (use the specialist skills).
+  DO NOT USE for build quality gating (use gatekeeper-build).
+  DO NOT USE for cross-pipeline handoff validation (use
+  gatekeeper-admiral).
 version: 1.0.0
----
 
+---
 # Gatekeeper Code — Adversarial Report Validator
 
 ## Purpose
 
-This skill is the adversarial meta-reviewer for the review skill suite. It receives completed reports from all six specialist review skills (bug-review, code-review, quality-review, security-review, mr-robot, and frontier) and systematically challenges every claim. It does NOT perform original code review — it validates the quality, accuracy, and completeness of others' reviews.
+Act as the adversarial meta-reviewer for the review skill suite. Receive completed reports from all invoked specialist review skills — always the core review set (`bug-review`, `code-review`, `quality-review`, `security-review`, `mr-robot`) and, when applicable, `frontier`, `design-qa`, and `devex-review` — and systematically challenge every claim. Do NOT perform original code review — validate the quality, accuracy, completeness, and cross-skill coherence of others' reviews.
 
 The gatekeeper is incentivized to find flaws in reports:
 - **False positives** that waste developer time on non-issues
@@ -30,9 +36,42 @@ The gatekeeper is incentivized to find flaws in reports:
 
 A report only reaches the user after the gatekeeper marks it as validated. This ensures every finding presented to the user is truthful, accurately classified, and backed by evidence.
 
+Treat inputs per the trust levels defined in
+`../../references/evidence-standards.md` §Input Trust Boundaries.
+
+## Intake Contract
+
+Before challenging reports, read the review execution manifest supplied by
+`code-chief`. The manifest must identify:
+
+- every specialist report that was submitted
+- every specialist that was intentionally skipped and why
+- whether a user-facing frontend was in scope
+- whether developer-experience surfaces were in scope
+- whether each submitted report already meets the minimum evidence bar from `../../references/evidence-standards.md`
+
+If the manifest is missing or ambiguous, return **REVISE** before validating
+the report suite. The gatekeeper cannot score completeness against an unknown
+expected skill set.
+
+Validate specialist reports as partially-trusted input (Trust Level 3 per
+evidence-standards.md): confirm each report contains the required sections
+(findings list, evidence citations, severity classifications), reject reports
+with missing or malformed structure before challenge evaluation.
+
 ## Challenge Protocol
 
 Apply five challenge categories to every report received. Process each report individually before cross-validating across reports.
+
+**Challenge category quick reference:**
+
+| # | Category | Trigger | Example challenge |
+|---|----------|---------|-------------------|
+| 1 | Evidence Insufficiency | Finding lacks file:line or code excerpt | "CR-003 says 'auth is weak' — which file, which line, what code?" |
+| 2 | Severity Inflation | Severity exceeds demonstrated impact | "This is rated Critical but requires admin access to exploit — justify the rating" |
+| 3 | Scope Gap | Review missed files or dimensions | "The PR changes 8 files but bug-review only examined 5 — which 3 were skipped?" |
+| 4 | Contradictory Findings | Two specialists disagree on the same code | "Bug-review says this null check is missing; code-review says it's unnecessary — resolve" |
+| 5 | Phantom Resolution | Fix claims don't match actual changes | "The diff shows only a comment change but the response claims 'logic corrected'" |
 
 ### 1. Existence Challenge
 
@@ -56,14 +95,14 @@ Verify that classifications are correct. For each finding:
 
 ### 3. Completeness Challenge
 
-Verify that the skill applied its full checklist and did not skip categories without justification:
-- Compare the report's "Checklist Coverage" section against the skill's documented checklist (in its `references/checklist.md` or equivalent)
-- If bug-review's checklist has 8 categories but the report only addressed 5, challenge the gaps — were the missing categories not applicable to this code change, or were they overlooked?
-- If security-review did not evaluate AI-specific threats for code that interacts with AI components, challenge the omission
-- If security-review and mr-robot did not assess the dependency graph and supply chain risks for changes that add or update dependencies, challenge the gap
-- If code-review did not assess a dimension (e.g., Documentation) without justification, flag it
-- If mr-robot did not perform supply chain attack simulation for codebases with significant external dependencies, challenge the omission
-- If frontier was invoked but did not assess all 5 domains for frontend code, challenge any skipped domains without justification
+Verify that each skill applied its full checklist without skipping categories:
+- Compare the report's coverage against the skill's documented checklist (in its `references/checklist.md` or equivalent)
+- If a skill addressed fewer categories than its checklist defines, challenge the gaps — were missing categories not applicable or overlooked?
+- If security-review/mr-robot did not assess dependency graph and supply chain risks for changes adding/updating dependencies, challenge the gap
+- If optional skills (frontier, design-qa, devex-review) were invoked, verify they covered all their documented domains; challenge any skipped domain without justification
+
+Use `references/checklist.md` as the canonical completeness matrix for the
+review suite.
 
 ### 4. Proportionality Challenge
 
@@ -89,7 +128,7 @@ Consult `references/challenge-protocol.md` for the complete rubric with examples
 
 When a challenge identifies an issue, construct a delegation request and send it back to the originating skill for resolution.
 
-Delegation requests target one of the six specialist skills with a specific challenge type, evidence requirement, and round number (max 2). The originating skill responds with one of three resolutions: **corrected**, **defended**, or **withdrawn**.
+Delegation requests target one of the invoked specialist skills with a specific challenge type, evidence requirement, and round number (max 2). Valid targets are `bug-review`, `code-review`, `quality-review`, `security-review`, `mr-robot`, `frontier`, `design-qa`, and `devex-review` when they were in scope. The originating skill responds with one of three resolutions: **corrected**, **defended**, or **withdrawn**.
 
 - **Maximum 2 delegation rounds per finding.** Round 1 is the initial challenge. Round 2 is a follow-up if Round 1's response is unconvincing. After Round 2, unresolved findings are marked **"Disputed"** with both positions documented.
 - **Batch delegation:** Group related challenges targeting the same skill into a single request to reduce round-trip overhead.
@@ -127,7 +166,7 @@ The gatekeeper issues one of three verdicts after completing all challenges and 
 
 ## Cross-Validation Protocol
 
-After individually validating each skill report, perform cross-validation across all submitted reports. If fewer than six skills produced reports, exclude missing skills from the matrix and note "Not in scope." Do not challenge a skill that was never invoked.
+After individually validating each skill report, perform cross-validation across all submitted reports. Use the review execution manifest to determine which skills were expected. If fewer than two specialist reports were submitted, skip the matrix and note the reduced coverage. If an optional skill was out of scope and explicitly skipped, mark it "Not in scope." Do not challenge a skill that was never invoked.
 
 **Build the Cross-Validation Matrix.** Map every changed file and function against findings from all invoked skills. For each cell, record the finding ID and severity, or "—" if no finding.
 
@@ -155,21 +194,98 @@ Consult `references/cross-validation.md` for the full report template.
 
 ---
 
+## Adversarial Verification Protocol
+
+Before issuing ANY verdict, execute the following mandatory self-checks.
+Skipping any step invalidates the review because partial adversarial
+verification creates a false sense of validation quality.
+
+### Anti-Rubber-Stamp Rule
+
+A Ready verdict requires ALL of the following:
+
+1. **Minimum 3 specific code references** — cite exact files and lines from
+   the codebase that were inspected to verify findings
+2. **At least 1 cross-validation finding** — document at least one overlap,
+   gap, or contradiction found during cross-validation (or explicitly state
+   why none exist)
+3. **Explicit confidence statement** — classify each challenged finding as
+   Proven (verified by reading code), Likely (strong indicators), or
+   Possible (circumstantial). Only Proven findings may be CRITICAL.
+
+### Gaming Detection
+
+Watch for these manipulation patterns in review reports:
+
+- **Phantom findings:** Findings that cite file paths or line numbers that
+  do not exist or do not contain the described issue. Always verify.
+- **Severity inflation:** Classifying cosmetic issues as MAJOR to pad the
+  finding count and appear thorough. Check against the severity rubric.
+- **Severity deflation:** Classifying genuine vulnerabilities as MINOR to
+  avoid remediation effort. Cross-reference with CVSS/CWE standards.
+- **Checklist gaming:** Marking checklist items as "N/A" without
+  justification to avoid reviewing them. Challenge every N/A.
+- **Contradiction hiding:** Two skills finding the same issue at different
+  severities without reconciliation. Force reconciliation.
+
+### Pre-Verdict Self-Check
+
+1. Re-read all critical findings across all skill reports
+2. For each finding marked as resolved, confirm the resolution evidence
+   exists in the actual code (not just in the skill's narrative)
+3. Ask: "If this code has a vulnerability that escapes review, would my
+   cross-validation have caught it?" If uncertain, add more scrutiny
+4. Verify the cross-validation matrix has no unexplained gaps in coverage
+
+---
+
 ## Anti-Gaming Safeguards
 
-The gatekeeper must also guard against its own biases and potential manipulation by reviewed skills to remain a useful quality gate rather than a bottleneck.
+Guard against own biases and potential manipulation by reviewed skills:
 
-**Severity Uniformity (Anti-Gaming).** Ensure that inflation/deflation of finding severity aligns consistently with the objective rubric across all skills. Reject attempts by specialist skills to artificially minimize a defect to force approval, or artificially inflate a defect to bypass remediation guidelines.
+- **Severity Uniformity:** Reject inflation/deflation that bypasses the objective rubric
+- **Remediation Regression:** Verify fixes do not introduce new findings elsewhere
+- **Calibration:** Track challenge acceptance rate — too high = too aggressive; too low = not adding value
+- **Proportionality:** Prioritize high-impact challenges over Minor disputes
 
-**Remediation Regression Checks.** Validate that defect remediations proposed or accepted in one review cycle do not cause overlapping security regressions, architectural debt, or performance degradation in other dimensions. A fix for a `bug-review` finding must not introduce a new `security-review` or `frontier` violation.
+---
 
-**Avoid challenge-for-challenge's-sake.** Do not nitpick valid findings just to demonstrate rigor. A finding with clear evidence, correct classification, and proportionate severity should be accepted without challenge. The goal is accuracy, not adversarial performance.
+## Gatekeeper Self-Correction
 
-**Focus on high-impact challenges.** Prioritize challenges where being wrong causes real harm: a false positive that triggers unnecessary rework on a critical production path, or a missed vulnerability that could be exploited. Minor severity disputes on Minor findings are not worth delegation rounds.
+When a gatekeeper challenge is overturned by evidence from the specialist:
 
-**Track calibration metrics.** Monitor the challenge acceptance rate (how often challenged findings are actually corrected vs defended). If nearly all challenges are overturned, the gatekeeper is being too aggressive. If none are overturned, it is not adding value. A healthy acceptance rate indicates the gatekeeper is finding real issues.
+1. **Acknowledge the error explicitly** — state what was wrong in the challenge
+2. **Withdraw the challenge** — remove it from the blocking findings list
+3. **Adjust calibration** — if the same type of challenge keeps getting overturned, recalibrate the threshold for that challenge type
+4. **Document the pattern** — note the overturned challenge and reason in the verdict report under "Calibration Notes" so future runs benefit
 
-**Respect evidence.** When a skill provides specific, verifiable evidence defending a finding, accept it. Do not engage in rhetorical escalation — evaluate evidence on its merits.
+---
+
+## Edge Cases & Failure Modes
+
+| Scenario | How to Handle |
+|----------|---------------|
+| Only 1-2 specialist reports submitted (not the full 6) | Validate available reports normally. Skip cross-validation (insufficient for meaningful matrix). Note reduced coverage in verdict as a limitation — do not inflate confidence. |
+| Code-chief omits an optional skill without a skip reason | Return **REVISE**. Require the execution manifest to state whether the skill was out of scope, unavailable, or intentionally deferred. |
+| Specialist report references files that no longer exist | Treat cited evidence as unverifiable. Downgrade the finding confidence to "Possible" and request re-verification from the specialist via delegation. |
+| Two specialists flag the same issue at contradictory severities | Force reconciliation: cite both severity assessments, apply the objective rubric, and declare the correct severity. If genuinely ambiguous, mark as Disputed and escalate. |
+| Specialist provides no evidence for a Critical finding | Reject the finding. Critical findings require Proven evidence (file:line references verified in the codebase). Return to the specialist for substantiation. |
+| All reports are clean — no findings at all | Do not rubber-stamp. Verify that the review scope was correct (were all changed files covered?). If scope was incomplete, challenge. If genuinely clean, issue Ready with a note confirming scope verification. |
+| Gatekeeper receives a report from a skill not in the expected set | Accept and validate it if it covers code in scope. Note the unexpected skill in the verdict report. Do not reject work simply because the routing was unconventional. |
+| Specialist findings reference a codebase version that has changed since the review started | Treat findings as stale. Flag the version mismatch, identify which findings are likely still valid (logic issues) versus potentially invalidated (line-number-dependent fixes), and request targeted re-verification for invalidated findings. |
+| Gatekeeper challenge is well-reasoned but specialist provides convincing counter-evidence | Accept the specialist's defense, withdraw the challenge, and log the overturned challenge in Calibration Notes. If the same challenge type is overturned repeatedly, adjust the challenge threshold for that type. |
+| All specialist reports are clean (zero findings) and suspiciously uniform | Do not rubber-stamp. Verify scope coverage was complete (all changed files examined). Sample-challenge at least 2 reports for checklist completeness. If scope was correct and reviews are genuinely clean, issue Ready with explicit scope verification note. |
+
+### Worked Challenge Cycle
+
+**Context:** code-chief submits a 6-skill review package for a Node.js REST API.
+
+1. **Existence challenge on security-review:** Report lists 8 findings but only cites file:line for 5. Gatekeeper returns REVISE: "Findings SEC-003, SEC-006, SEC-008 lack file:line evidence. Substantiate or withdraw."
+2. **Security-review responds:** Provides file:line for SEC-003 and SEC-006. Withdraws SEC-008 (was a false positive from an outdated dependency list).
+3. **Cross-validation:** quality-review rates the codebase "B" on maintainability. code-review flags 3 "High complexity" functions. Bug-review finds 0 issues in those same functions. Gatekeeper notes the discrepancy: high complexity but no bugs found — either bug-review missed edge cases or complexity is well-tested.
+4. **Proportionality challenge on bug-review:** "Functions `calculateDiscount()`, `applyTaxRules()`, and `resolveShipping()` have cyclomatic complexity >20 per quality-review. Bug-review reports 0 findings. Confirm these functions were exercised with boundary inputs."
+5. **Bug-review responds:** Provides evidence that all 3 functions were tested with boundary inputs. 0 bugs confirmed. Gatekeeper accepts — complexity does not guarantee bugs.
+6. **Verdict:** APPROVED with 2 resolved findings, 1 withdrawn, and a calibration note that high complexity without bugs should still carry an advisory for future refactoring.
 
 ---
 
@@ -178,7 +294,7 @@ The gatekeeper must also guard against its own biases and potential manipulation
 **When invoked by code-chief (pipeline mode):**
 - Receive the consolidated multi-skill review package from code-chief
 - Validate all phase reports in a single pass, applying the 5-challenge protocol to each
-- Build the cross-validation matrix across all submitted skill reports (up to 6 skills)
+- Build the cross-validation matrix across all submitted skill reports (up to 8 skills)
 - Route all delegation requests back through code-chief (not directly to skills)
 - Code-chief forwards skill responses back to gatekeeper-code for verdict
 
@@ -190,12 +306,30 @@ The gatekeeper must also guard against its own biases and potential manipulation
 
 ---
 
+## Reference Files
+
+| File | Purpose |
+|------|---------|
+| `references/checklist.md` | Canonical completeness matrix for the review suite, including optional design-qa and devex-review coverage expectations |
+| `references/challenge-protocol.md` | Detailed existence, accuracy, completeness, proportionality, and consistency challenge rules |
+| `references/cross-validation.md` | Cross-validation matrix process, overlap resolution, contradiction handling, and report template |
+| `references/delegation-workflow.md` | Delegation request and response formats, batch strategy, dispute handling, and escalation rules |
+| `../../references/evidence-standards.md` | Shared evidence specificity, severity alignment, and calibration thresholds used before accepting any finding as validated |
+
+---
+
 ## Pipeline Persistence
 
-Gatekeeper-code does not own pipeline persistence — the invoking orchestrator (code-chief in pipeline mode, or admiral at the cross-pipeline level) handles save operations. However, gatekeeper-code operates within the save context:
+Gatekeeper-code does not own pipeline persistence — the invoking orchestrator (code-chief in pipeline mode, or admiral at the cross-pipeline level) handles save operations.
 
 - **In pipeline mode**: code-chief writes the gatekeeper verdict to `gatekeeper-code_verdict.md` in the run's review directory
 - **In standalone mode**: the invoking skill or user is responsible for persisting the verdict
-- **Verdict artifacts**: all verdicts, challenge records, delegation logs, and cross-validation matrices are persisted by the orchestrator per `save-protocol.md`
-- **Save awareness**: when a Run ID or reference paths are provided in the submission, gatekeeper-code may read persisted deliverables from `skillset-saves/runs/{run-id}/review/` for review. This enables validation even when inline artifacts have been compacted from context (Tier 3 reference mode). The save path provides direct access to individual phase deliverables without requiring the full package to be in context.
-- **Save awareness**: when a Run ID or reference paths are provided in the submission, gatekeeper-code may read persisted deliverables from `skillset-saves/runs/{run-id}/review/` for review. This enables validation even when inline artifacts have been compacted from context (Tier 3 reference mode). The save path provides direct access to individual phase deliverables without requiring the full package to be in context.
+- **Save awareness**: when a Run ID or reference paths are provided, gatekeeper-code may read persisted deliverables from `skillset-saves/runs/{run-id}/review/` for validation
+- **Evidence standards**: require every verdict to meet the minimum evidence bar in `../../references/evidence-standards.md`
+
+If any save operation fails, follow the Persistence-Failure Decision Tree
+in `save-protocol.md` §Persistence-Failure Decision Tree.
+
+---
+
+*Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) apply to all skills. See `../../references/universal-frameworks.md` for complete definitions.*

@@ -1,15 +1,19 @@
 ---
 name: azure-configurator
 description: >-
-  This skill should be used when the user or azure-provisioner asks to "configure Azure app settings",
-  "set up Key Vault secrets", "configure RBAC roles", "set up PostgreSQL auth",
-  "configure managed identity", "set up Entra authentication for PostgreSQL",
-  "configure storage CORS", "set app service environment variables",
-  "configure Key Vault references", "set up database connection string",
-  "configure Azure firewall rules", "set up blob storage containers",
-  "manage Azure secrets", or mentions app settings, Key Vault references,
-  RBAC assignments, or PostgreSQL server configuration on Azure.
+  This skill should be used when the user asks to "configure Azure app
+  settings", "set up Key Vault secrets", "configure RBAC roles", "set
+  up PostgreSQL auth", "configure managed identity", "configure Key
+  Vault references", "manage Azure secrets", "set up RBAC",
+  "wire up the managed identity", or "finish wiring the Azure config". Handles post-IaC configuration:
+  RBAC assignments, Key Vault secret management, app settings,
+  PostgreSQL auth modes, and storage setup. Operates on already-
+  provisioned resources.
+  DO NOT USE for designing infrastructure (use azure-architect).
+  DO NOT USE for deploying code (use azure-deployer). DO NOT USE
+  for verifying configuration (use azure-verifier).
 version: 1.0.0
+
 ---
 
 # Azure Resource Configurator
@@ -235,16 +239,32 @@ Configure blob storage for application file uploads:
 
 ---
 
+## Edge Cases & Failure Modes
+
+| Scenario | How to Handle |
+|----------|---------------|
+| Key Vault access denied (RBAC not yet propagated) | RBAC assignments can take up to 10 minutes to propagate. Retry with backoff before declaring failure. Document the expected propagation delay in the runbook. |
+| Secret name collision after env-var normalization | If two environment variables normalize to the same Key Vault secret name, stop and escalate. Do not overwrite one secret with another or silently rename it. |
+| PostgreSQL Entra authentication fails | Verify the managed identity has the correct AAD role. Check pgaadauth extension status. Fall back to password auth temporarily if the deployment is blocked, but classify the Entra auth failure as a Critical finding. |
+| App Service cannot resolve Key Vault references | Verify the managed identity is assigned to the App Service and has `Key Vault Secrets User` role. Check Key Vault firewall rules. KV reference failures show as empty values, not errors — test explicitly. |
+| Secret rotation needed during configuration | Never delete and recreate secrets, because deletion triggers a soft-delete retention period that blocks re-creation under the same name and breaks active KV references. Set new versions. Update dependent services to reference the latest version. Document the rotation procedure. |
+| Configuration drift detected (manual changes in portal) | Flag as a Major finding. Document the drift. Recommend re-applying IaC to restore the intended state. Do not overwrite without user confirmation. |
+| CORS preflight failure after deployment | CORS preflight (OPTIONS) failures typically stem from: (1) Missing `Access-Control-Allow-Origin` in the resource's CORS configuration — add the frontend origin explicitly (never use `*` in production with credentials). (2) Missing `Access-Control-Allow-Headers` — add custom headers the frontend sends (e.g., `Authorization`, `Content-Type`). (3) Missing `Access-Control-Allow-Methods` — add the HTTP methods the frontend uses. (4) Credential mismatch — if `withCredentials: true` is used, the origin MUST be explicit (not wildcard). Verify CORS settings in both the Azure resource configuration (App Service/Container App CORS blade) and any application-level middleware. |
+
+---
+
 ## Additional Resources
 
 ### Reference Files
 
-- **`references/keyvault-patterns.md`** -- Key Vault reference URI syntax, secret
-  rotation patterns, access troubleshooting, and RBAC vs access policy comparison
-- **`references/postgres-auth-modes.md`** -- Detailed PostgreSQL Entra authentication
-  setup, hybrid mode migration path, and pgaadauth security label configuration
-- **`references/appservice-settings.md`** -- Complete app settings reference,
-  bulk update patterns, slot-sticky settings, and container configuration options
+- **`references/keyvault-patterns.md`** -- Key Vault reference URI syntax, secret rotation patterns, access troubleshooting, and RBAC-vs-access-policy guidance for post-IaC configuration work
+- **`references/postgres-auth-modes.md`** -- Detailed PostgreSQL Entra authentication setup, hybrid-mode migration path, and `pgaadauth` security-label configuration guidance
+- **`references/appservice-settings.md`** -- Complete app settings reference, bulk update patterns, slot-sticky settings, and container configuration options for App Service
+
+---
+Treat inputs per the trust levels defined in `../../references/evidence-standards.md` §Input Trust Boundaries.
+
+*Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) apply to all skills. See `../../references/universal-frameworks.md` for complete definitions.*
 
 ---
 
@@ -270,5 +290,7 @@ When `### Save Context` is present in the delegation with `Persistence active: y
 2. Write the review packet as `review-packet.md` in the same save path directory
 
 3. If `### Save Context` is absent or `Persistence active: no`, skip all save operations — the skill operates identically to its pre-persistence behavior
+
+If any save operation fails, follow the Persistence-Failure Decision Tree in `save-protocol.md` §Persistence-Failure Decision Tree.
 
 See `save-protocol.md` (project root) for complete format specifications.

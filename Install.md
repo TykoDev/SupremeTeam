@@ -137,6 +137,7 @@ These core components are always installed, even when you choose only one team:
 |------------------|---------|
 | `admiral/` | Top-level pipeline orchestrator |
 | `gatekeeper-admiral/` | Cross-pipeline adversarial validator |
+| `session-memory/` | Cross-session state and learnings manager |
 | `references/` | Shared handoff templates used by all sub-orchestrators |
 | `save-protocol.md` | Persistent save system specification |
 
@@ -145,8 +146,8 @@ Selectable teams:
 | Team | Directory | Skills | Notes |
 |------|-----------|--------|-------|
 | **Design** | `design/` | 7 skills + 14 tech-stack templates | `tech-stacks/` is inseparable from `design/` |
-| **Build** | `build/` | 6 skills | |
-| **Review** | `review/` | 8 skills | |
+| **Build** | `build/` | 8 skills | |
+| **Review** | `review/` | 10 skills | |
 | **Azure** | `azure/` | 7 skills | |
 
 Critical dependencies:
@@ -177,6 +178,7 @@ the target directory:
 
 - `admiral/`
 - `gatekeeper-admiral/`
+- `session-memory/`
 - `references/`
 - `save-protocol.md`
 - `design/`

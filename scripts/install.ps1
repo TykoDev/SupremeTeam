@@ -19,6 +19,7 @@ $sourceRoot = Join-Path $repoRoot "skills"
 $coreItems = @(
     "admiral",
     "gatekeeper-admiral",
+    "session-memory",
     "references",
     "save-protocol.md"
 )

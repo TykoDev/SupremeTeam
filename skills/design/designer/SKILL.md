@@ -1,85 +1,66 @@
 ---
 name: designer
 description: >-
-  This skill should be used when the user or commander asks to
-  "design the frontend", "define the design system", "select a styling
-  framework", "create component architecture", "define design tokens",
-  "choose a rendering pattern", "design the UI/UX spec", "create layout
-  templates", or "define the visual design language". It defines a
-  project's complete frontend strategy — rendering pattern, visual design
-  language, design token system, component architecture, styling stack,
-  layout templates, responsive strategy, accessibility, and performance
-  targets — and produces a gatekeeper-validated frontend design specification.
+  This skill should be used when the user asks to "design the frontend",
+  "define the design system", "select a styling framework", "create
+  component architecture", "define design tokens", "choose a rendering
+  pattern", "define the visual design language", "set up the UI
+   framework", "spec the UI", "plan the app shell", "pick a component
+   library", or "what should the frontend look like?". Defines the
+   complete frontend strategy — rendering pattern, design tokens,
+   component architecture, styling stack, layout templates, responsive
+   strategy, accessibility targets, and performance budgets — so the
+   implementation team can build the frontend without guessing.
+  DO NOT USE for backend architecture (use architect). DO NOT USE
+  for implementation code (use bob-the-builder). DO NOT USE for
+  visual QA of existing implementations (use design-qa).
 version: 1.0.0
 ---
 
-The **UI/UX Architecture Specialist** receives upstream context
-(requirements from `researcher`, plan from `planner`, system architecture from
-`architect`) and produces a complete **Frontend Design Specification** that the
-`engineer` skill will implement.
+# Designer — Frontend Architecture & Design Specialist
 
-The output is not code — it is a rigorous, implementation-ready design
-specification that covers every decision an engineer needs to build the
-frontend without guessing.
+## Purpose
 
----
+Receive upstream context (requirements from `researcher`, plan from `planner`,
+system architecture from `architect`) and produce a complete **Frontend Design
+Specification** that the `engineer` skill will implement without guessing.
 
-## Responsibilities
+Do not produce code. Lock the frontend strategy, token model, layout system,
+interaction rules, accessibility requirements, and performance constraints
+needed to build a reviewable frontend implementation.
 
-1. Select the rendering pattern (SPA, SSR, SSG, Islands, hybrid)
-2. Lock the frontend tech-stack overlay (`../tech-stacks/<overlay>.md`)
-3. Select the styling framework and component library
-4. Define the design token system (color, typography, spacing, motion)
-5. Define the visual design language (aesthetic direction, composition)
-6. Select and adapt page layout templates for every route
-7. Design the component system (inventory, states, props, composition)
-8. Define state management strategy
-9. Define routing strategy
-10. Define the responsive strategy (breakpoints, element adaptation)
-11. Define the motion and animation strategy
-12. Specify accessibility requirements (WCAG 2.2 Level AA)
-13. Set performance targets (Core Web Vitals)
-14. Prepare the review handoff for `gatekeeper-design`
+Cover the full frontend specification, from rendering pattern and stack lock
+through tokens, layouts, components, accessibility, performance targets, and
+the final handoff to `gatekeeper-design`.
 
 ---
 
 ## Design Philosophy
 
-### Core Principles
+Use `references/design-philosophy.md` to choose and defend the visual
+direction. The non-negotiables are simple: commit to a distinctive aesthetic,
+enforce WCAG 2.2 AA and Core Web Vitals as hard constraints, and keep all
+visual decisions token-first instead of falling back to generic defaults.
 
-Every design decision must trace back to these principles:
+Apply the adversarial anti-gaming framework from `../../references/universal-frameworks.md`
+to frontend decisions. Reject generic filler choices, placeholder layouts, and
+scope cuts disguised as minimalism when they are really unresolved design work.
 
-| Principle | Meaning |
-|-----------|---------|
-| **Bold & Intentional** | Commit to a clear aesthetic direction and execute with precision. Generic, safe, cookie-cutter interfaces are unacceptable. Every project must be visually distinctive. |
-| **Progressive Disclosure** | Show only what matters at each moment. Complexity is revealed through interaction, not displayed upfront. |
-| **Consistency as Trust** | Same color, icon, and interaction for the same purpose everywhere. Inconsistency erodes confidence. |
-| **Accessible by Default** | WCAG 2.2 Level AA is the baseline, not the goal. Use semantic HTML first, ARIA only where semantics are insufficient. |
-| **Performance is Design** | A design that loads slowly is a bad design. Target Core Web Vitals: LCP < 2.5s, INP < 200ms, CLS < 0.1. |
-| **Token-First** | Every visual value (color, spacing, font size, shadow, radius, duration) must come from a design token. Zero magic numbers. |
-
-### Visual Identity: Be Unforgettable
-
-Do NOT produce generic AI-generated aesthetics. The following are explicitly
-prohibited as default choices:
-
-- **Fonts**: Inter, Roboto, Arial, system-ui defaults
-- **Colors**: Purple gradients on white backgrounds, generic blue/gray schemes
-- **Layouts**: Predictable symmetric grids, cookie-cutter card layouts
-- **Motion**: No animation, or meaningless decorative animation
-
-Instead, commit to a specific aesthetic direction (see
-`references/visual-design-guide.md` §1) and ensure every visual decision
-reinforces that direction. No two projects should converge on the same
-visual identity.
+Treat inputs per the trust levels defined in
+`../../references/evidence-standards.md` §Input Trust Boundaries.
 
 ---
 
 ## Workflow
 
 Execute these steps in order. For each step, consult the referenced file for
-detailed guidance. Every step produces a discrete section of the final
-deliverable.
+detailed guidance. Every step produces a discrete section of the final deliverable.
+
+Before beginning Step 1, validate upstream deliverables: confirm the researcher
+SRS contains functional requirements, NFRs, and technology constraints; confirm
+the architect's system architecture includes the backend stack lock and API
+contracts. If any required input is missing or contradictory, stop and escalate
+to commander because unvalidated upstream gaps propagate as silent design drift.
 
 ---
 
@@ -92,10 +73,10 @@ Evaluate the project requirements and select the rendering strategy:
 | Factor | Consider |
 |--------|---------|
 | SEO requirements | Public-facing → SSR/SSG; authenticated → SPA |
-| Interactivity level | High → SPA/hybrid; low → SSG/Islands |
+| Interactivity | High → SPA/hybrid; low → SSG/Islands |
 | Data freshness | Real-time → SSR; periodic → ISR; static → SSG |
-| Team size | Single team → monolith; multiple teams → micro-frontends |
-| Content vs. application | Content → Astro/SSG; application → SPA/SSR |
+| Team size | Single → monolith; multiple → micro-frontends |
+| Content vs app | Content → Astro/SSG; application → SPA/SSR |
 
 Use the Decision Tree in `references/frontend-patterns.md` to guide selection.
 
@@ -153,6 +134,23 @@ Define the three-tier token architecture for this project:
 
 Use the token template in `references/design-system-template.md` §2.
 
+Mini example of the expected hierarchy:
+- primitive: `--color-sage-500`
+- semantic: `--color-primary`
+- component: `--button-primary-bg`
+
+**Worked example — token resolution for a primary button:**
+A designer receives a project with brand color Sage and needs to specify the
+primary button’s background. The resolution chain:
+1. Define primitive: `--color-sage-500: oklch(0.55 0.15 155)` in the global scale
+2. Map semantic: `--color-primary: var(--color-sage-500)` (light), `--color-primary: var(--color-sage-400)` (dark)
+3. Bind component: `--button-primary-bg: var(--color-primary)` in the Button spec
+4. Hover state: `--button-primary-bg-hover: var(--color-sage-600)` (one stop darker)
+5. Engineer implements `<Button variant="primary">` resolving `bg-[var(--button-primary-bg)]`
+
+If the brand later changes from Sage to Indigo, only Tier 1 primitives
+update — semantic and component tokens resolve automatically.
+
 **Produce**: Complete CSS custom properties for Tiers 1 and 2, plus dark mode
 overrides.
 
@@ -162,31 +160,34 @@ overrides.
 
 **Reference**: `references/visual-design-guide.md`
 
-This step defines the project's visual identity — the aesthetic choices that
-make it distinctive and memorable:
+Define the project's visual identity using the reference framework:
 
-1. **Aesthetic direction**: Choose from the framework in §1 (brutally minimal,
-   maximalist, retro-futuristic, organic, luxury, playful, editorial,
-   brutalist, industrial — or a custom blend)
-2. **Typography**: Select 1–2 distinctive font families. Define the type scale
-   with fluid `clamp()` values. Specify readability rules. See §2.
-3. **Color strategy**: Dominant color + sharp accent. Generate OKLCH scales.
-   Define dark mode approach. See §3.
-4. **Spacing**: Confirm 8-point grid. Define section/component/element
-   spacing standards. See §4.
-5. **Backgrounds & depth**: Choose atmospheric treatments that match the
-   aesthetic (gradients, noise, glass, dramatic shadows). See §5.
-6. **Composition**: Define layout personality — asymmetry, overlap, scale
-   contrast, negative space strategy. See §7.
+1. Choose the aesthetic direction and typography system — align with the
+   brand brief or, for greenfield projects, with the target audience's
+   expectations (enterprise → restrained, consumer → expressive)
+2. Lock color, spacing, depth, and dark-mode strategy — every value MUST
+   resolve to a Tier 1 primitive token from Step 4 because unlinked values
+   bypass the token system and break theme switching
+3. Define composition rules, contrast, and negative-space behavior — set
+   minimum contrast ratios that satisfy the WCAG targets from Step 12
 
-**Produce**: Aesthetic direction statement (2–3 sentences) + typography
-selection + color strategy + composition approach.
+**Produce**: A short aesthetic direction statement plus the final typography,
+color, and composition choices.
 
 ---
 
 ### Step 6 — Select Page Templates
 
 **Reference**: `references/page-templates/00-selection-guide.md`
+
+Treat `references/page-templates/` as a numbered template library. Always
+start with `00-selection-guide.md`, then read the exact numbered template files listed in
+the Reference Files section for every route you select. Do not invent a new
+template structure when an existing library template already matches the page
+intent, because the selection guide is the authoritative entry point for
+matching route intent to the existing template library and reusing the library
+preserves consistency across layouts, responsive behavior, and interaction
+patterns.
 
 For each route/page in the application:
 
@@ -207,28 +208,14 @@ application structure.
 
 **Reference**: `references/design-system-template.md` §1
 
-Design the component inventory using the specification format in the reference:
+Design the component inventory using the reference format:
 
-1. **Component inventory**: List all components needed. Classify each by
-   Atomic Design level (atom → molecule → organism → template → page) and
-   category (UI primitive, form, navigation, data display, feedback, layout)
-2. **Component API design**: For key components (5–10), define props, types,
-   defaults
-3. **State model**: Every interactive component must define all applicable
-   states from the 10-state model (default, hover, focus, active, disabled,
-   loading, error, success, empty, selected)
-4. **Composition patterns**: Prefer compound components and slots over
-   monolithic prop-heavy components
+1. List the required components and classify them by Atomic Design level and category
+2. Specify props, defaults, and composition rules for the highest-value components
+3. Define the full 10-state model for every interactive component
+4. Keep component APIs composable, token-first, and variant-driven
 
-**Component Design Principles**:
-- **Composable**: Build from small, single-responsibility parts
-- **Controlled / Uncontrolled**: Support both patterns with sensible defaults
-- **Token-first**: All visual properties from tokens (no hardcoded values)
-- **State-complete**: Design all 10 states before considering the component done
-- **Variant-based**: Use CVA for variant management (no conditional classes)
-
-**Produce**: Component inventory table + detailed specs for 5–10 key
-components.
+**Produce**: A component inventory table plus detailed specs for 5–10 key components.
 
 ---
 
@@ -275,17 +262,12 @@ code-splitting approach.
 Define how the application adapts across devices:
 
 1. **Methodology**: Mobile-first (base → `min-width` queries up)
-2. **Breakpoints**: Confirm or customize using the standard set
-   (sm/md/lg/xl/2xl)
-3. **Element behavior matrix**: For each major UI element (navigation,
-   tables, modals, forms, cards, hero, sidebar), specify behavior at mobile,
-   tablet, and desktop
-4. **Image strategy**: Format selection (AVIF/WebP), srcset/sizes, lazy
-   loading, `width`/`height` attributes
+2. **Breakpoints**: Confirm or customize the standard set (sm/md/lg/xl/2xl)
+3. **Element behavior matrix**: For each major UI element, specify behavior at mobile, tablet, and desktop
+4. **Image strategy**: Format selection (AVIF/WebP), srcset/sizes, lazy loading, dimensions
 5. **Touch targets**: Minimum 44×44px for all interactive elements
 
-Use the Responsive Element Behavior Matrix from
-`references/ui-ux-standards.md` §9 and `references/layout-patterns.md` §4.
+Use the Responsive Element Behavior Matrix from `references/ui-ux-standards.md` §9 and `references/layout-patterns.md` §4.
 
 **Produce**: Breakpoint table + element behavior matrix + image strategy.
 
@@ -295,16 +277,10 @@ Use the Responsive Element Behavior Matrix from
 
 **Reference**: `references/visual-design-guide.md` §6
 
-1. **Motion budget**: Allocate animation focus to high-impact moments
-   (page load, route transitions, scroll reveals, hover states)
-2. **Animation categories**: Define purpose, duration, and easing for each
-   category (entry, exit, state change, feedback, loading, shared element)
-3. **Timing tokens**: Confirm motion tokens (duration + easing) from Step 4
-4. **Technology**: CSS transitions/animations for simple effects. View
-   Transitions API for route changes. Motion (Framer Motion) for complex
-   orchestration in React.
-5. **Reduced motion**: `prefers-reduced-motion: reduce` media query must
-   disable all non-essential animation
+1. Allocate animation focus to high-impact moments (page load, route transitions, scroll reveals, hover states)
+2. Define purpose, duration, and easing for each animation category (entry, exit, state change, feedback, loading, shared element) using motion tokens from Step 4
+3. Select technology: CSS transitions for simple effects, View Transitions API for route changes, Motion library for complex orchestration
+4. Enforce `prefers-reduced-motion: reduce` to disable all non-essential animation — this is non-negotiable for WCAG compliance
 
 **Produce**: Motion budget allocation + timing tokens + technology selection
 + reduced motion strategy.
@@ -316,22 +292,14 @@ Use the Responsive Element Behavior Matrix from
 **Reference**: `references/design-system-template.md` §5,
 `references/ui-ux-standards.md` §3–4
 
-Specify WCAG 2.2 Level AA compliance requirements:
+Specify WCAG 2.2 Level AA compliance across four principles:
 
-1. **Perceivable**: Alt text, captions, semantic structure, color not sole
-   indicator, contrast ratios (4.5:1 normal, 3:1 large), text resizing
-2. **Operable**: Full keyboard access, no traps, skip links, descriptive
-   titles, logical focus order, visible focus indicator (not obscured),
-   minimum target size 24×24px, drag alternatives
-3. **Understandable**: Language declaration, visible labels, descriptive
-   error messages, consistent help, no redundant entry, accessible auth
+1. **Perceivable**: Alt text, captions, semantic structure, contrast ratios (4.5:1 / 3:1), color not sole indicator
+2. **Operable**: Full keyboard access, no traps, skip links, visible focus, min target 24×24px, drag alternatives
+3. **Understandable**: Language declaration, visible labels, descriptive errors, consistent help, accessible auth
 4. **Robust**: Valid HTML, correct ARIA, status announcements without focus
 
-**Form accessibility**: See `references/ui-ux-standards.md` §4 for the
-accessible form markup pattern.
-
-**Keyboard patterns**: See `references/ui-ux-standards.md` §3.4 for
-component-specific keyboard interaction standards.
+Consult `references/ui-ux-standards.md` §3.4 for keyboard interaction standards and §4 for accessible form markup.
 
 **Produce**: Compliance target statement + project-specific accessibility
 requirements + WCAG 2.2 checklist reference.
@@ -344,11 +312,11 @@ Define measurable performance goals:
 
 | Metric | Target | Measurement |
 |--------|--------|------------|
-| **Largest Contentful Paint (LCP)** | < 2.5 seconds | 75th percentile |
-| **Interaction to Next Paint (INP)** | < 200 milliseconds | 75th percentile |
+| **Largest Contentful Paint (LCP)** | < 2.5s | 75th percentile |
+| **Interaction to Next Paint (INP)** | < 200ms | 75th percentile |
 | **Cumulative Layout Shift (CLS)** | < 0.1 | 75th percentile |
-| **First Contentful Paint (FCP)** | < 1.8 seconds | 75th percentile |
-| **Time to Interactive (TTI)** | < 3.8 seconds | 75th percentile |
+| **First Contentful Paint (FCP)** | < 1.8s | 75th percentile |
+| **Time to Interactive (TTI)** | < 3.8s | 75th percentile |
 | **Total Bundle Size (JS)** | < 200KB gzipped | Initial load |
 
 **Performance rules**:
@@ -358,15 +326,17 @@ Define measurable performance goals:
 - No layout shift: Skeleton loaders match content dimensions
 - Third-party scripts: Load async, defer, or behind interaction
 
+Validate the visual system against these budgets before handoff. Do not approve
+heavy motion, oversized type scales, or token choices that clearly violate the
+stated performance targets.
+
 **Produce**: Performance budget table + enforcement rules.
 
 ---
 
 ### Step 14 — Prepare Review Handoff
 
-Compile all outputs from Steps 1–13 into the structured deliverable format
-below. The `gatekeeper-design` will review this deliverable against its
-adversarial checklist.
+Compile Steps 1–13 into the structured deliverable below. Gatekeeper-design will review against its adversarial checklist.
 
 ---
 
@@ -425,33 +395,11 @@ containing all sections produced during the workflow:
 Before submitting the deliverable, validate against these standards from
 `references/ui-ux-standards.md`:
 
-### Nielsen's Heuristics Checklist
-
-- [ ] **System Status**: Every async operation shows feedback
-- [ ] **Match Real World**: UI uses the user's language, not developer jargon
-- [ ] **User Control**: Undo, escape, back, cancel available everywhere
-- [ ] **Consistency**: Same visual + behavior for same purpose globally
-- [ ] **Error Prevention**: Constrained inputs, smart defaults, confirmations
-- [ ] **Recognition > Recall**: Information visible, not memorized
-- [ ] **Flexibility**: Keyboard shortcuts, bulk operations for power users
-- [ ] **Minimalist Design**: Every element earns its place
-- [ ] **Error Recovery**: Specific, actionable error messages
-- [ ] **Help**: Contextual help available where needed
-
-### Interaction Quality Checklist
-
-- [ ] All interactive elements have all applicable states from the 10-state
-  model (default, hover, focus, active, disabled, loading, error, success,
-  empty, selected)
-- [ ] Destructive actions use appropriate confirmation level (see
-  `references/ui-ux-standards.md` §3.3)
-- [ ] Forms follow single-column layout, top-aligned labels, progressive
-  validation (on-blur → on-input → on-submit)
-- [ ] Empty states include illustration + explanation + CTA
-- [ ] Data tables support sorting, filtering, pagination, and mobile card
-  fallback
-- [ ] Navigation hierarchy is appropriate for the application type
-- [ ] Feedback uses toast system with appropriate type/duration/position
+Confirm the deliverable satisfies Nielsen's heuristics, complete 10-state
+coverage for interactive elements, appropriate confirmation levels for
+destructive actions, modern form and empty-state patterns, responsive data
+display fallbacks, sensible navigation hierarchy, and clear feedback behavior.
+Document any deliberate exceptions with rationale.
 
 ---
 
@@ -461,6 +409,9 @@ When operating within the commander pipeline, include this review packet
 alongside the deliverable:
 
 ```markdown
+
+---
+
 ## Review Packet: Designer Phase
 
 ### Deliverable Summary
@@ -490,17 +441,57 @@ alongside the deliverable:
 
 ---
 
+## Edge Cases & Failure Modes
+
+| Scenario | How to Handle |
+|----------|---------------|
+| No existing design system or brand guidelines | Create the design system from scratch using the 3-tier token system. Document all aesthetic decisions and their rationale. This is the expected path for greenfield projects. |
+| Backend-only project (no frontend) | Skip the designer phase entirely. Return "Not applicable — no frontend in scope" to commander. |
+| Existing design system that conflicts with best practices | Respect the existing system as a constraint. Document each concrete conflict, explain whether it is retained or normalized, recommend incremental improvements, and identify which legacy patterns are frozen versus which can be migrated safely. Do not override established design tokens without an explicit approved exception. |
+| Upstream stack lock conflicts with the preferred frontend choice | Treat the approved stack lock as binding. Document the conflict, explain the design tradeoff, and propose any change as an explicit exception for commander and architect review instead of silently switching frameworks. |
+| Accessibility requirements exceed WCAG AA | Elevate the target to the specified level (e.g., AAA). Adjust color contrast ratios, font sizes, and interactive targets accordingly. Document the elevated requirements. |
+| Mobile-first vs. desktop-first ambiguity | Default to mobile-first (progressive enhancement). If the user specifies desktop-first, document the choice and adjust breakpoint strategy. |
+| Animation/motion requirements conflict with accessibility | Respect `prefers-reduced-motion`. All animations must have a reduced-motion fallback. This is non-negotiable for WCAG compliance. |
+| Existing frontend needs refactoring rather than net-new design | Extract the current token system, component patterns, and routing model first. Preserve stable user-facing conventions, then document which parts are retained, replaced, or normalized in the new specification. |
+| Brand guidelines specify contrast ratios below WCAG AA | WCAG AA is non-negotiable. Document the conflict, propose the closest brand-compliant colors that meet AA contrast (4.5:1 for text, 3:1 for large text), and escalate the trade-off to the user for explicit approval. Never ship below AA. |
+
+---
+
 ## Reference Files
 
 | File | Purpose |
 |------|---------|
-| `references/frontend-patterns.md` | Architecture selection decision tree, rendering patterns, modern CSS capabilities |
-| `references/design-system-template.md` | Three-tier token specification template, component spec format, WCAG 2.2 checklist |
-| `references/visual-design-guide.md` | Typography, color (OKLCH), spacing, theming, animation, composition, aesthetic direction |
-| `references/ui-ux-standards.md` | Nielsen's heuristics, interaction design, form standards, navigation, feedback, data display |
-| `references/styling-decision-matrix.md` | Styling framework + component library decision trees, shadcn/ui, CVA, CSS architecture |
-| `references/layout-patterns.md` | Grid/Flexbox patterns, modern CSS (container queries, subgrid), responsive strategy, images |
-| `references/page-templates/00-selection-guide.md` | Template selection guide + 18 individual template files (01–18) |
+| `references/frontend-patterns.md` | Rendering pattern decision tree |
+| `references/design-system-template.md` | Token template and component spec format |
+| `references/design-philosophy.md` | Visual principles and prohibited defaults |
+| `references/visual-design-guide.md` | Typography, color, spacing, composition |
+| `references/ui-ux-standards.md` | Heuristics, forms, feedback, data display |
+| `references/styling-decision-matrix.md` | Styling stack and component library choices |
+| `references/layout-patterns.md` | Layout, responsive, and image rules |
+| `references/page-templates/00-selection-guide.md` | Template selection and page mapping |
+| `references/page-templates/01-marketing-landing.md` | Hero-led landing page template for marketing and product launches |
+| `references/page-templates/02-saas-product.md` | Authenticated SaaS product shell with workspace navigation |
+| `references/page-templates/03-documentation.md` | Documentation and knowledge-base template |
+| `references/page-templates/04-admin-dashboard.md` | Admin dashboard layout and dense management workflows |
+| `references/page-templates/05-analytics.md` | Analytics-heavy reporting and insights template |
+| `references/page-templates/06-ecommerce-product.md` | Product detail and conversion-focused commerce template |
+| `references/page-templates/07-blog.md` | Editorial and blog-oriented reading template |
+| `references/page-templates/08-portfolio.md` | Portfolio and showcase template |
+| `references/page-templates/09-pricing.md` | Pricing comparison and plan-selection template |
+| `references/page-templates/10-authentication.md` | Sign-in, sign-up, and recovery-flow template |
+| `references/page-templates/11-settings.md` | Settings and account-management template |
+| `references/page-templates/12-data-table.md` | Data-table-heavy operational workspace template |
+| `references/page-templates/13-chat.md` | Chat and conversational workspace template |
+| `references/page-templates/14-file-manager.md` | File manager and content-browser template |
+| `references/page-templates/15-calendar.md` | Calendar and scheduling template |
+| `references/page-templates/16-multi-step-wizard.md` | Multi-step workflow and onboarding wizard template |
+| `references/page-templates/17-error-pages.md` | Empty, error, and fallback-state templates |
+| `references/page-templates/18-email-template.md` | Product email and notification template |
+| `../../references/universal-frameworks.md` | Shared cross-cutting frameworks for adversarial anti-gaming, debugging, build quality, and deployment assumptions |
+
+---
+
+*Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) apply to all skills. See `../../references/universal-frameworks.md` for complete definitions.*
 
 ---
 

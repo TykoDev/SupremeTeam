@@ -1,6 +1,6 @@
 # Skill Inventory
 
-Supreme Team contains **30 skills** and **14 tech-stack templates**.
+Supreme Team contains **35 skills** and **14 tech-stack templates**.
 
 ## Admiral Layer (2 skills)
 
@@ -28,7 +28,7 @@ The **tech-stacks** library provides 14 backend and frontend stack templates:
 `react-nextjs.md` · `react-tanstack.md` · `rust-axum.md` · `svelte-sveltekit.md` ·
 `vite-spa.md` · `vue-nuxt.md`
 
-## Build Sub-Pipeline (6 skills)
+## Build Sub-Pipeline (8 skills)
 
 | Skill | Role | Key Standards |
 |-------|------|---------------|
@@ -36,10 +36,12 @@ The **tech-stacks** library provides 14 backend and frontend stack templates:
 | **bob-the-builder** | Senior development engineer | IEEE 730, ISO/IEC 25010 |
 | **test-builder** | Test engineering specialist | ISO/IEC 29119, ISTQB |
 | **security-builder** | Code security auditor | OWASP Top 10, CWE Top 25, NIST SSDF |
-| **gatekeeper-build** | Adversarial implementation validator | 5-type challenge protocol |
 | **cross-check-build-confirm** | Implementation completeness scanner | Exhaustive pattern catalog |
+| **debugger** | Systematic root-cause debugging | Iron-law debugging, 5-phase methodology |
+| **health-check** | Code quality dashboard | Composite scoring (type safety, lint, tests, dead code) |
+| **gatekeeper-build** | Adversarial implementation validator | 5-type challenge protocol |
 
-## Review Sub-Pipeline (8 skills)
+## Review Sub-Pipeline (10 skills)
 
 | Skill | Role | Key Standards |
 |-------|------|---------------|
@@ -50,6 +52,8 @@ The **tech-stacks** library provides 14 backend and frontend stack templates:
 | **security-review** | Vulnerability detection and compliance | NIST SSDF, OWASP ASVS, STRIDE |
 | **mr-robot** | Adversarial penetration testing | OWASP Testing Guide, PTES, CVSS 4.0 |
 | **frontier** | Frontend performance and accessibility | Core Web Vitals, WCAG 2.2, CSP |
+| **design-qa** | Frontend visual quality assurance | Design tokens, visual hierarchy, CSS audits |
+| **devex-review** | Developer experience auditor | TTHW measurement, 8-dimension DX scoring |
 | **gatekeeper-code** | Adversarial meta-reviewer | 5-type challenge protocol |
 
 ## Azure Provision Sub-Pipeline (7 skills)
@@ -63,3 +67,9 @@ The **tech-stacks** library provides 14 backend and frontend stack templates:
 | **azure-deployer** | Deployment execution engineer | Docker, ACR, container pipelines |
 | **azure-verifier** | Post-deployment verification | Health checks, schema validation |
 | **gatekeeper-azure** | Unified Azure deliverable validator | 5-type challenge protocol + final adversarial sweep |
+
+## Session Memory (1 skill)
+
+| Skill | Role | Key Standards |
+|-------|------|---------------|
+| **session-memory** | Cross-session state and learnings manager | Checkpoints (save/resume), JSONL learnings |

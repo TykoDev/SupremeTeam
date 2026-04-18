@@ -988,3 +988,257 @@ Reference mode does NOT violate immutability because:
 - The artifact on disk is the exact, unmodified output from the sub-orchestrator
 - The summary is an addition for context management, not a modification
 - Any consumer that needs the full artifact can read it from the save path
+
+---
+
+## Cross-Session Learnings System
+
+The learnings system provides persistent project knowledge that accumulates across
+pipeline runs. Unlike checkpoints (which capture a single session's state), learnings
+persist indefinitely and are available to all pipeline skills.
+
+### Directory Structure
+
+```
+{workspace-root}/skillset-saves/
+├── learnings/
+│   ├── learnings.jsonl          # Append-only log of project knowledge
+│   └── learnings.jsonl.bak     # Pre-prune backup (created on prune ops)
+```
+
+### JSONL Schema
+
+Each line is a self-contained JSON object:
+
+```json
+{
+  "key": "zod-api-boundaries",
+  "type": "pattern",
+  "insight": "Use Zod schemas at all API boundaries for runtime type validation",
+  "confidence": 8,
+  "source": "session-memory",
+  "files": ["src/api/validators.ts", "src/schemas/"],
+  "tags": ["validation", "api", "typescript"],
+  "created": "2026-04-14T16:30:00Z",
+  "updated": "2026-04-14T16:30:00Z"
+}
+```
+
+**Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `key` | string | Yes | Unique kebab-case identifier. Max 50 chars. |
+| `type` | enum | Yes | One of: `pattern`, `pitfall`, `preference`, `architecture`, `tool` |
+| `insight` | string | Yes | The learning itself. One clear sentence. Max 200 chars. |
+| `confidence` | integer | Yes | 1-10. How confident is this learning? |
+| `source` | string | Yes | Which skill or user logged this learning |
+| `files` | string[] | No | Related file paths (relative to workspace root) |
+| `tags` | string[] | No | Categorization tags for search |
+| `created` | ISO 8601 | Yes | When first logged |
+| `updated` | ISO 8601 | Yes | When last updated or reconfirmed |
+
+### Learnings Integration with Pipeline Skills
+
+Pipeline skills SHOULD query learnings before starting work:
+
+1. **Pre-work query**: Search learnings by files that will be modified and by
+   domain-relevant tags
+2. **Post-work logging**: After completing work, log any new patterns, pitfalls,
+   or preferences discovered
+3. **Confidence updates**: If a learning is reconfirmed during work, bump
+   its confidence (max 10)
+
+### Staleness Rules
+
+A learning is **stale** when:
+- All files in its `files` array have been deleted from the workspace
+- Created >90 days ago AND never updated (confidence never bumped)
+- Contradicts a more recent learning with the same tags
+
+Stale entries are flagged for user review, not auto-deleted.
+
+---
+
+## Checkpoint Integration
+
+Checkpoints provide session-level state snapshots within the save system.
+
+### Directory Structure
+
+```
+{workspace-root}/skillset-saves/
+├── checkpoints/                    # Standalone checkpoints
+│   └── checkpoint_{timestamp}.md
+└── runs/
+    └── {run-id}/
+        └── checkpoints/            # Pipeline run checkpoints
+            └── checkpoint_{timestamp}.md
+```
+
+### Auto-Checkpoint Triggers
+
+Orchestrators MUST create automatic checkpoints on:
+
+| Trigger | When | Rationale |
+|---------|------|-----------|
+| Context tier escalation | Tier change from 1→3 or 2→4 | Context is being compacted; save state before degradation |
+| Gate submission | Before every gatekeeper submission | Preserve state in case of revision cycle |
+| Stage completion | Before advancing to next pipeline stage | Capture the completed stage's context |
+| Session end signal | User indicates "stop", "continue later" | Enable clean resume |
+
+### Checkpoint File Format
+
+Checkpoints use YAML frontmatter + markdown body (consistent with all
+`skillset-saves/` files):
+
+```markdown
+---
+type: checkpoint
+version: 1.0.0
+timestamp: {ISO 8601}
+branch: {current branch}
+head_commit: {commit hash}
+session_id: {session identifier}
+auto_triggered: {true/false}
+trigger_reason: {tier_escalation|gate_submission|stage_completion|session_end|user_request}
+pipeline_context:
+  run_id: {run-id or "standalone"}
+  pipeline_state: {state or "N/A"}
+  current_phase: {phase or "N/A"}
+---
+
+## Modified Files
+{list of modified/staged files}
+
+## Decisions Made
+{numbered list of decisions from this session}
+
+## Remaining Work
+{numbered list of remaining items}
+
+## Context Notes
+{critical context the next session needs}
+```
+
+### Save Trigger Addition
+
+| Trigger | Who Fires | What Gets Written |
+|---------|-----------|-------------------|
+| **CHECKPOINT_SAVE** | session-memory (or orchestrator on auto-trigger) | `checkpoints/checkpoint_{timestamp}.md` |
+| **LEARNING_LOG** | session-memory (or any skill via session-memory) | `learnings/learnings.jsonl` (append) |
+
+---
+
+## Memory Verification Protocol
+
+On every resume, the pipeline MUST verify memory artifacts in addition to the
+existing state-artifact consistency validation.
+
+### Memory Artifact Integrity Check
+
+After completing §State-Artifact Consistency Validation (Steps 0-6), execute:
+
+**Step 7 — Verify memory artifacts:**
+
+1. **Learnings file check**: If `skillset-saves/learnings/learnings.jsonl` exists:
+   - Confirm it is readable and contains valid JSONL
+   - Count entries and report: "Loaded {n} project learnings"
+   - If unreadable: set `memory_integrity_status: DEGRADED`, warn user,
+     continue without learnings
+
+2. **Checkpoint file check**: If the run has checkpoints in
+   `skillset-saves/runs/{run-id}/checkpoints/`:
+   - Read the latest checkpoint file
+   - Validate its YAML frontmatter
+   - Cross-reference its `branch` and `head_commit` with current state
+   - If discrepancies exist: warn user, proceed with `_state.md` as authoritative
+
+3. **Missing memory files**: Missing learnings or checkpoint files are a
+   WARNING, not a failure. The pipeline continues without them. Record the
+   warning in `_audit-trail.md`.
+
+### Memory Artifact Counts in Session Events
+
+Session boundary events in `_audit-trail.md` SHOULD include memory artifact counts:
+
+```
+SESSION_RESUME — session_id: {id}, resuming from: {state}, corrections: {list},
+  memory: {n} learnings loaded, {m} checkpoints available
+```
+
+```
+SESSION_END — session_id: {id}, final state: {state},
+  memory: {n} learnings (delta: +{added}), {m} checkpoints created this session
+```
+
+### Graceful Degradation for Memory
+
+Memory artifact failures follow the same graceful degradation philosophy as
+other save operations:
+
+- A corrupted `learnings.jsonl` does NOT halt the pipeline
+- A missing checkpoint does NOT prevent resume (use `_state.md`)
+- Memory features degrade silently when unavailable
+- Users are warned but never blocked by memory failures
+
+---
+
+## Persistence-Failure Decision Tree
+
+> **Normative policy.** All skills that reference this protocol MUST follow the
+> decision tree below when a save operation fails. This replaces per-skill
+> variance with a single authoritative degradation path.
+
+```
+Save operation attempted
+│
+├── SUCCESS → continue normally
+│
+└── FAILURE
+    │
+    ├── Is this a critical state file? (_state.md, _lock.md, _run-manifest.md,
+    │   gatekeeper-admiral_handoff-*.md, delivery-package.md)
+    │   │
+    │   ├── YES → RETRY once (immediate, no backoff)
+    │   │   ├── RETRY SUCCESS → continue; log WARNING to _audit-trail.md
+    │   │   └── RETRY FAILURE → WARN user:
+    │   │       "Pipeline state could not be persisted. Resume beyond this
+    │   │        session is not guaranteed. Recommend completing the current
+    │   │        stage without interruption."
+    │   │       Set context_tier ≥ 2 (save-degraded).
+    │   │       Continue pipeline execution — do NOT abort.
+    │   │
+    │   └── NO (deliverable, review-packet, audit-trail append, checkpoint,
+    │       learning, or any non-critical file)
+    │       │
+    │       └── LOG in-context warning:
+    │           "⚠ Save failed for {file}: {reason}. Continuing without
+    │            persistence for this artifact."
+    │           Continue pipeline execution — do NOT retry, do NOT abort.
+```
+
+**MUST rules:**
+1. A save failure MUST NEVER halt the pipeline or block specialist execution.
+2. A failed critical-state save MUST warn the user with the exact message above.
+3. A failed non-critical save MUST log but MUST NOT prompt the user or retry.
+4. Skills MUST NOT invent their own degradation paths — this tree is authoritative.
+
+**MUST NOT rules:**
+1. Skills MUST NOT retry non-critical saves (avoids cascading latency).
+2. Skills MUST NOT abort the pipeline on any save failure.
+3. Skills MUST NOT silently swallow critical-state failures — the user notice is mandatory.
+
+**Referencing this policy from a skill:**
+
+Skills reference this policy with a single line in their Persistent Save
+Protocol section:
+
+```markdown
+If any save operation fails, follow the Persistence-Failure Decision Tree
+in `save-protocol.md` §Persistence-Failure Decision Tree.
+```
+
+This replaces all per-skill "graceful degradation" language with a single
+canonical pointer.
+

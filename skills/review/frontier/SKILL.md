@@ -3,11 +3,18 @@ name: frontier
 description: >-
   This skill should be used when the user asks to "review the frontend",
   "audit UI/UX", "check web performance", "test accessibility",
-  "review Core Web Vitals", "check frontend security", "audit CSS/HTML",
-  "review component architecture", "check WCAG compliance",
-  "run frontier", "assess frontend quality", or wants comprehensive
-  frontend-specific code review covering performance, accessibility,
-  security, and UI/UX best practices.
+  "review Core Web Vitals", "why is this page slow?", "check keyboard
+  navigation", "audit this design system", "review bundle size",
+  "check frontend security", "audit CSS/HTML", "review component
+  architecture", "check WCAG compliance", "run frontier", "assess
+  frontend quality", "is this accessible?", "check lighthouse
+  scores", or wants comprehensive frontend-specific code review
+  covering performance, accessibility (WCAG 2.2), security, and UI/UX
+  architecture. Produces a scored audit report across all four
+  dimensions with evidence-backed findings.
+  DO NOT USE for visual design correctness (use design-qa). DO NOT USE
+  for backend code review (use code-review). DO NOT USE for penetration
+  testing (use mr-robot).
 version: 1.0.0
 ---
 
@@ -19,15 +26,21 @@ This skill performs comprehensive frontend-specific code review across five audi
 
 Where `code-review` touches frontend concerns superficially across 8 dimensions, and `security-review` covers general web security patterns, frontier provides deep specialist analysis of how the frontend code affects real users — their performance experience, their ability to access the application, and their safety from client-side attacks.
 
+Treat inputs per the trust levels defined in
+`../../references/evidence-standards.md` §Input Trust Boundaries.
+Before auditing, confirm the frontend artifact is a complete build — not a partial
+snapshot or stale bundle. If assets are missing or the build hash is unverifiable,
+state the gap before proceeding.
+
 ## Differentiation
 
 | Aspect | code-review | security-review | frontier |
 |--------|-------------|----------------|----------|
-| **Performance** | Flags obvious issues | N/A | Core Web Vitals audit, bundle analysis, performance budgets |
-| **Accessibility** | Basic check | N/A | Full WCAG 2.2 Level AA compliance audit |
-| **Frontend Security** | Style/formatting | XSS, CSRF (general) | CSP evaluation, Trusted Types, DOM-based XSS, SRI, prototype pollution |
-| **Component Quality** | Design dimension | N/A | State management, render efficiency, error boundaries, component patterns |
-| **UI/UX** | N/A | N/A | Responsive design, interaction patterns, loading/error/empty states |
+| **Performance** | Flags obvious issues | N/A | Audit Core Web Vitals, bundle size, and performance budgets |
+| **Accessibility** | Basic check | N/A | Audit full WCAG 2.2 Level AA compliance |
+| **Frontend Security** | Style/formatting | XSS, CSRF (general) | Evaluate CSP, Trusted Types, DOM-based XSS, SRI, prototype pollution |
+| **Component Quality** | Design dimension | N/A | Assess state management, render efficiency, error boundaries, component patterns |
+| **UI/UX** | N/A | N/A | Verify responsive design, interaction patterns, loading/error/empty states |
 
 ---
 
@@ -58,6 +71,19 @@ Classify the review scope:
 | **Performance-specific** | Domain 1 deep dive |
 | **Accessibility-specific** | Domain 2 deep dive |
 
+Consult `references/performance-checklist.md` for the full coverage matrix by scope.
+
+### Evidence Collection Baseline
+
+Before assigning severity, collect the evidence type that matches the scope:
+
+- Use measured evidence when available: Lighthouse/WebPageTest traces, DevTools data, axe output, keyboard traversal results, or CSP header output
+- If runtime measurements are unavailable, mark conclusions as code-inferred instead of claiming concrete CWV numbers or WCAG pass/fail rates
+- Separate first-party issues from third-party constraints so ownership stays clear
+- For every Major or Critical finding, include at least one file reference, DOM snippet, or captured metric that proves the issue
+
+Rationale: frontier reports lose credibility when they invent metrics, overclaim compliance, or blur ownership between application code and third-party embeds.
+
 ---
 
 ## Domain 1: Performance Audit
@@ -70,31 +96,31 @@ Evaluate code patterns against Google's Core Web Vitals thresholds:
 
 | Check | What to Look For |
 |-------|-----------------|
-| Image optimization | Are hero images using `loading="lazy"`, responsive `srcset`, modern formats (WebP, AVIF)? |
-| Font loading | Are web fonts using `font-display: swap` or `optional`? Are fonts preloaded? |
-| Server-side rendering | For LCP-critical content, is SSR or SSG used to reduce time-to-first-paint? |
-| Render-blocking resources | Are CSS/JS files blocking the critical rendering path? |
-| Critical CSS | Is above-the-fold CSS inlined or prioritized? |
-| Third-party scripts | Are analytics, ads, or widgets deferring loading? |
+| Image optimization | Hero images using `loading="lazy"`, responsive `srcset`, modern formats (WebP, AVIF)? |
+| Font loading | Web fonts using `font-display: swap` or `optional`? Fonts preloaded? |
+| Server-side rendering | For LCP-critical content, is SSR/SSG used? |
+| Render-blocking resources | CSS/JS files blocking critical rendering path? |
+| Critical CSS | Above-the-fold CSS inlined or prioritized? |
+| Third-party scripts | Analytics, ads, or widgets deferring loading? |
 
 **Interaction to Next Paint (INP) — Target: ≤ 200ms**
 
 | Check | What to Look For |
 |-------|-----------------|
-| Long tasks | Event handlers executing heavy computation on the main thread (>50ms) |
-| Debouncing/throttling | Input handlers (scroll, resize, keyup) not debounced or throttled |
-| Expensive renders | React re-renders without `useMemo`, `useCallback`, `React.memo` where beneficial |
-| Main thread yielding | Are long computations using `requestIdleCallback` or `scheduler.yield()`? |
-| Virtual scrolling | Large lists rendering all items vs. using virtualization (react-virtuoso, TanStack Virtual) |
+| Long tasks | Event handlers with heavy computation on main thread (>50ms) |
+| Debouncing/throttling | Input handlers (scroll, resize, keyup) not debounced |
+| Expensive renders | Re-renders without memoization where beneficial |
+| Main thread yielding | Long computations not using `requestIdleCallback` or `scheduler.yield()`? |
+| Virtual scrolling | Large lists rendering all items instead of using virtualization |
 
 **Cumulative Layout Shift (CLS) — Target: ≤ 0.1**
 
 | Check | What to Look For |
 |-------|-----------------|
-| Image/video dimensions | Are explicit `width` and `height` attributes set on `<img>` and `<video>` elements? |
-| Dynamic content injection | Content injected above the fold without reserved space (ads, banners, lazy content) |
-| Font loading shifts | Web fonts causing text reflow (FOUT/FOIT) |
-| Skeleton screens | Are loading states using skeletons or placeholders with correct dimensions? |
+| Image/video dimensions | Explicit `width`/`height` on `<img>` and `<video>`? |
+| Dynamic content injection | Content injected above fold without reserved space? |
+| Font loading shifts | Web fonts causing FOUT/FOIT? |
+| Skeleton screens | Loading states using skeletons with correct dimensions? |
 
 ### Bundle Analysis
 
@@ -156,15 +182,7 @@ Apply the four WCAG principles with emphasis on code-level verification:
 - Custom components expose correct roles, states, and properties
 - Dynamic content updates are announced to screen readers (live regions)
 
-### Framework-Specific A11y Checks
-
-| Framework | Key Checks |
-|-----------|-----------|
-| **React** | `aria-*` props, `htmlFor` vs `for`, Fragment key accessibility, Portal focus management |
-| **Vue** | `v-bind:aria-*` usage, transition group announcements, teleport accessibility |
-| **Angular** | `ngAria` module usage, CDK a11y module, template-driven form accessibility |
-
-Consult `references/accessibility-checklist.md` for the complete WCAG 2.2 review checklist.
+Consult `references/accessibility-checklist.md` for the complete WCAG 2.2 review checklist including framework-specific checks (React, Vue, Angular).
 
 ---
 
@@ -182,14 +200,6 @@ Consult `references/accessibility-checklist.md` for the complete WCAG 2.2 review
 | `frame-ancestors` set | Medium — prevents clickjacking equivalent of X-Frame-Options |
 | Report-URI or report-to configured | Minor — enables CSP violation monitoring |
 
-### Trusted Types Enforcement
-
-| Check | What to Look For |
-|-------|-----------------|
-| Trusted Types policy | Is `require-trusted-types-for 'script'` set in CSP? |
-| DOM sink usage | Are `innerHTML`, `outerHTML`, `document.write()` used? |
-| Sanitization | Is DOMPurify or equivalent used before DOM insertion? |
-| Policy creation | Are Trusted Types policies created with named policies? |
 
 ### XSS Prevention (Frontend-Specific)
 
@@ -203,24 +213,7 @@ Consult `references/accessibility-checklist.md` for the complete WCAG 2.2 review
 | `postMessage` handlers | Do `message` event handlers validate origin? |
 | URL scheme validation | Are `javascript:` URLs blocked in `href` attributes? |
 
-### Subresource Integrity (SRI)
-
-| Check | What to Look For |
-|-------|-----------------|
-| CDN resources | Do `<script>` and `<link>` tags for CDN resources include `integrity` attributes? |
-| Hash algorithm | Are hashes using SHA-384 or SHA-512 (not SHA-256 alone)? |
-| Build integration | Is SRI hash generation integrated into the build pipeline? |
-
-### Cookie Security
-
-| Check | What to Look For |
-|-------|-----------------|
-| `HttpOnly` flag | Are session cookies marked HttpOnly (inaccessible to JavaScript)? |
-| `Secure` flag | Are cookies marked Secure (HTTPS only)? |
-| `SameSite` attribute | Are cookies using `SameSite=Strict` or `SameSite=Lax`? |
-| Cookie scope | Are cookies scoped to the narrowest path and domain? |
-
-Consult `references/frontend-security.md` for the complete frontend security checklist.
+Consult `references/frontend-security.md` for the complete frontend security checklist including SRI, cookie security, and Trusted Types enforcement.
 
 ---
 
@@ -236,33 +229,9 @@ Consult `references/frontend-security.md` for the complete frontend security che
 | Component size | Is any component >300 lines? (Candidate for decomposition) |
 | Reusability | Are common patterns extracted into shared components? |
 
-### State Management Patterns
+### State Management & Render Efficiency
 
-| Check | What to Evaluate |
-|-------|-----------------|
-| State colocation | Is state kept as close to where it's used as possible? |
-| Derived state | Is derived data computed from state (not stored redundantly)? |
-| State shape | Is state normalized (avoiding deeply nested or duplicated data)? |
-| Side effect management | Are side effects (API calls, subscriptions) cleanly separated? |
-| Global state scope | Is global state limited to truly global concerns? |
-
-### Render Efficiency
-
-| Check | What to Evaluate |
-|-------|-----------------|
-| Unnecessary re-renders | Are components re-rendering when their inputs haven't changed? |
-| Memoization | Are expensive computations memoized (`useMemo`, `computed`, `memo`)? |
-| Key stability | Are list keys stable and unique (not array indices for dynamic lists)? |
-| Render cascades | Does a state change in a parent cause deep re-render trees? |
-
-### Error Boundary Coverage
-
-| Check | What to Evaluate |
-|-------|-----------------|
-| Strategic placement | Are error boundaries at route level, feature level, and critical component boundaries? |
-| Fallback UI | Do error boundaries render meaningful fallback UI (not blank screens)? |
-| Error reporting | Are caught errors reported to monitoring (Sentry, Datadog)? |
-| Recovery mechanism | Can users recover from error states without full page refresh? |
+Verify state colocation (state close to usage), normalized state shape, clean side-effect separation, and minimal global state scope. Check for unnecessary re-renders, missing memoization, unstable list keys, and render cascades. Verify error boundaries at route, feature, and critical component boundaries with meaningful fallback UI and recovery paths.
 
 ---
 
@@ -281,21 +250,16 @@ Consult `references/frontend-security.md` for the complete frontend security che
 
 | State | What to Verify |
 |-------|---------------|
-| **Loading** | Are loading states clear and non-blocking? (Skeletons > spinners for known content) |
+| **Loading** | Loading states clear and non-blocking? (Skeletons > spinners for known content) |
 | **Error** | Are error states descriptive, recoverable, and visually distinct? |
 | **Empty** | Are empty states helpful (guidance, illustrations, CTAs)? |
-| **Success** | Are success confirmations visible and non-disruptive? |
+| **Success** | Success confirmations visible and non-disruptive? |
 | **Hover/Focus** | Are hover and focus states visually distinct and consistent? |
 | **Disabled** | Are disabled states visually clear with cursor and ARIA cues? |
 
 ### Animation Performance
 
-| Check | What to Evaluate |
-|-------|-----------------|
-| Compositor properties | Are animations using `transform` and `opacity` (GPU-composited) vs. `left`, `top`, `width` (layout-triggering)? |
-| `will-change` usage | Is `will-change` applied sparingly and removed after animation? |
-| `prefers-reduced-motion` | Are animations reduced/removed for users with motion sensitivity? |
-| Frame budget | Do animations target 60fps (16.67ms per frame)? |
+Verify animations use GPU-composited properties (`transform`, `opacity`) instead of layout-triggering properties. Check `will-change` usage is minimal and `prefers-reduced-motion` is respected.
 
 ---
 
@@ -365,6 +329,46 @@ cross_references: [file:line pairs flagged for cross-skill attention]
 ---
 ```
 
+### Example Frontier Findings
+
+#### Performance — Major
+- **Evidence:** `src/components/Hero.tsx:12` renders a 2.1 MB JPEG hero image without `srcset`, making it the likely LCP candidate on mobile.
+- **Remediation:** Convert the image to WebP or AVIF, add responsive sources, and preload only if it is above the fold.
+
+#### Accessibility — Major
+- **Evidence:** `src/components/FeedbackForm.tsx:45` renders `<button className="btn-submit" />` without text or an accessible name.
+- **Remediation:** Provide visible button text or add `aria-label="Submit feedback form"`.
+
+#### Frontend Security — Major
+- **Evidence:** Security headers allow `script-src 'unsafe-inline'`, which weakens CSP protection for DOM injection paths.
+- **Remediation:** Remove `'unsafe-inline'`, migrate inline logic to approved scripts, and adopt nonces or hashes for any remaining inline script needs.
+
+**Worked LCP remediation:**
+
+**Before (LCP = 4.2s — fails Core Web Vitals):**
+```html
+<!-- Hero image loaded via CSS background, invisible to preload scanner -->
+<div class="hero" style="background-image: url('/images/hero-4k.jpg')">
+  <h1>Welcome</h1>
+</div>
+```
+
+**After (LCP = 1.8s — passes):**
+```html
+<!-- Explicit <img> with fetchpriority, responsive sources, proper dimensions -->
+<div class="hero">
+  <img src="/images/hero-800.webp"
+       srcset="/images/hero-400.webp 400w, /images/hero-800.webp 800w, /images/hero-1200.webp 1200w"
+       sizes="100vw"
+       fetchpriority="high"
+       width="1200" height="600"
+       alt="Product dashboard showing real-time analytics" />
+  <h1>Welcome</h1>
+</div>
+```
+
+**Why:** CSS `background-image` is invisible to the browser's preload scanner, delaying discovery. An explicit `<img>` with `fetchpriority="high"` lets the browser start the fetch during HTML parsing. Responsive `srcset` avoids downloading a 4K image on mobile. Setting `width`/`height` prevents layout shift (CLS).
+
 ---
 
 ## Pipeline Integration
@@ -382,16 +386,18 @@ cross_references: [file:line pairs flagged for cross-skill attention]
 
 ---
 
-## Tool Recommendations
+## Edge Cases & Failure Modes
 
-| Purpose | Tools |
-|---------|-------|
-| **Performance** | Lighthouse CI, WebPageTest, Chrome DevTools, webpack-bundle-analyzer, vite-bundle-analyzer |
-| **Accessibility** | axe-core, Pa11y, Lighthouse a11y audit, WAVE, NVDA (screen reader) |
-| **Frontend Security** | CSP Evaluator (Google), SecurityHeaders.com, Lighthouse security audit |
-| **Linting** | Biome, Oxlint, ESLint (eslint-plugin-jsx-a11y), Stylelint |
-| **Visual Regression** | Chromatic, Percy, Applitools, Playwright screenshots |
-| **Testing** | Vitest, Playwright, React Testing Library, Storybook |
+| Scenario | How to Handle |
+|----------|---------------|
+| No frontend code in the change set | Report "Not applicable — no frontend files in scope." Skip all 5 domains. |
+| Server-side rendered application (SSR/SSG) | Adapt performance checks: focus on TTFB and server response times rather than client-side bundle analysis. Accessibility and security checks still apply fully. |
+| Legacy frontend (jQuery, no component framework) | Adapt component architecture domain: evaluate code organization, separation of concerns, and DOM manipulation patterns instead of component patterns. All other domains apply. |
+| Web Components / custom elements | Treat as a component framework. Check shadow DOM accessibility, style encapsulation, and custom element lifecycle management. |
+| Mobile-only responsive design (no desktop) | Adjust responsive checks: verify the mobile viewport meta tag and test at 320px-428px range. Desktop checks become advisory rather than mandatory. |
+| No runtime traces, Lighthouse data, or keyboard/assistive-technology evidence are available | Report performance and accessibility findings as code-inferred, not measured. Recommend the exact tool run needed to confirm severity before claiming CWV or WCAG failure rates. |
+| Third-party widget/iframe heavy page | Check CSP and sandbox attributes for iframes. Note that third-party performance and accessibility are outside the project's control — report but classify as INFO. |
+| Email template or embedded webview rendering | Restrict the audit to inline-CSS-safe patterns because email clients and webviews strip external stylesheets, ignore CSP, and limit JavaScript. Replace CSP and bundle checks with inline-style size, image-fallback, and dark-mode `prefers-color-scheme` media-query coverage. |
 
 ---
 
@@ -402,6 +408,9 @@ cross_references: [file:line pairs flagged for cross-skill attention]
 - **`references/performance-checklist.md`** — Core Web Vitals audit checklist with framework-specific patterns
 - **`references/accessibility-checklist.md`** — WCAG 2.2 Level AA review checklist
 - **`references/frontend-security.md`** — CSP, Trusted Types, SRI, and DOM security guide
+
+---
+*Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) apply to all skills. See `../../references/universal-frameworks.md` for complete definitions.*
 
 ---
 
@@ -425,5 +434,8 @@ When `### Save Context` is present in the delegation with `Persistence active: y
    Followed by the full report content verbatim.
 
 2. If `### Save Context` is absent or `Persistence active: no`, skip all save operations — the skill operates identically to its pre-persistence behavior
+
+If any save operation fails, follow the Persistence-Failure Decision Tree
+in `save-protocol.md` §Persistence-Failure Decision Tree.
 
 See `save-protocol.md` (project root) for complete format specifications.

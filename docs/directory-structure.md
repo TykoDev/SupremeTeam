@@ -34,14 +34,16 @@ SupremeTeam/
     │   ├── engineer/
     │   ├── gatekeeper-design/
     │   └── tech-stacks/                  # 14 stack templates
-    ├── build/                            # Build sub-pipeline (6 skills)
+    ├── build/                            # Build sub-pipeline (8 skills)
     │   ├── build-management/
     │   ├── bob-the-builder/
     │   ├── test-builder/
     │   ├── security-builder/
     │   ├── cross-check-build-confirm/
+    │   ├── debugger/
+    │   ├── health-check/
     │   └── gatekeeper-build/
-    ├── review/                           # Review sub-pipeline (8 skills)
+    ├── review/                           # Review sub-pipeline (10 skills)
     │   ├── code-chief/
     │   ├── bug-review/
     │   ├── code-review/
@@ -49,6 +51,8 @@ SupremeTeam/
     │   ├── security-review/
     │   ├── mr-robot/
     │   ├── frontier/
+    │   ├── design-qa/
+    │   ├── devex-review/
     │   └── gatekeeper-code/
     ├── azure/                            # Azure provision sub-pipeline (7 skills)
     │   ├── azure-provisioner/
@@ -58,7 +62,8 @@ SupremeTeam/
     │   ├── azure-deployer/
     │   ├── azure-verifier/
     │   └── gatekeeper-azure/
-    ├── references/                       # Shared universal handoff templates
+    ├── session-memory/                   # Cross-session state & learnings manager
+    ├── references/                       # Shared universal references
     └── save-protocol.md                  # Persistent save system specification
 ```
 
@@ -75,6 +80,7 @@ their dependencies.**
 
 - `admiral` and `gatekeeper-admiral` sit directly under `skills/` (depth 2)
   because they orchestrate across all sub-pipelines
+- `session-memory` also sits at depth 2 as a cross-cutting utility skill
 - All other skills are nested under their pipeline category directory (depth 3)
 - `AGENTS.md` provides the authoritative flat index for tool discovery
   regardless of nesting depth

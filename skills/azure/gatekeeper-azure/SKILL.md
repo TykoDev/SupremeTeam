@@ -1,21 +1,24 @@
 ---
 name: gatekeeper-azure
 description: >-
-  This skill should be used when the user or azure-provisioner asks to
-  "validate Azure deliverables", "gate-check the Azure pipeline",
-  "review the deployment runbook", "challenge the Bicep design",
-  "verify the configuration spec", "validate deployment results",
-  "check verification completeness", "perform final adversarial Azure review",
-  "approve this Azure phase", or "quality-gate the Azure output".
-  It is the single adversarial quality gate for the Azure provisioning
-  pipeline that validates deliverables from azure-planner,
-  azure-architect, azure-configurator, azure-deployer, and azure-verifier.
-  It produces NO infrastructure, Bicep, or deployments. It challenges,
-  validates, and either approves or rejects Azure work.
-version: 1.1.0
+  This skill should be used when the user asks to "validate Azure
+  deliverables", "gate-check the Azure pipeline", "challenge the
+  Bicep design", "validate deployment results", "approve this Azure
+  phase", "quality-gate the Azure output", "is this Bicep ready?",
+  "pressure-test this Azure plan", "double-check this deployment
+  evidence", or "review the Azure configuration". Single adversarial
+  gate validating deliverables from all Azure pipeline specialists.
+  Produces no infrastructure artifacts or deployments — it only challenges, validates,
+  approves, revises, or escalates Azure deliverables using the
+  canonical pipeline verdicts `APPROVED`, `REVISE`, and `ESCALATE`.
+  DO NOT USE for designing infrastructure (use azure-architect).
+  DO NOT USE for deployment execution (use azure-deployer). DO NOT
+  USE for cross-pipeline gating (use gatekeeper-admiral).
+version: 1.0.0
+
 ---
 
-# Gatekeeper Azure — Unified Azure Deliverable Validator
+# Gatekeeper Azure — Azure Pipeline Adversarial Validator
 
 ## Purpose
 
@@ -209,6 +212,12 @@ Gatekeeper-azure applies these rules:
 When a challenge requires a specialist response, route it back through
 azure-provisioner.
 
+Consult `references/delegation-workflow.md` for worked examples, batching
+rules, escalation patterns, and dispute handling expectations.
+
+Run the Adversarial Verification Protocol before opening delegation loops so
+delegations are driven by verified gaps rather than first-pass suspicion.
+
 ### Delegation Request Format
 
 ```text
@@ -235,7 +244,9 @@ Amended Work:    [If corrected, the revised section]
 
 ### Round Limits
 
-- Maximum **2 delegation rounds per finding**
+- Maximum **2 delegation rounds per finding**, because unbounded
+  rounds stall the pipeline and indicate a scope or requirements
+  disagreement that only the user can resolve
 - After Round 2, mark the issue **Disputed** and escalate via
   azure-provisioner if still unresolved
 - Batch related findings only when they target the same skill
@@ -246,12 +257,80 @@ phase and replaying downstream phases after the fix.
 
 ---
 
-## Anti-Gaming Safeguards
+## Adversarial Verification Protocol
 
-- Do not manufacture findings just to appear rigorous
-- Prioritize issues with real deployment, security, or cost impact
-- Accept solid Azure work that is well-supported by evidence
-- Use adversarial scrutiny to improve truthfulness, not to create friction
+### Anti-Rubber-Stamp Rule
+
+To earn approval, an Azure deliverable MUST NOT be rubber-stamped because unconditional approval without evidence undermines the entire adversarial validation model. Gatekeeper-azure MUST document:
+1. At least 3 specific cross-references between the submitted Azure deliverable and the upstream design/build requirements.
+2. At least 1 validated challenge (or successful mitigation) concerning cloud security, cost, or configuration.
+3. A declarative conclusion confirming the deliverable is verified to be safe for production.
+
+### Gaming Detection
+
+Actively detect and reject specialist behaviors that attempt to game the validation process:
+- **Phantom Resolutions:** A specialist claims to have fixed an Azure configuration issue but the Bicep/script source code remains unchanged.
+- **Severity Deflation:** A specialist downplays a critical security risk (e.g., public database exposure) as a "minor issue."
+- **Checklist Gaming:** A specialist checks off a deployment phase without executing or validating the underlying tests.
+- **Contradiction Hiding:** A specialist ignores a direct conflict between the runbook and the actual deployed state.
+
+### Pre-Verdict Self-Check
+
+Before returning a verdict to azure-provisioner, gatekeeper-azure MUST ask:
+1. Did I empirically verify the claims made in this phase?
+2. Is the cost estimation realistically proportional?
+3. Have all critical security findings been demonstrably resolved?
+4. Are the deployment steps genuinely idempotent?
+
+If the answer to any is NO, the verdict MUST NOT be APPROVED.
+
+---
+
+## Gatekeeper Self-Correction
+
+When a gatekeeper challenge is overturned by evidence from the specialist:
+
+1. **Acknowledge the error explicitly** — state what was wrong in the challenge
+2. **Withdraw the challenge** — remove it from the blocking findings list
+3. **Adjust calibration** — if the same challenge type keeps getting overturned, recalibrate the threshold
+4. **Document the pattern** — note the overturned challenge in the verdict report under "Calibration Notes"
+
+---
+
+## Worked Validation Example
+
+Azure-architect submits a Bicep IaC Design Package for Phase 2 review.
+
+1. **Intent alignment**: User requested a containerized Deno backend on App Service
+   with PostgreSQL. The Bicep design provisions App Service Plan (B2), two Web Apps,
+   ACR (Basic), PostgreSQL Flexible Server (B1ms), Key Vault, and Storage. Aligns
+   with the approved Phase 1 runbook.
+2. **Cross-reference check**: (a) Web App SKU matches planner’s B2 recommendation.
+   (b) PostgreSQL version 16 with pgvector matches architect’s own requirements
+   section. (c) Key Vault uses RBAC authorization, consistent with the security
+   baseline.
+3. **Challenge issued (Completeness)**: The `web_app.bicep` module outputs
+   `principalId` and `defaultHostname` but omits `name`. Downstream Stage 03
+   (RBAC) needs the web app name to scope role assignments. Finding GK-AZ-M1:
+   Major — missing output blocks RBAC stage.
+4. **Challenge issued (Security)**: `pgAdminPassword` parameter lacks `@secure()`
+   decorator. Finding GK-AZ-C1: Critical — password visible in deployment history.
+5. **Verdict**: **REVISE** with 1 Critical and 1 Major finding. Architect must add
+   `@secure()` to the password parameter and add `name` to the web app module
+   outputs.
+
+---
+
+## Edge Cases & Failure Modes
+
+| Scenario | How to Handle |
+|----------|---------------|
+| Specialist claims fix but Bicep source unchanged | Classify as Phantom Resolution (Gaming Detection). Reject the claim and require the actual code change with a diff. |
+| Deployment targets a subscription with no quota for the planned SKU | Flag as Critical during azure-planner review. Require quota validation before approving the plan. Do not approve plans that assume quota availability without verification. |
+| Conflicting Bicep parameters between planner and architect deliverables | Force reconciliation: identify the parameter, cite both sources, and require alignment before approving either deliverable. |
+| Cost estimation missing entirely | Return **REVISE** only when the omission is unexplained. If the specialist documents that pricing inputs are unstable, region is unknown, or reliable pricing data is unavailable, accept the omission with a documented note per Cost Estimation Review Rules. |
+| Specialist defends a public endpoint for a database | Reject regardless of justification. Public database endpoints are never acceptable in production. Classify as Critical and require private endpoint configuration. |
+| First deployment with no rollback target | Acknowledge the risk but do not block. Require the deployer to document the manual recovery plan and verify that a backup strategy exists before proceeding. |
 
 ---
 
@@ -260,6 +339,9 @@ phase and replaying downstream phases after the fix.
 Structure the validation report as follows:
 
 ```markdown
+
+---
+
 ## Gatekeeper Azure Validation Report
 
 ### Metadata
@@ -319,6 +401,24 @@ Return the report to the invoking orchestrator (azure-provisioner). The orchestr
 
 ---
 
+## Reference Files
+
+| File | Purpose |
+|------|---------|
+| `references/review-criteria.md` | Ten-dimension Azure review rubric for all phases |
+| `references/challenge-protocol.md` | Detailed challenge rules and severity handling |
+| `references/attack-surface.md` | Final adversarial sweep coverage for identity, network, data, containers, and deployment surfaces |
+| `references/common-mistakes.md` | Frequent Azure delivery failures and anti-patterns to challenge explicitly |
+| `references/delegation-workflow.md` | Delegation request/response examples, batching strategy, and dispute handling |
+
+---
+
+Treat inputs per the trust levels defined in `../../references/evidence-standards.md` §Input Trust Boundaries.
+
+*Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) apply to all skills. See `../../references/universal-frameworks.md` for complete definitions.*
+
+---
+
 ## Pipeline Persistence
 
 Gatekeeper-azure does not own pipeline persistence. The invoking orchestrator
@@ -329,3 +429,5 @@ records the verdict and any challenge history.
 - **Final adversarial sweep findings** live inside the Phase 5
   `gatekeeper-verdict.md`; there is no separate adversarial-audit artifact
 - **Save awareness**: when a Run ID or reference paths are provided in the submission, gatekeeper-azure may read persisted deliverables from `skillset-saves/runs/{run-id}/azure/` for review. This enables validation even when inline artifacts have been compacted from context (Tier 3 reference mode). The save path provides direct access to individual phase deliverables without requiring the full package to be in context.
+
+If any save operation fails, follow the Persistence-Failure Decision Tree in `save-protocol.md` §Persistence-Failure Decision Tree.

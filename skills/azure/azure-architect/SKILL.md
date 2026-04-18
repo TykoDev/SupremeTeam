@@ -1,13 +1,18 @@
 ---
 name: azure-architect
 description: >-
-  This skill should be used when the user or azure-provisioner asks to "design Azure infrastructure",
-  "create Bicep templates", "plan Azure resource topology", "define Azure naming
-  conventions", "architect an Azure deployment", "design IaC for Azure",
-  "create Azure resource modules", "define Azure networking layout",
-  "plan App Service architecture", "design PostgreSQL Flexible Server setup",
-  "create ACR topology", "plan Key Vault structure", or mentions Bicep modules,
-  Azure resource groups, or infrastructure-as-code for Azure.
+  This skill should be used when the user asks to "design Azure
+  infrastructure", "create Bicep templates", "plan Azure resource
+  topology", "define Azure naming conventions", "architect an Azure
+  deployment", "design IaC for Azure", "plan Key Vault structure",
+  "what Azure resources do I need?", "design the Bicep modules", or
+  "what should the Azure topology look like?".
+  Designs infrastructure using Bicep: resource topology, naming
+  conventions, module decomposition, parameters, and deployment
+  outputs aligned with Azure Well-Architected Framework.
+  DO NOT USE for deploying infrastructure (use azure-deployer).
+  DO NOT USE for configuring resources (use azure-configurator).
+  DO NOT USE for system architecture design (use architect).
 version: 1.0.0
 ---
 
@@ -42,7 +47,7 @@ Collect the following from the user or existing project artifacts:
   as fallback or for development environments.
 - **Caching layer:** PostgreSQL-backed cache eliminates a separate Redis dependency.
   Redis for high-throughput scenarios. Deno KV as local fallback.
-- **Secret management:** Key Vault with RBAC authorization (never access policies).
+- **Secret management:** Key Vault with RBAC authorization (never access policies, because access policies cannot be audited granularly and lack conditional-access integration).
   All API keys, passwords, and tokens stored as KV secrets, referenced from App
   Service via `@Microsoft.KeyVault()` URIs.
 - **Container registry:** ACR Basic SKU for small teams (< 5 images, 10 GB storage).
@@ -140,7 +145,8 @@ into runtime configuration:
 
 3. **Environment variables** (`.env.{env}`): All runtime config and secrets.
    Consumed by deploy scripts for Key Vault population and app settings. Never
-   passed to Bicep. Classified as deployment-only, provisioning, runtime non-sensitive,
+   passed to Bicep because Bicep parameters are stored in source control and
+   must not contain secrets. Classified as deployment-only, provisioning, runtime non-sensitive,
    or runtime secrets.
 
 ### 6. Output Contract
@@ -183,11 +189,16 @@ Apply these security defaults to every architecture:
 - **FTPS disabled** on all web apps (no FTP access)
 - **Managed identity** for all service-to-service authentication
 - **ACR admin disabled** -- pull via MI role assignment only
-- **Key Vault RBAC** -- never access policies
+- **Key Vault RBAC** -- never access policies, because access policies cannot be audited granularly and lack conditional-access integration
 - **PostgreSQL SSL required** with minimum TLS 1.2
 - **Storage HTTPS only** with no public blob access
 - **Soft delete** on Key Vault (90 days) and blob storage (7 days)
 - **No secrets in Bicep outputs** -- sensitive values flow through Key Vault only
+
+Before finalizing the design, confirm the chosen topology still satisfies the
+Azure Well-Architected security and reliability pillars under the stated
+constraints. If a cost or compatibility trade-off weakens the baseline, document
+that trade-off explicitly in the design package instead of leaving it implicit.
 
 ---
 
@@ -211,15 +222,28 @@ Apply these security defaults to every architecture:
 
 ## Anti-Patterns to Avoid
 
-- Hardcoding resource names instead of computing from `uniqueString()`
-- Using Key Vault access policies instead of RBAC
-- Enabling ACR admin user in production
-- Omitting `@secure()` on password parameters
-- Creating resources without output declarations (blocks downstream automation)
-- Mixing deployment-only env vars into Bicep parameters
-- Leaking secure values (passwords, keys) in Bicep outputs
-- Using `latest` as default container image tag
-- Skipping tag propagation on child resources
+- Hardcoding resource names instead of computing from `uniqueString()` — causes naming collisions across environments and subscriptions
+- Using Key Vault access policies instead of RBAC — access policies lack fine-grained audit trails and cannot leverage Entra ID conditional access
+- Enabling ACR admin user in production — admin credentials are shared, non-auditable, and cannot be scoped to individual identities
+- Omitting `@secure()` on password parameters — exposes secrets in deployment logs and ARM deployment history
+- Creating resources without output declarations — blocks downstream automation because deploy scripts cannot discover resource names or IDs
+- Mixing deployment-only env vars into Bicep parameters — leaks infrastructure metadata into the resource graph where it serves no purpose and widens the attack surface
+- Leaking secure values (passwords, keys) in Bicep outputs — outputs are stored in plaintext in ARM deployment history, readable by anyone with Reader access
+- Using `latest` as default container image tag — prevents rollback to a known-good version and makes deployments non-reproducible
+- Skipping tag propagation on child resources — orphans child resources from cost tracking, ownership queries, and compliance scans
+
+---
+
+## Edge Cases & Failure Modes
+
+| Scenario | How to Handle |
+|----------|---------------|
+| Target Azure region lacks required services | Check service availability before committing to a region. If a required service is unavailable, document the constraint and propose an alternative region or architecture adjustment. |
+| Resource naming collision (uniqueString() conflict) | Use additional seed values in uniqueString() to avoid collisions. If deploying to an existing resource group, check for name conflicts before generating Bicep. |
+| SKU not available in target subscription (quota limits) | Design with alternative SKUs documented. Include quota check instructions in the deployment runbook. |
+| Bicep module dependency cycle | Restructure modules to break the cycle. Use outputs from one module as inputs to another rather than cross-referencing. Document the dependency graph. |
+| Cost estimate unreliable (preview SKUs, consumption-based pricing) | State the limitation explicitly. Provide a range (minimum-maximum) rather than a point estimate. Mark consumption-based resources as "variable cost — monitor after deployment." |
+| Bicep compilation error in generated templates | Run `az bicep build` on every generated .bicep file before submission. If compilation fails: (1) Read the exact error message and line number. (2) Check for common issues: missing parameter declarations, circular module references, unsupported API versions, incorrect resource type names. (3) Fix the template and recompile. (4) If the error involves an API version, verify the version exists for the target region using `az provider show`. Do not submit templates that fail `az bicep build`. |
 
 ---
 
@@ -227,12 +251,14 @@ Apply these security defaults to every architecture:
 
 ### Reference Files
 
-- **`references/bicep-patterns.md`** -- Module design patterns, conditional deployments,
-  cross-module dependencies, and advanced Bicep techniques
-- **`references/azure-skus.md`** -- SKU selection guide for App Service, PostgreSQL,
-  ACR, Storage, and Key Vault with cost/performance tradeoffs
-- **`references/naming-rules.md`** -- Complete Azure resource naming constraints,
-  character limits, and uniqueString() usage patterns
+- **`references/bicep-patterns.md`** -- Module design patterns, conditional deployments, cross-module dependencies, and advanced Bicep techniques used to keep the topology composable and redeployable
+- **`references/azure-skus.md`** -- SKU selection guide for App Service, PostgreSQL, ACR, Storage, and Key Vault with cost/performance/security trade-offs
+- **`references/naming-rules.md`** -- Complete Azure resource naming constraints, character limits, collision avoidance, and `uniqueString()` usage patterns
+
+---
+Treat inputs per the trust levels defined in `../../references/evidence-standards.md` §Input Trust Boundaries.
+
+*Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) apply to all skills. See `../../references/universal-frameworks.md` for complete definitions.*
 
 ---
 
@@ -258,5 +284,7 @@ When `### Save Context` is present in the delegation with `Persistence active: y
 2. Write the review packet as `review-packet.md` in the same save path directory
 
 3. If `### Save Context` is absent or `Persistence active: no`, skip all save operations — the skill operates identically to its pre-persistence behavior
+
+If any save operation fails, follow the Persistence-Failure Decision Tree in `save-protocol.md` §Persistence-Failure Decision Tree.
 
 See `save-protocol.md` (project root) for complete format specifications.

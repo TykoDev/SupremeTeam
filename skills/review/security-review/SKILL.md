@@ -2,41 +2,58 @@
 name: security-review
 description: >-
   This skill should be used when the user asks to "review security",
-  "check for vulnerabilities", "do a security audit", "review for OWASP
-  issues", "check authentication code", "assess supply chain security",
-  "review cryptography usage", "check for injection vulnerabilities",
-  "assess AI security", or "check compliance with NIST SSDF". It performs
-  systematic security analysis using NIST SSDF, OWASP ASVS, CWE Top 25,
-    and threat modeling with risk-tiered review depth. Distinct from
-    security-builder (build pipeline): security-review operates during the
-    review phase, analyzing shipped code with STRIDE threat modeling and
-    supply chain evaluation.
+  "check for vulnerabilities", "do a security audit", "review for
+  OWASP issues", "security scan this PR", "review authorization
+  logic", "check authentication code", "validate this against OWASP
+  ASVS", "assess supply chain security", "review this dependency
+  change", "check for data leakage", "assess AI security", "check
+  NIST SSDF compliance", "is this secure?", or "audit the auth
+  flow". Systematic defensive security analysis using NIST SSDF,
+  OWASP ASVS, CWE Top 25, and STRIDE threat modeling with risk-tiered
+  depth. Produces findings with CWE IDs, severity (CVSS-aligned), and
+  remediation guidance. DO NOT USE for offensive penetration testing
+  (use mr-robot). DO NOT USE for build-phase security controls (use
+  security-builder). DO NOT USE for Azure-specific security review
+  (use azure pipeline skills).
 version: 1.0.0
+
 ---
 
-# Security Review Specialist
+# Security Review — Security Assessment Specialist
 
 ## Purpose
 
-This skill performs dedicated security analysis focused exclusively on exploitability, security requirements compliance, and threat mitigation. It is distinct from bug-review (which targets correctness defects) and code-review (which applies a holistic assessment). The sole objective is to identify code that can be exploited by adversaries, violates security requirements, or introduces vulnerabilities into the software supply chain. All findings are mapped to established security frameworks and weakness taxonomies.
+Perform dedicated security analysis focused exclusively on exploitability, security requirements compliance, and threat mitigation. This skill is distinct from bug-review (which targets correctness defects) and code-review (which applies a holistic assessment). The sole objective is to identify code that can be exploited by adversaries, violates security requirements, or introduces vulnerabilities into the software supply chain. All findings are mapped to established security frameworks and weakness taxonomies.
+
+Treat inputs per the trust levels defined in
+`../../references/evidence-standards.md` §Input Trust Boundaries.
 
 ## Frameworks Alignment
 
-Anchor every security review to the applicable frameworks. Select the frameworks relevant to the project's regulatory and risk context.
+Anchor every security review to the applicable frameworks. The primary frameworks are:
 
-**NIST SSDF v1.1 (SP 800-218).** The definitive secure development practice framework. Practice PW.7 specifically mandates reviewing and analyzing human-readable code to identify vulnerabilities and verify compliance with security requirements, calling out both human review and automated analysis tools. Mandatory for all US federal software suppliers under Executive Order 14028.
+- **NIST SSDF v1.1** — Secure development practices; PW.7 mandates code review for vulnerability detection
+- **OWASP ASVS 5.0** — Technical control requirements at three compliance levels (L1 basic, L2 standard, L3 critical)
+- **OWASP Top 10:2025** — Risk categorization; XSS #1, Missing Authorization surged to #4
+- **CWE Top 25:2025** — Weakness taxonomy for classifying findings
+- **Microsoft Continuous SDL** — Expanded for AI-specific threats (prompt injection, training data poisoning)
+- **EU AI Act / RAD-AI** — For AI in high-risk contexts; extends documentation for probabilistic behaviors
 
-**OWASP ASVS 5.0.0.** Granular technical control requirements for web applications, microservices, and APIs. Three compliance levels: Level 1 (basic hygiene for low-risk apps), Level 2 (standard for most business applications handling personal/financial data), Level 3 (extreme rigor for mission-critical infrastructure). Use ASVS controls as the review checklist baseline.
+Consult `references/frameworks.md` for detailed framework descriptions, comparison tables, compliance mapping anchors, and version-specific changes.
 
-**OWASP Top 10:2025.** The eighth installment, analyzing 2.8 million+ applications. Includes Software Supply Chain Failures as a standalone category and first-ever guidance on AI-generated code security risks. Cross-Site Scripting holds #1 (score 60.38), Missing Authorization surged to #4.
+## Operational Framework Mapping
 
-**CWE Top 25 (2025).** Based on analysis of 39,080 CVEs. Use as the weakness taxonomy for classifying findings. Memory safety issues (buffer overflows) returned prominently, reinforcing the case for memory-safe languages.
+Map each review activity to its anchoring framework:
 
-**Microsoft Continuous SDL.** Expanded under the Secure Future Initiative to address AI-specific threats: training data poisoning, prompt injection, and non-deterministic outputs.
+| Review activity | Primary anchors |
+|-----------------|-----------------|
+| Risk tier assessment | NIST SSDF PW.7, OWASP ASVS level selection |
+| Auth and access control | OWASP ASVS V1-V4, CWE Top 25 |
+| Threat model delta | STRIDE, MITRE ATT&CK |
+| Supply chain review | NIST SSDF PS.3/PW.4, OWASP Top 10:2025 |
+| AI-specific review | Microsoft Continuous SDL, EU AI Act / RAD-AI |
 
-**EU AI Act / RAD-AI.** For systems deploying AI in high-risk contexts, RAD-AI extends standard documentation to capture probabilistic behaviors, data-dependent evolution, and dual ML/software lifecycles. Increases EU AI Act Annex IV addressability from ~36% to 93%.
-
-Consult `references/frameworks.md` for detailed framework descriptions, comparison tables, and compliance mapping anchors (SSDF to SP 800-53, CWE/SANS, MITRE ATT&CK).
+Consult `references/frameworks.md` for the full operational-use column with detailed mapping rationale.
 
 ## Threat Modeling Integration
 
@@ -68,6 +85,17 @@ Apply a risk-tiered approach to determine review depth.
 - SCA findings — check for vulnerable dependencies, verify patch availability
 - Secrets detection — confirm no new secrets detected, verify push protection is active
 - Normalize results to SARIF format for unified triage where possible
+
+### Tool Output Validation
+
+Treat automated security tools as leads, not verdicts:
+
+- Reproduce or trace each High/Critical alert to a concrete code path or configuration path
+- Re-score dependency findings based on reachable code paths, exposure, and exploit prerequisites instead of inheriting vendor severity blindly
+- Reject suppressions that do not state whether the alert is a false positive, accepted risk, or mitigated elsewhere
+- If required automated gates did not run, record a tooling gap and manually inspect the affected control area before finalizing the report
+
+Rationale: disciplined triage prevents false positives, false negatives, and severity inflation.
 
 **Step 3: Apply Secure Coding Checklist.** Systematically evaluate the changed code against the secure coding checklist (see summary below and full checklist in `references/secure-coding-checklist.md`).
 
@@ -104,27 +132,30 @@ Apply a risk-tiered approach to determine review depth.
 
 Apply these checks to every security-relevant code change. The full checklist with detailed sub-items is in `references/secure-coding-checklist.md`.
 
-**Input Validation.** All inputs validated for type, length, format on the server side. Character sets specified (UTF-8). Validation failures result in immediate rejection. Data sources classified as trusted or untrusted.
+**Input Validation.** Trace every external input (HTTP body, query string, headers, environment variables, queue payloads, webhook bodies) to its first validation point. Confirm server-side type, length, format, and allow-list checks exist before business logic runs. Validation failures must reject the request or payload immediately. Data sources must be classified explicitly as trusted or untrusted.
 
-**Output Encoding.** Context-specific encoding applied: HTML entity encoding for web output, parameterized queries for SQL, command escaping for OS commands. No raw user input rendered in templates.
+**Output Encoding.** Inspect every sink where data leaves the application: HTML rendering, SQL queries, shell commands, log output, and outbound templates. Confirm template auto-escaping stays enabled, SQL uses parameterized queries, shell invocations avoid raw concatenation, and user input never reaches HTML sinks without sanitization or safe APIs.
 
-**Authentication.** MFA enforced. OAuth2/OIDC for inter-service communication. No embedded passwords. Password storage uses bcrypt or Argon2. Proper token rotation and secure cookie handling.
+**Authentication.** Verify credential creation, token issuance, session establishment, and service-to-service authentication flows. Confirm MFA where required, OAuth2/OIDC or equivalent for inter-service auth, bcrypt or Argon2 for password storage, no embedded passwords, and proper token rotation or secure cookie handling where sessions exist.
 
-**Session Management.** Secure session identifiers, proper expiration, session fixation prevention, secure cookie attributes (Secure, HttpOnly, SameSite).
+**Session Management.** Check session identifier generation, rotation, invalidation, and expiry rules. Confirm fixation prevention on login or privilege change, secure cookie attributes (`Secure`, `HttpOnly`, `SameSite`), and server-side revocation or logout behavior.
 
-**Access Control.** Default deny policies. Least privilege enforcement. No direct object references without authorization checks. Prevent lateral movement through strict RBAC.
+**Access Control.** Walk each privileged action from entry point to data access. Confirm authorization happens on the server, object ownership is checked before reads or writes, default-deny behavior exists for missing roles, and RBAC or ABAC boundaries prevent lateral movement.
 
-**Error Handling.** No sensitive information in error responses (no stack traces, session IDs, architecture details to end users). Generic custom error pages. Security controls fail securely (deny by default on error).
+**Error Handling.** Inspect error responses, exception handlers, retries, and fallback paths. Confirm end users never receive stack traces, tokens, or architecture details, and that failures in auth, policy, or validation controls deny by default rather than bypassing protection.
 
-**Cryptography.** Approved algorithms only (no MD5, no SHA-1 for security purposes, no custom crypto). Proper key management. Keys never hardcoded.
+**Cryptography.** Identify every cryptographic use: hashing, encryption, signatures, token generation, and random number generation. Confirm approved algorithms only, established libraries instead of custom primitives, proper key storage and rotation, and no hardcoded keys or salts.
 
-**Logging.** No sensitive data in logs (no passwords, tokens, PII). Tamper-resistant logging on isolated systems. Sufficient context for incident investigation.
+**Logging.** Review application logs, audit logs, and monitoring hooks. Confirm secrets, tokens, passwords, and unnecessary PII are excluded, audit records contain enough context for incident response, and security-relevant logs are tamper-resistant or centrally collected.
 
 ## Output Format
 
 Structure the security review report as follows:
 
 ```
+
+---
+
 ## Security Review Report
 ### Summary
 - **Risk Tier:** Low | Medium | High
@@ -179,6 +210,16 @@ cross_references: [file:line pairs flagged for cross-skill attention]
 ---
 ```
 
+### Example Finding
+
+#### [SEC-001] [CWE-79] — DOM-Based XSS in Search Results
+- **Severity:** High (CVSS v4.0 score: 8.2)
+- **Location:** src/components/SearchResults.tsx:37
+- **Description:** User-controlled search text is inserted into the DOM through `innerHTML`, creating a script injection path.
+- **Evidence:** `results.innerHTML = `<li>${query}</li>`;` renders unsanitized input directly into markup.
+- **Remediation:** Replace `innerHTML` with text-safe rendering or sanitize through a vetted library such as DOMPurify before insertion.
+- **Framework Reference:** OWASP Top 10:2025 Injection, CWE-79, OWASP ASVS 5.0 V5.3
+
 ## Pipeline Integration
 
 **When invoked by code-chief (pipeline mode):**
@@ -195,6 +236,23 @@ cross_references: [file:line pairs flagged for cross-skill attention]
 
 In both modes, the gatekeeper-code applies especially rigorous scrutiny to security findings: Are CWE mappings accurate? Are CVSS scores justified by the actual exploit scenario? Were all relevant OWASP categories checked? Were AI-specific threats considered for code touching AI components? Were supply chain implications evaluated for dependency changes? For High-risk tier reviews, load the full checklist from `references/secure-coding-checklist.md`. For Low-risk tier reviews, the summary in this file is sufficient.
 
+## Edge Cases & Failure Modes
+
+| Scenario | How to Handle |
+|----------|---------------|
+| No security-relevant code in change | Report "No security-relevant changes detected" with evidence of what was examined. Skip full checklist but note any pre-existing issues observed. |
+| Embedded secrets in code | Classify as Critical immediately. Do not include the secret value in the report. Reference the file:line and state "secret detected — credential type: [API key/password/token]." Recommend rotation. |
+| Third-party dependency with known CVE | Report the CVE, CVSS score, and exploitability status. Check if the vulnerable code path is reachable from the application. If not reachable, classify as Major (not Critical) with justification. |
+| Automated security gates did not run or produced no artifacts | Record a tooling gap, identify the missing gate, and manually inspect the corresponding control area. Do not claim clean automated coverage when evidence is absent. |
+| New dependency has no CVE but shows suspicious maintainer turnover or install scripts | Treat it as a supply-chain concern even without a published CVE. Review provenance, install scripts, ownership changes, and package reputation before approving. |
+| AI/ML model code without standard security patterns | Apply AI-specific threat assessment even if the code appears safe. Check for prompt injection vectors, training data exposure, model manipulation surfaces, and output sanitization. |
+| Cryptographic code | Never approve custom cryptographic implementations without explicit justification. Flag any code that implements crypto primitives rather than using established libraries. |
+| Legacy code with known vulnerabilities | Distinguish between new vulnerabilities introduced by the change and pre-existing issues. Report both but classify differently: new = Critical/Major, pre-existing = INFO with recommendation. |
+| Insufficient context for threat modeling | State what context is missing. Perform a partial threat model with assumptions documented. Flag the assumptions as requiring validation. |
+| Pure library code with no direct user input | Focus on API surface safety: can callers pass malicious input that the library propagates unsanitized? Review default configurations for secure-by-default behavior and check for unsafe deserialization, path traversal, or command-injection vectors reachable through public API parameters. |
+
+---
+
 ## Additional Resources
 
 ### Reference Files
@@ -204,6 +262,9 @@ For detailed frameworks, checklists, and supply chain procedures, consult:
 - **`references/frameworks.md`** — NIST SSDF v1.1 (all four practice groups, PW.7 deep dive), OWASP ASVS 5.0.0 (levels and controls), OWASP SAMM v2 (maturity streams), OWASP Top 10:2025, CWE Top 25, Microsoft Continuous SDL, EU AI Act/RAD-AI, framework comparison tables, and compliance mapping anchors
 - **`references/secure-coding-checklist.md`** — Complete secure coding review checklist covering input validation, output encoding, authentication, session management, access control, error handling, cryptography, logging, and AI-specific threats with detailed sub-items and verification procedures
 - **`references/supply-chain.md`** — SBOM generation (CycloneDX v1.7, SPDX v3), SCA tools (Snyk, Dependency-Check, Dependabot), SLSA provenance levels and attestations, in-toto framework, Sigstore/cosign signing, secrets detection (TruffleHog v3, Gitleaks, GitHub Secret Scanning), and end-to-end supply chain gate implementation
+
+---
+*Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) apply to all skills. See `../../references/universal-frameworks.md` for complete definitions.*
 
 ---
 
@@ -227,5 +288,8 @@ When `### Save Context` is present in the delegation with `Persistence active: y
    Followed by the full report content verbatim.
 
 2. If `### Save Context` is absent or `Persistence active: no`, skip all save operations — the skill operates identically to its pre-persistence behavior
+
+If any save operation fails, follow the Persistence-Failure Decision Tree
+in `save-protocol.md` §Persistence-Failure Decision Tree.
 
 See `save-protocol.md` (project root) for complete format specifications.

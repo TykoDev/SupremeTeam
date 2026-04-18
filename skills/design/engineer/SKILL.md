@@ -1,14 +1,18 @@
 ---
 name: engineer
 description: >-
-  This skill should be used when the user or commander asks to "create the
-  implementation spec", "define the code structure", "design the testing
-  strategy", "configure CI/CD", "set up Docker", "define the .env contract",
-  "plan the observability setup", "configure code quality tools", "design the
-  repository structure", "create the DevOps configuration", or "specify
-  security controls". It produces implementation-ready specifications covering
-  repository structure, testing strategy, CI/CD pipeline, containerization,
-  environment configuration, security controls, and observability setup.
+  This skill should be used when the user asks to "create the
+  implementation spec", "define the code structure", "design the
+  testing strategy", "configure CI/CD", "set up Docker", "define
+  the .env contract", "specify security controls", "plan the
+   repo layout", "define repository organization", "set code
+   patterns", or "how should we structure the codebase?".
+  Produces implementation-ready specifications covering repository
+  structure, testing strategy, CI/CD pipelines, containerization,
+  environment configuration, security controls, and observability.
+  DO NOT USE for writing code (use bob-the-builder). DO NOT USE
+  for system architecture (use architect). DO NOT USE for Azure
+  infrastructure (use azure-architect).
 version: 1.0.0
 ---
 
@@ -16,13 +20,14 @@ version: 1.0.0
 
 ## Purpose
 
-This skill performs Phase 5 (final technical phase) of the Dev Design SkillSet
-pipeline. It takes all previously approved deliverables (requirements, project
-plan, architecture, frontend spec) and produces the implementation-ready
-specification: repository structure, code patterns, testing strategy, CI/CD
-pipeline, Docker configuration, environment contracts, security controls,
-observability setup, and an explicit record of the inherited stack locks it is
-implementing.
+Perform Phase 5 (final technical phase) of the Dev Design SkillSet pipeline.
+Take all previously approved deliverables (requirements, project plan,
+architecture, frontend spec) and produce the implementation-ready specification:
+repository structure, code patterns, testing strategy, CI/CD pipeline, Docker
+configuration, environment contracts, security controls, observability setup,
+and an explicit record of the inherited stack locks being implemented. Do not
+write application code or make architecture decisions — those belong to
+bob-the-builder and architect respectively.
 
 ## When to Activate
 
@@ -63,9 +68,30 @@ Document an **Inherited Stack Locks** section containing:
 - The runtime/framework/database/tooling version tuples being implemented
 - Any approved exceptions already recorded upstream
 
-Do not silently substitute stacks, frameworks, or major tooling. Any deviation
-from the inherited locks MUST reference a new or updated ADR and be called out
-as an exception for gatekeeper review.
+Do not silently substitute stacks, frameworks, or major tooling because
+undocumented changes invalidate upstream approvals and break build-phase
+assumptions. Any deviation from the inherited locks MUST reference a new or
+updated ADR and be called out as an exception for gatekeeper review because
+silent substitutions break downstream build, deployment, and validation
+assumptions.
+
+Treat these as valid exception classes only:
+- a locked technology creates a concrete implementation blocker
+- a verified platform constraint forces a different compatible tool or version
+- the user or commander explicitly approves the override
+
+Anything else is an undocumented drift and must not be normalized silently.
+
+Apply the adversarial anti-gaming framework from `../../references/universal-frameworks.md`
+to every implementation shortcut. A reduction in controls, testing depth,
+observability, or deployment rigor is drift unless it is explicitly approved
+and documented as an exception.
+
+Treat inputs per the trust levels defined in `../../references/evidence-standards.md` §Input Trust Boundaries.
+
+If inherited stack locks conflict with each other or with the approved scope,
+stop and escalate the incompatibility. Engineer records and implements locks; it
+does not reconcile contradictory upstream decisions on its own.
 
 ### Step 2: Define Repository Structure
 
@@ -117,6 +143,9 @@ Reference the inherited overlay files from the sibling skills-root
 Produce the complete `.env` specification:
 
 ```markdown
+
+---
+
 ## Environment Variable Contract
 
 ### Required Variables
@@ -144,7 +173,9 @@ Produce the complete `.env` specification:
 ```
 
 Validate all variables at startup with schema validation (Zod/Pydantic).
-Fail fast on invalid or missing configuration.
+Fail fast on invalid or missing configuration because misconfiguration detected
+late in deployment becomes production downtime instead of a controlled startup
+failure.
 
 ### Step 4: Design Testing Strategy
 
@@ -196,6 +227,48 @@ Produce the CI/CD pipeline specification:
 
 Consult `references/devops-patterns.md` for pipeline templates.
 
+**Worked CI/CD pipeline (GitHub Actions, Node.js):**
+
+```yaml
+name: CI/CD Pipeline
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test -- --coverage
+      - run: npm run build
+
+  security:
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm audit --audit-level=high
+      - uses: github/codeql-action/analyze@v3
+
+  deploy-staging:
+    if: github.ref == 'refs/heads/main'
+    needs: [build-test, security]
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npm run build
+      - run: npx azd deploy --environment staging
+```
+
 ### Step 6: Configure Containerization
 
 Produce Docker and docker-compose configurations:
@@ -236,6 +309,9 @@ Map OWASP Top 10:2025 mitigations to implementation:
 Specify the OpenTelemetry setup:
 
 ```markdown
+
+---
+
 ## Observability Configuration
 
 ### Logging
@@ -318,6 +394,22 @@ gatekeeper-design review report.
 
 ---
 
+## Edge Cases & Failure Modes
+
+| Scenario | How to Handle |
+|----------|---------------|
+| Architecture specifies technologies not yet in the stack lock | Do not add unlocked technologies to the implementation spec. Flag the gap and request a stack lock amendment through commander. |
+| CI/CD platform is not determined | Specify pipeline stages and requirements in platform-agnostic terms (build, test, lint, security scan, deploy). Note where platform-specific configuration is needed and mark as TBD for the build phase. |
+| Monorepo vs. polyrepo decision not made | Document both repository structure options with trade-offs. Recommend based on the project's size and team structure. The user or commander decides. |
+| Conflicting environment variable names across services | Standardize naming with a prefix convention (e.g., `APP_`, `DB_`, `AUTH_`). Document the convention in the env var contract. |
+| Containerization not appropriate (e.g., serverless target) | Skip Docker specification. Document the deployment target and its constraints. Adjust the CI/CD pipeline specification accordingly. |
+| Security controls conflict with usability requirements | Document the trade-off. Default to the security control unless the user explicitly accepts the risk. Reference the specific OWASP category being addressed. |
+| Inherited stack locks conflict with each other or with approved scope | Stop and escalate the incompatibility to commander with the specific conflicts and their downstream impact. Engineer records and implements locks — it does not reconcile contradictory upstream decisions on its own. |
+| Implementation spec contradicts approved architecture | Stop and flag the contradiction. Return to commander with the conflicting sections identified so architect can amend or issue a new ADR before engineer proceeds, because building on a contradictory foundation guarantees rework. |
+| Existing codebase with legacy patterns incompatible with inherited stack | Document the incompatibilities and the migration cost. Propose an incremental adoption strategy (strangler-fig or adapter layer) rather than a full rewrite. Escalate to commander if the migration cost exceeds the original scope. |
+
+---
+
 ## Additional Resources
 
 ### Reference Files
@@ -325,6 +417,9 @@ gatekeeper-design review report.
 For detailed patterns and templates:
 - **`references/implementation-patterns.md`** — Repository structure patterns, ORM selection, validation patterns, error handling
 - **`references/devops-patterns.md`** — CI/CD pipeline templates, Docker patterns, IaC patterns, secrets management
+
+---
+*Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) apply to all skills. See `../../references/universal-frameworks.md` for complete definitions.*
 
 ---
 
@@ -352,3 +447,4 @@ When `### Save Context` is present in the delegation with `Persistence active: y
 3. If `### Save Context` is absent or `Persistence active: no`, skip all save operations — the skill operates identically to its pre-persistence behavior
 
 See `save-protocol.md` (project root) for complete format specifications.
+If any save operation fails, follow the Persistence-Failure Decision Tree in `save-protocol.md` §Persistence-Failure Decision Tree.

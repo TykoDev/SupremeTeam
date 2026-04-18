@@ -1,13 +1,18 @@
 ---
 name: azure-planner
 description: >-
-  This skill should be used when the user or azure-provisioner asks to "plan an Azure deployment",
-  "create a deployment strategy", "design deployment stages", "plan environment
-  configuration", "define deployment pipeline", "create deployment runbook",
-  "plan database migrations", "design secret management strategy",
-  "plan RBAC assignments", "create deployment checklist", "organize env vars
-  for Azure", "plan staged rollout", or mentions deployment sequencing,
-  state management, or deployment dependencies for Azure.
+  This skill should be used when the user asks to "plan an Azure
+  deployment", "create a deployment strategy", "design deployment
+  stages", "create deployment runbook", "plan database migrations",
+  "design secret management strategy", "plan RBAC assignments",
+  "how should we deploy this?", "what's the rollout plan?", or
+  "what order should we ship this in Azure?".
+  Plans deployment strategies: stage sequencing, env var
+  organization, secrets management, database migrations, RBAC
+  assignments, and runbooks.
+  DO NOT USE for executing deployment (use azure-deployer). DO NOT
+  USE for designing infrastructure (use azure-architect). DO NOT
+  USE for project-level planning (use planner).
 version: 1.0.0
 ---
 
@@ -49,7 +54,8 @@ because Key Vault secrets must exist before app settings can reference them via
 `@Microsoft.KeyVault()` URIs. If this order is reversed, all KV reference app settings
 will fail to resolve.
 
-**Stage design principles:**
+**Stage design principles** (each rule exists because Azure deployments fail
+partway and must resume safely without duplicate resources or orphaned state):
 - Each stage is independently re-runnable (idempotent)
 - Each stage validates its prerequisites from the state file before executing
 - Each stage writes its results to the shared state file
@@ -79,11 +85,14 @@ Stage 05 writes: app settings confirmation
 ```
 
 **State file design rules:**
-- Each stage reads only the keys it needs -- never the entire file
+- Each stage reads only the keys it needs — never the entire file, because
+  coupling stages to the full schema makes them fragile to upstream changes
 - Each stage appends its outputs without overwriting prior entries
 - WhatIf mode creates a temporary state copy and discards it after preview
 - State file lives in `deploy/.state/` which is `.gitignore`-protected
-- State contains resource names, IDs, and hostnames but never secret values
+- State contains resource names, IDs, and hostnames but never secret values,
+  because secrets in the state file bypass Key Vault's access controls and
+  audit logging
 - A helper function (`Read-StateFile`/`Write-StateFile`/`Get-StateValue`) provides
   typed access to state values
 
@@ -91,6 +100,9 @@ Stage 05 writes: app settings confirmation
 
 Classify every env var into exactly one of four categories. This classification
 determines where the variable is stored and how it reaches the application:
+
+Use `references/env-var-catalog.md` as the canonical classification baseline so
+new variables extend the existing contract instead of inventing a parallel one.
 
 | Category | Example | Destination | Security |
 |----------|---------|-------------|----------|
@@ -210,16 +222,31 @@ Produce a runbook document containing:
 
 ---
 
+## Edge Cases & Failure Modes
+
+| Scenario | How to Handle |
+|----------|---------------|
+| No Azure subscription available for planning | Plan against documented Azure SKUs and pricing. Mark all resource-specific decisions as "requires validation against target subscription" and note subscription requirements (quota, region, features). |
+| Existing Azure resources to integrate with | Discover existing resources via the design package or user input. Plan around existing naming conventions, resource groups, and network topology. Do not plan to recreate existing resources. |
+| Budget constraints limit resource selection | Document cost-optimized alternatives for each resource choice. Use the cheapest viable SKU tier. Flag where cost optimization introduces performance or reliability trade-offs. |
+| Multi-region deployment required | Plan region-specific stages with data replication strategy. Document cross-region dependencies and latency implications. |
+| Database migration has no rollback path | Flag as a Critical risk. Require a backup stage before migration. Plan the migration as a separate, reversible stage where possible. |
+| Partial deployment failure (some resources provisioned, others failed) | Document the exact failure point and resource state. Determine whether the failure is retryable (transient API error) or requires rollback (resource conflict, quota exceeded). For retryable failures: re-run the failed deployment step with the same parameters. For non-retryable failures: plan a targeted rollback of the partially provisioned resources before re-attempting, to avoid orphaned resources and naming conflicts. Record the partial state in the deployment runbook. |
+
+---
+
 ## Additional Resources
 
 ### Reference Files
 
-- **`references/env-var-catalog.md`** -- Complete catalog of environment variables
-  with classification, default values, and destination mapping
-- **`references/stage-dependencies.md`** -- Detailed stage dependency graph,
-  state file schema, and inter-stage data flow documentation
-- **`references/migration-strategy.md`** -- Database migration patterns, checksum
-  tracking, multi-schema support, and assertion design
+- **`references/env-var-catalog.md`** -- Canonical catalog of environment variables with classification, default values, destination mapping, and secret-handling expectations
+- **`references/stage-dependencies.md`** -- Detailed stage dependency graph, state file schema, and inter-stage data flow documentation used to validate ordering and resumability
+- **`references/migration-strategy.md`** -- Database migration patterns, checksum tracking, multi-schema support, rollback constraints, and assertion design guidance
+
+---
+Treat inputs per the trust levels defined in `../../references/evidence-standards.md` §Input Trust Boundaries.
+
+*Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) apply to all skills. See `../../references/universal-frameworks.md` for complete definitions.*
 
 ---
 
@@ -245,5 +272,7 @@ When `### Save Context` is present in the delegation with `Persistence active: y
 2. Write the review packet as `review-packet.md` in the same save path directory
 
 3. If `### Save Context` is absent or `Persistence active: no`, skip all save operations — the skill operates identically to its pre-persistence behavior
+
+If any save operation fails, follow the Persistence-Failure Decision Tree in `save-protocol.md` §Persistence-Failure Decision Tree.
 
 See `save-protocol.md` (project root) for complete format specifications.

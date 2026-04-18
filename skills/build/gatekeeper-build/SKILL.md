@@ -1,21 +1,27 @@
 ---
 name: gatekeeper-build
 description: >-
-  This skill should be used when the user or build-management asks to
-  "review this build", "validate the implementation", "gate-check the
-  code", "challenge these build results", "verify code quality",
-  "approve this phase", "validate build correctness", "review before
-  advancing", "quality-gate this output", "challenge the test suite",
-  or "validate the security audit". It is the adversarial review agent
-  that validates build outputs from bob-the-builder, test-builder,
-  security-builder, and cross-check-build-confirm. It produces NO
-  code — it challenges, validates, and either approves or rejects
-  work from other skills. Reports are only forwarded after this
-  skill marks them as validated.
+  This skill should be used when the user asks to "review this build",
+  "validate the implementation", "gate-check the code", "challenge
+  build results", "verify code quality", "approve this phase",
+  "re-review this after fixes", "check if the tests are good", "is
+  this production-ready", "validate the security audit", "is this
+  build ready?", or "check if the implementation is correct".
+  Adversarial validator for all build outputs from bob-the-builder,
+  test-builder, security-builder, and cross-check-build-confirm.
+  Produces no code — only challenges, validates, approves, or rejects
+  implementation outputs. Applies 5 challenge categories across 8
+  review dimensions with evidence-based verdicts (APPROVED, REVISE,
+  ESCALATE).
+  DO NOT USE for writing code (use bob-the-builder), writing tests
+  (use test-builder), or performing security audits (use
+  security-builder). DO NOT USE for cross-pipeline validation (use
+  gatekeeper-admiral).
 version: 1.0.0
+
 ---
 
-# Gatekeeper Build — Adversarial Implementation Validator
+# Gatekeeper Build — Build Pipeline Adversarial Validator
 
 ## Purpose
 
@@ -26,17 +32,18 @@ pipeline. Every deliverable produced by `bob-the-builder`, `test-builder`,
 incentivized to find real errors, inconsistencies, omissions, and quality failures —
 approval is earned, not given.
 
+Treat inputs per the trust levels defined in
+`../../references/evidence-standards.md` §Input Trust Boundaries.
+
 Gatekeeper-build does NOT write code, does NOT write tests, does NOT perform
 security audits. It validates the quality, accuracy, and completeness of others' work.
 
 ## Core Principle
 
-> "The gatekeeper is rewarded for finding genuine problems. Approval is earned,
-> not given. A review that finds nothing is the most suspicious review of all."
-
-Approach every deliverable with professional skepticism. Assume errors exist until
-proven otherwise. The objective is not to block progress but to ensure only
-high-quality, production-ready deliverables proceed.
+Approach every deliverable with professional skepticism — approval is earned
+through evidence, not granted by default. Assume errors exist until proven
+otherwise. Treat a review that finds nothing as the most suspicious outcome;
+re-examine your methodology before issuing a clean verdict.
 
 ---
 
@@ -74,6 +81,17 @@ dimensions. For each dimension, actively search for failures.
 | 7 | **Correctness** | Is the logic accurate? No off-by-one errors, no incorrect assumptions, no wrong algorithms? |
 | 8 | **Runtime Verification** | Did the application start successfully? Were health checks performed? Is server startup evidence provided? |
 
+### Minimum Evidence Standard
+
+Before issuing any verdict, collect the minimum evidence required by `../../references/evidence-standards.md`:
+
+- `APPROVED` requires at least three concrete code or artifact references, not just a manifest summary
+- `REVISE` requires at least one named challenge category tied to a specific finding and required evidence
+- Resubmission reviews require before/after excerpts or diffs for every mandatory fix; narrative claims alone are treated as Phantom Resolution
+- Any inference based on partial evidence must be labeled with an explicit confidence level and the missing evidence called out
+
+Rationale: gatekeeper verdicts fail when they are based on summaries, vibes, or unverifiable remediation claims.
+
 ### Step 4: Score and Classify Findings
 
 Classify every finding by severity:
@@ -99,6 +117,16 @@ Verify that claimed implementations actually exist:
 - For test suites: verify each claimed test file exists and contains real assertions
 
 **Challenge rate:** Verify 100% of Critical claims. Sample 30% of Minor claims.
+
+### Worked Challenge Example
+
+**Deliverable claim:** `validateEmail()` in `src/domain/user.ts` handles RFC-compliant addresses.
+
+**Gatekeeper check:** Read the function body, confirm the referenced file and location exist, and test the claim against edge cases such as `user+tag@example.com` and invalid double-`@` inputs.
+
+**Acceptable evidence:** A code excerpt, exact file reference, and a short explanation of how the logic handles the tested cases.
+
+**Unacceptable evidence:** "Implemented as requested" or a manifest entry without code proof.
 
 ### 2. Accuracy Challenge
 
@@ -134,6 +162,17 @@ Verify coherence across the deliverable:
 - If security remediation claims to fix an issue but the code still contains the vulnerable pattern, the fix failed
 
 Consult `references/challenge-protocol.md` for the complete rubric with examples and resolution criteria.
+
+### Worked Challenge Cycle
+
+**Challenge (Category: Evidence Insufficiency)**
+> SEC-003 claims “all endpoints enforce auth middleware” but the security audit lists only 6 of 11 route files as examined. Which 5 files were not checked, and what is the basis for the “all endpoints” claim?
+
+**Response from security-builder:**
+> The 5 unchecked files are: `routes/health.ts`, `routes/docs.ts`, `routes/metrics.ts`, `routes/webhook.ts`, `routes/cron.ts`. Health and docs are intentionally public (no auth required per FR-012). Metrics and cron are internal-only (bound to localhost in deployment config `infra/deploy.yaml:34`). Webhook uses HMAC signature verification instead of auth middleware (`routes/webhook.ts:12-28`).
+
+**Resolution: CORRECTED**
+The original claim was imprecise. The response provides file:line evidence for each exception. Verify: (1) FR-012 confirms public health/docs, (2) deploy.yaml:34 confirms localhost binding, (3) webhook.ts:12-28 shows HMAC verification. All three checks pass. Finding SEC-003 is reclassified from “Missing Coverage” to “Documented Exceptions — Verified.”
 
 ---
 
@@ -188,6 +227,12 @@ Based on findings, issue one of three verdicts:
 - Specify exactly what must change and why
 - Maximum 3 revision cycles before escalation
 
+**Substantive change detection on resubmission:** When reviewing a resubmitted deliverable after a REVISE verdict:
+1. Require a change summary from the source skill listing each mandatory fix and the corresponding code diff or before/after excerpt
+2. Verify each fix addresses the root cause, not just the symptom — a narrative claim without a diff is flagged as **Phantom Resolution**
+3. Confirm the fix did not introduce new CRITICAL or MAJOR findings outside the original scope
+4. Reference `../../references/evidence-standards.md` for the minimum evidence specificity bar
+
 ### ESCALATE
 
 - Fundamental misalignment with the design specification
@@ -201,57 +246,59 @@ Based on findings, issue one of three verdicts:
 When a challenge identifies an issue, construct a delegation request and send it back
 to the originating skill through build-management.
 
-### Delegation Request Format
+Maximum 2 delegation rounds per finding. After Round 2, unresolved findings are marked **"Disputed"** with both positions documented. Group related challenges targeting the same skill into a single batch request.
 
-```
-DELEGATION REQUEST
-Source:          gatekeeper-build
-Target Skill:    [bob-the-builder | test-builder | security-builder | cross-check-build-confirm]
-Finding ID:      [ID from review, or GAP- prefix for missing items]
-Challenge Type:  [existence | accuracy | completeness | proportionality | consistency]
-Specific Question: [Precise, answerable question the skill must address]
-Evidence Required: [What the skill must provide to resolve the challenge]
-Round:           [1 | 2]
-```
-
-### Delegation Response Format
-
-The originating skill responds with:
-
-```
-DELEGATION RESPONSE
-Source Skill:    [bob-the-builder | test-builder | security-builder | cross-check-build-confirm]
-Finding ID:      [matching ID]
-Resolution:      [corrected | defended | withdrawn]
-Evidence:        [Specific evidence addressing the challenge]
-Amended Work:    [If corrected, the revised implementation or finding]
-```
-
-### Round Limits
-
-- **Maximum 2 delegation rounds per finding** — prevents infinite loops
-- **Round 1**: Initial challenge — skill provides evidence or corrects
-- **Round 2**: Follow-up if Round 1 response is unconvincing
-- **After Round 2**: Mark as **"Disputed"** with both positions documented for user judgment
-- **Batch delegation**: Group related challenges for the same skill into a single request
-
-Consult `references/delegation-workflow.md` for detailed examples and escalation procedures.
+Consult `references/delegation-workflow.md` for the complete delegation request/response formats, escalation procedures, and worked examples.
 
 ---
 
 ## Anti-Gaming Safeguards
 
-The gatekeeper must guard against its own biases, as well as "gaming" attempts by the reviewed skills:
+Use `references/challenge-protocol.md` for the full anti-gaming rubric. At a
+minimum:
 
-**Remediation Technical Debt (Anti-Gaming).** Validate that defect "remediations" by `bob-the-builder` or `security-builder` do not silently introduce new architectural technical debt. Solving an issue by breaking encapsulation, bypassing abstraction boundaries, or introducing dirty hacks to pass a single check is a BLOCKER violation of the original architectural design.
+- Reject Phantom Resolution: remediation narratives without diffs, before/after excerpts, or direct artifact references
+- Reject severity arbitrage: downgraded findings must explain why exploitability or blast radius changed
+- Reject summary-only approval: manifest claims never substitute for reading the underlying code, tests, or logs because manifests are self-reported and may omit or misrepresent actual implementation state
+- Reject manufactured objections: if evidence resolves the challenge, withdraw it explicitly rather than moving the goalposts
+- Prioritize high-impact risk and calibration over surface-level finding counts
 
-**Avoid challenge-for-challenge's-sake.** Do not nitpick valid implementations just to demonstrate rigor. Code with clear logic, correct behavior, and appropriate error handling should be approved without manufactured objections.
+### Gatekeeper Self-Correction
 
-**Focus on high-impact challenges.** Prioritize challenges where being wrong causes real harm: a missing security check on an admin endpoint matters more than a naming convention disagreement.
+If a finding issued by the gatekeeper is subsequently shown to be incorrect
+(the challenged code was actually correct, or the severity was miscalibrated):
 
-**Track calibration metrics.** Monitor the challenge acceptance rate. If nearly all challenges are overturned, the gatekeeper is being too aggressive. If none are overturned, it is not adding value.
+1. **Acknowledge the error** in the verdict report — do not silently drop findings
+2. **Withdraw the finding** with a brief explanation of why it was wrong
+3. **Adjust calibration** — if the same type of false positive recurs, note it as a calibration pattern and reduce scrutiny on that specific pattern in future reviews
+4. **Document the correction** in the challenge log to maintain audit trail integrity
 
-**Respect evidence.** When a skill provides specific, verifiable evidence defending its work, accept it. Evaluate evidence on its merits, not on adversarial instinct.
+Gatekeeper credibility depends on honest self-assessment. A gatekeeper that never admits errors is gaming its own process.
+
+---
+
+## Edge Cases & Failure Modes
+
+| Scenario | How to Handle |
+|----------|---------------|
+| Deliverable is empty or contains only scaffolding | Issue REVISE with Critical finding — deliverable is not substantive. Do not attempt to review placeholder content. |
+| Design specification is contradictory, incomplete, or references the wrong artifact revision | Issue ESCALATE with the exact conflicting sections cited. Do not gate implementation quality against a malformed target. |
+| Finding is disputed after 2 rounds with new evidence each time | Mark as "Disputed" with both positions documented. Route to build-management for user judgment. Do not enter round 3. |
+| Gatekeeper's own challenge creates a false positive | Acknowledge the error, withdraw the finding, and adjust calibration (see Self-Correction above). |
+| Multiple Critical findings across different dimensions | Issue REVISE with all findings. Do not APPROVED with Critical findings present regardless of how many other dimensions pass. |
+| Source skill claims "no changes needed" for REVISE findings | Require a diff or before/after excerpt proving the code was already correct. A narrative claim without evidence is flagged as Phantom Resolution. |
+| Submission mixes artifacts from different revision attempts | Treat it as a consistency failure. Require a clean package that identifies one revision set before continuing the review. |
+| Deliverable is too large to review in available context | Prioritize the highest-risk files (authentication, authorization, payment, data validation) and review those thoroughly. Document which files and modules were not reviewed due to context constraints. Issue APPROVED only for the reviewed scope and require a follow-up review for uncovered sections before final delivery. |
+
+---
+
+## Adversarial Verification Protocol
+
+Before any verdict, run the self-check in `references/challenge-protocol.md`.
+APPROVED requires 3 code references, 1 applied challenge category with
+evidence, and explicit confidence labels. Detect phantom resolutions, test
+inflation, severity arbitrage, and remediation tech debt. For Phase 4
+approvals, require runtime evidence or a justified exemption.
 
 ---
 
@@ -260,6 +307,9 @@ The gatekeeper must guard against its own biases, as well as "gaming" attempts b
 Structure the gatekeeper validation report as follows:
 
 ```markdown
+
+---
+
 ## Gatekeeper Build Validation Report
 
 ### Metadata
@@ -311,8 +361,9 @@ Structure the gatekeeper validation report as follows:
 
 For detailed review criteria, challenge rubrics, and delegation procedures:
 - **`references/challenge-protocol.md`** — Complete adversarial challenge rubric with detailed definitions, trigger conditions, example challenges, expected response formats, and resolution criteria for each of the 5 challenge categories across all 8 review dimensions
-- **`references/review-criteria.md`** — Per-phase review checklists for bob-the-builder output (code correctness, spec alignment, pattern adherence), test-builder output (test meaningfulness, coverage, assertion quality), security-builder output (finding accuracy, CWE mapping, remediation actionability), and cross-check-build-confirm output (completeness scan and runtime verification), plus cross-phase consistency matrix
-- **`references/delegation-workflow.md`** — Detailed delegation request and response formats with worked examples, batch delegation strategies, escalation procedures, resolution tracking, and round limit enforcement
+- **`references/review-criteria.md`** — Per-phase review checklists for bob-the-builder, test-builder, security-builder, and cross-check-build-confirm output, plus cross-phase consistency matrix
+- **`references/delegation-workflow.md`** — Delegation request/response formats, batch strategies, escalation procedures, resolution tracking, and round limit enforcement
+- **`../../references/evidence-standards.md`** — Canonical evidence specificity requirements, severity alignment, calibration thresholds, and evidence retention policy shared by all gatekeepers
 
 ---
 
@@ -322,4 +373,9 @@ Gatekeeper-build does not own pipeline persistence — the invoking orchestrator
 
 - **In pipeline mode**: build-management writes the gatekeeper verdict to the phase directory in the run’s build save path
 - **In standalone mode**: the invoking skill or user is responsible for persisting the verdict
-- **Verdict artifacts**: all verdicts, challenge records, and delegation logs are persisted by the orchestrator per `save-protocol.md`- **Save awareness**: when a Run ID or reference paths are provided in the submission, gatekeeper-build may read persisted deliverables from `skillset-saves/runs/{run-id}/build/` for review. This enables validation even when inline artifacts have been compacted from context (Tier 3 reference mode). The save path provides direct access to individual phase deliverables without requiring the full package to be in context.
+- **Verdict artifacts**: all verdicts, challenge records, and delegation logs are persisted by the orchestrator per `save-protocol.md`
+- **Persistence-failure handling**: if any save operation fails during verdict persistence, follow the Persistence-Failure Decision Tree in `save-protocol.md` §Persistence-Failure Decision Tree
+- **Save awareness**: when a Run ID or reference paths are provided in the submission, gatekeeper-build may read persisted deliverables from `skillset-saves/runs/{run-id}/build/` for review. This enables validation even when inline artifacts have been compacted from context (Tier 3 reference mode). The save path provides direct access to individual phase deliverables without requiring the full package to be in context.
+---
+
+*Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) apply to all skills. See `../../references/universal-frameworks.md` for complete definitions.*

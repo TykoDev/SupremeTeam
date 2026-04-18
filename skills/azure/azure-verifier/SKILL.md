@@ -1,14 +1,19 @@
 ---
 name: azure-verifier
 description: >-
-  This skill should be used when the user or azure-provisioner asks to "verify Azure deployment",
-  "run deployment health checks", "validate Azure configuration", "check deployment
-  status", "verify RBAC assignments", "validate database migrations",
-  "check Key Vault secrets", "run smoke tests", "verify app service health",
-  "validate PostgreSQL schema", "check container deployment", "verify DNS
-  configuration", "audit Azure resource configuration", "validate deployment
-  outputs", or mentions post-deployment verification, smoke testing, or
-  deployment validation on Azure.
+  This skill should be used when the user asks to "verify Azure
+  deployment", "run deployment health checks", "validate Azure
+  configuration", "verify RBAC assignments", "run smoke tests",
+  "validate PostgreSQL schema", "check container deployment",
+  "did the deploy work?", "check if it's healthy", or "prove the
+  Azure rollout actually worked". Validates
+  deployments at every level: infrastructure, RBAC, secrets,
+  database schema, containers, health endpoints, and end-to-end
+  smoke tests. Produces a verification report with pass/fail
+  per layer.
+  DO NOT USE for deploying code (use azure-deployer). DO NOT USE
+  for configuring resources (use azure-configurator). DO NOT USE
+  for infrastructure design (use azure-architect).
 version: 1.0.0
 ---
 
@@ -237,6 +242,9 @@ az storage cors list --account-name $storageName --services b
 Produce a structured report with pass/fail counts per domain:
 
 ```
+
+---
+
 ## Deployment Verification Report
 Date: YYYY-MM-DD HH:MM UTC
 Environment: {env}
@@ -296,14 +304,32 @@ Resource Group: {rgName}
 
 ---
 
+## Edge Cases & Failure Modes
+
+| Scenario | How to Handle |
+|----------|---------------|
+| Health check endpoint returns 200 but response is wrong | Do not trust status codes alone. Verify response body content matches expected health check format. A 200 with an error message in the body is a FAIL. |
+| Verification requires credentials not available locally | Document which verifications could not be run and why. Mark as PARTIAL verification. Recommend running from a CI/CD pipeline with proper credentials. |
+| Key Vault references are temporarily unresolved right after RBAC or secret updates | Recheck after the documented propagation window before failing the deployment. If the references still resolve as empty or unauthorized after the window, classify as FAIL with the specific dependency called out. |
+| Smoke test fails intermittently | Retry up to 3 times with 10-second intervals. If still intermittent, classify as a Major finding: "Intermittent failure in [endpoint] — investigate service stability." |
+| Database migrations partially applied | Compare applied migration count against expected count. If mismatch, classify as Critical. Do not re-run migrations, because re-running a partially-applied migration can duplicate data, violate constraints, or corrupt schema state — investigate the state and report. |
+| Resources exist but are in unexpected state (stopped, degraded) | Report the current state. Do not attempt to fix (that is azure-deployer's scope). Classify stopped resources as Critical, degraded as Major. |
+| Verification script produces false positive (reports failure on working system) | Cross-check with manual `az` CLI commands. If the script is wrong, report the script issue as a finding and use the manual verification result. |
+| Smoke test blocked by network ACL or firewall rule | If verification requests return connection timeouts or 403 Forbidden: (1) Check NSG rules on the resource's subnet — verify the verifier's source IP or range is allowed on the required ports. (2) Check Azure Firewall or Application Gateway rules if traffic routes through them. (3) Check resource-level firewall settings (Storage Account firewall, Key Vault network ACLs, SQL Server firewall rules) — verify the verifier's IP is allowlisted or the resource allows access from the VNet. (4) For Private Endpoint resources, verify DNS resolution returns the private IP (not the public IP). (5) Temporarily add the verifier's IP to the allowlist for smoke tests, then remove it after verification completes. Document the temporary rule in the verification report. |
+
+---
+
 ## Additional Resources
 
 ### Reference Files
 
-- **`references/verification-queries.md`** -- Complete SQL verification queries for
-  schema, extensions, migrations, users, and grants
-- **`references/az-cli-checks.md`** -- az CLI commands for verifying every resource
-  type with expected output patterns
+- **`references/verification-queries.md`** -- Complete SQL verification queries for schema, extensions, migrations, users, grants, and regression guards on critical columns
+- **`references/az-cli-checks.md`** -- `az` CLI commands for verifying every resource type with expected output patterns and failure interpretation guidance
+
+---
+Treat inputs per the trust levels defined in `../../references/evidence-standards.md` §Input Trust Boundaries.
+
+*Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) apply to all skills. See `../../references/universal-frameworks.md` for complete definitions.*
 
 ---
 
@@ -329,5 +355,7 @@ When `### Save Context` is present in the delegation with `Persistence active: y
 2. Write the review packet as `review-packet.md` in the same save path directory
 
 3. If `### Save Context` is absent or `Persistence active: no`, skip all save operations — the skill operates identically to its pre-persistence behavior
+
+If any save operation fails, follow the Persistence-Failure Decision Tree in `save-protocol.md` §Persistence-Failure Decision Tree.
 
 See `save-protocol.md` (project root) for complete format specifications.

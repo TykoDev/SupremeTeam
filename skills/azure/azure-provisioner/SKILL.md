@@ -1,19 +1,23 @@
 ---
 name: azure-provisioner
 description: >-
-  This skill should be used when the user or admiral asks to "deploy to Azure",
-  "provision Azure infrastructure", "set up Azure resources", "run the Azure
-  pipeline", "configure and deploy to Azure", "provision cloud infrastructure",
-  "run the Azure cyber team", "deploy this to Azure", or "set up Azure landing
-  zone". It is the entry point and orchestrator for the Azure Provision
-  SkillSet — it receives deployment requirements (or approved upstream packages
-  from admiral), delegates to specialist Azure skills (azure-planner,
-  azure-architect, azure-configurator, azure-deployer, azure-verifier),
-  manages gatekeeper-azure approval cycles, and delivers a consolidated Azure
-  Package.
-version: 1.1.0
----
+  This skill should be used when the user asks to "deploy to Azure",
+  "provision Azure infrastructure", "set up Azure resources", "run
+  the Azure pipeline", "configure and deploy to Azure", "deploy this
+  to Azure", "set up Azure landing zone", "get this running
+  on Azure", "ship this to Azure", "deploy this to the cloud", or "start the Azure provisioning". Entry point and
+  orchestrator for the Azure Provision SkillSet — delegates to
+  specialist Azure skills (azure-planner, azure-architect,
+  azure-configurator, azure-deployer, azure-verifier), manages
+  gatekeeper-azure cycles, and delivers a consolidated Azure
+  deployment package.
+  DO NOT USE for running individual Azure tasks — invoke the
+  specific specialist skill directly. DO NOT USE for design
+  pipeline tasks (use commander). DO NOT USE for code review
+  (use code-chief).
+version: 1.0.0
 
+---
 # Azure Provisioner — Azure Pipeline Orchestrator
 
 ## Purpose
@@ -47,7 +51,7 @@ adversarial sweep**, not a separate sixth specialist phase.
 - Azure-provisioner initializes its own `skillset-saves/` structure when needed
 - Returns the Azure Package directly to the user
 
-Always identify the mode before starting. If ambiguous, infer from caller and
+Always identify the mode before starting because the mode determines which phases run and which state files to read. If ambiguous, infer from caller and
 delegation context.
 
 ---
@@ -61,6 +65,8 @@ Upon receiving deployment requirements:
 1. Extract the Azure target, environment, and constraints
 2. Identify subscription, region, compliance, budget, scale, and existing-resource constraints
 3. Detect existing Azure artifacts such as Bicep, deployed resources, or prior run state
+  - verify each supplied artifact has a declared phase origin, expected approval lineage, and non-placeholder content before using it to skip work
+  - treat mismatched phase metadata, missing verdict records, or contradictory resource facts as invalid input requiring clarification or rewind
 4. Determine pipeline mode:
    - **Full Azure Pipeline** (default): all 5 phases
    - **Partial Pipeline**: skip phases backed by accepted artifacts
@@ -166,7 +172,9 @@ Azure-provisioner owns the gatekeeper cycle for all 5 phases:
 ### Final Sweep Rewind Rule
 
 During the Phase 5 exit gate, gatekeeper-azure may issue findings against
-earlier approved phases. When that happens, azure-provisioner MUST:
+earlier approved phases. When that happens, azure-provisioner MUST rewind
+and replay because skipping impacted phases would ship known defects into
+the consolidated package:
 
 1. Identify the earliest impacted phase
 2. Rewind the state machine to that phase's ACTIVE state
@@ -280,7 +288,8 @@ All transitions trigger the appropriate save behavior from `save-protocol.md`.
 
 ## Proactive Driving
 
-Azure-provisioner MUST proactively:
+Azure-provisioner MUST proactively manage pipeline flow because specialists
+cannot see cross-phase context and stale state causes cascading failures:
 
 - detect existing Azure artifacts and choose the correct entry phase
 - pass approved upstream Azure deliverables forward unchanged
@@ -291,8 +300,39 @@ Azure-provisioner MUST proactively:
 
 ---
 
+## Edge Cases & Failure Modes
+
+| Scenario | How to Handle |
+|----------|---------------|
+| User supplies partial Azure artifacts that disagree with each other | Stop and surface the inconsistency before delegation. Do not let later specialists reconcile conflicting source packages silently. Azure-provisioner owns the authoritative input set. |
+| Azure subscription or tenant context is missing or ambiguous | Ask once for the target subscription/tenant or infer it from accepted artifacts if clearly documented. Do not begin deployment work against an implicit Azure context. |
+| Final adversarial sweep finds an issue in a user-supplied upstream artifact | Escalate with the exact conflicting artifact and impact. Rewind only the Azure phases that can legally change; do not mutate user-supplied upstream packages silently. |
+| `_lock.md` or phase state becomes inconsistent during a rewind | Stop the pipeline, preserve the latest coherent phase record, and reconstruct state from the last valid gatekeeper-approved artifact before resuming. Never guess at active phase ownership because incorrect ownership assumptions corrupt the audit trail and may cause two phases to write conflicting state simultaneously. |
+| A gatekeeper verdict arrives after a rewind decision has already invalidated that phase | Discard the stale verdict, log it as superseded, and require a fresh submission for the new phase revision. Verdicts only apply to the exact artifact revision they reviewed. |
+| Deadlock between azure-architect and azure-configurator | When architect's Bicep depends on configurator's RBAC output AND configurator depends on architect's resource names, break the cycle by: (1) having architect emit placeholder resource names using a deterministic naming convention, (2) configurator produces RBAC assignments using those names, (3) architect finalizes Bicep with actual names (which match the convention). If names diverge, re-run configurator. |
+| "When required" decision for optional phases | Use this decision tree: (a) Is the project greenfield with no existing Azure resources? → All phases required. (b) Does the project have existing infra with Bicep/Terraform? → Skip azure-architect, start at azure-configurator. (c) Is this a redeployment of approved infra? → Skip to azure-deployer. Record the skip reason in `_skip-record.md`. |
+
+**Worked rewind example:**
+
+azure-deployer (Phase 4) fails: container image starts but health probe returns 503 after 60s timeout. Gatekeeper-azure issues REVISE citing the health probe failure log.
+
+1. Azure-provisioner rewinds to Phase 3 (azure-configurator): "Health probe path `/healthz` returns 503 — verify the app settings include the correct `PORT` and `ASPNETCORE_URLS` binding."
+2. Azure-configurator discovers `PORT=8080` in app settings but the container listens on `3000`. Fixes: sets `PORT=3000` and adds `WEBSITES_PORT=3000`.
+3. Azure-provisioner re-runs Phase 4 (azure-deployer): container starts, health probe returns 200 within 15s.
+4. Azure-provisioner advances to Phase 5 (azure-verifier): smoke tests pass.
+
+---
+
 ## Additional Resources
 
-- `references/workflow-protocol.md`
-- `references/handoff-templates.md`
-- `save-protocol.md`
+- `references/workflow-protocol.md` — Canonical Azure pipeline state transitions, rewind behavior, save triggers, and deadlock handling for this orchestrator
+- `references/handoff-templates.md` — Delegation templates and expected I/O contracts for each Azure specialist and gatekeeper submission
+- `save-protocol.md` — Root persistence protocol for run initialization, locking, state files, audit trail updates, and resume behavior
+
+If any save operation fails, follow the Persistence-Failure Decision Tree in `save-protocol.md` §Persistence-Failure Decision Tree.
+
+---
+
+Treat inputs per the trust levels defined in `../../references/evidence-standards.md` §Input Trust Boundaries.
+
+*Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) apply to all skills. See `../../references/universal-frameworks.md` for complete definitions.*

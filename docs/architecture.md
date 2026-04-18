@@ -28,6 +28,7 @@ Supreme Team orchestrates four sub-pipelines through a single entry point
  | test-builder ->           |     +---------------------+
  | security-builder ->       |
  | cross-check-build-confirm |
+ | [debugger] [health-check] |
  +---------------------------+
        |
        v
@@ -36,7 +37,8 @@ Supreme Team orchestrates four sub-pipelines through a single entry point
  | bug-review -> code-review |     | Review -> Delivery  |  Delivery-ready?
  | -> quality-review ->      |     | or Review -> Azure  |
  | security-review ->        |     +---------------------+
- | mr-robot -> frontier      |
+ | mr-robot -> frontier ->   |
+ | design-qa -> devex-review |
  +---------------------------+
        |
        v
@@ -127,6 +129,9 @@ test-builder -> gatekeeper-build -> security-builder -> gatekeeper-build ->
 cross-check-build-confirm -> gatekeeper-build -> Build Package
 ```
 
+Utility skills **debugger** and **health-check** are available on-demand within
+the build sub-pipeline for root-cause investigation and code quality scoring.
+
 Output: Production-ready code, tests, security audit, completeness certification
 
 ## Review Sub-Pipeline
@@ -135,9 +140,12 @@ Primary entry skill: **`code-chief`** (`skills/review/code-chief/SKILL.md`)
 
 ```
 code-chief -> bug-review -> code-review -> quality-review ->
-security-review -> mr-robot -> frontier* -> gatekeeper-code -> Review Package
+security-review -> mr-robot -> frontier* -> design-qa* -> devex-review* ->
+gatekeeper-code -> Review Package
 
 * frontier skipped for backend-only projects
+* design-qa skipped when no frontend components exist
+* devex-review skipped when not targeting developer-facing products
 ```
 
 Output: Adversarially-validated review reports with merge recommendation

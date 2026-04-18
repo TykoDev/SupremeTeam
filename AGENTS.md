@@ -42,7 +42,7 @@ backend and frontend stack configurations consumed by architect and designer:
 `react-nextjs.md` · `react-tanstack.md` · `rust-axum.md` · `svelte-sveltekit.md` ·
 `vite-spa.md` · `vue-nuxt.md`
 
-## Build Sub-Pipeline (6 skills)
+## Build Sub-Pipeline (8 skills)
 
 | Skill | Path | Role |
 |-------|------|------|
@@ -51,9 +51,11 @@ backend and frontend stack configurations consumed by architect and designer:
 | **test-builder** | `skills/build/test-builder/SKILL.md` | Test engineer — creates comprehensive unit, integration, and E2E test suites |
 | **security-builder** | `skills/build/security-builder/SKILL.md` | Security auditor — maps findings to OWASP Top 10, CWE Top 25, NIST SSDF |
 | **cross-check-build-confirm** | `skills/build/cross-check-build-confirm/SKILL.md` | Completeness scanner — verifies no scaffolding, TODOs, or placeholders remain |
+| **debugger** | `skills/build/debugger/SKILL.md` | Systematic root-cause debugging — hypothesis-driven investigation with 5-phase methodology |
+| **health-check** | `skills/build/health-check/SKILL.md` | Code quality dashboard — composite scoring across type safety, lint, tests, dead code |
 | **gatekeeper-build** | `skills/build/gatekeeper-build/SKILL.md` | Adversarial validator of build outputs — challenges code, tests, security audits |
 
-## Review Sub-Pipeline (8 skills)
+## Review Sub-Pipeline (10 skills)
 
 | Skill | Path | Role |
 |-------|------|------|
@@ -64,6 +66,8 @@ backend and frontend stack configurations consumed by architect and designer:
 | **security-review** | `skills/review/security-review/SKILL.md` | Vulnerability detection using NIST SSDF, OWASP ASVS, STRIDE threat modeling |
 | **mr-robot** | `skills/review/mr-robot/SKILL.md` | Adversarial penetration testing with proof-of-concept exploit chains |
 | **frontier** | `skills/review/frontier/SKILL.md` | Frontend performance, accessibility (WCAG 2.2), and security auditor |
+| **design-qa** | `skills/review/design-qa/SKILL.md` | Frontend visual quality assurance — audits rendered output against design tokens and visual best practices |
+| **devex-review** | `skills/review/devex-review/SKILL.md` | Developer experience auditor — live evidence-based DX audit across 8 dimensions with TTHW measurement |
 | **gatekeeper-code** | `skills/review/gatekeeper-code/SKILL.md` | Adversarial meta-reviewer — validates all specialist review reports |
 
 ## Azure Provision Sub-Pipeline (7 skills)
@@ -78,6 +82,12 @@ backend and frontend stack configurations consumed by architect and designer:
 | **azure-verifier** | `skills/azure/azure-verifier/SKILL.md` | Post-deployment verification — health checks, schema validation, smoke tests |
 | **gatekeeper-azure** | `skills/azure/gatekeeper-azure/SKILL.md` | Unified adversarial quality gate for Azure provisioning deliverables |
 
+## Session Memory (1 skill)
+
+| Skill | Path | Role |
+|-------|------|------|
+| **session-memory** | `skills/session-memory/SKILL.md` | Cross-session state and learnings manager — checkpoints for resume and JSONL learnings for accumulated project knowledge |
+
 ## Shared Resources
 
 | File | Path | Purpose |
@@ -86,6 +96,8 @@ backend and frontend stack configurations consumed by architect and designer:
 | **responsibility-matrix.md** | `skills/admiral/references/responsibility-matrix.md` | Unified responsibility, trigger, input/output, escalation, and save ownership matrix for all pipeline components |
 | **handoff-templates.md** (cross-pipeline) | `skills/admiral/references/handoff-templates.md` | Cross-pipeline handoff delegation templates used by admiral and gatekeeper-admiral |
 | **handoff-templates.md** (universal) | `skills/references/handoff-templates.md` | Universal delegation handoff templates used by all sub-orchestrators for specialist delegations |
+| **evidence-standards.md** | `skills/references/evidence-standards.md` | Input trust boundaries and evidence quality standards used by all skills |
+| **universal-frameworks.md** | `skills/references/universal-frameworks.md` | Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) |
 
 > Note: the table above lists the canonical shared handoff-template files.
 > Orchestrator-local handoff-template files also exist under
@@ -110,14 +122,16 @@ skills/
 │   ├── engineer/
 │   ├── gatekeeper-design/
 │   └── tech-stacks/             # 14 stack templates
-├── build/                        # Build sub-pipeline (6 skills)
+├── build/                        # Build sub-pipeline (8 skills)
 │   ├── build-management/
 │   ├── bob-the-builder/
 │   ├── test-builder/
 │   ├── security-builder/
 │   ├── cross-check-build-confirm/
+│   ├── debugger/
+│   ├── health-check/
 │   └── gatekeeper-build/
-├── review/                       # Review sub-pipeline (8 skills)
+├── review/                       # Review sub-pipeline (10 skills)
 │   ├── code-chief/
 │   ├── bug-review/
 │   ├── code-review/
@@ -125,6 +139,8 @@ skills/
 │   ├── security-review/
 │   ├── mr-robot/
 │   ├── frontier/
+│   ├── design-qa/
+│   ├── devex-review/
 │   └── gatekeeper-code/
 ├── azure/                        # Azure provision sub-pipeline (7 skills)
 │   ├── azure-provisioner/
@@ -134,13 +150,16 @@ skills/
 │   ├── azure-deployer/
 │   ├── azure-verifier/
 │   └── gatekeeper-azure/
-├── references/                   # Shared universal handoff templates
+├── session-memory/               # Cross-session state & learnings manager
+├── references/                   # Shared universal references
 └── save-protocol.md              # Persistent save system specification
 ```
 
-**Total: 30 skills + 14 tech-stack templates**
+**Total: 35 skills + 14 tech-stack templates**
 
 > **Note on folder depth:** `admiral` and `gatekeeper-admiral` sit directly under
-> `skills/` (depth 2) because they orchestrate across all sub-pipelines. All other
-> skills are nested under their pipeline category directory (depth 3). This manifest
-> provides the authoritative flat index for tool discovery regardless of nesting depth.
+> `skills/` (depth 2) because they orchestrate across all sub-pipelines.
+> `session-memory` also sits at depth 2 as a cross-cutting utility skill. All
+> other skills are nested under their pipeline category directory (depth 3).
+> This manifest provides the authoritative flat index for tool discovery
+> regardless of nesting depth.

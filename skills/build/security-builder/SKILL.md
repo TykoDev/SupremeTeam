@@ -1,21 +1,24 @@
 ---
 name: security-builder
 description: >-
-  This skill should be used when the user or build-management asks to
-  "audit code security", "check for vulnerabilities", "review security
-  of the build", "scan for security issues", "validate input handling",
-  "check authentication code", "review access control implementation",
-  "audit cryptography usage", "check for injection vulnerabilities",
-  "assess dependency security", "verify OWASP compliance in the code",
-  or "run a security audit". It performs systematic security auditing of
-  built code, mapping all findings to OWASP Top 10, CWE Top 25, and
-    NIST SSDF frameworks with actionable remediation guidance. Distinct from
-    security-review (review pipeline): security-builder operates during the
-    build phase, auditing newly-written code before it ships.
+  This skill should be used when the user asks to "audit code security",
+  "check for vulnerabilities", "scan for security issues", "check
+  authentication code", "check for injection vulnerabilities", "verify
+  OWASP compliance", "run a security audit", "is this code secure?",
+  "check for hardcoded secrets", or "scan dependencies for CVEs".
+  Build-phase security auditor that examines actual implemented code
+  for vulnerabilities, insecure patterns, and compliance gaps. Every
+  finding is mapped to OWASP Top 10:2025, CWE Top 25:2025, and
+  NIST SSDF v1.1 with actionable remediation guidance. Findings
+  requiring code changes are packaged for routing to bob-the-builder.
+  DO NOT USE for security review during the review phase (use
+  security-review). DO NOT USE for adversarial penetration testing
+  (use mr-robot). DO NOT USE for fixing code (use bob-the-builder).
 version: 1.0.0
+
 ---
 
-# Security Builder — Code Security Auditor
+# Security Builder — Build-Phase Security Auditor
 
 ## Purpose
 
@@ -28,11 +31,14 @@ to bob-the-builder through build-management. Security Builder is a specialist
 phase in the canonical pipeline, not a final approver — its output is not
 accepted until `gatekeeper-build` validates it through build-management.
 
+Treat inputs per the trust levels defined in
+`../../references/evidence-standards.md` §Input Trust Boundaries.
+
 ## Core Principle
 
-> "Audit the code that exists, not the code that was planned. The implementation
-> is the only source of truth for security posture. Verify every claim by
-> examining the actual code paths."
+Audit the code that exists, not the code that was planned. The implementation
+is the only source of truth for security posture. Verify every claim by
+examining the actual code paths.
 
 ---
 
@@ -77,26 +83,40 @@ Systematically check the codebase against OWASP Top 10:2025:
 
 For every external input entry point identified in Step 1:
 
-1. **Trace the input**: Follow the data from entry point through all transformations to storage or output
-2. **Identify sinks**: Where does the data end up? (SQL query, HTML template, shell command, log file, response body)
-3. **Verify sanitization**: Is the data validated, encoded, or escaped before reaching each sink?
-4. **Check bypass potential**: Can the sanitization be circumvented through encoding tricks, double encoding, or type confusion?
+1. **Trace the input**: Follow the data from entry point through all transformations to storage or output. Document each function in the call chain that touches the data.
+2. **Identify sinks**: Where does the data end up? (SQL query, HTML template, shell command, log file, response body, file system path)
+3. **Verify sanitization**: Is the data validated, encoded, or escaped before reaching each sink? Record the specific validation function and its location.
+4. **Check bypass potential**: Can the sanitization be circumvented through encoding tricks (double encoding, null bytes, Unicode normalization), type confusion (string vs. number coercion), or alternative code paths that skip validation?
+5. **Map the trust boundary crossing**: For each entry-point-to-sink path, identify where data crosses from untrusted to trusted context. If there is no explicit trust boundary crossing (no validation between entry and sink), flag it as a finding.
+
+**Worked example:**
+```
+Entry: POST /api/search { query: userInput }
+  → controller.search(req.body.query)    // no validation
+  → service.find(query)                   // passes through
+  → db.query(`SELECT * WHERE name LIKE '%${query}%'`)  // SINK: SQL
+  Result: CWE-89 — no parameterization between entry and SQL sink
+```
 
 ### Step 4: Authentication and Authorization Audit
 
 1. **Credential storage**: Verify passwords use bcrypt/scrypt/argon2 with appropriate cost factors
 2. **Session management**: Check token generation (cryptographic randomness), storage (httpOnly, secure flags), and expiration
-3. **Authorization enforcement**: Verify every endpoint checks permissions — not just the UI hiding buttons
+3. **Authorization enforcement**: Verify every endpoint enforces permissions checks — not just the UI hiding buttons
 4. **Privilege escalation**: Test for horizontal (accessing other users' data) and vertical (accessing admin functions) escalation paths
 5. **API key management**: Verify API keys are scoped, rotatable, and not hardcoded
 
 ### Step 5: Dependency and Supply Chain Scan
 
-1. **Known vulnerabilities**: Check all dependencies against CVE databases (NVD, OSV, GitHub Advisory)
+Scan all dependencies for security risks. Consult `references/security-checklist.md`
+for the complete verification procedure and extended signal definitions.
+
+1. **Known vulnerabilities**: Check all dependencies against CVE databases (NVD, OSV, GitHub Advisory). For each CVE, perform reachability analysis: trace the vulnerable function to confirm the project actually calls it — a CVE in an unused code path is informational, not critical
 2. **Outdated packages**: Flag packages more than 2 major versions behind
 3. **Unmaintained packages**: Flag packages with no commits in 12+ months
 4. **Lockfile integrity**: Verify lockfile exists and is committed to version control
 5. **License compliance**: Flag copyleft licenses (GPL) in proprietary projects
+6. **Supply chain indicators**: Flag recently-published packages (< 30 days) with broad permissions, typosquatting names, or install scripts that execute arbitrary code
 
 ### Step 6: Secrets Detection
 
@@ -111,15 +131,15 @@ Scan the entire codebase for hardcoded secrets:
 
 ## Framework Alignment
 
-All findings MUST be mapped to at least one of these frameworks:
+All findings MUST be mapped to at least one of the following frameworks because
+established framework mapping ensures findings are discoverable, comparable, and
+actionable across tools and teams:
+OWASP Top 10:2025 (primary risk categorization), CWE Top 25:2025 (weakness
+taxonomy), NIST SSDF v1.1 (secure development practices), OWASP ASVS 5.0
+(technical control requirements at L1/L2/L3), and CVSS v4.0 (severity scoring).
 
-| Framework | Version | Use |
-|-----------|---------|-----|
-| **OWASP Top 10** | 2025 | Primary risk categorization |
-| **CWE Top 25** | 2025 | Weakness taxonomy for precise classification |
-| **NIST SSDF** | v1.1 | Secure development practice verification |
-| **OWASP ASVS** | 5.0 | Technical control requirements (L1/L2/L3) |
-| **CVSS** | v4.0 | Severity scoring |
+Consult `references/security-checklist.md` for the complete framework
+mapping table, version details, and cross-reference anchors.
 
 ---
 
@@ -139,6 +159,9 @@ All findings MUST be mapped to at least one of these frameworks:
 Package security findings requiring code changes for routing to bob-the-builder:
 
 ```markdown
+
+---
+
 ## SECURITY REMEDIATION PACKAGE
 
 ### Critical Findings (Fix Immediately)
@@ -165,6 +188,9 @@ Package security findings requiring code changes for routing to bob-the-builder:
 Structure the security audit report as follows:
 
 ```markdown
+
+---
+
 ## Security Audit Report
 
 ### Risk Assessment
@@ -224,6 +250,21 @@ resubmit through build-management.
 
 ---
 
+## Edge Cases & Failure Modes
+
+| Scenario | How to Handle |
+|----------|---------------|
+| False positive from automated scanner | Verify manually before reporting. If confirmed false positive, document the reason and exclude from findings. Track false positive rate for scanner calibration. |
+| Vulnerability found in a dependency (not project code) | Report with the dependency name, version, CVE/CWE, and reachability analysis. If the vulnerable code path is not reachable from the application, note this and classify as Major (not Critical). |
+| No OWASP category is applicable | Rare but possible for purely computational code. Document which categories were checked and why each was inapplicable. Do not generate phantom findings to fill categories. |
+| Remediation creates a new vulnerability | Verify all remediations do not introduce new issues. If a fix for one vulnerability opens another (e.g., fixing injection by removing validation entirely), flag both and escalate for architectural review. |
+| Secrets found in code or configuration | Classify as Critical. Report file:line but do NOT include the secret value in the report. Recommend immediate rotation and add to `.gitignore`/secrets manager. |
+| Code interacts with AI/ML components | Invoke the AI-specific threat assessment even if the code appears to be standard CRUD. Check for prompt injection, model manipulation, training data exposure, and output trust boundaries. |
+| Code uses custom cryptographic implementation | Flag as a Critical finding (CWE-327). Custom cryptography is almost always weaker than well-audited libraries. Recommend replacing with established libraries (e.g., libsodium, OpenSSL, Web Crypto API, bcrypt/argon2 for hashing). Document the exact location and algorithm attempted. |
+| Supply chain compromise indicators | If dependency analysis reveals a recently-published package (< 30 days old) with high-privilege install scripts or no prior version history, flag as a potential supply chain attack. Classify as High severity. Recommend pinning to a known-good version and investigating the package provenance. |
+
+---
+
 ## Additional Resources
 
 ### Reference Files
@@ -232,6 +273,9 @@ For detailed checklists, vulnerability patterns, and remediation guidance:
 - **`references/security-checklist.md`** — Complete secure coding checklist with OWASP Top 10 mapping, CWE Top 25 weakness patterns, ASVS control verification procedures, AI-specific threat assessment, and supply chain verification steps
 - **`references/vulnerability-patterns.md`** — Common vulnerability patterns by language and framework including injection variants, authentication bypass techniques, insecure deserialization, broken access control, cryptographic failures, SSRF, and path traversal with detection guidance
 - **`references/remediation-guide.md`** — Remediation priority matrix, fix patterns for each vulnerability category, verification procedures to confirm fixes, and structured remediation report format for bob-the-builder
+
+---
+*Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) apply to all skills. See `../../references/universal-frameworks.md` for complete definitions.*
 
 ---
 
@@ -255,5 +299,8 @@ When `### Save Context` is present in the delegation with `Persistence active: y
    Followed by the full deliverable content verbatim.
 
 2. If `### Save Context` is absent or `Persistence active: no`, skip all save operations — the skill operates identically to its pre-persistence behavior
+
+If any save operation fails, follow the Persistence-Failure Decision Tree
+in `save-protocol.md` §Persistence-Failure Decision Tree.
 
 See `save-protocol.md` (project root) for complete format specifications.

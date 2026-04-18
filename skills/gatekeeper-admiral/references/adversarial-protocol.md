@@ -88,6 +88,24 @@ was built against what was reviewed:
 
 ---
 
+## Gaming Pattern Examples
+
+Concrete examples of manipulation patterns to watch for in handoff packages.
+
+**Rationalization Overload** — Burying a weakness under verbose justification:
+> "While the authentication module does not currently implement rate limiting, this is a deliberate architectural choice that balances user experience considerations with the current threat model assessment, taking into account the deployment topology, the expected user base growth trajectory, and the planned Phase 2 security hardening milestone..."
+*Red flag:* 47 words to avoid saying "rate limiting is missing." Challenge: "State in one sentence whether rate limiting is implemented. If not, cite the ADR or risk acceptance that authorizes the gap."
+
+**Phantom Resolution** — Claiming a fix with no substantive change:
+> Diff shows: `- // TODO: add input validation` → `+ // Input validation handled by middleware`
+*Red flag:* A comment was changed but no middleware was added or configured. Challenge: "Show the middleware registration and the validation rules it enforces."
+
+**Scope Laundering** — Moving a must-have requirement to a later phase without approval:
+> "FR-009 (multi-tenant data isolation) has been deferred to Phase 2 to optimize the Phase 1 delivery timeline."
+*Red flag:* FR-009 is marked MUST in the SRS and was not flagged as deferrable by the planner. Challenge: "FR-009 is a MUST requirement. Show the user-approved scope change or the risk acceptance that authorizes deferral."
+
+---
+
 ## Scoring Mechanics
 
 ### Severity Classification
@@ -148,6 +166,35 @@ On attempt 2, focus review on:
 2. Whether the fixes introduced new issues
 3. Whether the remaining findings are genuinely blocking or could be
    accepted with documented risk
+
+---
+
+## Evidence Artifact Requirements
+
+Every verdict issued by gatekeeper-admiral must produce a structured evidence
+artifact per **`../references/evidence-standards.md`**. Use the canonical YAML
+frontmatter block and include the required findings table, challenge log, and
+verdict rationale in the body.
+
+### Substantive Change Detection
+
+When a sub-orchestrator returns a revised package after a REVISE verdict:
+
+1. Require a change summary listing each mandatory fix and the corresponding
+   modification (deliverable name, section, before/after excerpt)
+2. Verify each fix meets the minimum evidence specificity bar from
+   `evidence-standards.md` — a narrative claim ("this was fixed") without
+   a diff excerpt or before/after comparison is flagged as **Phantom Resolution**
+3. Check that the revision did not introduce new CRITICAL or MAJOR findings
+   outside the scope of the original mandatory fixes
+
+### Calibration Tracking
+
+Track challenge acceptance rate, critical finding rate, dispute rate, and mean
+rounds to resolution across pipeline runs using the thresholds defined in
+`evidence-standards.md`. Log calibration metrics in the run's `_audit-trail.md`
+and flag drift in the next verdict if metrics fall outside the healthy range for
+3 consecutive runs.
 
 ### DISPUTED Item Protocol
 
@@ -235,3 +282,101 @@ handoff package. This:
    specifying what is missing and why it matters for the downstream pipeline
 5. **Perfectionism**: Issuing REVISE for minor issues that do not affect
    downstream pipeline functionality
+
+---
+
+## Confidence-Calibrated Verdicts
+
+Every finding must state a confidence level:
+
+| Level | Definition | Evidence Requirement |
+|-------|-----------|---------------------|
+| **Proven** | Finding verified by reading code/artifacts directly | Exact file, section, or line cited |
+| **Likely** | Strong indicators but not fully confirmed | Indirect evidence cited, further verification recommended |
+| **Possible** | Pattern suggests an issue but evidence is circumstantial | Hypothesis stated, confirmation steps identified |
+
+### Confidence Rules
+
+1. Only **Proven** findings can be classified as CRITICAL
+2. **Likely** findings can be MAJOR or MINOR
+3. **Possible** findings are MINOR only — they do not block approval
+4. If a CRITICAL finding cannot reach Proven confidence, downgrade it and document why
+
+---
+
+## Gaming Detection Patterns
+
+Actively detect attempts to manipulate the gatekeeper into false approval:
+
+### Pattern 1: Rationalization Overload
+
+**Signal:** A deliverable provides extensive justification for why gaps are
+acceptable but does not actually fill the gaps.
+
+**Response:** Ignore the justification. Check if the deliverable meets the
+checklist. Justification for non-compliance is itself a finding.
+
+### Pattern 2: Complexity Distraction
+
+**Signal:** A deliverable is so large or complex that reviewing it thoroughly
+would consume the entire context window, potentially causing the gatekeeper
+to skim and rubber-stamp.
+
+**Response:** Focus on the deliverable inventory scan first. If the inventory
+is incomplete, issue REVISE without reading the full document. Quality of
+structure signals quality of content.
+
+### Pattern 3: Phantom Resolution
+
+**Signal:** A revision claims to fix a finding from attempt 1, but the fix
+is cosmetic (rewording the same content) rather than substantive.
+
+**Response:** Compare the specific section cited in the finding with the
+revision. If the substantive issue remains, the finding is not resolved.
+
+### Pattern 4: Severity Arbitrage
+
+**Signal:** A downstream pipeline reclassifies an upstream finding at a lower
+severity to avoid remediation.
+
+**Response:** Cross-reference the finding across pipeline boundaries. If the
+upstream gatekeeper classified it as MAJOR but the downstream report treats
+it as MINOR, flag the discrepancy.
+
+### Pattern 5: Scope Laundering
+
+**Signal:** An upstream constraint (stack lock, architectural boundary, security
+requirement) quietly disappears in the downstream output without an explicit
+ADR or documented override.
+
+**Response:** Track all upstream constraints through the handoff. Any constraint
+that is present in the source but absent in the target without documentation
+is a CRITICAL finding.
+
+---
+
+## Pre-Verdict Adversarial Verification Step
+
+Before issuing any verdict, perform this mandatory verification:
+
+1. **Inventory re-check:** Re-count the required deliverables against the
+   checklist. Do not trust your initial count — recount deliberately.
+
+2. **Random deep-dive:** Select ONE deliverable at random and read it in
+   detail. Check for substance (not just structure). This catches packages
+   where every section header exists but content is thin.
+
+3. **Failure imagination:** Describe, in one sentence, the most likely way
+   this package could cause a downstream failure. If you can describe it,
+   it needs a finding. If you genuinely cannot, document that you tried.
+
+4. **Evidence audit:** For every CRITICAL and MAJOR finding you are about
+   to issue, confirm you have cited specific evidence (not general patterns).
+   For every APPROVED verdict, confirm you have cited at least 3 specific
+   items you inspected.
+
+5. **Self-bias check:** Acknowledge whether you are leaning toward approval
+   because the package is genuinely strong, or because of fatigue, context
+   pressure, or desire to advance the pipeline. If the latter, pause and
+   re-review the critical items.
+

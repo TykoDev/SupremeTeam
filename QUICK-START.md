@@ -146,6 +146,7 @@ These core components are always required, even for partial installs:
 |------|---------|
 | `admiral/` | Top-level pipeline orchestrator |
 | `gatekeeper-admiral/` | Cross-pipeline adversarial validator |
+| `session-memory/` | Cross-session state and learnings manager |
 | `references/` | Shared handoff templates |
 | `save-protocol.md` | Persistent save system specification |
 
@@ -210,7 +211,12 @@ Use the bug-review skill on src/auth/ to find correctness defects.
 Use the security-review skill to audit this module for vulnerabilities.
 Use the mr-robot skill to adversarially test this API.
 Use the frontier skill to audit the frontend for accessibility.
+Use the design-qa skill to check visual consistency of the UI.
+Use the devex-review skill to test the developer onboarding experience.
 Use the test-builder skill to create a test suite for this module.
+Use the debugger skill to investigate this failing test.
+Use the health-check skill to run a code quality dashboard.
+Use the session-memory skill to checkpoint progress.
 ```
 
 If your tool supports slash-style skill commands, you can use that syntax

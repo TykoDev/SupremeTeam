@@ -5,9 +5,16 @@ description: >-
   "review for defects", "check for edge cases", "analyze error handling",
   "look for concurrency issues", "validate test quality", "check for null
   handling", "review boundary conditions", "check for race conditions",
-  or "assess error paths". It performs systematic bug detection across code
-  changes using CWE-driven checklists, defect classification, and test-driven
-  review methodology.
+  "assess error paths", "hunt for bugs", "what could go wrong here?",
+  "sanity check this change", "what might break?", "check for bugs", or
+  "is there a bug here?".
+  Performs systematic bug detection across code changes using CWE-driven
+  checklists, defect classification (logic/data/interface/concurrency/
+  resource), and test-driven review methodology with severity and
+  confidence levels per finding.
+  DO NOT USE for security vulnerability analysis (use security-review).
+  DO NOT USE for code quality assessment (use quality-review). DO NOT
+  USE for general code review (use code-review).
 version: 1.0.0
 ---
 
@@ -15,13 +22,16 @@ version: 1.0.0
 
 ## Purpose
 
-This skill performs systematic bug detection focused exclusively on correctness defects, logic errors, and reliability issues. It is distinct from security review (which focuses on exploitability and compliance) and code review (which applies a holistic 8-dimension assessment). The sole objective is to identify code that will produce incorrect results, crash, leak resources, corrupt data, or behave unpredictably under realistic conditions.
+Perform systematic bug detection focused exclusively on correctness defects, logic errors, and reliability issues. This skill is distinct from security review (which focuses on exploitability and compliance) and code review (which applies a holistic 8-dimension assessment). The sole objective is to identify code that will produce incorrect results, crash, leak resources, corrupt data, or behave unpredictably under realistic conditions.
+
+Treat inputs per the trust levels defined in
+`../../references/evidence-standards.md` §Input Trust Boundaries.
 
 ## Core Methodology
 
 The bug-finding methodology rests on three pillars derived from industry research and practice.
 
-**CWE Top 25 as a Defect Checklist Driver.** The Common Weakness Enumeration Top 25 (2025 edition, based on analysis of 39,080 CVEs) identifies weakness classes that are both severe and prevalent. Many CWE entries — buffer overflows, null pointer dereferences, integer overflows, improper input validation — are correctness bugs as much as security issues. Use the CWE Top 25 to prioritize which bug classes to hunt for, focusing on weaknesses that cause data corruption, crashes, and incorrect outputs.
+**CWE Top 25 as a Defect Checklist Driver.** Use the Common Weakness Enumeration Top 25 (2025 edition) to prioritize which bug classes to hunt for. Many CWE entries — buffer overflows, null pointer dereferences, integer overflows, improper input validation — are correctness bugs as much as security issues. Focus first on weaknesses that cause data corruption, crashes, and incorrect outputs.
 
 **Google's Reviewer Focus Areas.** Google's publicly shared code review guidance directs reviewers to evaluate design correctness, functional behavior, edge cases, concurrency hazards, and test adequacy. Adopt this prioritization: architectural misfit first (highest impact), then logic errors, then edge cases and race conditions, then test gaps.
 
@@ -55,6 +65,10 @@ Follow these steps in order when reviewing code for bugs.
 - Concurrent scenarios are tested where applicable
 - Mutation-surviving test patterns are avoided (tests that pass regardless of code changes)
 
+Treat a test as placeholder or low-value if it lacks a specific assertion,
+only checks that code executes, or would still pass if the changed logic were
+inverted.
+
 **Step 6: Classify Findings by Severity.** Assign each finding a severity level using the classification rubric below, and record the evidence (specific code locations, execution conditions, expected vs actual behavior).
 
 ## Severity Classification
@@ -68,6 +82,30 @@ Assign findings using this three-tier rubric:
 **Minor** — Cosmetic logic issues with negligible impact, unreachable dead code, redundant defensive checks, minor test improvements, logging enhancements. Fix at author's discretion; do not block merge.
 
 For security-adjacent bugs, cross-reference with CVSS v4.0 scoring. For general defect classification and post-mortem analysis, apply IEEE 1044 or IBM Orthogonal Defect Classification (ODC) categories as described in `references/triage-workflow.md`.
+
+**Worked bug trace:**
+
+**Entry point:** `POST /api/orders` → `OrderController.create()`
+**Logic error at:** `src/services/orderService.ts:67`
+```typescript
+// BUG: off-by-one in quantity validation
+if (item.quantity > inventory.available) {  // should be >=
+  throw new InsufficientStockError();
+}
+// When quantity === available, the order succeeds but inventory goes to -1
+```
+**Downstream impact:** Negative inventory allows overselling; warehouse ships orders it cannot fulfill.
+**Catching test:**
+```typescript
+test('rejects order when quantity equals exact remaining inventory', () => {
+  const inventory = { available: 5 };
+  const order = { items: [{ productId: 'A', quantity: 5 }] };
+  // This test fails on the buggy code (no exception thrown)
+  expect(() => orderService.create(order, inventory))
+    .toThrow(InsufficientStockError);
+});
+```
+**Classification:** CWE-193 (Off-by-one Error), Severity: Major
 
 ## Detection Technique Recommendations
 
@@ -94,6 +132,9 @@ Consult `references/detection-techniques.md` for detailed guidance on each techn
 Structure the bug review report as follows:
 
 ```
+
+---
+
 ## Bug Review Report
 ### Summary
 - Total findings: [count] (Critical: [n], Major: [n], Minor: [n])
@@ -154,6 +195,21 @@ cross_references: [file:line pairs flagged for cross-skill attention]
 
 In both modes, prepare to defend each finding with specific evidence: code paths, reproducible conditions, and concrete expected-vs-actual behavior. The gatekeeper-code will challenge whether findings are real, whether severities are accurately calibrated, and whether important bug classes were missed given the nature of the code change.
 
+## Edge Cases & Failure Modes
+
+| Scenario | How to Handle |
+|----------|---------------|
+| No test suite exists | Report as a Major finding (untestable code). Recommend specific detection techniques from `references/detection-techniques.md` as compensating controls. Manual review depth increases. |
+| Change is configuration-only (no logic) | Focus on state corruption patterns: are defaults safe? Are types validated? Are migrations idempotent? Skip algorithm/logic bug classes. |
+| Concurrency code without clear threading model | Do not assume single-threaded. Check for shared mutable state, async patterns, and event loop behavior. If the threading model is unclear, flag as a finding. |
+| Third-party library code included in diff | Skip review of vendored/generated code. Review only the integration points and call sites. |
+| Bug report provided but not reproducible | Document the attempted reproduction steps. Classify as Possible (not Proven). Flag for monitoring rather than immediate fix. |
+| Massive diff (>1000 lines changed) | Focus on high-risk areas: entry points, data mutation, error paths, security boundaries. State the scope limitation. |
+| AI-generated code in the diff | Increase scrutiny on boundary conditions, off-by-one errors, and hallucinated API calls because AI-generated code frequently compiles but silently mishandles edge cases. Verify every assertion in AI-written tests actually exercises the stated behavior. |
+| Change spans multiple services with shared data contracts | Trace data flow across service boundaries. Check for schema version mismatches, backward-incompatibility in serialization, and missing validation at the receiving service. A bug in the contract affects all consumers. |
+
+---
+
 ## Additional Resources
 
 ### Reference Files
@@ -163,6 +219,9 @@ For detailed checklists, detection techniques, and triage workflows, consult:
 - **`references/checklist.md`** — Complete defect-focused reviewer checklist organized by 8 bug classes, with patterns, language-specific gotchas, and example findings for each category
 - **`references/detection-techniques.md`** — Deep dive on static analysis (Infer, SonarQube), sanitizers (ASan, MSan, UBSan, TSan), fuzzing (libFuzzer, OSS-Fuzz, ClusterFuzzLite, LibAFL), mutation testing (PIT, Stryker, mutmut), and property-based testing (Hypothesis, fast-check)
 - **`references/triage-workflow.md`** — Detailed triage process using IEEE 1044 and IBM ODC classification, severity rubrics, remediation workflow with repro artifact requirements, and defect metrics (density, escape rate, time-to-fix)
+
+---
+*Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) apply to all skills. See `../../references/universal-frameworks.md` for complete definitions.*
 
 ---
 
@@ -186,5 +245,8 @@ When `### Save Context` is present in the delegation with `Persistence active: y
    Followed by the full report content verbatim.
 
 2. If `### Save Context` is absent or `Persistence active: no`, skip all save operations — the skill operates identically to its pre-persistence behavior
+
+If any save operation fails, follow the Persistence-Failure Decision Tree
+in `save-protocol.md` §Persistence-Failure Decision Tree.
 
 See `save-protocol.md` (project root) for complete format specifications.

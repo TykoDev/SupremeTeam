@@ -10,9 +10,9 @@ claude_destination="${HOME}/.claude/skills"
 install_claude=0
 requested_teams=()
 
-core_items=(admiral gatekeeper-admiral references save-protocol.md)
+core_items=(admiral gatekeeper-admiral session-memory references save-protocol.md)
 all_teams=(design build review azure)
-managed_items=(admiral gatekeeper-admiral references save-protocol.md design build review azure)
+managed_items=(admiral gatekeeper-admiral session-memory references save-protocol.md design build review azure)
 selected_teams=()
 
 usage() {

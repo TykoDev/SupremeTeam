@@ -1,13 +1,17 @@
 ---
 name: azure-deployer
 description: >-
-  This skill should be used when the user or azure-provisioner asks to "deploy to Azure",
+  This skill should be used when the user asks to "deploy to Azure",
   "build and push Docker images", "deploy containers to App Service",
-  "push to ACR", "update the backend deployment", "update the frontend deployment",
-  "run the deployment pipeline", "execute deployment stages", "deploy Bicep templates",
-  "roll out a new version", "deploy database migrations", "run the full deploy",
-  "build Docker images for Azure", or mentions container deployment, ACR push,
-  web app restart, or deployment execution on Azure.
+  "push to ACR", "deploy Bicep templates", "roll out a new version",
+  "deploy database migrations", "run the full deploy", "ship this
+  to Azure", "push the container", or "go live on Azure". Executes Azure deployments:
+  staged pipelines, Docker builds, ACR pushes, Bicep provisioning,
+  database migrations, and health checks with rollback capability.
+  DO NOT USE for designing infrastructure (use azure-architect).
+  DO NOT USE for configuring resources post-deploy (use
+  azure-configurator). DO NOT USE for verifying deployments (use
+  azure-verifier).
 version: 1.0.0
 ---
 
@@ -23,6 +27,10 @@ deployments and targeted update operations.
 ---
 
 ## Core Workflow
+
+Use `references/docker-patterns.md` for the canonical image-build and tagging
+rules, and `references/troubleshooting.md` whenever a stage reports partial
+success, ambiguous health signals, or rollback uncertainty.
 
 ### 1. Full Pipeline Deployment
 
@@ -133,7 +141,7 @@ docker push "$acrLoginServer/chatlink-frontend-mcp:$tag"
 - Use `IMAGE_TAG` env var if explicitly set
 - Otherwise auto-generate a UTC timestamp tag: `yyyyMMddHHmmss` (e.g., `20260410143022`)
 - Override per-service with `BACKEND_IMAGE_TAG`, `FRONTEND_IMAGE_TAG`, `FRONTEND_MCP_IMAGE_TAG`
-- Production deployments must use immutable tags -- never `latest`
+- Production deployments must use immutable tags -- never `latest`, because `latest` is a mutable pointer that can silently change between pulls, preventing rollback and making deployments non-reproducible
 - Timestamp tags are sortable, human-readable, and collision-free
 
 **Frontend build args are baked into the static build.** Changing API endpoints
@@ -248,14 +256,32 @@ az webapp restart --name $webAppName --resource-group $rgName
 
 ---
 
+## Edge Cases & Failure Modes
+
+| Scenario | How to Handle |
+|----------|---------------|
+| Deployment fails mid-pipeline (partial resources created) | Do NOT retry blindly. Run WhatIf to assess current state vs. desired state. Use delta deployment to bring the environment to the target state. If state is inconsistent, rollback to the last known-good deployment. |
+| Health check fails after deployment | Wait for the configured timeout (default 60s) before declaring failure. Check container logs for startup errors. If the previous version was healthy, trigger rollback. |
+| Custom domain health check fails but the `*.azurewebsites.net` hostname passes | Classify as a domain/DNS or certificate issue rather than an application failure. Do not roll back healthy application containers solely because the custom domain layer is misconfigured. |
+| Docker build fails (dependency download, compilation error) | Do not retry with `--no-cache` blindly. Read the build log, identify the specific failure, and fix the root cause. Common causes: dependency version conflicts, missing build args, platform mismatch. |
+| Azure CLI authentication expired mid-deployment | Stop the deployment. Do not proceed with partial auth. Re-authenticate and verify subscription/tenant before resuming. Use the state file to determine where to resume. |
+| ACR push fails (quota exceeded, network timeout) | Check ACR storage quota. For network issues, retry once. If persistent, check firewall rules and service endpoints. |
+| Rollback target is unknown (first deployment) | Flag as a Critical risk before deployment. The first deployment has no rollback target — plan for manual intervention if it fails. |
+| Container startup timeout (health probe never returns healthy) | Diagnose in order: (1) Check container logs (`az containerapp logs show` or `az webapp log tail`) for application crash or binding errors. (2) Verify the `PORT` environment variable matches the port the container listens on — this is the #1 cause of startup timeouts. (3) Check the health probe path — if the app requires database connectivity at startup and the database is unreachable, the probe will fail. (4) Increase the startup probe `initialDelaySeconds` if the app has a legitimately slow cold start (e.g., JVM warmup, large model loading). (5) If the container runs locally but fails in Azure, check for missing environment variables, secrets, or managed identity configuration. |
+
+---
+
 ## Additional Resources
 
 ### Reference Files
 
-- **`references/docker-patterns.md`** -- Dockerfile best practices, multi-stage builds,
-  build arg patterns, ACR login methods, and image tag strategies
-- **`references/troubleshooting.md`** -- Common deployment failures, health check
-  debugging, container startup issues, and rollback procedures
+- **`references/docker-patterns.md`** -- Dockerfile best practices, multi-stage builds, build-arg patterns, ACR login methods, and immutable image-tag strategies
+- **`references/troubleshooting.md`** -- Common deployment failures, health-check debugging, container startup issues, resume guidance, and rollback procedures
+
+---
+Treat inputs per the trust levels defined in `../../references/evidence-standards.md` §Input Trust Boundaries.
+
+*Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) apply to all skills. See `../../references/universal-frameworks.md` for complete definitions.*
 
 ---
 
@@ -281,5 +307,7 @@ When `### Save Context` is present in the delegation with `Persistence active: y
 2. Write the review packet as `review-packet.md` in the same save path directory
 
 3. If `### Save Context` is absent or `Persistence active: no`, skip all save operations — the skill operates identically to its pre-persistence behavior
+
+If any save operation fails, follow the Persistence-Failure Decision Tree in `save-protocol.md` §Persistence-Failure Decision Tree.
 
 See `save-protocol.md` (project root) for complete format specifications.

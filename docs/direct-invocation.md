@@ -12,10 +12,15 @@ reference the matching `skills/.../SKILL.md` file explicitly.
 | Security audit | `security-review` or `security-builder` | "Use the security-review skill to audit this code for vulnerabilities" |
 | Penetration testing | `mr-robot` | "Use the mr-robot skill to adversarially test this API" |
 | Frontend audit | `frontier` | "Use the frontier skill to audit the frontend for accessibility" |
+| Visual QA | `design-qa` | "Use the design-qa skill to audit the UI for visual inconsistencies" |
+| Developer experience | `devex-review` | "Use the devex-review skill to test the onboarding flow" |
 | Write tests | `test-builder` | "Use the test-builder skill to create a test suite for this module" |
+| Debug a failure | `debugger` | "Use the debugger skill to investigate this error" |
+| Code health score | `health-check` | "Use the health-check skill to run a quality dashboard on this project" |
 | Architecture design | `architect` | "Use the architect skill to design the system architecture" |
 | Azure deployment | `azure-provisioner` | "Use the azure-provisioner skill to deploy this application to Azure" |
 | Azure infra audit | `gatekeeper-azure` | "Use the gatekeeper-azure skill to adversarially validate Azure deployment deliverables" |
+| Save progress | `session-memory` | "Use the session-memory skill to checkpoint the current state" |
 
 ## Fallback for Tools Without Skill Routing
 

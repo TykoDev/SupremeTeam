@@ -195,3 +195,30 @@ Issue an ESCALATE verdict only when:
 ### Salvageable Content
 [What parts of the deliverable, if any, can be reused]
 ```
+
+---
+
+## Evidence Artifact Requirements
+
+Every verdict issued by gatekeeper-design must produce a structured evidence
+artifact per **`../../references/evidence-standards.md`**. Use the canonical
+YAML frontmatter block and include the required findings table, challenge log,
+and verdict rationale in the body.
+
+### Substantive Change Detection
+
+When a specialist resubmits a deliverable after a REVISE verdict:
+
+1. Require a change summary listing each mandatory fix and the corresponding
+   modification (deliverable section, before/after excerpt)
+2. Verify each fix meets the minimum evidence specificity bar — a narrative
+   claim without a before/after diff excerpt is flagged as **Phantom Resolution**
+3. Check that the revision did not introduce new CRITICAL or MAJOR findings
+   outside the scope of the original mandatory fixes
+
+### Calibration Tracking
+
+Track challenge acceptance rate, critical finding rate, dispute rate, and mean
+rounds to resolution across phase reviews. Log calibration metrics in the run's
+`_audit-trail.md` and flag drift in the next verdict if metrics fall outside
+the healthy range for 3 consecutive reviews.

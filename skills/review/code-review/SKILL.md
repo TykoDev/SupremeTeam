@@ -4,11 +4,16 @@ description: >-
   This skill should be used when the user asks to "review this code",
   "do a code review", "review this pull request", "check this PR",
   "evaluate code changes", "review for design and complexity",
-  "assess code readiness for merge", "review this diff", or
-  "give feedback on this code". It performs comprehensive code review
-  covering design, functionality, complexity, tests, naming, comments,
-  style, and documentation using Google's 8-dimension framework with
-  risk-tiered PR assessment.
+  "assess code readiness for merge", "review this diff", "give
+  feedback on this code", "look at my changes", "what would you
+  comment on here?", "is this code okay?", or "is this ready to merge?". Performs
+  comprehensive code review covering design,
+  functionality, complexity, tests, naming, comments, style, and
+  documentation using Google's 8-dimension framework with risk-tiered
+  PR assessment (Low/Medium/High/Critical).
+  DO NOT USE for bug hunting (use bug-review). DO NOT USE for
+  security-specific review (use security-review). DO NOT USE for
+  frontend visual audit (use design-qa or frontier).
 version: 1.0.0
 ---
 
@@ -17,6 +22,9 @@ version: 1.0.0
 ## Purpose
 
 This skill performs comprehensive, general-purpose code review across the broadest possible scope. It applies Google's 8-dimension framework — design, functionality, complexity, tests, naming, comments, style, and documentation — holistically to every code change. It is distinct from the specialized skills (bug-review targets correctness defects, security-review targets exploitability, quality-review targets long-term maintainability) because it evaluates all dimensions together and provides a unified merge recommendation.
+
+Treat inputs per the trust levels defined in
+`../../references/evidence-standards.md` §Input Trust Boundaries.
 
 ## The 8 Review Dimensions
 
@@ -39,6 +47,9 @@ Evaluate every code change against these eight dimensions, adapted from Google's
 **Documentation.** Check whether READMEs, API docs, inline documentation, changelog entries, and migration guides are updated to reflect the change. If the change alters public APIs or user-facing behavior, documentation updates are mandatory, not optional.
 
 Consult `references/review-dimensions.md` for detailed guidance, common mistakes, and example review comments for each dimension.
+Use `references/pr-workflow.md` for the structural review flow and
+`references/feedback-guide.md` for phrasing and severity conventions so the
+review stays evidence-based and consistent from intake through final comments.
 
 ## PR Assessment Protocol
 
@@ -64,7 +75,9 @@ Consult `references/pr-workflow.md` for the complete risk-tiered PR lifecycle, m
 
 Follow these steps in order for each code review.
 
-**Step 1: Read the PR Description.** Understand the intent before reading code. Review the linked issue or requirement. Verify the PR description explains what changed and why.
+**Step 1: Validate Inputs.** Before reviewing, confirm the PR diff is complete and untruncated. If the diff is partial, file list is missing, or commit history is squashed beyond reconstruction, state the gap explicitly — do not review what you cannot see. Treat inputs per the trust levels in `../../references/evidence-standards.md` §Input Trust Boundaries.
+
+**Step 2: Read the PR Description.** Understand the intent before reading code. Review the linked issue or requirement. Verify the PR description explains what changed and why.
 
 **Step 2: AI-Generated Code Detection.** Assess whether the code appears to be AI-generated. Indicators include: uniform variable naming patterns, overly verbose comments restating the code, missing edge case handling, generic error messages, and suspiciously complete but shallow implementations. If AI generation is suspected, apply heightened scrutiny to: edge case handling, error path completeness, business logic correctness, and whether the code truly fits the project's patterns rather than being generic boilerplate. Document AI-generation suspicion in the report.
 
@@ -90,7 +103,7 @@ Effective review feedback is constructive, prioritized, and actionable.
 - **Optional:** Improvement that the author should consider but is explicitly not required.
 - **Question:** Seeking understanding, not requesting a change. Indicates the reviewer needs clarification.
 
-**Focus Human Attention.** Research shows only ~15% of code review comments address real defects — the bulk target style and formatting issues that automated linters should handle. Reserve human review comments for logic, security, architecture, and design. Automated tools should handle style, formatting, and known vulnerability patterns.
+**Focus Human Attention.** In practice, only a small share of review comments surface real defects when teams spend human time on style and formatting. Reserve human review comments for logic, security, architecture, and design. Automated tools should handle style, formatting, and known vulnerability patterns.
 
 **Handling Disagreements.** If the author and reviewer disagree on a non-blocking issue, the author's judgment prevails. For blocking issues, escalate to a third reviewer or team lead rather than engaging in prolonged debate.
 
@@ -100,11 +113,32 @@ Consult `references/feedback-guide.md` for detailed examples, comment transforma
 
 Google's guiding principle for code review: "A CL that improves the overall code health of the system should not be delayed for days because it isn't perfect." Balance thoroughness with velocity. Approve with minor nits rather than blocking on cosmetics. Provide the first review response within one business day to prevent systemic throughput collapse. Time-box individual review sessions to 60–90 minutes maximum — reviewer effectiveness degrades sharply after that point. This skill is language-agnostic and applies to any programming language, framework, or technology stack.
 
+**Worked review finding:**
+
+**Dimension:** Complexity (Dimension 3)
+**Location:** `src/utils/permissions.ts:12-45`
+**Finding:** Function `canAccess()` uses a 34-line nested if/else chain to check 6 permission levels. Cyclomatic complexity is 12.
+**Why it matters:** Each new permission level requires modifying the chain, increasing regression risk. The nested structure makes it easy to miss a branch during future changes.
+**Recommendation:** Replace with a strategy map:
+```typescript
+const permissionChecks: Record<Role, (resource: Resource) => boolean> = {
+  admin: () => true,
+  editor: (r) => r.ownerId === user.id || r.isPublic,
+  viewer: (r) => r.isPublic || r.sharedWith.includes(user.id),
+  // ...
+};
+return permissionChecks[user.role]?.(resource) ?? false;
+```
+**Severity:** Major (maintainability, not correctness — the current code works but resists change)
+
 ## Output Format
 
 Structure the code review report as follows:
 
 ```
+
+---
+
 ## Code Review Report
 ### Summary
 - **Verdict:** Approve | Approve with Nits | Request Changes
@@ -175,6 +209,21 @@ cross_references: [file:line pairs flagged for cross-skill attention]
 
 In both modes, the gatekeeper-code will challenge whether all dimensions were thoroughly assessed, whether the risk tier matches the actual change scope, and whether blocking items were correctly identified or missed.
 
+## Edge Cases & Failure Modes
+
+| Scenario | How to Handle |
+|----------|---------------|
+| No PR context (reviewing files directly) | Skip PR assessment protocol (size check, risk tier). Apply the 8-dimension review to the files as-is. Note the absence of PR context. |
+| AI-generated code detected | Apply extra scrutiny to all 8 dimensions. AI code often passes superficial review but fails on edge cases, error handling, and security. Check for hallucinated APIs or impossible patterns. |
+| Very large PR (>1000 lines) | Recommend splitting before reviewing. If splitting is not possible, focus on Design and Functionality first — these catch the highest-impact issues. Document what was not reviewed. |
+| Review of generated/scaffolded code | Skip cosmetic dimensions (Style, Naming). Focus on Design and Functionality for the customized portions. |
+| Reviewer lacks domain expertise | State the limitation. Focus on general code quality dimensions (Complexity, Tests, Style). Flag domain-specific logic for specialist review. |
+| Conflicting feedback from multiple reviewers | Apply the hierarchy: Blocking > Nit > Optional. For conflicting blocking items, escalate to the code owner. |
+| PR consists primarily of file deletions | Verify that no other code depends on the deleted files (imports, configuration references, test fixtures). Check for orphaned tests that tested the deleted code. Deletion PRs are high-risk for silent breakage because compilers may not catch all dynamic references. |
+| Code contains obfuscated or intentionally obscured logic | Flag as a Blocking finding. Obfuscated code cannot be meaningfully reviewed for correctness or security. Require the author to explain the logic in comments or refactor to readable form before the review can proceed. |
+
+---
+
 ## Additional Resources
 
 ### Reference Files
@@ -184,6 +233,9 @@ For detailed review guidance, PR workflows, and feedback conventions, consult:
 - **`references/review-dimensions.md`** — Detailed guidance for each of Google's 8 review dimensions, with questions to ask, common mistakes, and example review comments per dimension
 - **`references/pr-workflow.md`** — Complete risk-tiered PR lifecycle from pre-commit through post-merge, Ship/Show/Ask model with examples, stacked PR strategies, merge queues (Graphite, Aviator, GitHub native), and reviewer assignment patterns
 - **`references/feedback-guide.md`** — Constructive feedback conventions with before/after examples, severity prefix usage, handling disagreements, sandwich method for juniors, and time-boxing guidance
+
+---
+*Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) apply to all skills. See `../../references/universal-frameworks.md` for complete definitions.*
 
 ---
 
@@ -207,5 +259,8 @@ When `### Save Context` is present in the delegation with `Persistence active: y
    Followed by the full report content verbatim.
 
 2. If `### Save Context` is absent or `Persistence active: no`, skip all save operations — the skill operates identically to its pre-persistence behavior
+
+If any save operation fails, follow the Persistence-Failure Decision Tree
+in `save-protocol.md` §Persistence-Failure Decision Tree.
 
 See `save-protocol.md` (project root) for complete format specifications.

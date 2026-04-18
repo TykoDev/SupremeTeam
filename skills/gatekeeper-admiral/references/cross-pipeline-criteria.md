@@ -145,6 +145,20 @@ Check every item. A missing or placeholder deliverable is a CRITICAL finding.
 
 ---
 
+## Handoff 4: Review Package -> Azure Provisioning (When Stage 4 Active)
+
+Validate the approved delivery package is provision-ready.
+
+| # | Check | How to Verify | Severity if Failed |
+|---|-------|--------------|-------------------|
+| 1 | Infrastructure Alignment | Deployment topology matches architecture spec — container counts, service types, database engine, networking | CRITICAL |
+| 2 | Configuration Completeness | Env vars, connection strings, Key Vault refs, RBAC assignments sufficient for azure-provisioner without guessing | MAJOR |
+| 3 | Security Posture Continuity | Security findings resolved during review remain resolved in deployment config — no hardcoded secrets, TLS enforced, managed identity used | CRITICAL |
+| 4 | Artifact Readiness | Build artifacts (Docker images, compiled output, static assets) referenced by deployment config exist and are accessible | CRITICAL |
+| 5 | Rollback Specification | Rollback strategy documented — what to do if health checks fail, which prior version to restore | MAJOR |
+
+---
+
 ## Handoff 4: Azure Package -> Final Delivery (when Stage 4 executed)
 
 This handoff validates the Azure Provisioning Package when admiral has executed

@@ -1,0 +1,48 @@
+# Build-Management Agent Manifest
+
+name: build-management-agent
+type: sub-orchestrator
+version: 1.0.0
+parent: admiral-agent
+
+purpose: |
+  Autonomous build pipeline orchestrator. Manages four build phases
+  (bob-the-builder → test-builder → security-builder → cross-check-build-confirm)
+  with gatekeeper-build validating each phase. Produces a consolidated build package.
+
+capabilities:
+  - phase-management
+  - delegation
+  - state-persistence
+  - gate-validation
+
+tools_required:
+  - category: file-system
+    operations: [read, write, list, search]
+  - category: terminal
+    operations: [execute]
+  - category: search
+    operations: [semantic, grep]
+  - category: sub-agent
+    operations: [invoke, receive-result]
+  - category: diagnostics
+    operations: [get-errors]
+
+delegates_to:
+  - name: bob-the-builder
+    skill_path: build/bob-the-builder
+  - name: test-builder
+    skill_path: build/test-builder
+  - name: security-builder
+    skill_path: build/security-builder
+  - name: cross-check-build-confirm
+    skill_path: build/cross-check-build-confirm
+  - name: gatekeeper-build
+    skill_path: build/gatekeeper-build
+
+detection_rules:
+  agent_mode_conditions:
+    - sub-agent invocation available
+    - file system tools available
+    - terminal execution available
+  fallback: skill-mode

@@ -13,115 +13,178 @@
 > repository checkout unless their configured skill path points here or you have
 > copied the tree into `~/.agents/skills/` or `%USERPROFILE%\.agents\skills\`.
 
+## Entry Routing
+
+`admiral` is the **primary entry orchestrator** — the single front door for the
+entire delivery lifecycle (design, build, review, ship, investigate,
+checkpoint/resume, gate validation, skill/team creation). Every in-scope request
+initiates through `admiral` so that one intake, one persisted run, and one
+cross-stage gatekeeper govern the whole pipeline. The binding contract is in
+`skills/routing-doctrine.md` and is reinforced deterministically by the
+`harness/hooks/user_prompt_submit.py` hook. Standalone Tier-4 tools
+(`safety-guardrails/*`, `browser-automation/*`, `release-and-deployment/*`,
+`testing-and-qa/*`) run directly, outside this routing.
+
+| Tier | Skills |
+|------|--------|
+| **Entry orchestrator** | `admiral` |
+| **In-scope (must defer to admiral when reached cold)** | `design/commander`, `build/build-management`, `review/code-chief`, `skill-maker`, `investigate`, `session-memory`, `gatekeeper-admiral` |
+| **Internal specialists** | every skill under `design/`, `build/`, `review/` not listed above |
+| **Standalone tools** | `safety-guardrails/*`, `browser-automation/*`, `release-and-deployment/*`, `testing-and-qa/*` (plus the host `update-config` skill) |
+
 ## Admiral Layer (2 skills)
 
 | Skill | Path | Role |
 |-------|------|------|
-| **admiral** | `skills/admiral/SKILL.md` | Top-level pipeline orchestrator — single entry point for the full design-build-review-provision lifecycle |
-| **gatekeeper-admiral** | `skills/gatekeeper-admiral/SKILL.md` | Cross-pipeline adversarial validator — validates handoffs between sub-pipelines |
+| **admiral** | `skills/admiral/SKILL.md` | Primary entry orchestrator — single front door for the full design→build→review delivery lifecycle, plus investigation, resume, and skill/team creation |
+| **gatekeeper-admiral** | `skills/gatekeeper-admiral/SKILL.md` | Cross-stage adversarial validator — validates handoff packages at every major delivery boundary |
 
-## Design Sub-Pipeline (7 skills)
+## Design Sub-Pipeline (6 skills)
 
 | Skill | Path | Role |
 |-------|------|------|
 | **commander** | `skills/design/commander/SKILL.md` | Design pipeline orchestrator — delegates to specialists, owns gatekeeper-design cycles |
-| **researcher** | `skills/design/researcher/SKILL.md` | Requirements gathering and domain analysis (SRS, bounded contexts) |
-| **planner** | `skills/design/planner/SKILL.md` | Project planning with milestones, risk register, and rollout strategy |
-| **architect** | `skills/design/architect/SKILL.md` | System architecture design with C4 diagrams, ADRs, API contracts |
-| **designer** | `skills/design/designer/SKILL.md` | UI/UX architecture — frontend strategy, design tokens, component system |
-| **engineer** | `skills/design/engineer/SKILL.md` | Implementation specification — repo structure, DevOps, CI/CD, security controls |
-| **gatekeeper-design** | `skills/design/gatekeeper-design/SKILL.md` | Adversarial quality gate for design deliverables |
+| **researcher** | `skills/design/researcher/SKILL.md` | Requirements gathering and domain analysis — grounds the design in evidence |
+| **planner** | `skills/design/planner/SKILL.md` | Delivery planning with milestones, rollout strategy, decision gates, and risk handling |
+| **architect** | `skills/design/architect/SKILL.md` | System architecture (interfaces, API contracts, component boundaries, data flow) **and** owner of the frontend/UI visual design system (shadcn/ui tokens, component template, UI/UX spec, design review) for user-facing surfaces |
+| **engineer** | `skills/design/engineer/SKILL.md` | Implementation specification — delivery slices, dependency order, operational constraints |
+| **gatekeeper-design** | `skills/design/gatekeeper-design/SKILL.md` | Adversarial quality gate for design deliverables (design→build boundary) |
 
-### Tech-Stack Templates (14 files)
-
-Located at `skills/design/tech-stacks/`. These are data files (not skills) providing
-backend and frontend stack configurations consumed by architect and designer:
-
-`angular.md` · `astro.md` · `bun-typescript.md` · `deno-typescript.md` ·
-`dotnet-aspnet.md` · `go-gin.md` · `node-typescript.md` · `python-fastapi.md` ·
-`react-nextjs.md` · `react-tanstack.md` · `rust-axum.md` · `svelte-sveltekit.md` ·
-`vite-spa.md` · `vue-nuxt.md`
+> The frontend/UI design system that previously lived in a separate `designer`
+> skill is now owned by **architect** per `skills/design-doctrine.md`. There is
+> no separate `designer` skill and no `tech-stacks/` template library.
 
 ## Build Sub-Pipeline (8 skills)
 
 | Skill | Path | Role |
 |-------|------|------|
 | **build-management** | `skills/build/build-management/SKILL.md` | Build pipeline orchestrator — delegates to specialists, owns gatekeeper-build cycles |
-| **bob-the-builder** | `skills/build/bob-the-builder/SKILL.md` | Senior development engineer — translates design to production code |
-| **test-builder** | `skills/build/test-builder/SKILL.md` | Test engineer — creates comprehensive unit, integration, and E2E test suites |
-| **security-builder** | `skills/build/security-builder/SKILL.md` | Security auditor — maps findings to OWASP Top 10, CWE Top 25, NIST SSDF |
-| **cross-check-build-confirm** | `skills/build/cross-check-build-confirm/SKILL.md` | Completeness scanner — verifies no scaffolding, TODOs, or placeholders remain |
-| **debugger** | `skills/build/debugger/SKILL.md` | Systematic root-cause debugging — hypothesis-driven investigation with 5-phase methodology |
-| **health-check** | `skills/build/health-check/SKILL.md` | Code quality dashboard — composite scoring across type safety, lint, tests, dead code |
-| **gatekeeper-build** | `skills/build/gatekeeper-build/SKILL.md` | Adversarial validator of build outputs — challenges code, tests, security audits |
+| **bob-the-builder** | `skills/build/bob-the-builder/SKILL.md` | Implements approved scope as production code without placeholders or unowned TODOs |
+| **test-builder** | `skills/build/test-builder/SKILL.md` | Builds the automated test surface across intended scope and key failure paths |
+| **security-builder** | `skills/build/security-builder/SKILL.md` | Hardens the implementation — unsafe dependencies, insecure patterns, missing controls |
+| **cross-check-build-confirm** | `skills/build/cross-check-build-confirm/SKILL.md` | Internal completeness cross-check — verifies the build package is complete and consistent |
+| **debugger** | `skills/build/debugger/SKILL.md` | Isolates root causes of a reproduced build-phase failure and returns a bounded fix path |
+| **health-check** | `skills/build/health-check/SKILL.md` | Verifies runtime health, startup readiness, and environment dependencies |
+| **gatekeeper-build** | `skills/build/gatekeeper-build/SKILL.md` | Adversarial validator of build outputs (build→review boundary) |
 
-## Review Sub-Pipeline (10 skills)
+## Review Sub-Pipeline (11 skills)
 
 | Skill | Path | Role |
 |-------|------|------|
 | **code-chief** | `skills/review/code-chief/SKILL.md` | Review pipeline orchestrator — delegates to specialists, owns gatekeeper-code cycles |
-| **bug-review** | `skills/review/bug-review/SKILL.md` | Systematic bug detection using CWE-driven checklists and defect classification |
-| **code-review** | `skills/review/code-review/SKILL.md` | Holistic 8-dimension code review (design, complexity, tests, naming, style) |
-| **quality-review** | `skills/review/quality-review/SKILL.md` | Code health audits — maintainability, standards adherence, architecture drift |
-| **security-review** | `skills/review/security-review/SKILL.md` | Vulnerability detection using NIST SSDF, OWASP ASVS, STRIDE threat modeling |
-| **mr-robot** | `skills/review/mr-robot/SKILL.md` | Adversarial penetration testing with proof-of-concept exploit chains |
-| **frontier** | `skills/review/frontier/SKILL.md` | Frontend performance, accessibility (WCAG 2.2), and security auditor |
-| **design-qa** | `skills/review/design-qa/SKILL.md` | Frontend visual quality assurance — audits rendered output against design tokens and visual best practices |
-| **devex-review** | `skills/review/devex-review/SKILL.md` | Developer experience auditor — live evidence-based DX audit across 8 dimensions with TTHW measurement |
-| **gatekeeper-code** | `skills/review/gatekeeper-code/SKILL.md` | Adversarial meta-reviewer — validates all specialist review reports |
+| **bug-review** | `skills/review/bug-review/SKILL.md` | Correctness defects, broken invariants, crash paths, data-corruption risks |
+| **code-review** | `skills/review/code-review/SKILL.md` | Merge readiness, local code quality, change risk, and clarity for the change as submitted |
+| **quality-review** | `skills/review/quality-review/SKILL.md` | Maintainability, architecture drift, standards compliance, tech-debt pressure |
+| **security-review** | `skills/review/security-review/SKILL.md` | Defensive security posture, dependency exposure, access-control and data-handling risk |
+| **cso** | `skills/review/cso/SKILL.md` | Security-leadership oversight — governance, accepted risk, release posture, control gaps |
+| **mr-robot** | `skills/review/mr-robot/SKILL.md` | Adversarial penetration testing — exploit paths, abuse cases, chaining conditions |
+| **frontier** | `skills/review/frontier/SKILL.md` | Frontend performance, accessibility, robustness, and component behavior |
+| **design-qa** | `skills/review/design-qa/SKILL.md` | Visual quality assurance — hierarchy, token adherence, responsive behavior, interaction polish |
+| **devex-review** | `skills/review/devex-review/SKILL.md` | Developer experience — onboarding, tool ergonomics, docs clarity, integration friction |
+| **gatekeeper-code** | `skills/review/gatekeeper-code/SKILL.md` | Adversarial meta-reviewer — validates consolidated review packages (review→delivery boundary) |
 
-## Azure Provision Sub-Pipeline (7 skills)
+## Investigation (1 skill)
 
 | Skill | Path | Role |
 |-------|------|------|
-| **azure-provisioner** | `skills/azure/azure-provisioner/SKILL.md` | Azure pipeline orchestrator — delegates to specialists, owns gatekeeper-azure cycles |
-| **azure-planner** | `skills/azure/azure-planner/SKILL.md` | Azure deployment strategy, stage sequencing, and runbook planning |
-| **azure-architect** | `skills/azure/azure-architect/SKILL.md` | Azure infrastructure design — Bicep templates, resource topology, naming |
-| **azure-configurator** | `skills/azure/azure-configurator/SKILL.md` | Azure resource configuration — RBAC, Key Vault, app settings, PostgreSQL auth |
-| **azure-deployer** | `skills/azure/azure-deployer/SKILL.md` | Azure deployment execution — Docker builds, ACR push, container deployment |
-| **azure-verifier** | `skills/azure/azure-verifier/SKILL.md` | Post-deployment verification — health checks, schema validation, smoke tests |
-| **gatekeeper-azure** | `skills/azure/gatekeeper-azure/SKILL.md` | Unified adversarial quality gate for Azure provisioning deliverables |
+| **investigate** | `skills/investigate/SKILL.md` | Disciplined root-cause analysis across code, logs, runtime clues, and environmental evidence when the failure shape is still unclear (in-scope Admiral component) |
+
+## Skill Maker (3 skills)
+
+| Skill | Path | Role |
+|-------|------|------|
+| **skill-maker** | `skills/skill-maker/SKILL.md` | End-to-end orchestrator for creating, reviewing, improving, optimizing, and packaging Claude skills and coordinated skill teams |
+| **skill-creator** | `skills/skill-maker/skill-creator/SKILL.md` | Drafts and improves skills — SKILL.md authoring, supporting files, evals, trigger tuning, `.skill` packaging |
+| **skill-reviewer** | `skills/skill-maker/skill-reviewer/SKILL.md` | Adversarial quality gate for skills — scores 0–100 across a 10-dimension rubric and returns a prioritized fix list |
 
 ## Session Memory (1 skill)
 
 | Skill | Path | Role |
 |-------|------|------|
-| **session-memory** | `skills/session-memory/SKILL.md` | Cross-session state and learnings manager — checkpoints for resume and JSONL learnings for accumulated project knowledge |
+| **session-memory** | `skills/session-memory/SKILL.md` | Cross-session state and learnings manager — checkpoints for resume and durable learnings for accumulated project knowledge |
 
-## Shared Resources
+## Browser Automation (4 skills · standalone tools)
+
+| Skill | Path | Role |
+|-------|------|------|
+| **browse** | `skills/browser-automation/browse/SKILL.md` | Drives an existing browser session via an evidence-first page-reading workflow |
+| **open-browser** | `skills/browser-automation/open-browser/SKILL.md` | Launches a visible browser workspace, reusing an available browser before installing one |
+| **setup-browser-cookies** | `skills/browser-automation/setup-browser-cookies/SKILL.md` | Imports/prepares authenticated browser session state for protected surfaces |
+| **pair-agent** | `skills/browser-automation/pair-agent/SKILL.md` | Pairs a remote collaborator to a browser session with short-lived scoped access |
+
+## Release & Deployment (4 skills · standalone tools)
+
+| Skill | Path | Role |
+|-------|------|------|
+| **ship** | `skills/release-and-deployment/ship/SKILL.md` | End-to-end release orchestration — readiness, launch sequencing, verification, follow-up |
+| **land-and-deploy** | `skills/release-and-deployment/land-and-deploy/SKILL.md` | Combined merge, rollout, verification, and post-release checks with rollback awareness |
+| **setup-deploy** | `skills/release-and-deployment/setup-deploy/SKILL.md` | Defines durable deployment settings and environment conventions for reuse |
+| **document-release** | `skills/release-and-deployment/document-release/SKILL.md` | Release notes, operational follow-up, and product documentation paper trail |
+
+## Safety Guardrails (4 skills · standalone tools)
+
+| Skill | Path | Role |
+|-------|------|------|
+| **guard** | `skills/safety-guardrails/guard/SKILL.md` | Combined intent checks + write boundaries — bundles careful and freeze |
+| **careful** | `skills/safety-guardrails/careful/SKILL.md` | Intent/confirmation check before destructive or irreversible actions |
+| **freeze** | `skills/safety-guardrails/freeze/SKILL.md` | Locks a declared path/boundary from edits until explicitly lifted |
+| **unfreeze** | `skills/safety-guardrails/unfreeze/SKILL.md` | Clears an active protection boundary and records the area is open again |
+
+> The guard/freeze boundary is enforced deterministically by
+> `harness/hooks/pre_tool_use.py` via `.harness-state/guard-state.json`.
+
+## Testing & QA (3 skills · standalone tools)
+
+| Skill | Path | Role |
+|-------|------|------|
+| **qa** | `skills/testing-and-qa/qa/SKILL.md` | Systematic product testing that records evidence, applies scoped fixes, and reruns until stable |
+| **qa-only** | `skills/testing-and-qa/qa-only/SKILL.md` | Read-only product testing — evidence-backed defect report without applying fixes |
+| **benchmark** | `skills/testing-and-qa/benchmark/SKILL.md` | Comparative performance/workflow-speed measurement with repeatable evidence |
+
+## Runtime Harness (infrastructure, not skills)
+
+Located at `skills/harness/`. Deterministic enforcement of the lifecycle layers
+defined in `skills/harness-doctrine.md`. See `skills/harness/hooks/README.md` and
+`skills/harness/gatekeeper/README.md`.
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| **pre_tool_use.py** | `skills/harness/hooks/pre_tool_use.py` | `PreToolUse` hook — blocks dangerous shell commands and writes into a frozen/guarded boundary (Layer 3 Action Realization) |
+| **post_tool_use.py** | `skills/harness/hooks/post_tool_use.py` | `PostToolUse` hook — detects repeated failures, empty-output streaks, oscillation; injects a recovery hint (Layer 4 Trajectory Regulation) |
+| **user_prompt_submit.py** | `skills/harness/hooks/user_prompt_submit.py` | `UserPromptSubmit` hook — advisory entry-routing reminder steering lifecycle requests through `admiral` |
+| **verify_registration.py** | `skills/harness/hooks/verify_registration.py` | Diagnostic — confirms the three hooks are registered in a host `settings.json` (run by admiral at intake) |
+| **\_gatecheck.py** | `skills/harness/gatekeeper/_gatecheck.py` | Shared stdlib gate engine behind every `gatekeeper-*` skill's `scripts/check.py` — deterministic, fail-loud package checks |
+
+> Hook registration lives in the host `settings.json` and is owned by the
+> `update-config` skill. Hooks are stdlib-only and fail open; the gate engine
+> fails loud (a gate that cannot prove a package clean must never approve it).
+
+## Doctrine & Protocol Files (skill set root)
 
 | File | Path | Purpose |
 |------|------|---------|
-| **save-protocol.md** | `skills/save-protocol.md` | Persistent save system specification for pipeline state, resume, and audit trails |
-| **responsibility-matrix.md** | `skills/admiral/references/responsibility-matrix.md` | Unified responsibility, trigger, input/output, escalation, and save ownership matrix for all pipeline components |
-| **handoff-templates.md** (cross-pipeline) | `skills/admiral/references/handoff-templates.md` | Cross-pipeline handoff delegation templates used by admiral and gatekeeper-admiral |
-| **handoff-templates.md** (universal) | `skills/references/handoff-templates.md` | Universal delegation handoff templates used by all sub-orchestrators for specialist delegations |
-| **evidence-standards.md** | `skills/references/evidence-standards.md` | Input trust boundaries and evidence quality standards used by all skills |
-| **universal-frameworks.md** | `skills/references/universal-frameworks.md` | Cross-cutting frameworks (Build & Implementation, Iron-Law Debugging, Azure Deployment, Adversarial Anti-Gaming) |
-
-> Note: the table above lists the canonical shared handoff-template files.
-> Orchestrator-local handoff-template files also exist under
-> `skills/design/commander/references/`,
-> `skills/build/build-management/references/`,
-> `skills/review/code-chief/references/`, and
-> `skills/azure/azure-provisioner/references/`.
+| **routing-doctrine.md** | `skills/routing-doctrine.md` | Entry-routing contract: admiral as the front door, skill tiers, active-handoff loop guard, hook reinforcement |
+| **grill-me-doctrine.md** | `skills/grill-me-doctrine.md` | Binding intake interview protocol run before any delegation |
+| **design-doctrine.md** | `skills/design-doctrine.md` | Frontend/UI design-system doctrine (shadcn/ui token system) owned by architect |
+| **harness-doctrine.md** | `skills/harness-doctrine.md` | Runtime harness doctrine — four lifecycle layers, failure taxonomy, engineering non-negotiables |
+| **mcp-tools.md** | `skills/mcp-tools.md` | Global MCP tool registry; admiral enforces its `discovery_ttl_hours` freshness rule (default 480h) at intake |
+| **save-protocol.md** | `skills/save-protocol.md` | Persistent save system specification — directory structure, file formats, write probe, mode re-check, session pin, resume protocol |
 
 ## Directory Layout
 
 ```
 skills/
-├── admiral/                      # Top-level orchestrator
-│   └── references/              # workflow-protocol, handoff-templates, delivery-template, responsibility-matrix
-├── gatekeeper-admiral/           # Cross-pipeline validator
-├── design/                       # Design sub-pipeline (7 skills + tech-stacks)
+├── admiral/                      # Primary entry orchestrator
+│   ├── references/              # workflow.md, examples.md
+│   └── agent/                   # agent-manifest.yaml, agent-protocol.md, adapters/{claude,codex,copilot}.md
+├── gatekeeper-admiral/           # Cross-stage validator (+ scripts/check.py)
+├── design/                       # Design sub-pipeline (6 skills)
 │   ├── commander/
 │   ├── researcher/
 │   ├── planner/
-│   ├── architect/
-│   ├── designer/
+│   ├── architect/               # also owns the frontend/UI design system
 │   ├── engineer/
-│   ├── gatekeeper-design/
-│   └── tech-stacks/             # 14 stack templates
+│   └── gatekeeper-design/       # + scripts/check.py
 ├── build/                        # Build sub-pipeline (8 skills)
 │   ├── build-management/
 │   ├── bob-the-builder/
@@ -130,36 +193,62 @@ skills/
 │   ├── cross-check-build-confirm/
 │   ├── debugger/
 │   ├── health-check/
-│   └── gatekeeper-build/
-├── review/                       # Review sub-pipeline (10 skills)
+│   └── gatekeeper-build/        # + scripts/check.py
+├── review/                       # Review sub-pipeline (11 skills)
 │   ├── code-chief/
 │   ├── bug-review/
 │   ├── code-review/
 │   ├── quality-review/
 │   ├── security-review/
+│   ├── cso/
 │   ├── mr-robot/
 │   ├── frontier/
 │   ├── design-qa/
 │   ├── devex-review/
-│   └── gatekeeper-code/
-├── azure/                        # Azure provision sub-pipeline (7 skills)
-│   ├── azure-provisioner/
-│   ├── azure-planner/
-│   ├── azure-architect/
-│   ├── azure-configurator/
-│   ├── azure-deployer/
-│   ├── azure-verifier/
-│   └── gatekeeper-azure/
+│   └── gatekeeper-code/         # + scripts/check.py
+├── investigate/                  # Root-cause analysis (in-scope component)
+├── skill-maker/                  # Skill/team creation orchestrator
+│   ├── skill-creator/
+│   └── skill-reviewer/
 ├── session-memory/               # Cross-session state & learnings manager
-├── references/                   # Shared universal references
-└── save-protocol.md              # Persistent save system specification
+├── browser-automation/           # Standalone tools (4)
+│   ├── browse/
+│   ├── open-browser/
+│   ├── setup-browser-cookies/
+│   └── pair-agent/
+├── release-and-deployment/       # Standalone tools (4)
+│   ├── ship/
+│   ├── land-and-deploy/
+│   ├── setup-deploy/
+│   └── document-release/
+├── safety-guardrails/            # Standalone tools (4)
+│   ├── guard/
+│   ├── careful/
+│   ├── freeze/
+│   └── unfreeze/
+├── testing-and-qa/               # Standalone tools (3)
+│   ├── qa/
+│   ├── qa-only/
+│   └── benchmark/
+├── harness/                      # Runtime harness (infrastructure)
+│   ├── hooks/                   # pre/post tool-use, user-prompt-submit, verify_registration
+│   └── gatekeeper/              # _gatecheck.py deterministic gate engine
+├── routing-doctrine.md
+├── grill-me-doctrine.md
+├── design-doctrine.md
+├── harness-doctrine.md
+├── mcp-tools.md
+└── save-protocol.md
 ```
 
-**Total: 35 skills + 14 tech-stack templates**
+**Total: 47 skills** (Admiral 2 · Design 6 · Build 8 · Review 11 · Investigate 1 ·
+Skill-Maker 3 · Session-Memory 1 · Browser-Automation 4 · Release-and-Deployment 4 ·
+Safety-Guardrails 4 · Testing-and-QA 3), plus the runtime harness and six
+doctrine/protocol files.
 
-> **Note on folder depth:** `admiral` and `gatekeeper-admiral` sit directly under
-> `skills/` (depth 2) because they orchestrate across all sub-pipelines.
-> `session-memory` also sits at depth 2 as a cross-cutting utility skill. All
-> other skills are nested under their pipeline category directory (depth 3).
-> This manifest provides the authoritative flat index for tool discovery
-> regardless of nesting depth.
+> **Note on folder depth:** `admiral`, `gatekeeper-admiral`, `investigate`,
+> `skill-maker`, and `session-memory` sit directly under `skills/` (depth 2)
+> because they are cross-cutting Admiral-pipeline components. Pipeline-stage
+> skills nest under their category directory (`design/`, `build/`, `review/`),
+> and standalone tools nest under their group directory. This manifest provides
+> the authoritative flat index for tool discovery regardless of nesting depth.

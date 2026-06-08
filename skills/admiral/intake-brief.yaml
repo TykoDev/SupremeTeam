@@ -1,0 +1,55 @@
+skill_name: admiral
+target_path: admiral/
+purpose: |
+  Orchestrates the end-to-end delivery lifecycle across design, build, and
+  review work. Selects the earliest incomplete stage,
+  manages cross-stage handoffs, and delivers a unified package with traceability.
+triggers:
+  - run the full pipeline
+  - design build review
+  - continue from an approved design package
+  - ship this end to end
+  - resume the pipeline
+  - create a skill
+  - build me a skill for
+  - create a team of skills
+  - build me a pipeline for
+  - run admiral
+inputs:
+  - user request and project constraints
+  - approved upstream packages when resuming or running partial scope
+  - persistence context when save state is active
+outputs:
+  - unified delivery package
+  - handoff records for each completed cross-stage boundary
+  - user escalation summary when a blocking decision is required
+  - validated .skill package when running skill-creation mode
+  - coordinated team package when running team-creation mode
+severity_model: shared 4-tier (Critical | Major | Minor | Info)
+required_contracts:
+  - Preamble Tier System
+  - Proactive triggers
+  - Shared severity
+  - Idempotent handoff submissions
+  - Persistence-aware rewind rules
+  - Save-Protocol Adherence (write-probe before first save)
+  - Mode Re-Check (per-boundary three-capability probe)
+  - Session Routing (admiral pin while *_ACTIVE)
+  - MCP Registry Freshness (480-hour TTL on mcp-tools.md)
+discovery:
+  mcp_registry_path: mcp-tools.md
+  mcp_registry_max_age_hours: 480
+  save_protocol_path: save-protocol.md
+  persistence_probe_required: true
+  mode_recheck_required: true
+  session_pin_supported: true
+authoring_rules:
+  - First-principles wording only
+  - No provenance or comparison language
+  - No references to planning-note filenames inside generated artifacts
+  - Supporting files must be one level deep and directly referenced
+acceptance:
+  rubric_score: 100/100
+  blocked_phrase_scan: zero hits
+  cross_cutting_contracts_embedded: true
+  package_ready: true

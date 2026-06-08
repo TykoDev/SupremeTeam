@@ -1,0 +1,35 @@
+skill_name: build-management
+target_path: build/build-management/
+purpose: |
+  Orchestrates implementation from an approved design package to a production-
+  ready build package. Owns coding, testing, security hardening, completeness
+  confirmation, and gate routing across the build pipeline.
+triggers:
+  - implement this design
+  - start the build pipeline
+  - build this project
+  - turn the specification into code
+  - execute the implementation plan
+inputs:
+  - approved design package or equivalent implementation specification
+  - module and feature scope for the requested build
+  - persistence context when delegated or resumed
+outputs:
+  - consolidated build package
+  - phase approval records
+  - remediation routing summary when revisions occur
+severity_model: shared 4-tier (Critical | Major | Minor | Info)
+required_contracts:
+  - Proactive triggers
+  - Shared severity
+  - Delegated vendoring detection
+  - Fail-closed mandatory phases
+authoring_rules:
+  - First-principles wording only
+  - No provenance or comparison language
+  - No references to planning-note filenames inside generated artifacts
+  - Supporting files must be one level deep and directly referenced
+acceptance:
+  blocked_phrase_scan: zero hits
+  cross_cutting_contracts_embedded: true
+  package_ready: true

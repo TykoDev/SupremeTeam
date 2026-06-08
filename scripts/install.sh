@@ -10,9 +10,49 @@ claude_destination="${HOME}/.claude/skills"
 install_claude=0
 requested_teams=()
 
-core_items=(admiral gatekeeper-admiral session-memory references save-protocol.md)
-all_teams=(design build review azure)
-managed_items=(admiral gatekeeper-admiral session-memory references save-protocol.md design build review azure)
+# Core components are always installed: the Admiral pipeline spine, the runtime
+# harness (hooks + deterministic gate engine), and the root doctrine/protocol files.
+core_items=(
+    admiral
+    gatekeeper-admiral
+    session-memory
+    investigate
+    skill-maker
+    harness
+    design-doctrine.md
+    grill-me-doctrine.md
+    harness-doctrine.md
+    mcp-tools.md
+    routing-doctrine.md
+    save-protocol.md
+)
+
+# Friendly team name -> source directory under skills/.
+all_teams=(design build review browser release safety testing)
+
+team_dir() {
+    case "$1" in
+        design)  printf 'design' ;;
+        build)   printf 'build' ;;
+        review)  printf 'review' ;;
+        browser) printf 'browser-automation' ;;
+        release) printf 'release-and-deployment' ;;
+        safety)  printf 'safety-guardrails' ;;
+        testing) printf 'testing-and-qa' ;;
+        *)       return 1 ;;
+    esac
+}
+
+managed_items=("${core_items[@]}")
+for team in "${all_teams[@]}"; do
+    managed_items+=("$(team_dir "$team")")
+done
+
+# Paths from older Supreme Team layouts that are no longer shipped. Removed from
+# the destination on each run so an in-place update over an old install does not
+# leave stale directories behind. Not part of the source-layout assertion.
+legacy_items=(azure references design/tech-stacks)
+
 selected_teams=()
 
 usage() {
@@ -20,7 +60,9 @@ usage() {
 Usage: bash ./scripts/install.sh [options]
 
 Options:
-  --team NAME               Install one team (design, build, review, azure). Repeatable.
+  --team NAME               Install one team. Repeatable. One of:
+                              design, build, review,
+                              browser, release, safety, testing
   --destination PATH        Override the default agent skill path.
   --install-claude          Mirror the install into ~/.claude/skills.
   --claude-destination PATH Override the Claude Code skill path.
@@ -58,10 +100,8 @@ assert_source_layout() {
     done
 
     for item in "${all_teams[@]}"; do
-        [[ -d "$source_root/$item" ]] || die "Missing source team '$item' at '$source_root/$item'."
+        [[ -d "$source_root/$(team_dir "$item")" ]] || die "Missing source team '$item' at '$source_root/$(team_dir "$item")'."
     done
-
-    [[ -d "$source_root/design/tech-stacks" ]] || die "Missing design tech-stack directory at '$source_root/design/tech-stacks'."
 }
 
 resolve_teams() {
@@ -81,13 +121,13 @@ resolve_teams() {
                 selected_teams=("${all_teams[@]}")
                 return
                 ;;
-            design|build|review|azure)
+            design|build|review|browser|release|safety|testing)
                 if ! contains_value "$normalized" "${resolved[@]}"; then
                     resolved+=("$normalized")
                 fi
                 ;;
             *)
-                die "Unknown team '$requested'. Use design, build, review, azure, or all."
+                die "Unknown team '$requested'. Use design, build, review, browser, release, safety, testing, or all."
                 ;;
         esac
     done
@@ -102,6 +142,10 @@ clear_destination() {
 
     local item
     for item in "${managed_items[@]}"; do
+        rm -rf "$target_root/$item"
+    done
+
+    for item in "${legacy_items[@]}"; do
         rm -rf "$target_root/$item"
     done
 }
@@ -122,12 +166,8 @@ assert_destination_layout() {
     done
 
     for item in "${selected_teams[@]}"; do
-        [[ -d "$target_root/$item" ]] || die "Missing installed team '$item' at '$target_root/$item'."
+        [[ -d "$target_root/$(team_dir "$item")" ]] || die "Missing installed team '$item' at '$target_root/$(team_dir "$item")'."
     done
-
-    if contains_value "design" "${selected_teams[@]}"; then
-        [[ -d "$target_root/design/tech-stacks" ]] || die "Missing installed design tech-stack directory at '$target_root/design/tech-stacks'."
-    fi
 }
 
 install_supreme_team() {
@@ -141,7 +181,7 @@ install_supreme_team() {
     done
 
     for item in "${selected_teams[@]}"; do
-        copy_source_item "$item" "$target_root"
+        copy_source_item "$(team_dir "$item")" "$target_root"
     done
 
     assert_destination_layout "$target_root"
@@ -207,3 +247,4 @@ printf 'Target: %s\n' "$destination"
 printf 'Teams: %s\n' "$(format_team_list)"
 printf 'Claude mirror: %s\n' "$claude_status"
 printf 'Restart your assistant session if it was already running.\n'
+printf 'Register the runtime harness hooks via the update-config skill to enable deterministic entry routing and action guards.\n'

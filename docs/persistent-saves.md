@@ -24,8 +24,7 @@ your-project/
 │           ├── _audit-trail.md    # Every state transition logged
 │           ├── design/            # Design phase deliverables + verdicts
 │           ├── build/             # Build phase deliverables + verdicts
-│           ├── review/            # Review phase reports + verdicts
-│           └── azure/             # Azure phase deliverables + verdicts
+│           └── review/            # Review phase reports + verdicts
 ├── src/
 └── ...
 ```
@@ -41,10 +40,11 @@ your-project/
   submissions or lost verdicts
 - **Lease-based session locking**: `_lock.md` with heartbeat refresh prevents
   concurrent session corruption and enables stale-session detection on resume
-- **Standalone sub-orchestrator support**: Each sub-orchestrator (commander,
-  build-management, code-chief, azure-provisioner) can initialize its own save
-  tree with full lock lifecycle, skip-records, and resume protocol when running
-  outside admiral
+- **Sub-orchestrator support**: Each sub-orchestrator (commander,
+  build-management, code-chief) participates in the save tree with full lock
+  lifecycle, skip-records, and resume protocol. Per the entry-routing doctrine,
+  delivery-lifecycle work initiates through admiral, so a sub-orchestrator
+  reached cold hands off to admiral first rather than starting an independent run
 - **Idempotent gatekeeper submissions**: Every handoff carries a unique
   `submission_id`; on resume, existing verdicts are detected before resubmission
 - **State-artifact consistency validation**: On every resume, a 6-step check
@@ -66,6 +66,11 @@ your-project/
 - **Self-documenting**: A copy of `skills/save-protocol.md` is placed in
   `skillset-saves/` so the directory structure is understandable on its own
 
-See `skills/save-protocol.md` for the complete specification and
-`skills/admiral/references/responsibility-matrix.md` for the definitive
-component-to-file save ownership mappings.
+The save check runs at admiral startup: it classifies the latest run as
+active/inactive/orphaned/missing/unreadable, resumes an active or recoverable
+run before starting a new one, and rebuilds a missing or stale `_latest.md`
+pointer by scanning `runs/`. A lost pointer is never treated as a lost run.
+
+See `skills/save-protocol.md` for the complete specification — directory
+structure, file formats, the write-capability probe, mode re-check, session pin,
+save triggers, and the resume protocol.

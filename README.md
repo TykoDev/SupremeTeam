@@ -1,18 +1,20 @@
 <p align="center">
     <img src="https://img.shields.io/badge/TykoDev-Supreme%20Team-blueviolet?style=for-the-badge&logo=brain&logoColor=white" alt="TykoDev Supreme Team" />
   <br/>
-  <em>End-to-end autonomous software design, implementation, and review in a single pipeline</em>
+  <em>End-to-end autonomous software design, implementation, and adversarial review in a single pipeline</em>
 </p>
 
 # Supreme Team
 
-![Supreme Team Architecture](docs/assets/architecture.jpg)
-
 Supreme Team is an AI skill system that drives a complete software lifecycle —
-design, build, adversarial review, and Azure deployment — through a single
-orchestrated pipeline. It runs inside AI coding assistants (Claude Code, Cursor,
-Windsurf, or any tool that loads Markdown skill files) and replaces manual
-back-and-forth with structured, gated delegation across 35 specialized skills.
+design, build, and adversarial review — through a single orchestrated pipeline,
+with cross-cutting standalone tools for browser automation, release & deployment,
+safety guardrails, and testing & QA. It runs inside AI coding assistants (Claude
+Code, Cursor, Windsurf, or any tool that loads Markdown skill files) and replaces
+manual back-and-forth with structured, gated delegation across **47 specialized
+skills** governed by a single entry orchestrator.
+
+![Supreme Team pipeline architecture — the automated factory blueprint](docs/assets/2_Pipeline.jpg)
 
 ## Why Supreme Team
 
@@ -20,59 +22,91 @@ back-and-forth with structured, gated delegation across 35 specialized skills.
 single-pass attempt with no structured validation, no adversarial review, and no
 way to resume if the conversation ends mid-task.
 
-**With Supreme Team**, the same request flows through a phased pipeline where
-each deliverable is challenged by adversarial gatekeepers before the next phase
-begins. Design specs are validated before code is written. Code is security-audited
-before review. Review findings are evidence-checked before delivery. Every
-artifact is saved to disk for cross-session resume and audit.
+**With Supreme Team**, the same request enters through one front door
+(**admiral**) and flows through a phased pipeline where each deliverable is
+challenged by adversarial gatekeepers before the next phase begins. Design specs
+are validated before code is written. Code is security-audited before review.
+Review findings are evidence-checked before delivery. Every artifact is saved to
+disk for cross-session resume and audit, and a runtime harness deterministically
+blocks dangerous actions and steers lifecycle work through the orchestrator.
+
+![The chaos of unstructured AI vs. orchestrated delivery — execution, validation, memory, and safety compared](docs/assets/3_compare.jpg)
+
+![Supreme Team: the automated software lifecycle](docs/assets/Intro.jpg)
 
 ### What You Get
 
-- **One entry point** — tell admiral what you want and it routes through the
-  right phases automatically
-- **Adversarial quality gates** — five gatekeepers challenge every deliverable;
-  approval is earned, never assumed
+- **One enforced entry point** — admiral is the primary entry orchestrator; tell
+  it what you want and it routes through the right phases under one intake, one
+  persisted run, and one cross-stage gate
+- **Adversarial quality gates** — four gatekeepers challenge every deliverable,
+  backed by a deterministic gate engine; approval is earned, never assumed
+- **Runtime harness** — stdlib hooks block dangerous commands and guarded-path
+  writes, detect degenerate trajectories, and reinforce entry routing
 - **Cross-session persistence** — pipeline state, deliverables, and audit trails
-  are saved to disk so you can resume where you left off
-- **Flexible execution** — run the full pipeline, any subset of phases, or
-  individual skills in standalone mode
-- **No platform lock-in** — plain Markdown files that work with any AI tool
-  that reads skill definitions
-- **14 tech-stack templates** — pre-configured backend and frontend stacks from
-  Go/Gin to React/Next.js to Rust/Axum
+  are saved to disk so you can resume exactly where you left off
+- **Flexible execution** — run the full pipeline, any subset of phases, individual
+  skills, or the standalone tool groups
+- **Skill & team creation** — skill-maker drafts, evals, reviews, and packages new
+  Claude skills and coordinated skill teams
+- **No platform lock-in** — plain Markdown files that work with any AI tool that
+  reads skill definitions
 
 ## Skills and Orchestrators
 
-Supreme Team contains **35 skills** organized into four sub-pipelines, each
-managed by its own orchestrator, with **admiral** as the top-level entry point.
+Supreme Team contains **47 skills**: a three-stage delivery pipeline managed by
+sub-orchestrators under the top-level **admiral**, three cross-cutting
+Admiral-pipeline components, and four standalone tool groups.
 
-| Sub-Pipeline | Orchestrator | Skills | Purpose |
-|-------------|-------------|--------|--------|
-| **Admiral Layer** | admiral | 2 | Top-level orchestration + cross-pipeline validation |
-| **Design** | commander | 7 + 14 templates | Requirements, architecture, API contracts, stack selection |
-| **Build** | build-management | 8 | Implementation, testing, security audit, debugging, health checks |
-| **Review** | code-chief | 10 | Bug detection, code quality, security, penetration testing, frontend audit, visual QA, DX audit |
-| **Azure** | azure-provisioner | 7 | Infrastructure design, deployment, configuration, verification |
-| **Session Memory** | — | 1 | Cross-session state checkpoints and accumulated learnings |
+![The gated architecture of AI software engineering — phases, sub-pipelines, and the 47-skill breakdown](docs/assets/1_Overview.jpg)
 
-Every sub-pipeline orchestrator delegates to its specialists in sequence
-and validates each phase through its own gatekeeper before advancing.
+| Group | Orchestrator / Tier | Skills | Purpose |
+|-------|---------------------|--------|---------|
+| **Admiral Layer** | admiral | 2 | Top-level orchestration + cross-stage validation |
+| **Design** | commander | 6 | Requirements, planning, architecture, API contracts, design system, impl spec |
+| **Build** | build-management | 8 | Implementation, testing, security hardening, completeness, debugging, health |
+| **Review** | code-chief | 11 | Bug detection, code quality, security, security leadership, pen-testing, frontend, visual QA, DX |
+| **Investigation** | — (in-scope) | 1 | Disciplined root-cause analysis |
+| **Skill Maker** | skill-maker | 3 | Create, review, and package Claude skills and teams |
+| **Session Memory** | — (in-scope) | 1 | Cross-session checkpoints and accumulated learnings |
+| **Browser Automation** | standalone | 4 | Launch, drive, authenticate, and share a browser session |
+| **Release & Deployment** | standalone | 4 | Release orchestration, merge-and-deploy, deploy config, release notes |
+| **Safety Guardrails** | standalone | 4 | Intent checks and write-boundary locks (guard / careful / freeze / unfreeze) |
+| **Testing & QA** | standalone | 3 | Test-and-fix QA, report-only QA, performance benchmarking |
 
-See [docs/skills.md](docs/skills.md) for the complete inventory with
-standards and key capabilities per skill.
+Every pipeline sub-orchestrator delegates to its specialists in sequence and
+validates each phase through its own gatekeeper before advancing.
+
+See [docs/skills.md](docs/skills.md) for the complete inventory and
+[docs/architecture.md](docs/architecture.md) for the pipeline flow.
+
+![SupremeTeam scoring matrix — per-skill eval scores across all 47 skills](docs/assets/Score_Matrix.jpg)
+
+## Entry Routing
+
+**admiral** is the single front door for the entire delivery lifecycle. The
+entry-routing doctrine fixes the gap that descriptions alone cannot close: a
+request like "design this system" or "investigate this bug" is initiated through
+admiral so the run gets one intake, one persisted state, and one cross-stage
+gate. In-scope skills reached cold hand off to admiral first; standalone tools
+(Tier 4) run directly. A `UserPromptSubmit` hook reinforces this deterministically
+once registered.
+
+See [docs/routing.md](docs/routing.md) for the tiers, precedence, and loop guard.
+
+![Pre-flight: the grill-me interview and routing — startup save check, intake, environment probe, classification and delegation](docs/assets/4_intake.jpg)
 
 ## How Gatekeepers Work
 
-Supreme Team enforces quality through five adversarial gatekeepers at two levels:
+Supreme Team enforces quality through **four adversarial gatekeepers** at two
+levels. Per-phase gatekeepers (`gatekeeper-design`, `gatekeeper-build`,
+`gatekeeper-code`) validate work within their sub-pipeline. The cross-stage
+gatekeeper (`gatekeeper-admiral`) validates at the boundaries between stages. A
+fifth adversarial gate, `skill-reviewer`, scores skills inside the skill-maker
+pipeline. Every gatekeeper is backed by a shared deterministic gate engine that
+turns mechanically checkable conditions into a fail-loud pass.
 
-**Per-phase gatekeepers** (`gatekeeper-design`, `gatekeeper-build`,
-`gatekeeper-code`, `gatekeeper-azure`) validate work within their sub-pipeline.
-Each specialist's output must pass its gatekeeper before the next specialist
-begins.
-
-**Cross-pipeline gatekeeper** (`gatekeeper-admiral`) validates at the boundaries
-between sub-pipelines — ensuring the output of one pipeline is suitable input
-for the next.
+![Quality control: the adversarial gatekeepers — per-phase and cross-stage validation](docs/assets/5_gatekeeper.jpg)
 
 Every gatekeeper verdict is one of:
 - **APPROVED** — advance to the next phase
@@ -81,25 +115,38 @@ Every gatekeeper verdict is one of:
 
 A review that finds nothing is treated as the most suspicious review of all.
 
+![Rejecting bad work: the deterministic gate engine — input package to APPROVED, REVISE, or ESCALATE](docs/assets/6_review_loop.jpg)
+
 See [docs/gatekeepers.md](docs/gatekeepers.md) for the full pattern.
+
+## Runtime Harness
+
+A stdlib-only runtime harness deterministically enforces the parts of the
+contract that can be checked mechanically: `pre_tool_use.py` blocks dangerous
+commands and writes into a frozen/guarded boundary, `post_tool_use.py` detects
+degenerate trajectories and injects a recovery hint, and `user_prompt_submit.py`
+reinforces entry routing. The hooks **fail open**; the gatekeeper gate engine
+**fails loud**. Registration lives in the host `settings.json` and is owned by the
+`update-config` skill.
+
+![Safety first: the four layers of the runtime harness](docs/assets/7_harness.jpg)
+
+See [docs/harness.md](docs/harness.md) and `skills/harness-doctrine.md`.
+
+![Safety guardrails protecting project files — freeze, careful, and guard write-boundary locks](docs/assets/8_guardrails.jpg)
 
 ## Persistent Saves
 
 Pipeline state is automatically saved to `skillset-saves/` in your project
-workspace as the pipeline runs. This provides:
+workspace as the pipeline runs, providing cross-session resume, crash recovery
+(lease-based locking, idempotent gatekeeper submissions), a chronological audit
+trail, deliverable backup, and graceful degradation if saves fail.
 
-- **Cross-session resume** — close the conversation, come back later, pick up
-  exactly where you left off
-- **Crash recovery** — lease-based locking and idempotent gatekeeper
-  submissions prevent corruption from session crashes
-- **Audit trail** — every state transition, gatekeeper verdict, and revision
-  cycle is logged chronologically
-- **Deliverable backup** — every SRS, architecture doc, test report, and
-  security audit is saved to disk as it's produced
-- **Graceful degradation** — if saves fail, the pipeline continues with
-  in-context artifacts and warns you about persistence gaps
+![Memory architecture: the persistent save system — deliverables, state files, and audit trails on disk](docs/assets/9_memory.jpg)
 
 See [docs/persistent-saves.md](docs/persistent-saves.md) for details.
+
+![Crash recovery and state validation — 6-step consistency check, orphaned-state cleanup, and idempotent submissions](docs/assets/10_recovery.jpg)
 
 ## Limitations
 
@@ -107,13 +154,14 @@ See [docs/persistent-saves.md](docs/persistent-saves.md) for details.
   context window. The save system mitigates this with reference-mode tiers, but
   very large codebases may still require manual chunking.
 - **LLM accuracy** — the pipeline enforces structure and adversarial review, but
-  the quality of outputs is bounded by the underlying model's capabilities.
-  Gatekeepers catch many issues but are not infallible.
-- **Azure-specific** — the cloud deployment sub-pipeline currently supports
-  Azure only. Other cloud providers would require additional skill sets.
+  output quality is bounded by the underlying model. Gatekeepers catch many
+  issues but are not infallible.
 - **No runtime execution** — Supreme Team generates artifacts (code, configs,
-  runbooks) but does not execute deployments automatically. The deployer skill
-  produces commands and scripts; a human or CI system runs them.
+  runbooks) and orchestrates release flows, but a human or CI system runs the
+  actual deployment commands the release tools produce.
+- **Hook enforcement is host-dependent** — deterministic entry routing and action
+  guards require the runtime harness hooks to be registered in the host
+  `settings.json`. Without them, those layers fall back to advisory doctrine.
 - **Single-session concurrency** — the lease-based lock system is advisory.
   Running two sessions against the same project simultaneously can cause
   conflicts.
@@ -131,10 +179,12 @@ instructions.
 | [Install.md](Install.md) | Detailed installation procedure (AI-agent and manual) |
 | [AGENTS.md](AGENTS.md) | Authoritative skill manifest for tool discovery |
 | [docs/architecture.md](docs/architecture.md) | Pipeline architecture, flow diagrams, and execution modes |
-| [docs/skills.md](docs/skills.md) | Complete skill inventory with standards |
-| [docs/gatekeepers.md](docs/gatekeepers.md) | Gatekeeper pattern and adversarial philosophy |
+| [docs/skills.md](docs/skills.md) | Complete skill inventory |
+| [docs/routing.md](docs/routing.md) | Entry-routing doctrine and skill tiers |
+| [docs/gatekeepers.md](docs/gatekeepers.md) | Gatekeeper pattern and the deterministic gate engine |
+| [docs/harness.md](docs/harness.md) | Runtime harness: hooks and gate engine |
 | [docs/persistent-saves.md](docs/persistent-saves.md) | Save system, resume, and audit trails |
-| [docs/direct-invocation.md](docs/direct-invocation.md) | Standalone skill usage and fallback prompts |
+| [docs/direct-invocation.md](docs/direct-invocation.md) | Standalone skill usage and routing tiers |
 | [docs/directory-structure.md](docs/directory-structure.md) | Repository and installed layout reference |
 
 ---

@@ -1,0 +1,68 @@
+# Code-Chief Agent Manifest
+
+name: code-chief-agent
+type: sub-orchestrator
+version: 1.0.0
+parent: admiral-agent
+
+purpose: |
+  Autonomous review pipeline orchestrator. Manages up to nine review phases
+  (bug-review → code-review → quality-review → security-review → mr-robot →
+  cso → frontier → design-qa → devex-review) with gatekeeper-code validating the
+  consolidated package. Produces a consolidated review package.
+
+capabilities:
+  - phase-management
+  - delegation
+  - state-persistence
+  - gate-validation
+  - cross-model-synthesis
+
+tools_required:
+  - category: file-system
+    operations: [read, write, list, search]
+  - category: terminal
+    operations: [execute]
+  - category: search
+    operations: [semantic, grep]
+  - category: sub-agent
+    operations: [invoke, receive-result]
+  - category: diagnostics
+    operations: [get-errors]
+
+tools_optional:
+  - category: browser
+    operations: [navigate, snapshot]
+    purpose: Visual QA and design-qa phases
+
+delegates_to:
+  - name: bug-review
+    skill_path: review/bug-review
+  - name: code-review
+    skill_path: review/code-review
+  - name: quality-review
+    skill_path: review/quality-review
+  - name: security-review
+    skill_path: review/security-review
+  - name: mr-robot
+    skill_path: review/mr-robot
+  - name: cso
+    skill_path: review/cso
+    optional: true
+  - name: frontier
+    skill_path: review/frontier
+    optional: true
+  - name: design-qa
+    skill_path: review/design-qa
+    optional: true
+  - name: devex-review
+    skill_path: review/devex-review
+    optional: true
+  - name: gatekeeper-code
+    skill_path: review/gatekeeper-code
+
+detection_rules:
+  agent_mode_conditions:
+    - sub-agent invocation available
+    - file system tools available
+  fallback: skill-mode

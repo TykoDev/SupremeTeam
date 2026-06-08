@@ -1,0 +1,8 @@
+# Runtime harness state — written by the hooks at run time, never committed.
+# (Default location is $CLAUDE_PROJECT_DIR/.harness-state; this guard also
+# covers the temp-dir fallback if a run ever lands state next to the hooks.)
+.harness-state/
+
+# Python bytecode cache
+__pycache__/
+*.pyc

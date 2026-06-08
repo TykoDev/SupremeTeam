@@ -1,0 +1,37 @@
+skill_name: code-chief
+target_path: review/code-chief/
+purpose: |
+  Orchestrates the review pipeline across correctness, merge readiness,
+  maintainability, security, adversarial pressure testing, security leadership
+  oversight, and optional frontend or developer-experience audits. Delivers a consolidated review
+  package with prioritized remediation and readiness guidance.
+triggers:
+  - review this codebase comprehensively
+  - start the review pipeline
+  - audit this change before merge
+  - pressure-test this project
+  - run the full review flow
+inputs:
+  - review target scope and risk context
+  - available upstream design or build artifacts for traceability
+  - persistence context when delegated or resumed
+outputs:
+  - consolidated review package
+  - execution manifest with skip justifications
+  - prioritized remediation summary
+severity_model: shared 4-tier (Critical | Major | Minor | Info)
+required_contracts:
+  - Cross-model synthesis
+  - Shared severity
+  - Proactive triggers
+  - Pipeline-owned consolidated gate routing
+authoring_rules:
+  - First-principles wording only
+  - No provenance or comparison language
+  - No references to planning-note filenames inside generated artifacts
+  - Supporting files must be one level deep and directly referenced
+acceptance:
+  rubric_score: 100/100
+  blocked_phrase_scan: zero hits
+  cross_cutting_contracts_embedded: true
+  package_ready: true

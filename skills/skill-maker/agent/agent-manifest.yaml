@@ -1,0 +1,41 @@
+# Skill-Maker Agent Manifest
+
+name: skill-maker-agent
+type: sub-orchestrator
+version: 1.0.0
+parent: admiral-agent
+
+purpose: |
+  Autonomous skill creation pipeline orchestrator. Manages the full skill lifecycle
+  (create → review → improve loop → optimize → package) with skill-reviewer as the
+  internal quality gate. Produces validated .skill packages and coordinated team sets.
+
+capabilities:
+  - phase-management
+  - delegation
+  - state-persistence
+  - quality-gate-management
+  - team-generation
+
+tools_required:
+  - category: file-system
+    operations: [read, write, list, search]
+  - category: terminal
+    operations: [execute]
+  - category: search
+    operations: [semantic, grep]
+  - category: sub-agent
+    operations: [invoke, receive-result]
+
+delegates_to:
+  - name: skill-creator
+    skill_path: skill-maker/skill-creator
+  - name: skill-reviewer
+    skill_path: skill-maker/skill-reviewer
+
+detection_rules:
+  agent_mode_conditions:
+    - sub-agent invocation available
+    - file system tools available
+    - terminal execution available
+  fallback: skill-mode

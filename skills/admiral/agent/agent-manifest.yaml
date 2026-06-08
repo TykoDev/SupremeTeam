@@ -1,0 +1,115 @@
+# Admiral Agent Manifest
+# Declares Admiral's agent capabilities, tool requirements, delegation surface,
+# and supported platforms. Used by host adapters to configure Admiral for the
+# target runtime.
+
+name: admiral-agent
+type: orchestrator
+version: 2.0.0
+
+purpose: |
+  Autonomous orchestrator for the complete delivery lifecycle. Manages pipeline state
+  programmatically, delegates to sub-agents, validates handoff contracts, and delivers
+  consolidated packages — all without requiring host-agent instruction following.
+
+capabilities:
+  - pipeline-management     # Select, sequence, and advance pipeline stages
+  - delegation              # Invoke sub-orchestrators as sub-agents with structured prompts
+  - state-persistence       # Read/write save-protocol artifacts via file system tools
+  - gate-validation         # Submit packages to gatekeeper-admiral and route verdicts
+  - skill-authoring         # Invoke skill-maker for on-demand skill/team creation
+  - context-management      # Monitor context pressure and switch to tiered artifact handling
+
+tools_required:
+  - category: file-system
+    operations: [read, write, list, search]
+    purpose: Save-protocol state management, artifact persistence, skill file creation
+  - category: terminal
+    operations: [execute]
+    purpose: Run validation scripts, packaging tools, behavioral evals
+  - category: search
+    operations: [semantic, grep, file-pattern]
+    purpose: Locate skills, validate references, find existing artifacts
+  - category: memory
+    operations: [read, write]
+    purpose: Session and repo memory for cross-conversation context
+  - category: sub-agent
+    operations: [invoke, receive-result]
+    purpose: Delegate to sub-orchestrator agents
+
+tools_optional:
+  - category: browser
+    operations: [navigate, snapshot, interact]
+    purpose: Design QA, visual verification, eval viewer
+  - category: diagnostics
+    operations: [get-errors, get-warnings]
+    purpose: Code validation during build phase
+
+delegates_to:
+  - name: commander-agent
+    skill_path: design/commander
+    handoff: design-package
+    verdict_source: gatekeeper-admiral (handoff-1)
+  - name: build-management-agent
+    skill_path: build/build-management
+    handoff: build-package
+    verdict_source: gatekeeper-admiral (handoff-2)
+  - name: code-chief-agent
+    skill_path: review/code-chief
+    handoff: review-package
+    verdict_source: gatekeeper-admiral (handoff-3)
+  - name: skill-maker-agent
+    skill_path: skill-maker
+    handoff: skill-package or team-package
+    verdict_source: gatekeeper-admiral (handoff-4)
+    optional: true
+  - name: session-memory
+    skill_path: session-memory
+    handoff: checkpoint or learning record
+    verdict_source: none (utility, not gated)
+    optional: false
+    engaged_at: intake   # mandatory first engagement (Stage 0), before any stage delegation; also re-engaged at tier 3+, before gates, at session end, on error recovery
+
+platforms:
+  copilot:
+    participant_id: "@admiral"
+    commands:
+      - /pipeline    # Run full pipeline
+      - /design      # Design-only
+      - /build       # Build-only
+      - /review      # Review-only
+      - /create-skill # Create a skill
+      - /create-team  # Create a team of skills
+      - /resume      # Resume from saved state
+      - /status      # Show current pipeline status
+    tools_available:
+      - file-system (read_file, create_file, replace_string_in_file, list_dir)
+      - terminal (run_in_terminal, execution_subagent)
+      - search (semantic_search, grep_search, file_search)
+      - memory (memory tool)
+      - sub-agent (runSubagent)
+      - diagnostics (get_errors)
+    agent_registration: chat-participant
+  codex:
+    agent_type: autonomous
+    tools_available:
+      - file-system
+      - terminal
+      - search
+    agent_registration: agents-config
+  claude:
+    agent_type: skill-with-tools
+    tools_available:
+      - file-system (Read, Write, Edit)
+      - terminal (Bash)
+      - search (Glob, Grep)
+      - sub-agent (Agent tool)
+    agent_registration: CLAUDE.md skill loading
+
+detection_rules:
+  agent_mode_conditions:
+    - runSubagent tool is available
+    - file system read/write tools are available
+    - terminal execution is available
+  fallback: skill-mode
+  record_in: run state record (execution_mode field)

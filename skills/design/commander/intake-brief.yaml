@@ -1,0 +1,36 @@
+skill_name: commander
+target_path: design/commander/
+purpose: |
+  Orchestrates the design pipeline from scoped request to consolidated design
+  package. Owns phase ordering, gate routing, and stack-lock continuity across
+  research, planning, architecture, frontend design, and implementation guidance.
+triggers:
+  - design this system
+  - create the design package
+  - start the design pipeline
+  - plan and architect this project
+  - generate the full specification
+inputs:
+  - project goal, user needs, and scope constraints
+  - technology preferences and prohibited options
+  - persistence context when delegated or resumed
+outputs:
+  - consolidated design package
+  - phase approval records
+  - stack-lock registry for downstream consumers
+severity_model: shared 4-tier (Critical | Major | Minor | Info)
+required_contracts:
+  - Proactive triggers
+  - Shared severity
+  - Stack-lock continuity
+  - Pipeline-owned gate routing
+authoring_rules:
+  - First-principles wording only
+  - No provenance or comparison language
+  - No references to planning-note filenames inside generated artifacts
+  - Supporting files must be one level deep and directly referenced
+acceptance:
+  rubric_score: 100/100
+  blocked_phrase_scan: zero hits
+  cross_cutting_contracts_embedded: true
+  package_ready: true

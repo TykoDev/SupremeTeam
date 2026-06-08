@@ -34,11 +34,13 @@ anything:
 Ask these questions in order:
 
 1. Install all teams or only a subset?
-2. If subset, which teams: `Design`, `Build`, `Review`, `Azure`?
-3. Install to the default agent skill path only, also mirror to Claude Code, or install only to the Claude Code path?
+2. If subset, which teams: `Design`, `Build`, `Review`, `Browser`, `Release`,
+   `Safety`, `Testing`?
+3. Install to the default agent skill path only, also mirror to Claude Code, or
+   install only to the Claude Code path?
 4. Do they want to override either default destination path?
 
-### 3. Map the user's answers to the existing installer flags
+### 3. Map the user's answers to the installer flags
 
 | User intent | Windows | macOS / Linux | Notes |
 |-------------|---------|---------------|-------|
@@ -48,6 +50,10 @@ Ask these questions in order:
 | Install only to Claude Code path | `-Destination "$HOME\.claude\skills"` | `--destination "$HOME/.claude/skills"` | Use this when Claude Code should be the only target |
 | Override the primary install path | `-Destination "D:\SupremeTeam\skills"` | `--destination "/custom/skills/path"` | Replaces the default agent skill path |
 | Override the Claude Code mirror path | `-InstallClaude -ClaudeDestination "D:\Claude\skills"` | `--install-claude --claude-destination "/custom/claude/path"` | Use only when a Claude mirror is also requested |
+
+Team flag values: `Design`, `Build`, `Review`, `Browser`, `Release`, `Safety`,
+`Testing`, or `All`. On macOS/Linux these are lowercase
+(`design build review browser release safety testing all`).
 
 > **Note:** All script paths above are relative to the repository root. The base
 > commands in Step 1 already include the `scripts/` prefix.
@@ -78,7 +84,17 @@ without an error:
 - `Teams: ...`
 - `Claude mirror: ...`
 
-### 6. Boundary note for Claude requests
+### 6. Recommend registering the runtime harness hooks
+
+After a successful install, recommend registering the three runtime harness hooks
+(`pre_tool_use.py`, `post_tool_use.py`, `user_prompt_submit.py`) in the host
+`settings.json` to enable deterministic entry routing and action guards. The
+`update-config` skill owns this registration, or the block can be applied
+manually from `skills/harness/hooks/README.md`. Without registration these layers
+fall back to advisory doctrine. Admiral also checks registration at intake via
+`harness/hooks/verify_registration.py`.
+
+### 7. Boundary note for Claude requests
 
 This repository defines two built-in install targets only:
 
@@ -135,26 +151,39 @@ These core components are always installed, even when you choose only one team:
 
 | Directory / File | Purpose |
 |------------------|---------|
-| `admiral/` | Top-level pipeline orchestrator |
-| `gatekeeper-admiral/` | Cross-pipeline adversarial validator |
+| `admiral/` | Primary entry orchestrator |
+| `gatekeeper-admiral/` | Cross-stage adversarial validator |
 | `session-memory/` | Cross-session state and learnings manager |
-| `references/` | Shared handoff templates used by all sub-orchestrators |
+| `investigate/` | Root-cause analysis component |
+| `skill-maker/` | Skill/team creation orchestrator |
+| `harness/` | Runtime harness (hooks + deterministic gate engine) |
+| `routing-doctrine.md` | Entry-routing contract |
+| `grill-me-doctrine.md` | Intake interview protocol |
+| `design-doctrine.md` | Frontend/UI design-system doctrine |
+| `harness-doctrine.md` | Runtime harness doctrine |
+| `mcp-tools.md` | Global MCP tool registry |
 | `save-protocol.md` | Persistent save system specification |
 
 Selectable teams:
 
 | Team | Directory | Skills | Notes |
 |------|-----------|--------|-------|
-| **Design** | `design/` | 7 skills + 14 tech-stack templates | `tech-stacks/` is inseparable from `design/` |
+| **Design** | `design/` | 6 skills | `architect` owns the frontend/UI design system |
 | **Build** | `build/` | 8 skills | |
-| **Review** | `review/` | 10 skills | |
-| **Azure** | `azure/` | 7 skills | |
+| **Review** | `review/` | 11 skills | |
+| **Browser** | `browser-automation/` | 4 tools | Standalone (out of pipeline routing) |
+| **Release** | `release-and-deployment/` | 4 tools | Standalone |
+| **Safety** | `safety-guardrails/` | 4 tools | Enforced by `harness/hooks/pre_tool_use.py` |
+| **Testing** | `testing-and-qa/` | 3 tools | Standalone |
 
 Critical dependencies:
 
-- `design/architect/`, `design/designer/`, and `design/engineer/` depend on `design/tech-stacks/`
-- `review/code-chief/` depends on `references/`
-- `admiral`, `commander`, `build-management`, `code-chief`, and `azure-provisioner` depend on `save-protocol.md`
+- All skills resolve the root doctrine/protocol files
+  (`routing-doctrine.md`, `grill-me-doctrine.md`, `save-protocol.md`, and the
+  relevant `design-doctrine.md` / `harness-doctrine.md` / `mcp-tools.md`)
+- Every `gatekeeper-*` skill depends on `harness/gatekeeper/_gatecheck.py`
+- `design/architect` UI work depends on `design-doctrine.md`
+- `admiral` intake depends on `harness/hooks/verify_registration.py`, `mcp-tools.md`, and `save-protocol.md`
 
 ## Common installer options
 
@@ -162,6 +191,7 @@ Critical dependencies:
 |------|---------|---------------|
 | Install all teams | `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1` | `bash ./scripts/install.sh` |
 | Install only Design + Review | `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Team Design,Review` | `bash ./scripts/install.sh --team design --team review` |
+| Install only the standalone tools | `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Team Browser,Release,Safety,Testing` | `bash ./scripts/install.sh --team browser --team release --team safety --team testing` |
 | Install and mirror to Claude Code | `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -InstallClaude` | `bash ./scripts/install.sh --install-claude` |
 | Install only to the Claude Code path | `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Destination "$HOME\.claude\skills"` | `bash ./scripts/install.sh --destination "$HOME/.claude/skills"` |
 | Install into a custom agent path | `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Destination "D:\SupremeTeam\skills"` | `bash ./scripts/install.sh --destination "$HOME/.agents/skills"` |
@@ -179,12 +209,18 @@ the target directory:
 - `admiral/`
 - `gatekeeper-admiral/`
 - `session-memory/`
-- `references/`
-- `save-protocol.md`
+- `investigate/`
+- `skill-maker/`
+- `harness/`
+- `routing-doctrine.md`, `grill-me-doctrine.md`, `design-doctrine.md`,
+  `harness-doctrine.md`, `mcp-tools.md`, `save-protocol.md`
 - `design/`
 - `build/`
 - `review/`
-- `azure/`
+- `browser-automation/`
+- `release-and-deployment/`
+- `safety-guardrails/`
+- `testing-and-qa/`
 
 Unrelated entries in the same target directory are left alone.
 
@@ -201,8 +237,8 @@ Summarize the Supreme Team pipelines available from the installed skills.
 ```
 
 If skill discovery is configured correctly, the assistant should identify the
-admiral orchestrator, the installed team sub-pipelines, and the shared
-resources.
+admiral orchestrator, the installed team sub-pipelines, the standalone tool
+groups, and the shared resources.
 
 ## Manual fallback
 
@@ -237,7 +273,9 @@ Copy-Item -Recurse -Force (Join-Path $source "*") -Destination $destination -Err
 |---------|--------------|-----|
 | PowerShell blocks `install.ps1` | Script execution policy is restricting local scripts | Run `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1` |
 | Installer says the `skills/` source tree is missing | The script is not being run from a valid Supreme Team checkout | Re-run the installer from this repository or point to the correct clone |
-| Design skills cannot resolve stack templates | `design/tech-stacks/` was not copied | Re-run the installer with `Design` or `All` |
-| Review orchestration cannot find shared templates | `references/` is missing | Re-run the installer so the core components are restored |
+| `Unknown team` error | A team name was misspelled | Use `Design`, `Build`, `Review`, `Browser`, `Release`, `Safety`, `Testing`, or `All` |
+| Design skills cannot resolve the design-system doctrine | `design-doctrine.md` was not copied | Re-run the installer so the core components are restored |
+| Gatekeepers' `check.py` cannot find the engine | `harness/` was not copied | Re-run the installer so the core components are restored |
 | Resume or save artifacts do not work | `save-protocol.md` is missing | Re-run the installer so the core components are restored |
+| Entry routing / action guards are not enforced | The harness hooks are not registered in `settings.json` | Register them via the `update-config` skill (see `skills/harness/hooks/README.md`) |
 | Skills are not discovered after install | Wrong target path, stale assistant session, or your tool is not configured to scan that path | Verify the install target, restart the assistant session, and confirm your tool discovers skills from `~/.agents/skills/` or `%USERPROFILE%\.agents\skills\` |

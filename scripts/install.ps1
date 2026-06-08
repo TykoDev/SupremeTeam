@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("All", "Design", "Build", "Review", "Azure")]
+    [ValidateSet("All", "Design", "Build", "Review", "Browser", "Release", "Safety", "Testing")]
     [string[]]$Team = @("All"),
 
     [string]$Destination = (Join-Path $env:USERPROFILE ".agents\skills"),
@@ -16,23 +16,43 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $sourceRoot = Join-Path $repoRoot "skills"
 
+# Core components are always installed. They contain the Admiral pipeline spine
+# (entry orchestrator, cross-stage gate, memory, investigation, skill-maker), the
+# runtime harness (hooks + deterministic gate engine), and the root doctrine and
+# protocol files every skill resolves by relative path.
 $coreItems = @(
     "admiral",
     "gatekeeper-admiral",
     "session-memory",
-    "references",
+    "investigate",
+    "skill-maker",
+    "harness",
+    "design-doctrine.md",
+    "grill-me-doctrine.md",
+    "harness-doctrine.md",
+    "mcp-tools.md",
+    "routing-doctrine.md",
     "save-protocol.md"
 )
 
+# Friendly team name -> source directory under skills/.
 $teamDirectories = @{
-    design = "design"
-    build = "build"
-    review = "review"
-    azure = "azure"
+    design  = "design"
+    build   = "build"
+    review  = "review"
+    browser = "browser-automation"
+    release = "release-and-deployment"
+    safety  = "safety-guardrails"
+    testing = "testing-and-qa"
 }
 
-$allTeamNames = @("design", "build", "review", "azure")
-$managedItems = $coreItems + @("design", "build", "review", "azure")
+$allTeamNames = @("design", "build", "review", "browser", "release", "safety", "testing")
+$managedItems = $coreItems + ($allTeamNames | ForEach-Object { $teamDirectories[$_] })
+
+# Paths from older Supreme Team layouts that are no longer shipped. Removed from
+# the destination on each run so an in-place update over an old install does not
+# leave stale directories behind. Not part of the source-layout assertion.
+$legacyItems = @("azure", "references", "design\tech-stacks")
 
 function Assert-PathPresent {
     param(
@@ -76,7 +96,7 @@ function Clear-InstallDestination {
 
     New-Item -ItemType Directory -Force -Path $TargetRoot | Out-Null
 
-    foreach ($item in $managedItems) {
+    foreach ($item in ($managedItems + $legacyItems)) {
         $targetPath = Join-Path $TargetRoot $item
 
         if (-not (Test-Path -LiteralPath $targetPath)) {
@@ -121,8 +141,6 @@ function Assert-SourceLayout {
     foreach ($teamName in $allTeamNames) {
         Assert-PathPresent -Path (Join-Path $sourceRoot $teamDirectories[$teamName]) -Description "source team '$teamName'"
     }
-
-    Assert-PathPresent -Path (Join-Path $sourceRoot "design\tech-stacks") -Description "design tech-stack directory"
 }
 
 function Assert-DestinationLayout {
@@ -137,10 +155,6 @@ function Assert-DestinationLayout {
 
     foreach ($teamName in $SelectedTeams) {
         Assert-PathPresent -Path (Join-Path $TargetRoot $teamDirectories[$teamName]) -Description "installed team '$teamName'"
-    }
-
-    if ($SelectedTeams -contains "design") {
-        Assert-PathPresent -Path (Join-Path $TargetRoot "design\tech-stacks") -Description "installed design tech-stack directory"
     }
 }
 
@@ -192,6 +206,7 @@ try {
     Write-Host "Teams: $(Format-TeamList -SelectedTeams $selectedTeams)"
     Write-Host "Claude mirror: $claudeStatus"
     Write-Host "Restart your assistant session if it was already running."
+    Write-Host "Register the runtime harness hooks via the update-config skill to enable deterministic entry routing and action guards."
 }
 catch {
     Write-Error $_.Exception.Message

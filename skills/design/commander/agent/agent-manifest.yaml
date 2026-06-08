@@ -1,0 +1,45 @@
+# Commander Agent Manifest
+
+name: commander-agent
+type: sub-orchestrator
+version: 1.0.0
+parent: admiral-agent
+
+purpose: |
+  Autonomous design pipeline orchestrator. Manages four design phases
+  (researcher → planner → architect → engineer) with gatekeeper-design
+  validating each phase. Produces a consolidated design package.
+
+capabilities:
+  - phase-management
+  - delegation
+  - state-persistence
+  - gate-validation
+
+tools_required:
+  - category: file-system
+    operations: [read, write, list, search]
+  - category: terminal
+    operations: [execute]
+  - category: search
+    operations: [semantic, grep]
+  - category: sub-agent
+    operations: [invoke, receive-result]
+
+delegates_to:
+  - name: researcher
+    skill_path: design/researcher
+  - name: planner
+    skill_path: design/planner
+  - name: architect
+    skill_path: design/architect
+  - name: engineer
+    skill_path: design/engineer
+  - name: gatekeeper-design
+    skill_path: design/gatekeeper-design
+
+detection_rules:
+  agent_mode_conditions:
+    - sub-agent invocation available
+    - file system tools available
+  fallback: skill-mode

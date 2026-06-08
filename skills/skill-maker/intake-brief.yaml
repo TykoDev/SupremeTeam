@@ -1,0 +1,45 @@
+skill_name: skill-maker
+target_path: skill-maker/
+purpose: |
+  Orchestrates the full skill creation, adversarial review, and iterative improvement
+  lifecycle. Delegates drafting and improvement to skill-creator, scoring and audits to
+  skill-reviewer. Loops review and improvement until 100/100 or max iterations. Also
+  supports team creation — generating coordinated skill sets with orchestrator,
+  specialists, and gatekeeper as a unit.
+triggers:
+  - create a skill
+  - build me a skill
+  - make a skill
+  - run the skill pipeline
+  - create and review a skill
+  - take this skill to 100
+  - harden this skill
+  - turn this into a skill
+  - ship this skill
+  - make it production-ready
+  - create a team of skills
+  - build me a pipeline for
+inputs:
+  - skill intent describing what capability is needed and when it should trigger
+  - path to existing skill when hardening or reviewing
+  - reviewer findings when entering improve-only mode
+  - team description when creating coordinated skill sets
+outputs:
+  - validated .skill package with 100/100 scorecard
+  - delivery report with iteration history and final scorecard
+  - team package with coordinated skills when in team-creation mode
+severity_model: shared 4-tier (Critical | Major | Minor | Info)
+required_contracts:
+  - Preamble Tier System
+  - Proactive triggers
+  - Shared severity
+authoring_rules:
+  - First-principles wording only
+  - No provenance or comparison language
+  - No references to planning-note filenames inside generated artifacts
+  - Supporting files must be one level deep and directly referenced
+acceptance:
+  rubric_score: 100/100
+  blocked_phrase_scan: zero hits
+  cross_cutting_contracts_embedded: true
+  package_ready: true

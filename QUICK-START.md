@@ -77,7 +77,20 @@ bash ./scripts/install.sh --destination "$HOME/.claude/skills"
 | Custom agent path | `-Destination "path"` | `--destination "path"` |
 | Custom Claude path | `-ClaudeDestination "path"` | `--claude-destination "path"` |
 
-Available teams: `Design`, `Build`, `Review`, `Azure` (or `All`).
+Available teams (or `All`):
+
+| Team flag | Installs |
+|-----------|----------|
+| `Design` | `design/` (6 skills) |
+| `Build` | `build/` (8 skills) |
+| `Review` | `review/` (11 skills) |
+| `Browser` | `browser-automation/` (4 tools) |
+| `Release` | `release-and-deployment/` (4 tools) |
+| `Safety` | `safety-guardrails/` (4 tools) |
+| `Testing` | `testing-and-qa/` (3 tools) |
+
+The core components (see below) are always installed regardless of team
+selection.
 
 ### Verify Script Success
 
@@ -144,14 +157,22 @@ These core components are always required, even for partial installs:
 
 | Item | Purpose |
 |------|---------|
-| `admiral/` | Top-level pipeline orchestrator |
-| `gatekeeper-admiral/` | Cross-pipeline adversarial validator |
+| `admiral/` | Primary entry orchestrator |
+| `gatekeeper-admiral/` | Cross-stage adversarial validator |
 | `session-memory/` | Cross-session state and learnings manager |
-| `references/` | Shared handoff templates |
+| `investigate/` | Root-cause analysis component |
+| `skill-maker/` | Skill/team creation orchestrator |
+| `harness/` | Runtime harness (hooks + deterministic gate engine) |
+| `routing-doctrine.md` | Entry-routing contract |
+| `grill-me-doctrine.md` | Intake interview protocol |
+| `design-doctrine.md` | Frontend/UI design-system doctrine |
+| `harness-doctrine.md` | Runtime harness doctrine |
+| `mcp-tools.md` | Global MCP tool registry |
 | `save-protocol.md` | Persistent save system specification |
 
 Plus whichever team directories you selected (`design/`, `build/`, `review/`,
-`azure/`).
+`browser-automation/`, `release-and-deployment/`, `safety-guardrails/`,
+`testing-and-qa/`).
 
 ---
 
@@ -160,7 +181,16 @@ Plus whichever team directories you selected (`design/`, `build/`, `review/`,
 If your AI assistant was already running, restart it so it picks up the new
 skills.
 
-## Step 3: Verify Skill Discovery
+## Step 3: (Recommended) Register the Runtime Harness Hooks
+
+To enable deterministic entry routing and action guards, register the three
+harness hooks in your host `settings.json`. The simplest path is to ask the
+`update-config` skill to register them, or apply the block in
+`skills/harness/hooks/README.md` manually. Without registration, entry routing
+and guard enforcement fall back to advisory doctrine. A newly created settings
+file needs `/hooks` or a restart to load.
+
+## Step 4: Verify Skill Discovery
 
 Ask your assistant:
 
@@ -168,10 +198,10 @@ Ask your assistant:
 Summarize the Supreme Team pipelines available from the installed skills.
 ```
 
-If configured correctly, it should identify admiral, the sub-pipelines, and
-shared resources.
+If configured correctly, it should identify admiral, the sub-pipelines, the
+standalone tool groups, and the shared resources.
 
-## Step 4: Start Using Supreme Team
+## Step 5: Start Using Supreme Team
 
 ### Full Pipeline (Idea to Reviewed Code)
 
@@ -180,52 +210,50 @@ Use the admiral skill to design, build, and review this project:
 [describe your project]
 ```
 
-### Design Only
+### Design Only / Build / Review
 
 ```text
-Use the commander skill to design [your idea].
+Design [your idea].
+Implement this approved design.
+Review this codebase.
 ```
 
-### Build from a Plan
+These initiate through admiral automatically (the entry-routing doctrine) — you
+do not need to name a sub-orchestrator.
+
+### Investigate a Bug
 
 ```text
-Use the build-management skill to implement this approved design.
+Find the root cause of this failure.
 ```
 
-### Review Existing Code
+### Create a Skill or Team
 
 ```text
-Use the code-chief skill to do a full code review of this codebase.
+Use the skill-maker skill to create a skill that [behavior].
 ```
 
-### Deploy to Azure
+### Standalone Tools (invoke directly)
 
 ```text
-Use the azure-provisioner skill to deploy this application to Azure.
-```
-
-### Individual Skills
-
-```text
-Use the bug-review skill on src/auth/ to find correctness defects.
-Use the security-review skill to audit this module for vulnerabilities.
-Use the mr-robot skill to adversarially test this API.
-Use the frontier skill to audit the frontend for accessibility.
-Use the design-qa skill to check visual consistency of the UI.
-Use the devex-review skill to test the developer onboarding experience.
-Use the test-builder skill to create a test suite for this module.
-Use the debugger skill to investigate this failing test.
-Use the health-check skill to run a code quality dashboard.
+Use the open-browser skill to launch a browser workspace.
+Use the browse skill to click through the app and capture evidence.
+Use the ship skill to coordinate this release.
+Use the land-and-deploy skill to get this branch live.
+Use the freeze skill to protect src/payments from edits.
+Use the guard skill to lock things down while we work.
+Use the qa skill to test this product and fix what's broken.
+Use the benchmark skill to compare performance.
 Use the session-memory skill to checkpoint progress.
 ```
 
-If your tool supports slash-style skill commands, you can use that syntax
-as shorthand.
+If your tool supports slash-style skill commands, you can use that syntax as
+shorthand.
 
 ## Updating
 
-Re-run the installer script. Each run replaces the Supreme Team-managed paths
-in the target directory while leaving unrelated entries alone.
+Re-run the installer script. Each run replaces the Supreme Team-managed paths in
+the target directory while leaving unrelated entries alone.
 
 ## Troubleshooting
 
@@ -234,8 +262,8 @@ in the target directory while leaving unrelated entries alone.
 | PowerShell blocks `install.ps1` | Use `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1` |
 | Installer says `skills/` source is missing | Run the installer from the Supreme Team repository root |
 | Skills are not discovered | Check the install target path, restart the assistant session |
-| Design skills can't find stack templates | Re-run installer with Design or All |
-| Review can't find shared templates | Re-run installer to restore core components |
+| Entry routing / guards not enforced | Register the harness hooks via `update-config` (see Step 3) |
+| Design skills can't resolve the design-system doctrine | Re-run the installer so core components (`design-doctrine.md`) are restored |
 
 See [Install.md](Install.md) for the full installation procedure and
 [docs/directory-structure.md](docs/directory-structure.md) for the expected

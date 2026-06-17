@@ -55,7 +55,7 @@ Route elsewhere for just an intent check (`safety-guardrails/careful`), just a p
 
 ## Deterministic Enforcement (Action Realization layer)
 
-This guard is the advisory expression of the Action Realization layer. When the host supports Claude Code hooks, the guarded boundary can also be **deterministically enforced** by a pre-tool-use hook that blocks writes into guarded paths before they execute. Two rules are load-bearing:
+This guard is the advisory expression of the Action Realization layer. When the host supports compatible runtime hooks, the guarded boundary can also be **deterministically enforced** by a pre-tool-use hook that blocks writes into guarded paths before they execute. Two rules are load-bearing:
 
 - **`allow_dangerous: true` requires explicit owner confirmation** before the guard-state file is written — named approval, recorded scope and reason, and reverted to `false` the moment the dangerous operation completes. Never the default; never enabled silently.
 - **The hook is advisory-grade, not a hard security control.** Per harness-doctrine §3 it *fails open*: any internal error — malformed state, an unreadable path, or a host that never runs the hook — lets the action proceed. Never treat `blocked_globs` as the sole protection for secrets or production paths; for real isolation use OS/filesystem permissions or a sandbox.

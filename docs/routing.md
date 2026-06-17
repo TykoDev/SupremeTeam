@@ -62,12 +62,12 @@ only on `RUN_COMPLETE` (`DELIVERED`), the command `release admiral` /
 
 ## Deterministic Reinforcement (hook)
 
-`harness/hooks/user_prompt_submit.py` is a `UserPromptSubmit` hook that fires on
+`harness/hooks/user_prompt_submit.py` is a prompt-submit hook that fires on
 every fresh user prompt and injects an advisory reminder pointing at admiral when
 no active run is detected, and reinforces the session pin when a run is in
 progress. It stays silent for explicit slash commands, is stdlib-only, and fails
-open. Registration lives in the host `settings.json` and is owned by the
-`update-config` skill.
+open. Registration lives in the host-native hook configuration or plugin layer
+and is installed only when explicitly requested.
 
 Because this deterministic layer only works once the hook is registered, admiral
 verifies registration at intake via `harness/hooks/verify_registration.py`. Until

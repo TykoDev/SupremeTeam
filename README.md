@@ -6,13 +6,18 @@
 
 # Supreme Team
 
-Supreme Team is an AI skill system that drives a complete software lifecycle —
-design, build, and adversarial review — through a single orchestrated pipeline,
-with cross-cutting standalone tools for browser automation, release & deployment,
-safety guardrails, and testing & QA. It runs inside AI coding assistants (Claude
-Code, Cursor, Windsurf, or any tool that loads Markdown skill files) and replaces
-manual back-and-forth with structured, gated delegation across **47 specialized
-skills** governed by a single entry orchestrator.
+- **Admiral orchestration** — one front door for design, build, review,
+  investigation, release, resume, and skill/team creation across **47 skills**.
+- **Save protocol** — persisted runs, resumable checkpoints, audit trails, and
+  recoverable handoffs in `skillset-saves/`.
+- **Runtime harness** — hook-based routing reinforcement, guarded writes,
+  dangerous-command checks, and failure-trajectory recovery hints.
+- **Gated pipelines** — design, build, review, browser automation, release,
+  safety, testing, and QA workflows with clear ownership boundaries.
+- **Adversarial review** — gatekeepers, bug/security/quality/frontier lenses,
+  cso and mr-robot pressure testing, and fail-loud deterministic checks.
+- **Templates and doctrine** — grill-me intake, shadcn/ui component templates,
+  API contracts, handoff templates, and reusable skill-maker packaging patterns.
 
 ![Supreme Team pipeline architecture — the automated factory blueprint](docs/assets/2_Pipeline.jpg)
 
@@ -126,8 +131,8 @@ contract that can be checked mechanically: `pre_tool_use.py` blocks dangerous
 commands and writes into a frozen/guarded boundary, `post_tool_use.py` detects
 degenerate trajectories and injects a recovery hint, and `user_prompt_submit.py`
 reinforces entry routing. The hooks **fail open**; the gatekeeper gate engine
-**fails loud**. Registration lives in the host `settings.json` and is owned by the
-`update-config` skill.
+**fails loud**. Hook registration is explicit opt-in and uses each host's native
+configuration or plugin mechanism.
 
 ![Safety first: the four layers of the runtime harness](docs/assets/7_harness.jpg)
 
@@ -160,8 +165,8 @@ See [docs/persistent-saves.md](docs/persistent-saves.md) for details.
   runbooks) and orchestrates release flows, but a human or CI system runs the
   actual deployment commands the release tools produce.
 - **Hook enforcement is host-dependent** — deterministic entry routing and action
-  guards require the runtime harness hooks to be registered in the host
-  `settings.json`. Without them, those layers fall back to advisory doctrine.
+  guards require the runtime harness hooks to be registered for the active host.
+  Without them, those layers fall back to advisory doctrine.
 - **Single-session concurrency** — the lease-based lock system is advisory.
   Running two sessions against the same project simultaneously can cause
   conflicts.

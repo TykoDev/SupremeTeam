@@ -3,11 +3,20 @@ param(
     [ValidateSet("All", "Design", "Build", "Review", "Browser", "Release", "Safety", "Testing")]
     [string[]]$Team = @("All"),
 
+    [ValidateSet("Auto", "Codex", "Claude", "Cursor", "OpenCode")]
+    [string[]]$Target = @("Auto"),
+
     [string]$Destination = (Join-Path $env:USERPROFILE ".agents\skills"),
+
+    [switch]$RegisterHooks,
 
     [switch]$InstallClaude,
 
-    [string]$ClaudeDestination = (Join-Path $env:USERPROFILE ".claude\skills")
+    [string]$ClaudeDestination = (Join-Path $env:USERPROFILE ".claude\skills"),
+
+    [string]$CursorDestination = (Join-Path $env:USERPROFILE ".cursor\skills"),
+
+    [string]$OpenCodeDestination = (Join-Path $env:USERPROFILE ".config\opencode\skills")
 )
 
 Set-StrictMode -Version Latest
@@ -185,28 +194,172 @@ function Format-TeamList {
     }) -join ", "
 }
 
+function Add-UniqueValue {
+    param(
+        [string[]]$Values,
+        [string]$Value
+    )
+
+    if ($Values -notcontains $Value) {
+        return @($Values + $Value)
+    }
+
+    return $Values
+}
+
+function Test-CommandAvailable {
+    param([string]$Name)
+
+    try {
+        return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
+    }
+    catch {
+        return $false
+    }
+}
+
+function Test-HostDetected {
+    param([string]$HostName)
+
+    switch ($HostName) {
+        "codex" {
+            return (Test-CommandAvailable -Name "codex") -or
+                (Test-Path -LiteralPath (Join-Path $env:USERPROFILE ".codex"))
+        }
+        "claude" {
+            return (Test-CommandAvailable -Name "claude") -or
+                (Test-Path -LiteralPath (Join-Path $env:USERPROFILE ".claude"))
+        }
+        "cursor" {
+            return (Test-CommandAvailable -Name "cursor") -or
+                (Test-Path -LiteralPath (Join-Path $env:USERPROFILE ".cursor")) -or
+                (Test-Path -LiteralPath (Join-Path $env:APPDATA "Cursor"))
+        }
+        "opencode" {
+            return (Test-CommandAvailable -Name "opencode") -or
+                (Test-Path -LiteralPath (Join-Path $env:USERPROFILE ".config\opencode")) -or
+                (Test-Path -LiteralPath (Join-Path $env:APPDATA "opencode"))
+        }
+        default {
+            return $false
+        }
+    }
+}
+
+function Resolve-HostTargets {
+    param([string[]]$RequestedTargets)
+
+    $resolved = @()
+    $normalizedTargets = $RequestedTargets | ForEach-Object { $_.ToLowerInvariant() }
+
+    if ($normalizedTargets -contains "auto") {
+        foreach ($hostName in @("codex", "claude", "cursor", "opencode")) {
+            if (Test-HostDetected -HostName $hostName) {
+                $resolved = Add-UniqueValue -Values $resolved -Value $hostName
+            }
+        }
+    }
+
+    foreach ($targetName in $normalizedTargets) {
+        if ($targetName -eq "auto") {
+            continue
+        }
+
+        $resolved = Add-UniqueValue -Values $resolved -Value $targetName
+    }
+
+    if ($InstallClaude) {
+        $resolved = Add-UniqueValue -Values $resolved -Value "claude"
+    }
+
+    return $resolved
+}
+
+function Find-PythonCommand {
+    foreach ($candidate in @("python", "python3", "py")) {
+        $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
+        if ($null -ne $cmd) {
+            return $cmd.Source
+        }
+    }
+
+    throw "Python 3 is required to register runtime harness hooks."
+}
+
+function Register-HarnessHooks {
+    param(
+        [string[]]$HostTargets,
+        [string]$HookRoot
+    )
+
+    if ($HostTargets.Count -eq 0) {
+        Write-Host "Hook registration skipped: no host targets were detected. Pass -Target Codex,Claude,Cursor,OpenCode to choose explicitly."
+        return
+    }
+
+    $helper = Join-Path $repoRoot "scripts\install_hooks.py"
+    Assert-PathPresent -Path $helper -Description "hook registration helper"
+
+    $python = Find-PythonCommand
+    $hookArgs = @($helper, "--hook-root", $HookRoot)
+    foreach ($hostName in $HostTargets) {
+        $hookArgs += @("--target", $hostName)
+    }
+
+    & $python @hookArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Hook registration failed."
+    }
+}
+
 try {
     Assert-SourceLayout
 
     $selectedTeams = Resolve-TeamSelection -RequestedTeams $Team
+    $hostTargets = @(Resolve-HostTargets -RequestedTargets $Target)
 
     Write-Host "Installing Supreme Team to $Destination"
     Install-SupremeTeam -TargetRoot $Destination -SelectedTeams $selectedTeams
 
-    if ($InstallClaude) {
+    $mirrorSummaries = @()
+
+    if ($hostTargets -contains "claude") {
         Write-Host "Mirroring Supreme Team to $ClaudeDestination"
         Install-SupremeTeam -TargetRoot $ClaudeDestination -SelectedTeams $selectedTeams
+        $mirrorSummaries += "claude=$ClaudeDestination"
     }
 
-    $claudeStatus = if ($InstallClaude) { $ClaudeDestination } else { "not requested" }
+    if ($hostTargets -contains "cursor") {
+        Write-Host "Mirroring Supreme Team to $CursorDestination"
+        Install-SupremeTeam -TargetRoot $CursorDestination -SelectedTeams $selectedTeams
+        $mirrorSummaries += "cursor=$CursorDestination"
+    }
+
+    if ($hostTargets -contains "opencode") {
+        Write-Host "Mirroring Supreme Team to $OpenCodeDestination"
+        Install-SupremeTeam -TargetRoot $OpenCodeDestination -SelectedTeams $selectedTeams
+        $mirrorSummaries += "opencode=$OpenCodeDestination"
+    }
+
+    if ($RegisterHooks) {
+        Register-HarnessHooks -HostTargets $hostTargets -HookRoot (Join-Path $Destination "harness\hooks")
+    }
+
+    $mirrorStatus = if ($mirrorSummaries.Count -gt 0) { $mirrorSummaries -join "; " } else { "none" }
+    $hookStatus = if ($RegisterHooks) { "requested" } else { "not requested" }
+    $hostStatus = if ($hostTargets.Count -gt 0) { $hostTargets -join ", " } else { "none detected" }
 
     Write-Host ""
     Write-Host "Supreme Team installation complete."
     Write-Host "Target: $Destination"
+    Write-Host "Host targets: $hostStatus"
+    Write-Host "Host mirrors: $mirrorStatus"
     Write-Host "Teams: $(Format-TeamList -SelectedTeams $selectedTeams)"
-    Write-Host "Claude mirror: $claudeStatus"
+    Write-Host "Hook registration: $hookStatus"
     Write-Host "Restart your assistant session if it was already running."
-    Write-Host "Register the runtime harness hooks via the update-config skill to enable deterministic entry routing and action guards."
+    if (-not $RegisterHooks) {
+        Write-Host "Run again with -RegisterHooks to register runtime harness hooks for the selected hosts."
+    }
 }
 catch {
     Write-Error $_.Exception.Message

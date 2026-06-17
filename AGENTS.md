@@ -152,11 +152,11 @@ defined in `skills/harness-doctrine.md`. See `skills/harness/hooks/README.md` an
 | **pre_tool_use.py** | `skills/harness/hooks/pre_tool_use.py` | `PreToolUse` hook — blocks dangerous shell commands and writes into a frozen/guarded boundary (Layer 3 Action Realization) |
 | **post_tool_use.py** | `skills/harness/hooks/post_tool_use.py` | `PostToolUse` hook — detects repeated failures, empty-output streaks, oscillation; injects a recovery hint (Layer 4 Trajectory Regulation) |
 | **user_prompt_submit.py** | `skills/harness/hooks/user_prompt_submit.py` | `UserPromptSubmit` hook — advisory entry-routing reminder steering lifecycle requests through `admiral` |
-| **verify_registration.py** | `skills/harness/hooks/verify_registration.py` | Diagnostic — confirms the three hooks are registered in a host `settings.json` (run by admiral at intake) |
+| **verify_registration.py** | `skills/harness/hooks/verify_registration.py` | Diagnostic — confirms the three hooks are registered in host-native hook config (run by admiral at intake) |
 | **\_gatecheck.py** | `skills/harness/gatekeeper/_gatecheck.py` | Shared stdlib gate engine behind every `gatekeeper-*` skill's `scripts/check.py` — deterministic, fail-loud package checks |
 
-> Hook registration lives in the host `settings.json` and is owned by the
-> `update-config` skill. Hooks are stdlib-only and fail open; the gate engine
+> Hook registration lives in host-native hook config and is installed only by
+> explicit installer opt-in (`-RegisterHooks` / `--register-hooks`). Hooks are stdlib-only and fail open; the gate engine
 > fails loud (a gate that cannot prove a package clean must never approve it).
 
 ## Doctrine & Protocol Files (skill set root)

@@ -1,6 +1,6 @@
 # Guard — Deterministic Enforcement Reference
 
-How the advisory guard is backed by a deterministic Claude Code hook: the
+How the advisory guard is backed by a deterministic host-compatible hook: the
 `guard-state.json` schema, activation steps, the `allow_dangerous` override
 protocol, and the fail-open semantics. Read this when activating hook-level
 enforcement or diagnosing why a guarded write was or was not blocked.
@@ -8,7 +8,7 @@ enforcement or diagnosing why a guarded write was or was not blocked.
 ## Action Realization layer
 
 The guard is the advisory expression of the Action Realization layer
-(`../../harness-doctrine.md` §1). When the host supports Claude Code hooks, the
+(`../../harness-doctrine.md` §1). When the host supports compatible runtime hooks, the
 guarded boundary is also deterministically enforced by
 `../../harness/hooks/pre_tool_use.py`, which blocks writes into the guarded paths
 before they execute — so the guard is no longer advice the model can ignore. When
@@ -18,7 +18,7 @@ See `../../harness/hooks/README.md`.
 ## guard-state.json
 
 To activate enforcement, record the boundary in `.harness-state/guard-state.json`
-(under `$CLAUDE_PROJECT_DIR`, else the OS temp dir):
+(under `SUPREMETEAM_PROJECT_DIR`, a host workspace variable, the current working directory, or the OS temp fallback):
 
 ```json
 {

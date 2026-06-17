@@ -7,8 +7,12 @@ repo_root="$(CDPATH= cd -- "$script_dir/.." && pwd)"
 source_root="$repo_root/skills"
 destination="${HOME}/.agents/skills"
 claude_destination="${HOME}/.claude/skills"
+cursor_destination="${HOME}/.cursor/skills"
+opencode_destination="${HOME}/.config/opencode/skills"
 install_claude=0
+register_hooks=0
 requested_teams=()
+requested_targets=()
 
 # Core components are always installed: the Admiral pipeline spine, the runtime
 # harness (hooks + deterministic gate engine), and the root doctrine/protocol files.
@@ -63,9 +67,15 @@ Options:
   --team NAME               Install one team. Repeatable. One of:
                               design, build, review,
                               browser, release, safety, testing
+  --target NAME             Install host-native support for one host. Repeatable.
+                              One of: auto, codex, claude, cursor, opencode.
+                              Default: auto.
   --destination PATH        Override the default agent skill path.
+  --register-hooks          Register runtime harness hooks for selected hosts.
   --install-claude          Mirror the install into ~/.claude/skills.
   --claude-destination PATH Override the Claude Code skill path.
+  --cursor-destination PATH Override the Cursor skill path.
+  --opencode-destination PATH Override the OpenCode skill path.
   -h, --help                Show this help message.
 
 If no --team options are provided, all teams are installed.
@@ -197,6 +207,94 @@ format_team_list() {
     done
 }
 
+host_detected() {
+    case "$1" in
+        codex)
+            command -v codex >/dev/null 2>&1 || [[ -d "$HOME/.codex" ]]
+            ;;
+        claude)
+            command -v claude >/dev/null 2>&1 || [[ -d "$HOME/.claude" ]]
+            ;;
+        cursor)
+            command -v cursor >/dev/null 2>&1 || [[ -d "$HOME/.cursor" ]]
+            ;;
+        opencode)
+            command -v opencode >/dev/null 2>&1 || [[ -d "$HOME/.config/opencode" ]]
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+add_selected_target() {
+    local target="$1"
+
+    if ! contains_value "$target" "${selected_targets[@]}"; then
+        selected_targets+=("$target")
+    fi
+}
+
+resolve_targets() {
+    local target normalized
+
+    selected_targets=()
+
+    if [[ ${#requested_targets[@]} -eq 0 ]]; then
+        requested_targets=(auto)
+    fi
+
+    for target in "${requested_targets[@]}"; do
+        normalized="$(printf '%s' "$target" | tr '[:upper:]' '[:lower:]')"
+        case "$normalized" in
+            auto)
+                for detected in codex claude cursor opencode; do
+                    if host_detected "$detected"; then
+                        add_selected_target "$detected"
+                    fi
+                done
+                ;;
+            codex|claude|cursor|opencode)
+                add_selected_target "$normalized"
+                ;;
+            *)
+                die "Unknown target '$target'. Use auto, codex, claude, cursor, or opencode."
+                ;;
+        esac
+    done
+
+    if [[ $install_claude -eq 1 ]]; then
+        add_selected_target claude
+    fi
+}
+
+find_python() {
+    if command -v python3 >/dev/null 2>&1; then
+        printf 'python3'
+    elif command -v python >/dev/null 2>&1; then
+        printf 'python'
+    else
+        die "Python 3 is required to register runtime harness hooks."
+    fi
+}
+
+register_harness_hooks() {
+    if [[ ${#selected_targets[@]} -eq 0 ]]; then
+        printf 'Hook registration skipped: no host targets were detected. Pass --target codex, --target claude, --target cursor, or --target opencode to choose explicitly.\n'
+        return
+    fi
+
+    local python hook_args target
+    python="$(find_python)"
+    hook_args=("$repo_root/scripts/install_hooks.py" --hook-root "$destination/harness/hooks")
+
+    for target in "${selected_targets[@]}"; do
+        hook_args+=(--target "$target")
+    done
+
+    "$python" "${hook_args[@]}"
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --team)
@@ -204,10 +302,19 @@ while [[ $# -gt 0 ]]; do
             requested_teams+=("$2")
             shift 2
             ;;
+        --target)
+            [[ $# -ge 2 ]] || die "Missing value for --target."
+            requested_targets+=("$2")
+            shift 2
+            ;;
         --destination)
             [[ $# -ge 2 ]] || die "Missing value for --destination."
             destination="$2"
             shift 2
+            ;;
+        --register-hooks)
+            register_hooks=1
+            shift
             ;;
         --install-claude)
             install_claude=1
@@ -216,6 +323,16 @@ while [[ $# -gt 0 ]]; do
         --claude-destination)
             [[ $# -ge 2 ]] || die "Missing value for --claude-destination."
             claude_destination="$2"
+            shift 2
+            ;;
+        --cursor-destination)
+            [[ $# -ge 2 ]] || die "Missing value for --cursor-destination."
+            cursor_destination="$2"
+            shift 2
+            ;;
+        --opencode-destination)
+            [[ $# -ge 2 ]] || die "Missing value for --opencode-destination."
+            opencode_destination="$2"
             shift 2
             ;;
         -h|--help)
@@ -230,21 +347,54 @@ done
 
 assert_source_layout
 resolve_teams
+resolve_targets
 
 printf 'Installing Supreme Team to %s\n' "$destination"
 install_supreme_team "$destination"
 
-if [[ $install_claude -eq 1 ]]; then
+mirror_status=()
+
+if contains_value claude "${selected_targets[@]}"; then
     printf 'Mirroring Supreme Team to %s\n' "$claude_destination"
     install_supreme_team "$claude_destination"
-    claude_status="$claude_destination"
-else
-    claude_status="not requested"
+    mirror_status+=("claude=$claude_destination")
+fi
+
+if contains_value cursor "${selected_targets[@]}"; then
+    printf 'Mirroring Supreme Team to %s\n' "$cursor_destination"
+    install_supreme_team "$cursor_destination"
+    mirror_status+=("cursor=$cursor_destination")
+fi
+
+if contains_value opencode "${selected_targets[@]}"; then
+    printf 'Mirroring Supreme Team to %s\n' "$opencode_destination"
+    install_supreme_team "$opencode_destination"
+    mirror_status+=("opencode=$opencode_destination")
+fi
+
+if [[ $register_hooks -eq 1 ]]; then
+    register_harness_hooks
 fi
 
 printf '\nSupreme Team installation complete.\n'
 printf 'Target: %s\n' "$destination"
+if [[ ${#selected_targets[@]} -gt 0 ]]; then
+    printf 'Host targets: %s\n' "${selected_targets[*]}"
+else
+    printf 'Host targets: none detected\n'
+fi
+if [[ ${#mirror_status[@]} -gt 0 ]]; then
+    printf 'Host mirrors: %s\n' "${mirror_status[*]}"
+else
+    printf 'Host mirrors: none\n'
+fi
 printf 'Teams: %s\n' "$(format_team_list)"
-printf 'Claude mirror: %s\n' "$claude_status"
+if [[ $register_hooks -eq 1 ]]; then
+    printf 'Hook registration: requested\n'
+else
+    printf 'Hook registration: not requested\n'
+fi
 printf 'Restart your assistant session if it was already running.\n'
-printf 'Register the runtime harness hooks via the update-config skill to enable deterministic entry routing and action guards.\n'
+if [[ $register_hooks -ne 1 ]]; then
+    printf 'Run again with --register-hooks to register runtime harness hooks for the selected hosts.\n'
+fi

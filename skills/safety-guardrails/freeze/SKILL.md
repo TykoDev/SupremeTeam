@@ -55,9 +55,9 @@ Route elsewhere to lift the lock (`safety-guardrails/unfreeze`), add only an int
 
 ## Deterministic Enforcement (Action Realization layer)
 
-Freeze is the advisory expression of the Action Realization layer (`../../harness-doctrine.md` §1). When the host supports Claude Code hooks, the frozen boundary is also **deterministically enforced** by `../../harness/hooks/pre_tool_use.py`, which blocks any edit or command that touches a frozen path before it executes.
+Freeze is the advisory expression of the Action Realization layer (`../../harness-doctrine.md` §1). When the host supports compatible runtime hooks, the frozen boundary is also **deterministically enforced** by `../../harness/hooks/pre_tool_use.py`, which blocks any edit or command that touches a frozen path before it executes.
 
-To activate enforcement, add the frozen paths to `frozen_globs` in `.harness-state/guard-state.json` (under `$CLAUDE_PROJECT_DIR`, else the OS temp dir):
+To activate enforcement, add the frozen paths to `frozen_globs` in `.harness-state/guard-state.json` (under `SUPREMETEAM_PROJECT_DIR`, a host workspace variable, the current working directory, or the OS temp fallback):
 
 ```json
 { "frozen_globs": ["infra/*.tf", "src/payments/**"] }

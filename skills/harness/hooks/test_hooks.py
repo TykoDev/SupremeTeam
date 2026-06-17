@@ -292,19 +292,19 @@ class UserPromptSubmitTests(unittest.TestCase):
 class VerifyRegistrationTests(unittest.TestCase):
     _BLOCK = {
         "hooks": {
-            "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "python pre_tool_use.py"}]}],
-            "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "python post_tool_use.py"}]}],
-            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "python user_prompt_submit.py"}]}],
+            "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"python {HOOK_DIR / 'pre_tool_use.py'}"}]}],
+            "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"python {HOOK_DIR / 'post_tool_use.py'}"}]}],
+            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": f"python {HOOK_DIR / 'user_prompt_submit.py'}"}]}],
         }
     }
 
-    def _run(self, project: Path, home: Path) -> subprocess.CompletedProcess:
+    def _run(self, project: Path, home: Path, host: str = "claude") -> subprocess.CompletedProcess:
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(project)
         env["HOME"] = str(home)
         env["USERPROFILE"] = str(home)  # Path.home() uses USERPROFILE on Windows
         return subprocess.run(
-            [sys.executable, str(HOOK_DIR / "verify_registration.py")],
+            [sys.executable, str(HOOK_DIR / "verify_registration.py"), "--host", host],
             input="{}", text=True, capture_output=True, env=env, check=False,
         )
 
@@ -344,6 +344,20 @@ class VerifyRegistrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("[OK ] PreToolUse", result.stdout)
         self.assertIn("[MISSING] UserPromptSubmit", result.stdout)
+
+    def test_same_basename_from_unrelated_package_is_missing(self):
+        unrelated = {
+            "hooks": {
+                "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "python /tmp/critlabs-suite/harness/hooks/pre_tool_use.py"}]}],
+                "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "python /tmp/critlabs-suite/harness/hooks/post_tool_use.py"}]}],
+                "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "python /tmp/critlabs-suite/harness/hooks/user_prompt_submit.py"}]}],
+            }
+        }
+        with _project_dir() as project, _project_dir() as home:
+            self._write_settings(project, unrelated)
+            result = self._run(project, home)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("status: MISSING", result.stdout)
 
 
 if __name__ == "__main__":

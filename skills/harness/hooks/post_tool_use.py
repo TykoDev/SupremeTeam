@@ -2,7 +2,7 @@
 """
 Trajectory Regulation hook (LIFE-HARNESS Layer 4) for SupremeTeam.
 
-Runs as a Claude Code ``PostToolUse`` hook. It watches the evolving trajectory
+Runs as a host ``PostToolUse``/post-tool hook. It watches the evolving trajectory
 for degenerate, non-progressing patterns and injects a recovery hint as
 additional context — the deterministic, per-step expression of the coarse-grained
 trajectory control that gatekeepers and session-memory already provide.
@@ -13,7 +13,7 @@ doctrine section 3 — never from guessed intent):
   - empty-output streak (>= 3 consecutive empty results)
   - two-state oscillation (A,B,A,B over the last four steps)
 
-Contract: prints the Claude Code PostToolUse additionalContext envelope to
+Contract: prints the PostToolUse additionalContext envelope to
 stdout and exits 0. On any internal error it exits 0 silently (fail open). It
 never blocks — by definition the action already executed.
 """

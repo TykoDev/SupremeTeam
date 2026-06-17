@@ -59,19 +59,21 @@ Resolution:
 
 ## 4. Deterministic Reinforcement (hook)
 
-`harness/hooks/user_prompt_submit.py` is a `UserPromptSubmit` hook that fires on every fresh
+`harness/hooks/user_prompt_submit.py` is a prompt-submit hook that fires on every fresh
 user prompt and injects a routing reminder pointing at `admiral` when no active run is
 detected. It is advisory (it cannot own the host loop — see `harness-doctrine.md`), stdlib
 only, and fail-open. It stays silent for explicit slash commands and reinforces the active
-run's session pin when a run is in progress. Registration lives in the host `settings.json`
-and is owned by the `update-config` skill (see `harness/hooks/README.md`).
+run's session pin when a run is in progress. Registration lives in the host-native hook
+configuration or plugin layer and is installed only when explicitly requested (see
+`harness/hooks/README.md`).
 
 Because this deterministic layer only works once the hook is registered, Admiral verifies
 registration at intake by running `harness/hooks/verify_registration.py` (its **Harness Hook
 Registration** contract). When any of the three hooks is missing, the verifier emits a
-`REGISTER_PROMPT` and Admiral asks the user to register them via `update-config`. Until the
-`user_prompt_submit.py` hook is registered, entry routing falls back to the advisory layer
-(this doctrine plus the skill descriptions and per-skill Entry Routing checks).
+`REGISTER_PROMPT` and Admiral asks the user whether to rerun the installer with
+`-RegisterHooks` / `--register-hooks`. Until the prompt-submit hook is registered, entry
+routing falls back to the advisory layer (this doctrine plus the skill descriptions and
+per-skill Entry Routing checks).
 
 ## 5. Why This Matters
 

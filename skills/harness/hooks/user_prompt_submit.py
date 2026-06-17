@@ -2,7 +2,7 @@
 """
 Entry-Routing hook for SupremeTeam.
 
-Runs as a Claude Code ``UserPromptSubmit`` hook. On every fresh user turn it
+Runs as a host ``UserPromptSubmit``/prompt-submit hook. On every fresh user turn it
 injects a short routing reminder steering delivery-lifecycle work to ``admiral``,
 the primary entry orchestrator (see ../../routing-doctrine.md). This is the only
 deterministic place the catalog can reinforce entry routing, because skills are
@@ -60,7 +60,14 @@ def _emit(context: str) -> None:
 
 
 def _saves_root() -> Path:
-    base = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    base = (
+        os.environ.get("SUPREMETEAM_PROJECT_DIR")
+        or os.environ.get("CLAUDE_PROJECT_DIR")
+        or os.environ.get("CODEX_WORKSPACE_DIR")
+        or os.environ.get("CURSOR_WORKSPACE_DIR")
+        or os.environ.get("OPENCODE_WORKSPACE_DIR")
+        or os.getcwd()
+    )
     return Path(base) / "skillset-saves"
 
 

@@ -23,10 +23,18 @@ _MAX_TRAJ = 40
 def state_dir() -> Path:
     """Return the harness state directory, creating it if possible.
 
-    Prefers ``$CLAUDE_PROJECT_DIR/.harness-state`` so guard/freeze records and
-    trajectory state live with the project; falls back to the OS temp dir.
+    Prefers ``$SUPREMETEAM_PROJECT_DIR/.harness-state`` so guard/freeze records
+    and trajectory state live with the project; falls back through known host
+    project-directory variables and then the current working directory.
     """
-    base = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    base = (
+        os.environ.get("SUPREMETEAM_PROJECT_DIR")
+        or os.environ.get("CLAUDE_PROJECT_DIR")
+        or os.environ.get("CODEX_WORKSPACE_DIR")
+        or os.environ.get("CURSOR_WORKSPACE_DIR")
+        or os.environ.get("OPENCODE_WORKSPACE_DIR")
+        or os.getcwd()
+    )
     try:
         d = Path(base) / ".harness-state"
         d.mkdir(parents=True, exist_ok=True)

@@ -2,7 +2,7 @@
 """
 Action Realization hook (LIFE-HARNESS Layer 3) for SupremeTeam.
 
-Runs as a Claude Code ``PreToolUse`` hook. It validates a generated action
+Runs as a host ``PreToolUse``/pre-tool hook. It validates a generated action
 *before* the host executes it and BLOCKS the ones that would deterministically
 fail or violate an active guard/freeze boundary. This is the deterministic
 expression of the otherwise-advisory ``safety-guardrails`` skills.
@@ -14,7 +14,7 @@ Doctrine (../../harness-doctrine.md):
     recorded frozen boundary) — never on ambiguous intent — so a strong backbone
     is unaffected.
 
-Block contract: prints the Claude Code PreToolUse deny envelope to stdout and
+Block contract: prints the PreToolUse deny envelope to stdout and
 exits 0. On any internal error it exits 0 silently (fail open), letting the
 action proceed.
 """

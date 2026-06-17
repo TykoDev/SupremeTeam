@@ -131,4 +131,4 @@ alongside them.
 | `admiral` (intake) | `harness/hooks/verify_registration.py`, `mcp-tools.md`, `save-protocol.md` |
 | Every `gatekeeper-*` skill | `harness/gatekeeper/_gatecheck.py` (located by walking up to the skill-set root) |
 | `design/architect` (UI work) | `design-doctrine.md` (frontend/UI design-system doctrine) |
-| Deterministic entry routing / guard enforcement | `harness/hooks/` registered in the host `settings.json` (owned by the `update-config` skill) |
+| Deterministic entry routing / guard enforcement | `harness/hooks/` registered in host-native hook config with `-RegisterHooks` / `--register-hooks` |

@@ -25,9 +25,10 @@ intervention does nothing.
 | 4 | **Trajectory Regulation** | after execution | Detect degenerate patterns (loops, stagnation, empty-output streaks, budget exhaustion) and inject recovery (gatekeepers, session-memory, admiral rewind, **`post_tool_use.py`**). |
 
 Skills are instructions running *inside* the host loop and do not own that loop.
-The only place Supreme Team can deterministically intercept a tool call is the
-host's hook system, so Layers 3 and 4 have both an advisory expression (skill
-prose) and, where the host supports hooks, a deterministic one (`harness/hooks/`).
+The only place Supreme Team can deterministically intercept a tool call is a
+host hook or plugin lifecycle, so Layers 3 and 4 have both an advisory expression
+(skill prose) and, where the host supports compatible hooks, a deterministic one
+(`harness/hooks/`).
 
 ## Hooks
 
@@ -40,28 +41,26 @@ internal error exits 0 and lets the action proceed), and inert on the strong cas
 | `pre_tool_use.py` | `PreToolUse` | 3 | Blocks dangerous shell commands and writes into a frozen/guarded boundary, *before* execution. |
 | `post_tool_use.py` | `PostToolUse` | 4 | Detects repeated failing commands, empty-output streaks, and A,B,A,B oscillation; injects a recovery hint. |
 | `user_prompt_submit.py` | `UserPromptSubmit` | — | Advisory entry-routing reminder steering lifecycle requests through admiral when no run is active; reinforces the session pin when one is. Silent on slash commands. |
-| `verify_registration.py` | diagnostic | — | Confirms the three hooks are registered in a host `settings.json` (exit 0 registered / 1 missing / 2 unknown). Run by admiral at intake; emits a ready-to-paste `REGISTER_PROMPT` when any are missing. |
+| `verify_registration.py` | diagnostic | — | Confirms host-native hook config points at Supreme Team's three hooks (exit 0 registered / 1 missing / 2 unknown). Run by admiral at intake; emits a `REGISTER_PROMPT` when any are missing. |
 
 ### Registration
 
-Hook registration lives in the host's `settings.json` (project/host-specific) and
-is owned by the **`update-config`** skill — no `settings.json` is committed into
-the skills tree. The block registers `pre_tool_use.py`
-(matcher `Bash|PowerShell|Edit|Write|NotebookEdit`), `post_tool_use.py` (matcher
-`Bash|PowerShell` — Layer 4 watches command actions, not edits), and
-`user_prompt_submit.py` (no matcher — a prompt-lifecycle event). On Windows,
-replace `python` with `py -3` as appropriate. See
-`skills/harness/hooks/README.md`. Admiral never blocks a run on a failed
-registration check — it warns and continues, and flags that entry routing is
-advisory-only until the prompt hook is registered.
+Hook registration is explicit opt-in in the installers:
+`-RegisterHooks` on Windows and `--register-hooks` on macOS/Linux. The installer
+writes host-native config: Codex `~/.codex/hooks.json`, Claude Code
+`~/.claude/settings.json`, Cursor a local `supremeteam-hooks` plugin, and
+OpenCode a local plugin script. See `skills/harness/hooks/README.md`. Admiral
+never blocks a run on a failed registration check — it warns and continues, and
+flags that entry routing is advisory-only until the prompt hook is registered.
 
 ### Guard / freeze integration
 
 `pre_tool_use.py` enforces the boundary recorded by the `guard` and `freeze`
-skills at `.harness-state/guard-state.json` (under `$CLAUDE_PROJECT_DIR`, else the
-OS temp dir): `frozen_globs`, `blocked_globs`, and `allow_dangerous`. When the
-file is absent or empty (the default), only the built-in destructive-pattern
-guard applies. `unfreeze` clears `frozen_globs`.
+skills at `.harness-state/guard-state.json` under `SUPREMETEAM_PROJECT_DIR`, a
+known host workspace variable, the current working directory, or the OS temp
+fallback: `frozen_globs`, `blocked_globs`, and `allow_dangerous`. When the file
+is absent or empty (the default), only the built-in destructive-pattern guard
+applies. `unfreeze` clears `frozen_globs`.
 
 ## Deterministic Gate Engine
 
@@ -109,7 +108,7 @@ regression check**, and **fail open**. Hook changes must run the stdlib suite at
 
 ```bash
 # Hooks
-python -m unittest discover -s SupremeTeam/harness/hooks -p "test_*.py"
+python -m unittest discover -s skills/harness/hooks -p "test_*.py"
 
 # Gate engine
 python -m unittest discover -s SupremeTeam/harness/gatekeeper -p "test_*.py"

@@ -46,10 +46,12 @@ work attaches to the right layer rather than inventing a parallel system.
 | Action Realization | `safety-guardrails/guard|freeze|careful`, save-protocol write-capability probe, gatekeeper pre-checks, **`harness/hooks/pre_tool_use.py`** | advisory **+ deterministic hook** |
 | Trajectory Regulation | gatekeepers, `session-memory` checkpoints, admiral rewind rule, max-2-revisions, context-tier escalation, **`harness/hooks/post_tool_use.py`** | per-boundary **+ per-step hook** |
 
-The only place SupremeTeam can deterministically intercept a tool call is **Claude Code
-hooks**, because skills are instructions running *inside* the host loop and do not own that
-loop. Layers 3 and 4 therefore have both an advisory expression (skill prose) and, where the
-host supports hooks, a deterministic expression (`harness/hooks/`). See `harness/hooks/README.md`.
+The only place SupremeTeam can deterministically intercept a tool call is a
+host-provided hook or plugin lifecycle, because skills are instructions running
+*inside* the host loop and do not own that loop. Layers 3 and 4 therefore have
+both an advisory expression (skill prose) and, where the host supports compatible
+hooks, a deterministic expression (`harness/hooks/`) registered through the
+host-native configuration. See `harness/hooks/README.md`.
 
 ## 2. Failure Taxonomy and Priority Order
 

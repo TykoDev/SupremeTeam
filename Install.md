@@ -1,162 +1,104 @@
-# Supreme Team — Installation Guide
+# Supreme Team — Agent Installation Guide
 
-Supreme Team ships with installer scripts in the `scripts/` directory:
+This guide is written for coding agents that can read and write the local file
+system. Install Supreme Team by copying the grouped `skills/` source tree into
+the skill discovery paths used by the active assistant host.
 
-- `scripts/install.ps1` for Windows
-- `scripts/install.sh` for macOS and Linux
+Do not flatten, rename, or cherry-pick individual skill folders. The tree shape
+is load-bearing because skills resolve shared doctrine, gatekeeper scripts, and
+handoff references by relative path.
 
-For human users, Markdown does not execute automatically. Opening or running
-`Install.md` in an editor does not install anything by itself; you must run one
-of the installer scripts.
+For a human-operated fallback, use the helper scripts in [`scripts/`](scripts/).
 
-For AI agents, this file is the procedural installation entry point. Use it to
-identify the operating system, ask the user what to install, and then execute
-the correct installer script with the matching flags.
+## Agent Install Contract
 
-Supreme Team ships as a grouped `skills/` source tree. This layout is
-load-bearing — do not flatten, rename, or partially extract individual skill
-folders without their dependencies.
+Before installing, confirm these repository paths exist:
 
-## AI agent entry point
+- `skills/admiral/SKILL.md`
+- `skills/gatekeeper-admiral/SKILL.md`
+- `skills/harness/hooks/verify_registration.py`
+- `skills/routing-doctrine.md`
+- `skills/grill-me-doctrine.md`
+- `skills/save-protocol.md`
 
-If you are an AI agent installing Supreme Team, follow this flow before running
-anything:
+Then copy the selected Supreme Team directories and root doctrine files into one
+or more host skill paths.
 
-### 1. Detect the operating system
+Default install scope is **all teams**. Partial installs are allowed, but the
+core components are always required.
 
-| OS | Script | Base command |
-|----|--------|--------------|
-| Windows | `scripts/install.ps1` | `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1` |
-| macOS / Linux | `scripts/install.sh` | `bash ./scripts/install.sh` |
+## Python Prerequisite
 
-### 2. Ask the user what they want installed
+Supreme Team's runtime harness, hook verifier, and hook registration helpers use
+Python. Before installation, verify that Python **3.13 or newer** is available.
 
-Ask these questions in order:
+Check local commands in this order and use the first one that reports version
+`3.13.x` or newer:
 
-1. Install all teams or only a subset?
-2. If subset, which teams: `Design`, `Build`, `Review`, `Browser`, `Release`,
-   `Safety`, `Testing`?
-3. Install to the default agent skill path only, also mirror to Claude Code, or
-   install only to the Claude Code path?
-4. Do they want to override either default destination path?
-
-### 3. Map the user's answers to the installer flags
-
-| User intent | Windows | macOS / Linux | Notes |
-|-------------|---------|---------------|-------|
-| Install all teams | no extra flags | no extra flags | This is the default behavior |
-| Install a subset | `-Team Design,Review` | `--team design --team review` | Windows accepts a comma-separated list; macOS/Linux repeats `--team` |
-| Also mirror to Claude Code | `-InstallClaude` | `--install-claude` | Adds a Claude Code mirror in addition to the primary install |
-| Install only to Claude Code path | `-Destination "$HOME\.claude\skills"` | `--destination "$HOME/.claude/skills"` | Use this when Claude Code should be the only target |
-| Override the primary install path | `-Destination "D:\SupremeTeam\skills"` | `--destination "/custom/skills/path"` | Replaces the default agent skill path |
-| Override the Claude Code mirror path | `-InstallClaude -ClaudeDestination "D:\Claude\skills"` | `--install-claude --claude-destination "/custom/claude/path"` | Use only when a Claude mirror is also requested |
-
-Team flag values: `Design`, `Build`, `Review`, `Browser`, `Release`, `Safety`,
-`Testing`, or `All`. On macOS/Linux these are lowercase
-(`design build review browser release safety testing all`).
-
-> **Note:** All script paths above are relative to the repository root. The base
-> commands in Step 1 already include the `scripts/` prefix.
-
-### 4. Execute the matching script
-
-Use the base command for the detected operating system and append only the flags
-that match the user's answers.
-
-Representative examples:
-
-| Intent | Windows | macOS / Linux |
-|--------|---------|---------------|
-| Install all teams to the default agent path | `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1` | `bash ./scripts/install.sh` |
-| Install Design + Review and also mirror to Claude Code | `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Team Design,Review -InstallClaude` | `bash ./scripts/install.sh --team design --team review --install-claude` |
-| Install only to the Claude Code path | `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Destination "$HOME\.claude\skills"` | `bash ./scripts/install.sh --destination "$HOME/.claude/skills"` |
-
-The scripts resolve the repository root from their own location, so they still
-work when launched by full path from another directory.
-
-### 5. Verify success from installer output
-
-Treat the install as successful when the script prints these summary lines
-without an error:
-
-- `Supreme Team installation complete.`
-- `Target: ...`
-- `Teams: ...`
-- `Claude mirror: ...`
-
-### 6. Recommend registering the runtime harness hooks
-
-After a successful install, recommend registering the three runtime harness hooks
-(`pre_tool_use.py`, `post_tool_use.py`, `user_prompt_submit.py`) in the host
-`settings.json` to enable deterministic entry routing and action guards. The
-`update-config` skill owns this registration, or the block can be applied
-manually from `skills/harness/hooks/README.md`. Without registration these layers
-fall back to advisory doctrine. Admiral also checks registration at intake via
-`harness/hooks/verify_registration.py`.
-
-### 7. Boundary note for Claude requests
-
-This repository defines two built-in install targets only:
-
-- the default agent skills path
-- an optional Claude Code mirror path
-
-There is no separate built-in `Claude Coder` target or agent-type switch in the
-current scripts. If the user says `Claude Coder`, clarify whether they mean
-Claude Code or another custom destination. If they mean another destination, use
-`-Destination` or `--destination` with the exact path they want.
-
-## What the installers do
-
-- Resolve the repository root from the script location, so they work even when launched from another directory
-- Install all teams by default
-- Support partial installs while always including the shared core components
-- Optionally mirror the same install into Claude Code's skill path
-- Replace the Supreme Team-managed paths in the target directory on each run, leaving unrelated entries alone
-- Validate the copied tree before reporting success
-
-## Default targets
-
-| Target | Linux / macOS | Windows |
-|--------|----------------|---------|
-| Agent skills | `~/.agents/skills/` | `%USERPROFILE%\.agents\skills\` |
-| Claude Code mirror | `~/.claude/skills/` | `%USERPROFILE%\.claude\skills\` |
-
-## Quick install
-
-### Windows (PowerShell)
+### Windows
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
-```
-
-If script execution is already allowed in your shell, this works too:
-
-```powershell
-.\scripts\install.ps1
+py -3.13 --version
+python --version
+python3 --version
 ```
 
 ### macOS / Linux
 
 ```bash
-bash ./scripts/install.sh
+python3 --version
+python --version
 ```
 
-By default, both installers copy the full Supreme Team bundle into the default
-agent skill path and verify the result before finishing.
+If no Python command exists, or the newest detected version is older than 3.13,
+do not install Python silently. Prompt the user for approval first:
 
-## Partial install rules
+```text
+Supreme Team needs Python 3.13+ for hook verification and runtime harness
+helpers. I found no compatible Python installation. Do you want me to install
+Python 3.13 or newer for this system?
+```
 
-These core components are always installed, even when you choose only one team:
+Only after approval, install Python 3.13+ using a trusted system package source
+appropriate for the host, such as `winget` on Windows, Homebrew on macOS, or the
+distribution package manager on Linux. Re-run the version check after
+installation. If the user declines, continue with the skill file copy, but warn
+that hook verification and hook registration cannot run until Python 3.13+ is
+available.
 
-| Directory / File | Purpose |
-|------------------|---------|
+## Default Targets
+
+| Target | Linux / macOS | Windows |
+|--------|---------------|---------|
+| Common Agent Skills | `~/.agents/skills/` | `%USERPROFILE%\.agents\skills\` |
+| Claude Code skills | `~/.claude/skills/` | `%USERPROFILE%\.claude\skills\` |
+| Cursor skills | `~/.cursor/skills/` | `%USERPROFILE%\.cursor\skills\` |
+| OpenCode skills | `~/.config/opencode/skills/` | `%USERPROFILE%\.config\opencode\skills\` |
+
+Codex uses the common `.agents/skills` path and does not require a separate
+mirror.
+
+Use local evidence before adding host-native mirrors:
+
+| Host | Evidence | Install target |
+|------|----------|----------------|
+| Codex | `codex` on PATH or `~/.codex/` exists | common `.agents/skills` |
+| Claude Code | `claude` on PATH or `~/.claude/` exists | `.claude/skills` |
+| Cursor | `cursor` on PATH, `~/.cursor/`, or app config exists | `.cursor/skills` |
+| OpenCode | `opencode` on PATH or `~/.config/opencode/` exists | `.config/opencode/skills` |
+
+## What To Copy
+
+Always copy these core components:
+
+| Source under `skills/` | Purpose |
+|------------------------|---------|
 | `admiral/` | Primary entry orchestrator |
 | `gatekeeper-admiral/` | Cross-stage adversarial validator |
-| `session-memory/` | Cross-session state and learnings manager |
+| `session-memory/` | Cross-session checkpoints and durable learnings |
 | `investigate/` | Root-cause analysis component |
-| `skill-maker/` | Skill/team creation orchestrator |
-| `harness/` | Runtime harness (hooks + deterministic gate engine) |
+| `skill-maker/` | Skill and coordinated team creation |
+| `harness/` | Runtime hooks and deterministic gate engine |
 | `routing-doctrine.md` | Entry-routing contract |
 | `grill-me-doctrine.md` | Intake interview protocol |
 | `design-doctrine.md` | Frontend/UI design-system doctrine |
@@ -166,97 +108,36 @@ These core components are always installed, even when you choose only one team:
 
 Selectable teams:
 
-| Team | Directory | Skills | Notes |
-|------|-----------|--------|-------|
-| **Design** | `design/` | 6 skills | `architect` owns the frontend/UI design system |
-| **Build** | `build/` | 8 skills | |
-| **Review** | `review/` | 11 skills | |
-| **Browser** | `browser-automation/` | 4 tools | Standalone (out of pipeline routing) |
-| **Release** | `release-and-deployment/` | 4 tools | Standalone |
-| **Safety** | `safety-guardrails/` | 4 tools | Enforced by `harness/hooks/pre_tool_use.py` |
-| **Testing** | `testing-and-qa/` | 3 tools | Standalone |
+| Team | Source directory | Skills |
+|------|------------------|--------|
+| Design | `design/` | 6 skills |
+| Build | `build/` | 8 skills |
+| Review | `review/` | 11 skills |
+| Browser | `browser-automation/` | 4 standalone tools |
+| Release | `release-and-deployment/` | 4 standalone tools |
+| Safety | `safety-guardrails/` | 4 standalone tools |
+| Testing | `testing-and-qa/` | 3 standalone tools |
 
-Critical dependencies:
+For the default all-teams install, copy the full contents of `skills/` into each
+selected target.
 
-- All skills resolve the root doctrine/protocol files
-  (`routing-doctrine.md`, `grill-me-doctrine.md`, `save-protocol.md`, and the
-  relevant `design-doctrine.md` / `harness-doctrine.md` / `mcp-tools.md`)
-- Every `gatekeeper-*` skill depends on `harness/gatekeeper/_gatecheck.py`
-- `design/architect` UI work depends on `design-doctrine.md`
-- `admiral` intake depends on `harness/hooks/verify_registration.py`, `mcp-tools.md`, and `save-protocol.md`
+## Direct Install Steps
 
-## Common installer options
+1. Resolve the repository root that contains this `Install.md`.
+2. Verify Python 3.13+ is installed; if missing or outdated, ask the user before
+   installing it.
+3. Select target directories from the table above.
+4. Create each target directory if missing.
+5. Copy `skills/` contents into each target, preserving directory structure.
+6. Remove stale Supreme Team legacy paths from the target if present:
+   `azure/`, `references/`, and `design/tech-stacks/`.
+7. Verify each target contains `admiral/SKILL.md` and the shared doctrine files.
+8. Restart or reload the assistant so it refreshes skill discovery.
 
-| Goal | Windows | macOS / Linux |
-|------|---------|---------------|
-| Install all teams | `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1` | `bash ./scripts/install.sh` |
-| Install only Design + Review | `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Team Design,Review` | `bash ./scripts/install.sh --team design --team review` |
-| Install only the standalone tools | `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Team Browser,Release,Safety,Testing` | `bash ./scripts/install.sh --team browser --team release --team safety --team testing` |
-| Install and mirror to Claude Code | `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -InstallClaude` | `bash ./scripts/install.sh --install-claude` |
-| Install only to the Claude Code path | `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Destination "$HOME\.claude\skills"` | `bash ./scripts/install.sh --destination "$HOME/.claude/skills"` |
-| Install into a custom agent path | `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Destination "D:\SupremeTeam\skills"` | `bash ./scripts/install.sh --destination "$HOME/.agents/skills"` |
-| Install into a custom Claude path | `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -InstallClaude -ClaudeDestination "D:\Claude\skills"` | `bash ./scripts/install.sh --install-claude --claude-destination "$HOME/.claude/skills"` |
+### Windows Direct Copy
 
-If you launch either script by full path, it still resolves the repository root
-automatically. The current working directory does not need to be the repository
-root.
-
-## Updating an existing install
-
-Re-run the installer script. Each run replaces the Supreme Team-managed paths in
-the target directory:
-
-- `admiral/`
-- `gatekeeper-admiral/`
-- `session-memory/`
-- `investigate/`
-- `skill-maker/`
-- `harness/`
-- `routing-doctrine.md`, `grill-me-doctrine.md`, `design-doctrine.md`,
-  `harness-doctrine.md`, `mcp-tools.md`, `save-protocol.md`
-- `design/`
-- `build/`
-- `review/`
-- `browser-automation/`
-- `release-and-deployment/`
-- `safety-guardrails/`
-- `testing-and-qa/`
-
-Unrelated entries in the same target directory are left alone.
-
-## Verification
-
-After installation:
-
-1. Confirm the target contains the core components plus the teams you selected.
-2. Start a new assistant session if your current one was already running.
-3. Ask your assistant:
-
-```text
-Summarize the Supreme Team pipelines available from the installed skills.
-```
-
-If skill discovery is configured correctly, the assistant should identify the
-admiral orchestrator, the installed team sub-pipelines, the standalone tool
-groups, and the shared resources.
-
-## Manual fallback
-
-Use these commands only if you cannot run the installer scripts. They assume you
-are already in the repository root. The scripts above are safer because they
-validate the result and do not depend on the current working directory.
-
-### macOS / Linux
-
-```bash
-repo_root="$(pwd)"
-destination="$HOME/.agents/skills"
-
-mkdir -p "$destination"
-cp -R "$repo_root/skills/." "$destination/"
-```
-
-### Windows (PowerShell)
+Run from the Supreme Team repository root, or adapt `$repoRoot` to the checkout
+path:
 
 ```powershell
 $repoRoot = (Get-Location).Path
@@ -265,17 +146,156 @@ $destination = Join-Path $env:USERPROFILE ".agents\skills"
 
 New-Item -ItemType Directory -Force -Path $destination | Out-Null
 Copy-Item -Recurse -Force (Join-Path $source "*") -Destination $destination -ErrorAction Stop
+
+foreach ($stale in @("azure", "references", "design\tech-stacks")) {
+  $path = Join-Path $destination $stale
+  if (Test-Path $path) {
+    Remove-Item -Recurse -Force $path
+  }
+}
+
+Test-Path (Join-Path $destination "admiral\SKILL.md")
 ```
+
+### macOS / Linux Direct Copy
+
+Run from the Supreme Team repository root, or adapt `repo_root` to the checkout
+path:
+
+```bash
+repo_root="$(pwd)"
+source="$repo_root/skills"
+destination="$HOME/.agents/skills"
+
+mkdir -p "$destination"
+cp -R "$source/." "$destination/"
+
+rm -rf "$destination/azure" "$destination/references" "$destination/design/tech-stacks"
+
+test -f "$destination/admiral/SKILL.md"
+```
+
+## Host-Native Mirrors
+
+When local evidence confirms a host, repeat the direct copy into that host's
+native skill directory as well as the common `.agents/skills` target.
+
+Examples:
+
+| Host | Windows destination | macOS / Linux destination |
+|------|---------------------|---------------------------|
+| Claude Code | `%USERPROFILE%\.claude\skills` | `~/.claude/skills` |
+| Cursor | `%USERPROFILE%\.cursor\skills` | `~/.cursor/skills` |
+| OpenCode | `%USERPROFILE%\.config\opencode\skills` | `~/.config/opencode/skills` |
+
+If a user asks for a custom destination, copy into that path instead and verify
+the same required files.
+
+## Partial Installs
+
+For a partial install, copy all core components plus only the requested team
+directories. Do not omit core files even when the user asks for a single team;
+the orchestrators, gatekeepers, save protocol, and doctrine files are shared.
+
+Critical dependencies:
+
+- All skills resolve the root doctrine and protocol files.
+- Every `gatekeeper-*` skill depends on `harness/gatekeeper/_gatecheck.py`.
+- `design/architect` UI work depends on `design-doctrine.md`.
+- `admiral` intake depends on `harness/hooks/verify_registration.py`,
+  `mcp-tools.md`, and `save-protocol.md`.
+
+## Runtime Harness Hooks
+
+The runtime harness includes three stdlib Python hooks:
+
+- `pre_tool_use.py`
+- `post_tool_use.py`
+- `user_prompt_submit.py`
+
+Copying `skills/harness/` installs the hook files, but it does not register them
+in host configuration. Hook registration is explicit opt-in because it changes
+assistant runtime behavior.
+
+Do not run the verifier or registration helper until Python 3.13+ has been
+confirmed. If Python is missing or outdated, ask for approval to install Python
+3.13+ first, then retry the verifier.
+
+After installation, verify hook status from the repository root or an installed
+target:
+
+```bash
+python skills/harness/hooks/verify_registration.py --host auto
+```
+
+Use `--host codex`, `--host claude`, `--host cursor`, `--host opencode`, or
+`--host all` for a specific check.
+
+If hooks are missing, let `admiral` surface the generated registration prompt at
+intake, or use the helper script directly:
+
+```bash
+python scripts/install_hooks.py --host auto --repo-root .
+```
+
+After registration, open `/hooks` or restart the host if it requires hook review
+or reload. Codex and Claude may require explicit trust before newly registered
+hooks execute.
+
+Without registered hooks, Supreme Team still works through skills and doctrine,
+but deterministic entry routing and pre/post tool enforcement are advisory only.
+
+## Verify Skill Discovery
+
+Restart the assistant session, then ask:
+
+```text
+Summarize the Supreme Team pipelines available from the installed skills.
+```
+
+A successful install should identify:
+
+- `admiral` as the entry orchestrator
+- design, build, and review sub-pipelines
+- investigation, session memory, and skill-maker components
+- standalone browser, release, safety, and testing tool groups
+- shared doctrine and protocol files, including the save protocol and harness
+
+## Updating An Existing Install
+
+Repeat the direct copy into the same target directories. This refreshes Supreme
+Team-managed files while preserving unrelated files in the skill target.
+
+If you need a fully clean Supreme Team refresh, remove only the Supreme
+Team-managed paths listed in this guide, then copy again. Do not delete an entire
+host skill directory unless the user explicitly confirms that it contains no
+unrelated skills.
+
+## Manual Script Fallback
+
+Use the helper scripts only when a human wants a wrapper around the direct copy
+and validation flow:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
+```
+
+```bash
+bash ./scripts/install.sh
+```
+
+Script options remain available for team selection, explicit host targets,
+custom destinations, and hook registration. See the script help or
+[`scripts/`](scripts/) for details.
 
 ## Troubleshooting
 
 | Problem | Likely cause | Fix |
 |---------|--------------|-----|
-| PowerShell blocks `install.ps1` | Script execution policy is restricting local scripts | Run `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1` |
-| Installer says the `skills/` source tree is missing | The script is not being run from a valid Supreme Team checkout | Re-run the installer from this repository or point to the correct clone |
-| `Unknown team` error | A team name was misspelled | Use `Design`, `Build`, `Review`, `Browser`, `Release`, `Safety`, `Testing`, or `All` |
-| Design skills cannot resolve the design-system doctrine | `design-doctrine.md` was not copied | Re-run the installer so the core components are restored |
-| Gatekeepers' `check.py` cannot find the engine | `harness/` was not copied | Re-run the installer so the core components are restored |
-| Resume or save artifacts do not work | `save-protocol.md` is missing | Re-run the installer so the core components are restored |
-| Entry routing / action guards are not enforced | The harness hooks are not registered in `settings.json` | Register them via the `update-config` skill (see `skills/harness/hooks/README.md`) |
-| Skills are not discovered after install | Wrong target path, stale assistant session, or your tool is not configured to scan that path | Verify the install target, restart the assistant session, and confirm your tool discovers skills from `~/.agents/skills/` or `%USERPROFILE%\.agents\skills\` |
+| Skills are not discovered | Wrong target path or stale assistant session | Verify the target path and restart the assistant session |
+| `admiral` is missing | The tree was flattened or copied from the wrong source | Copy the contents of `skills/` again, preserving directories |
+| Python verifier commands fail | Python is missing or older than 3.13 | Ask the user for approval to install Python 3.13+, install from a trusted source, then re-run the version check |
+| Gatekeepers cannot find `_gatecheck.py` | `harness/` was omitted | Copy the required core components |
+| Resume or save artifacts do not work | `save-protocol.md` was omitted | Copy the required root doctrine/protocol files |
+| Hooks are not enforced | Hook registration was not requested, trusted, or loaded | Register hooks explicitly, then reload or restart the host |
+| Verifier reports missing hooks even though old hook names exist | Host config points at another package or stale path | Re-register hooks so config points at this Supreme Team checkout |

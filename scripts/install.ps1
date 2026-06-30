@@ -209,6 +209,18 @@ function Add-UniqueValue {
     return $Values
 }
 
+function Test-SupremeTeamInstallPresent {
+    param([string]$TargetRoot)
+
+    foreach ($item in ($managedItems + $legacyItems)) {
+        if (Test-Path -LiteralPath (Join-Path $TargetRoot $item)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 function Test-CommandAvailable {
     param([string]$Name)
 
@@ -361,6 +373,7 @@ try {
     $hostTargets = @(Resolve-HostTargets -RequestedTargets $Target)
     $normalizedRequestedTargets = @($Target | ForEach-Object { $_.ToLowerInvariant() })
     $explicitCodexTarget = $normalizedRequestedTargets -contains "codex"
+    $explicitCursorTarget = $normalizedRequestedTargets -contains "cursor"
     Write-PythonReadinessWarning
 
     Write-Host "Installing Supreme Team to $Destination"
@@ -368,7 +381,7 @@ try {
 
     $mirrorSummaries = @()
 
-    if (($hostTargets -contains "codex") -and ($explicitCodexTarget -or (Test-Path -LiteralPath $CodexDestination))) {
+    if (($hostTargets -contains "codex") -and ($explicitCodexTarget -or (Test-SupremeTeamInstallPresent -TargetRoot $CodexDestination))) {
         Write-Host "Mirroring Supreme Team to $CodexDestination"
         Install-SupremeTeam -TargetRoot $CodexDestination -SelectedTeams $selectedTeams
         $mirrorSummaries += "codex=$CodexDestination"
@@ -380,7 +393,7 @@ try {
         $mirrorSummaries += "claude=$ClaudeDestination"
     }
 
-    if ($hostTargets -contains "cursor") {
+    if (($hostTargets -contains "cursor") -and ($explicitCursorTarget -or (Test-SupremeTeamInstallPresent -TargetRoot $CursorDestination))) {
         Write-Host "Mirroring Supreme Team to $CursorDestination"
         Install-SupremeTeam -TargetRoot $CursorDestination -SelectedTeams $selectedTeams
         $mirrorSummaries += "cursor=$CursorDestination"

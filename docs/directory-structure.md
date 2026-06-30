@@ -135,9 +135,10 @@ alongside them.
 | OpenCode mirror | `~/.config/opencode/skills/` | `%USERPROFILE%\.config\opencode\skills\` |
 
 The common target is always installed. Existing host-native mirrors are refreshed
-during upgrades so old Supreme Team copies do not remain discoverable; Codex is
-mirrored automatically only when `~/.codex/skills/` already exists, or when the
-Codex target is selected explicitly.
+during upgrades so old Supreme Team copies do not remain discoverable. Codex and
+Cursor are mirrored automatically only when their host-native skill directory
+already contains Supreme Team files, or when the corresponding host target is
+selected explicitly; project-level `.cursor/skills/` is a custom destination.
 
 ## Critical Dependencies
 

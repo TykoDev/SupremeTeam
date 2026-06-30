@@ -15,7 +15,9 @@ in [`scripts/`](scripts/).
 They install the common `.agents/skills` target and can also add locally
 confirmed host-native mirrors. During upgrades, existing host-native mirrors
 such as `.codex/skills` and `.claude/skills` are refreshed instead of being left
-behind.
+behind. Cursor is refreshed in auto mode only when `~/.cursor/skills` already
+contains a Supreme Team install; explicit Cursor targeting creates or updates
+that global mirror.
 
 ### Automatic Agent Install
 
@@ -59,9 +61,10 @@ Available teams: `Design`, `Build`, `Review`, `Browser`, `Release`, `Safety`,
 Host targets: `auto`, `codex`, `claude`, `cursor`, `opencode`.
 
 `auto` always updates the common `.agents/skills` target. It also updates
-detected host-native mirrors; Codex is mirrored only when `.codex/skills`
-already exists, while explicit `-Target Codex` / `--target codex` creates or
-updates that mirror.
+detected host-native mirrors; Codex and Cursor are mirrored only when an
+existing Supreme Team install is found in their host-native skill directory.
+Explicit `-Target Codex` / `--target codex` or `-Target Cursor` /
+`--target cursor` creates or updates that host-native mirror.
 
 ### Successful Output
 
@@ -158,8 +161,8 @@ Use the qa skill to test this product and fix what's broken.
 
 Use this only when the scripts cannot run. For upgrades, follow
 [`Install.md`](Install.md)'s managed multi-target direct-copy steps so existing
-`.codex/skills`, `.claude/skills`, and other host-native mirrors are refreshed.
-The short commands below install only the common target.
+`.codex/skills`, `.claude/skills`, and eligible host-native mirrors are
+refreshed. The short commands below install only the common target.
 
 ### macOS / Linux
 

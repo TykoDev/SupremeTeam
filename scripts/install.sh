@@ -13,6 +13,7 @@ opencode_destination="${HOME}/.config/opencode/skills"
 install_claude=0
 register_hooks=0
 codex_target_explicit=0
+cursor_target_explicit=0
 requested_teams=()
 requested_targets=()
 
@@ -183,6 +184,19 @@ assert_destination_layout() {
     done
 }
 
+supreme_team_install_present() {
+    local target_root="$1"
+    local item
+
+    for item in "${managed_items[@]}" "${legacy_items[@]}"; do
+        if [[ -e "$target_root/$item" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
 install_supreme_team() {
     local target_root="$1"
 
@@ -260,6 +274,9 @@ resolve_targets() {
             codex|claude|cursor|opencode)
                 if [[ "$normalized" == codex ]]; then
                     codex_target_explicit=1
+                fi
+                if [[ "$normalized" == cursor ]]; then
+                    cursor_target_explicit=1
                 fi
                 add_selected_target "$normalized"
                 ;;
@@ -389,7 +406,7 @@ install_supreme_team "$destination"
 
 mirror_status=()
 
-if contains_value codex "${selected_targets[@]}" && { [[ $codex_target_explicit -eq 1 ]] || [[ -d "$codex_destination" ]]; }; then
+if contains_value codex "${selected_targets[@]}" && { [[ $codex_target_explicit -eq 1 ]] || supreme_team_install_present "$codex_destination"; }; then
     printf 'Mirroring Supreme Team to %s\n' "$codex_destination"
     install_supreme_team "$codex_destination"
     mirror_status+=("codex=$codex_destination")
@@ -401,7 +418,7 @@ if contains_value claude "${selected_targets[@]}"; then
     mirror_status+=("claude=$claude_destination")
 fi
 
-if contains_value cursor "${selected_targets[@]}"; then
+if contains_value cursor "${selected_targets[@]}" && { [[ $cursor_target_explicit -eq 1 ]] || supreme_team_install_present "$cursor_destination"; }; then
     printf 'Mirroring Supreme Team to %s\n' "$cursor_destination"
     install_supreme_team "$cursor_destination"
     mirror_status+=("cursor=$cursor_destination")

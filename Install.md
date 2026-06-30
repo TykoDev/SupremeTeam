@@ -82,16 +82,21 @@ available.
 The common `.agents/skills` target is always installed. Some hosts also read
 host-native skill directories. During upgrades, refresh every existing
 host-native Supreme Team target so old copies do not remain discoverable.
-Codex is mirrored automatically only when `~/.codex/skills/` already exists; an
-explicit Codex target creates or updates that mirror.
+Codex is mirrored automatically only when `~/.codex/skills/` already contains a
+Supreme Team install from an older run. An explicit Codex target creates or
+updates that mirror.
+Cursor is mirrored automatically only when `~/.cursor/skills/` already contains
+a Supreme Team install from an older run. An explicit Cursor target creates or
+updates the global Cursor mirror. Project-level `.cursor/skills/` is a custom
+destination, not a default install target.
 
 Use local evidence before adding host-native mirrors:
 
 | Host | Evidence | Install target |
 |------|----------|----------------|
-| Codex | `codex` on PATH or `~/.codex/` exists | common `.agents/skills`; also existing `.codex/skills`, or create it when Codex is explicitly targeted |
+| Codex | `codex` on PATH or `~/.codex/` exists | common `.agents/skills`; existing Supreme Team install in `.codex/skills`; create/update it only when Codex is explicitly targeted |
 | Claude Code | `claude` on PATH or `~/.claude/` exists | `.claude/skills` |
-| Cursor | `cursor` on PATH, `~/.cursor/`, or app config exists | `.cursor/skills` |
+| Cursor | `cursor` on PATH, `~/.cursor/`, or app config exists | existing Supreme Team install in `~/.cursor/skills`; create/update it only when Cursor is explicitly targeted |
 | OpenCode | `opencode` on PATH or `~/.config/opencode/` exists | `.config/opencode/skills` |
 
 ## What To Copy
@@ -176,9 +181,11 @@ local Supreme Team checkout is available. Keep it simple:
 2. Extract the archive.
 3. Find the extracted directory that contains `skills/admiral/SKILL.md`.
 4. Build the target list: the common `.agents/skills` target plus every existing
-   host-native skills target from **Default Targets**. Include `.codex/skills`
-   when it already exists, and include it when the user explicitly asks for
-   Codex.
+   host-native Supreme Team target from **Default Targets**. Include
+   `.codex/skills` only when it already contains Supreme Team files, or when the
+   user explicitly asks for Codex. Include `~/.cursor/skills` only when it
+   already contains Supreme Team files, or when the user explicitly asks for
+   Cursor.
 5. Remove the managed current paths and known legacy paths from each selected
    skill target if they are present.
 6. Copy `skills/.` directly into each selected skill target, preserving structure.
@@ -212,14 +219,18 @@ different default branch.
 $archiveUrl = "https://github.com/<owner>/<repo>/archive/refs/heads/<branch>.zip"
 $work = Join-Path $env:TEMP ("supremeteam-" + [guid]::NewGuid().ToString("N"))
 $zip = Join-Path $work "repo.zip"
+$includeCodex = $false  # Set true only when the user explicitly asks for Codex.
+$codexDestination = Join-Path $env:USERPROFILE ".codex\skills"
+$includeCursor = $false  # Set true only when the user explicitly asks for Cursor.
+$cursorDestination = Join-Path $env:USERPROFILE ".cursor\skills"
 $destinations = @(
   (Join-Path $env:USERPROFILE ".agents\skills")
 )
 
 foreach ($candidate in @(
-  (Join-Path $env:USERPROFILE ".codex\skills"),
+  $codexDestination,
   (Join-Path $env:USERPROFILE ".claude\skills"),
-  (Join-Path $env:USERPROFILE ".cursor\skills"),
+  $cursorDestination,
   (Join-Path $env:USERPROFILE ".config\opencode\skills")
 )) {
   if (Test-Path -LiteralPath $candidate) {
@@ -261,6 +272,31 @@ $managed = @(
   "design\tech-stacks"
 )
 
+function Test-SupremeTeamInstallPresent {
+  param([string]$TargetRoot)
+
+  foreach ($item in $managed) {
+    if (Test-Path -LiteralPath (Join-Path $TargetRoot $item)) {
+      return $true
+    }
+  }
+
+  return $false
+}
+
+$destinations = @($destinations | Where-Object {
+  (($_ -ne $codexDestination) -or $includeCodex -or (Test-SupremeTeamInstallPresent $_)) -and
+  (($_ -ne $cursorDestination) -or $includeCursor -or (Test-SupremeTeamInstallPresent $_))
+})
+
+if ($includeCodex -and $destinations -notcontains $codexDestination) {
+  $destinations += $codexDestination
+}
+
+if ($includeCursor -and $destinations -notcontains $cursorDestination) {
+  $destinations += $cursorDestination
+}
+
 foreach ($destination in $destinations) {
   New-Item -ItemType Directory -Force -Path $destination | Out-Null
 
@@ -292,12 +328,16 @@ Remove-Item -Recurse -Force $work
 ```bash
 archive_url="https://github.com/<owner>/<repo>/archive/refs/heads/<branch>.zip"
 work="$(mktemp -d)"
+include_codex=0 # Set to 1 only when the user explicitly asks for Codex.
+codex_destination="$HOME/.codex/skills"
+include_cursor=0 # Set to 1 only when the user explicitly asks for Cursor.
+cursor_destination="$HOME/.cursor/skills"
 destinations=("$HOME/.agents/skills")
 
 for candidate in \
-  "$HOME/.codex/skills" \
+  "$codex_destination" \
   "$HOME/.claude/skills" \
-  "$HOME/.cursor/skills" \
+  "$cursor_destination" \
   "$HOME/.config/opencode/skills"
 do
   if [ -d "$candidate" ]; then
@@ -311,6 +351,83 @@ repo_root="$(find "$work" -path "*/skills/admiral/SKILL.md" -print -quit)"
 repo_root="${repo_root%/skills/admiral/SKILL.md}"
 
 test -n "$repo_root" || { echo "Could not find Supreme Team skills directory in archive." >&2; exit 1; }
+
+supreme_team_install_present() {
+  target_root="$1"
+  for item in \
+    admiral \
+    gatekeeper-admiral \
+    session-memory \
+    investigate \
+    skill-maker \
+    harness \
+    design \
+    build \
+    review \
+    browser-automation \
+    release-and-deployment \
+    safety-guardrails \
+    testing-and-qa \
+    design-doctrine.md \
+    grill-me-doctrine.md \
+    harness-doctrine.md \
+    mcp-tools.md \
+    routing-doctrine.md \
+    save-protocol.md \
+    azure \
+    references \
+    design/tech-stacks
+  do
+    if [ -e "$target_root/$item" ]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+filtered_destinations=()
+for destination in "${destinations[@]}"; do
+  if [ "$destination" = "$codex_destination" ] &&
+     [ "$include_codex" -ne 1 ] &&
+     ! supreme_team_install_present "$destination"; then
+    continue
+  fi
+
+  if [ "$destination" = "$cursor_destination" ] &&
+     [ "$include_cursor" -ne 1 ] &&
+     ! supreme_team_install_present "$destination"; then
+    continue
+  fi
+
+  filtered_destinations+=("$destination")
+done
+
+if [ "$include_codex" -eq 1 ]; then
+  codex_already_selected=0
+  for destination in "${filtered_destinations[@]}"; do
+    if [ "$destination" = "$codex_destination" ]; then
+      codex_already_selected=1
+    fi
+  done
+  if [ "$codex_already_selected" -ne 1 ]; then
+    filtered_destinations+=("$codex_destination")
+  fi
+fi
+
+if [ "$include_cursor" -eq 1 ]; then
+  cursor_already_selected=0
+  for destination in "${filtered_destinations[@]}"; do
+    if [ "$destination" = "$cursor_destination" ]; then
+      cursor_already_selected=1
+    fi
+  done
+  if [ "$cursor_already_selected" -ne 1 ]; then
+    filtered_destinations+=("$cursor_destination")
+  fi
+fi
+
+destinations=("${filtered_destinations[@]}")
 
 for destination in "${destinations[@]}"; do
   mkdir -p "$destination"
@@ -361,8 +478,9 @@ rm -rf "$work"
 2. Verify Python 3.13+ is installed; if missing or outdated, ask the user before
    installing it.
 3. Select target directories from the table above. Include the common target and
-   every existing host-native mirror; include `.codex/skills` when it already
-   exists, or when Codex is explicitly requested.
+   every existing host-native Supreme Team mirror; include `.codex/skills` and
+   `~/.cursor/skills` only when they already contain Supreme Team files, or when
+   the corresponding host is explicitly requested.
 4. Create each selected target directory if missing.
 5. Remove managed current paths and known legacy paths from each target if they
    are present. Preserve unrelated sibling skills.
@@ -380,14 +498,18 @@ path:
 ```powershell
 $repoRoot = (Get-Location).Path
 $source = Join-Path $repoRoot "skills"
+$includeCodex = $false  # Set true only when the user explicitly asks for Codex.
+$codexDestination = Join-Path $env:USERPROFILE ".codex\skills"
+$includeCursor = $false  # Set true only when the user explicitly asks for Cursor.
+$cursorDestination = Join-Path $env:USERPROFILE ".cursor\skills"
 $destinations = @(
   (Join-Path $env:USERPROFILE ".agents\skills")
 )
 
 foreach ($candidate in @(
-  (Join-Path $env:USERPROFILE ".codex\skills"),
+  $codexDestination,
   (Join-Path $env:USERPROFILE ".claude\skills"),
-  (Join-Path $env:USERPROFILE ".cursor\skills"),
+  $cursorDestination,
   (Join-Path $env:USERPROFILE ".config\opencode\skills")
 )) {
   if (Test-Path -LiteralPath $candidate) {
@@ -419,6 +541,31 @@ $managed = @(
   "references",
   "design\tech-stacks"
 )
+
+function Test-SupremeTeamInstallPresent {
+  param([string]$TargetRoot)
+
+  foreach ($item in $managed) {
+    if (Test-Path -LiteralPath (Join-Path $TargetRoot $item)) {
+      return $true
+    }
+  }
+
+  return $false
+}
+
+$destinations = @($destinations | Where-Object {
+  (($_ -ne $codexDestination) -or $includeCodex -or (Test-SupremeTeamInstallPresent $_)) -and
+  (($_ -ne $cursorDestination) -or $includeCursor -or (Test-SupremeTeamInstallPresent $_))
+})
+
+if ($includeCodex -and $destinations -notcontains $codexDestination) {
+  $destinations += $codexDestination
+}
+
+if ($includeCursor -and $destinations -notcontains $cursorDestination) {
+  $destinations += $cursorDestination
+}
 
 foreach ($destination in $destinations) {
   New-Item -ItemType Directory -Force -Path $destination | Out-Null
@@ -452,18 +599,99 @@ path:
 ```bash
 repo_root="$(pwd)"
 source="$repo_root/skills"
+include_codex=0 # Set to 1 only when the user explicitly asks for Codex.
+codex_destination="$HOME/.codex/skills"
+include_cursor=0 # Set to 1 only when the user explicitly asks for Cursor.
+cursor_destination="$HOME/.cursor/skills"
 destinations=("$HOME/.agents/skills")
 
 for candidate in \
-  "$HOME/.codex/skills" \
+  "$codex_destination" \
   "$HOME/.claude/skills" \
-  "$HOME/.cursor/skills" \
+  "$cursor_destination" \
   "$HOME/.config/opencode/skills"
 do
   if [ -d "$candidate" ]; then
     destinations+=("$candidate")
   fi
 done
+
+supreme_team_install_present() {
+  target_root="$1"
+  for item in \
+    admiral \
+    gatekeeper-admiral \
+    session-memory \
+    investigate \
+    skill-maker \
+    harness \
+    design \
+    build \
+    review \
+    browser-automation \
+    release-and-deployment \
+    safety-guardrails \
+    testing-and-qa \
+    design-doctrine.md \
+    grill-me-doctrine.md \
+    harness-doctrine.md \
+    mcp-tools.md \
+    routing-doctrine.md \
+    save-protocol.md \
+    azure \
+    references \
+    design/tech-stacks
+  do
+    if [ -e "$target_root/$item" ]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+filtered_destinations=()
+for destination in "${destinations[@]}"; do
+  if [ "$destination" = "$codex_destination" ] &&
+     [ "$include_codex" -ne 1 ] &&
+     ! supreme_team_install_present "$destination"; then
+    continue
+  fi
+
+  if [ "$destination" = "$cursor_destination" ] &&
+     [ "$include_cursor" -ne 1 ] &&
+     ! supreme_team_install_present "$destination"; then
+    continue
+  fi
+
+  filtered_destinations+=("$destination")
+done
+
+if [ "$include_codex" -eq 1 ]; then
+  codex_already_selected=0
+  for destination in "${filtered_destinations[@]}"; do
+    if [ "$destination" = "$codex_destination" ]; then
+      codex_already_selected=1
+    fi
+  done
+  if [ "$codex_already_selected" -ne 1 ]; then
+    filtered_destinations+=("$codex_destination")
+  fi
+fi
+
+if [ "$include_cursor" -eq 1 ]; then
+  cursor_already_selected=0
+  for destination in "${filtered_destinations[@]}"; do
+    if [ "$destination" = "$cursor_destination" ]; then
+      cursor_already_selected=1
+    fi
+  done
+  if [ "$cursor_already_selected" -ne 1 ]; then
+    filtered_destinations+=("$cursor_destination")
+  fi
+fi
+
+destinations=("${filtered_destinations[@]}")
 
 for destination in "${destinations[@]}"; do
   mkdir -p "$destination"
@@ -509,13 +737,19 @@ done
 ## Host-Native Mirrors
 
 When local evidence confirms a host, repeat the managed-clean copy into that
-host's native skill directory as well as the common `.agents/skills` target. For
-upgrades, every existing host-native Supreme Team directory must be refreshed
-and verified; do not stop after the common target succeeds.
+host's native skill directory as well as the common `.agents/skills` target when
+the host target is in scope. For upgrades, every existing host-native Supreme
+Team directory must be refreshed and verified; do not stop after the common
+target succeeds.
 
 Codex mirror rule: auto mode updates `.codex/skills` only when that directory
-already exists. If the user explicitly selects Codex, create or update
-`.codex/skills`.
+already contains Supreme Team managed or legacy paths. If the user explicitly
+selects Codex, create or update `.codex/skills`.
+
+Cursor mirror rule: auto mode updates `~/.cursor/skills` only when that
+directory already contains Supreme Team managed or legacy paths. If the user
+explicitly selects Cursor, create or update `~/.cursor/skills`. Use project-level
+`.cursor/skills/` only as an explicit custom destination for repo-scoped skills.
 
 Examples:
 
@@ -615,7 +849,10 @@ Use the same managed-clean flow as a fresh install:
 
 1. Resolve all existing Supreme Team skill targets: the common `.agents/skills`
    target plus any host-native mirrors such as `.codex/skills`,
-   `.claude/skills`, `.cursor/skills`, and `.config/opencode/skills`.
+   `.claude/skills`, `.cursor/skills`, and `.config/opencode/skills`. For Codex
+   and Cursor, auto-upgrade only the host-native mirror when it already contains
+   Supreme Team files; otherwise require an explicit host target or custom
+   destination.
 2. Remove only the managed current paths and known legacy paths listed in
    **Managed Upgrade Boundary** from each target.
 3. Copy the new `skills/` contents into every target.

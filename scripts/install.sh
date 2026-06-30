@@ -6,11 +6,13 @@ script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 repo_root="$(CDPATH= cd -- "$script_dir/.." && pwd)"
 source_root="$repo_root/skills"
 destination="${HOME}/.agents/skills"
+codex_destination="${HOME}/.codex/skills"
 claude_destination="${HOME}/.claude/skills"
 cursor_destination="${HOME}/.cursor/skills"
 opencode_destination="${HOME}/.config/opencode/skills"
 install_claude=0
 register_hooks=0
+codex_target_explicit=0
 requested_teams=()
 requested_targets=()
 
@@ -71,6 +73,7 @@ Options:
                               One of: auto, codex, claude, cursor, opencode.
                               Default: auto.
   --destination PATH        Override the default agent skill path.
+  --codex-destination PATH  Override the Codex skill path.
   --register-hooks          Register runtime harness hooks for selected hosts.
   --install-claude          Mirror the install into ~/.claude/skills.
   --claude-destination PATH Override the Claude Code skill path.
@@ -255,6 +258,9 @@ resolve_targets() {
                 done
                 ;;
             codex|claude|cursor|opencode)
+                if [[ "$normalized" == codex ]]; then
+                    codex_target_explicit=1
+                fi
                 add_selected_target "$normalized"
                 ;;
             *)
@@ -268,14 +274,37 @@ resolve_targets() {
     fi
 }
 
-find_python() {
-    if command -v python3 >/dev/null 2>&1; then
-        printf 'python3'
-    elif command -v python >/dev/null 2>&1; then
-        printf 'python'
-    else
-        die "Python 3 is required to register runtime harness hooks."
+python_satisfies_minimum() {
+    local candidate="$1"
+    "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 13) else 1)' >/dev/null 2>&1
+}
+
+find_compatible_python() {
+    local candidate
+    for candidate in python3 python; do
+        if command -v "$candidate" >/dev/null 2>&1 && python_satisfies_minimum "$candidate"; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+warn_python_readiness() {
+    if ! find_compatible_python >/dev/null 2>&1; then
+        printf 'Warning: Python 3.13+ was not found. Skill files will still be copied, but hook verification and registration require Python 3.13 or newer.\n' >&2
     fi
+}
+
+find_python() {
+    local python
+    if python="$(find_compatible_python)"; then
+        printf '%s' "$python"
+        return 0
+    fi
+
+    die "Python 3.13 or newer is required to register runtime harness hooks."
 }
 
 register_harness_hooks() {
@@ -310,6 +339,11 @@ while [[ $# -gt 0 ]]; do
         --destination)
             [[ $# -ge 2 ]] || die "Missing value for --destination."
             destination="$2"
+            shift 2
+            ;;
+        --codex-destination)
+            [[ $# -ge 2 ]] || die "Missing value for --codex-destination."
+            codex_destination="$2"
             shift 2
             ;;
         --register-hooks)
@@ -348,11 +382,18 @@ done
 assert_source_layout
 resolve_teams
 resolve_targets
+warn_python_readiness
 
 printf 'Installing Supreme Team to %s\n' "$destination"
 install_supreme_team "$destination"
 
 mirror_status=()
+
+if contains_value codex "${selected_targets[@]}" && { [[ $codex_target_explicit -eq 1 ]] || [[ -d "$codex_destination" ]]; }; then
+    printf 'Mirroring Supreme Team to %s\n' "$codex_destination"
+    install_supreme_team "$codex_destination"
+    mirror_status+=("codex=$codex_destination")
+fi
 
 if contains_value claude "${selected_targets[@]}"; then
     printf 'Mirroring Supreme Team to %s\n' "$claude_destination"

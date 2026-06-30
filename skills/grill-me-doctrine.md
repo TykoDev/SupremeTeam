@@ -8,7 +8,7 @@ Skills bound by this doctrine: `admiral`, `commander`, `skill-maker`, `researche
 
 Interview the user relentlessly about every aspect of the plan or design until you reach a **shared understanding**. Do not accept a vague request and start building. Walk down each branch of the decision tree, resolving dependencies between decisions one-by-one until no load-bearing ambiguity remains.
 
-## 2. The Five Rules
+## 2. The Six Rules
 
 1. **Resolve every branch.** Treat the plan as a decision tree. For each node, surface the decision that must be made, resolve it, and only then descend into the branches that decision unlocks. Do not leave a branch unresolved because it is uncomfortable or far away.
 
@@ -20,6 +20,8 @@ Interview the user relentlessly about every aspect of the plan or design until y
 
 5. **Explore the codebase instead of asking.** If a question can be answered by reading the code, configs, existing artifacts, or git history, go find the answer yourself. Only ask the user about things the codebase cannot tell you: intent, priorities, constraints, and tradeoff preferences. Reserve the user's attention for genuine judgment calls.
 
+6. **Apply YAGNI to the interview.** Do not interrogate speculative branches just because they are imaginable. Ask only decisions that change the next deliverable, a locked contract, a migration path, a security posture, or a rollback/operational commitment. If a branch is not load-bearing yet, record the recommended default, the trigger that would reopen it, and the owner/timing instead of forcing an early design commitment.
+
 ## 3. When the Interview Ends
 
 The interview is complete only when:
@@ -27,6 +29,7 @@ The interview is complete only when:
 - Every branch of the decision tree that affects the deliverable is resolved or explicitly deferred with a recorded reason.
 - No assumption material to the plan remains unstated.
 - The user has confirmed the shared understanding back, or has explicitly delegated remaining calls to your recommendations.
+- Every deferred branch has passed the YAGNI test: deferring it does not hide a dependency, irreversible choice, security boundary, migration commitment, or user-visible behavior promise.
 
 Record the resolved decisions and any explicitly deferred branches in the intake/plan artifact so downstream phases inherit the shared understanding rather than re-deriving it.
 
@@ -44,12 +47,14 @@ Prompt rules:
 4. **Ask judgment calls without delay.** Decisions about product behavior, API compatibility, authentication model, data retention, billing/limits, deployment target, rollout risk, UI personality, density, accessibility tradeoffs, and other non-discoverable preferences must be prompted automatically.
 5. **Offer delegation as a valid answer.** When appropriate, one option may let the user delegate the decision to the recommended default. Record delegated defaults explicitly so downstream gates can see that the user accepted the recommendation.
 6. **Block generation on unresolved decisions.** Do not produce a plan/design/configuration package that depends on an unasked, unresolved decision. Either resolve it, record a deliberate deferral with owner and deadline, or narrow the package so the decision is no longer load-bearing.
+7. **Prefer reversible defaults.** When two options are both acceptable and the choice is not load-bearing for the next deliverable, choose the simpler reversible default and record the reopen trigger instead of asking for a premature platform, abstraction, or future-scale commitment.
 
 Every planning artifact includes a **Decision Register** with:
 
 - Resolved decisions, their source (`user`, `codebase`, `prior-artifact`, or `delegated-default`), and the chosen option.
 - Deferred decisions, why they are safe to defer, who owns them, and which downstream phase must reopen them.
 - Rejected options for material tradeoffs, with one-line rationale.
+- YAGNI deferrals: non-load-bearing branches intentionally left out of scope, with the evidence that they are safe to defer and the trigger that reopens them.
 
 ## 5. Scaling the Interview
 

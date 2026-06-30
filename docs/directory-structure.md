@@ -89,6 +89,14 @@ SupremeTeam/
     └── save-protocol.md
 ```
 
+Generated local directories are intentionally excluded from the repository:
+
+| Path | Purpose | Git status |
+|------|---------|------------|
+| `skillset-saves/` | Admiral runtime saves, locks, audit trails, and local run deliverables | Ignored; do not commit |
+| `harness-test-work/` | Temporary harness regression-test workspace | Ignored; do not commit |
+| `temp/` | Local scratch/comparison inputs, when present | Remove before committing |
+
 ## Skills Directory
 
 The grouped `skills/` hierarchy is load-bearing. The root doctrine and protocol
@@ -121,7 +129,15 @@ alongside them.
 | Target | Linux / macOS | Windows |
 |--------|---------------|---------|
 | Agent skills | `~/.agents/skills/` | `%USERPROFILE%\.agents\skills\` |
+| Codex mirror | `~/.codex/skills/` | `%USERPROFILE%\.codex\skills\` |
 | Claude Code mirror | `~/.claude/skills/` | `%USERPROFILE%\.claude\skills\` |
+| Cursor mirror | `~/.cursor/skills/` | `%USERPROFILE%\.cursor\skills\` |
+| OpenCode mirror | `~/.config/opencode/skills/` | `%USERPROFILE%\.config\opencode\skills\` |
+
+The common target is always installed. Existing host-native mirrors are refreshed
+during upgrades so old Supreme Team copies do not remain discoverable; Codex is
+mirrored automatically only when `~/.codex/skills/` already exists, or when the
+Codex target is selected explicitly.
 
 ## Critical Dependencies
 

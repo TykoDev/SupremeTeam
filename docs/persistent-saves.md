@@ -12,6 +12,16 @@ it creates a `skillset-saves/` directory in the **active project's workspace
 root**:
 
 ```
+
+## Repository Hygiene
+
+`skillset-saves/` is local runtime state. It contains run locks, audit trails,
+handoff packages, and resumable deliverables for the current workspace. The
+directory is intentionally listed in `.gitignore` and must not be committed to
+the Supreme Team source repository.
+
+Keep `skillset-saves/` when you want Admiral to resume or audit a local run.
+Delete it only when you intentionally want to discard local run history.
 your-project/
 ├── skillset-saves/
 │   ├── _index.md          # Registry of all pipeline runs

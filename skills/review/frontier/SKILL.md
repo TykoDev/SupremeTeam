@@ -34,6 +34,7 @@ Route elsewhere when the concern is purely visual hierarchy, tokens, and polish 
 - Accessibility requirements, responsive breakpoints, and performance budgets for the target viewports.
 - Browser screenshots, Lighthouse reports, or console/network evidence when already captured.
 - Interface-review priorities such as required viewports, accessibility targets, performance budgets, or interactions explicitly out of scope.
+- Performance baselines or budgets when performance is claimed, including Core Web Vitals, bundle-size, interaction latency, or endpoint timing evidence where applicable.
 
 ## Outputs
 
@@ -44,9 +45,10 @@ Route elsewhere when the concern is purely visual hierarchy, tokens, and polish 
 ## Workflow
 
 1. Map the rendered flows, components, states, and viewports actually in scope before judging the interface behavior.
-2. Inspect accessibility, performance, interaction resilience, loading and error states, and component behavior with concrete viewport or runtime evidence.
-3. Separate release-blocking UI failures from polish issues, then explain user impact, affected devices, and the most likely root cause for each major item.
-4. Deliver a frontend packet to `review/code-chief` with reproduction notes, affected breakpoints, and any handoff needed from design or engineering lenses.
+2. Inspect accessibility, interaction resilience, loading and error states, and component behavior with concrete viewport or runtime evidence.
+3. For performance claims, measure before recommending optimization: capture baseline symptom, identify the bottleneck, and verify improvement evidence instead of approving speculative micro-optimizations.
+4. Separate release-blocking UI failures from polish issues, then explain user impact, affected devices, and the most likely root cause for each major item.
+5. Deliver a frontend packet to `review/code-chief` with reproduction notes, affected breakpoints, performance evidence, and any handoff needed from design or engineering lenses.
 
 ## Required Contracts
 
@@ -63,6 +65,7 @@ Route elsewhere when the concern is purely visual hierarchy, tokens, and polish 
 
 - Ground every interface finding in an observable behavior — screenshot, Lighthouse metric, or console error — not in design opinion.
 - Separate accessibility blockers from visual-polish issues so remediation routes to the right priority.
+- Reject performance work that adds complexity without baseline and after-measurement evidence; obvious anti-patterns such as unbounded rendering, missing pagination, missing image dimensions, and N+1 fetches can be flagged directly with the affected path.
 - Deliver findings that `review/code-chief` can merge into the consolidated review without re-rendering the interface.
 
 ## Skip Rule

@@ -34,6 +34,7 @@ Route elsewhere when the item is a standalone defensive flaw with no meaningful 
 - Security-review findings and dependency advisories that identify candidate exploit primitives.
 - Operational context such as deployment model, exposed services, and external dependency trust levels.
 - Adversarial-review priorities such as high-value assets, attacker profiles, excluded abuse cases, or accepted-risk boundaries.
+- Abuse-case seeds from design or security review, including LLM prompt-injection paths, SSRF candidates, privilege transitions, rate-limit gaps, and supply-chain trust assumptions.
 
 ## Outputs
 
@@ -43,9 +44,9 @@ Route elsewhere when the item is a standalone defensive flaw with no meaningful 
 
 ## Workflow
 
-1. Identify plausible attacker starting points, trust boundaries, and high-value state changes inside the scoped surface before proposing any exploit path.
-2. Chain weak checks, unsafe defaults, race windows, and privilege transitions into concrete abuse narratives instead of listing isolated smells.
-3. Distinguish confirmed exploit chains from speculative attack ideas, then record preconditions, blast radius, and containment options for every major item.
+1. Identify plausible attacker starting points, trust boundaries, high-value state changes, and abuse goals inside the scoped surface before proposing any exploit path.
+2. Chain weak checks, unsafe defaults, race windows, privilege transitions, prompt/data poisoning, and supply-chain assumptions into concrete abuse narratives instead of listing isolated smells.
+3. Distinguish confirmed exploit chains from speculative attack ideas, then record preconditions, blast radius, containment options, and the smallest non-destructive proof that makes the chain concrete.
 4. Deliver an adversarial packet to `review/code-chief` with exploit narratives, required hardening, and any follow-up that `review/security-review` should validate further.
 
 ## Required Contracts
@@ -63,6 +64,7 @@ Route elsewhere when the item is a standalone defensive flaw with no meaningful 
 
 - Trace every exploit path through concrete code, configuration, and dependency evidence — not through theoretical risk categories.
 - Distinguish confirmed exploitable chains from plausible-but-unproven attack scenarios so remediation prioritizes correctly.
+- Default to a standard external-attacker model only when the real profile is absent; state the assumption and reopen it when the system exposes privileged users, multi-tenant data, agents/tools, or internal network reachability.
 - Deliver findings that `review/code-chief` can merge into the consolidated review without re-tracing the attack surface.
 
 ## Skip Rule

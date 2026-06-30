@@ -119,7 +119,7 @@ Not skills, but load-bearing for the catalog. See [harness.md](harness.md) and
 
 | Component | Purpose |
 |-----------|---------|
-| `harness/hooks/` | Deterministic `PreToolUse`, `PostToolUse`, and `UserPromptSubmit` enforcement + a registration verifier |
+| `harness/hooks/` | Deterministic `PreToolUse`, `PostToolUse`, and `UserPromptSubmit` enforcement + registration and runtime readiness diagnostics |
 | `harness/gatekeeper/` | Shared stdlib gate engine behind every `gatekeeper-*` skill's `scripts/check.py` |
 | `routing-doctrine.md` | Entry-routing contract and skill tiers |
 | `grill-me-doctrine.md` | Binding intake interview protocol |

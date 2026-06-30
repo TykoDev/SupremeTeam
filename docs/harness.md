@@ -32,7 +32,8 @@ host hook or plugin lifecycle, so Layers 3 and 4 have both an advisory expressio
 
 ## Hooks
 
-Located at `skills/harness/hooks/`. Stdlib-only (Python 3.8+), **fail open** (any
+Located at `skills/harness/hooks/`. Stdlib-only (supported install baseline:
+Python 3.13+), **fail open** (any
 internal error exits 0 and lets the action proceed), and inert on the strong case
 (each rule fires only on a mechanically certain signal).
 
@@ -42,6 +43,7 @@ internal error exits 0 and lets the action proceed), and inert on the strong cas
 | `post_tool_use.py` | `PostToolUse` | 4 | Detects repeated failing commands, empty-output streaks, and A,B,A,B oscillation; injects a recovery hint. |
 | `user_prompt_submit.py` | `UserPromptSubmit` | — | Advisory entry-routing reminder steering lifecycle requests through admiral when no run is active; reinforces the session pin when one is. Silent on slash commands. |
 | `verify_registration.py` | diagnostic | — | Confirms host-native hook config points at Supreme Team's three hooks (exit 0 registered / 1 missing / 2 unknown). Run by admiral at intake; emits a `REGISTER_PROMPT` when any are missing. |
+| `check_readiness.py` | diagnostic | — | Combines Python version, hook registration, and `skillset-saves` active-run status so Admiral can report runtime readiness after activation/resume. |
 
 ### Registration
 
@@ -52,6 +54,16 @@ writes host-native config: Codex `~/.codex/hooks.json`, Claude Code
 OpenCode a local plugin script. See `skills/harness/hooks/README.md`. Admiral
 never blocks a run on a failed registration check — it warns and continues, and
 flags that entry routing is advisory-only until the prompt hook is registered.
+
+Admiral also runs the readiness diagnostic after save activation/resume:
+
+```bash
+python skills/harness/hooks/check_readiness.py --host auto --require-active-run
+```
+
+This diagnostic is report-only. It does not install Python, register hooks, or
+create save state; it names which dimension is degraded so the user can approve
+the appropriate follow-up.
 
 ### Guard / freeze integration
 

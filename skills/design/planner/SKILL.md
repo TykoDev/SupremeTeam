@@ -32,19 +32,22 @@ Route elsewhere when the need is gathering requirements (`design/researcher`), a
 - Requirements evidence, stakeholder goals, success measures, and constraints approved by `design/researcher`.
 - Business or technology choices already locked by intake or prior gates, plus resource and sequencing constraints.
 - Decisions that still affect milestones, staffing, release slices, dependency order, or rollout risk.
+- Migration, deprecation, replacement, or legacy-support context when the plan changes an existing system, API, dependency, feature, or operational workflow.
 
 ## Outputs
 
 - Delivery plan with milestones, decision gates, dependency map, and rollout strategy.
 - Decision Register capturing open choices, recommended defaults, owners, and escalation timing.
+- Migration/deprecation path when applicable, including replacement readiness, consumer/usage discovery, advisory vs compulsory posture, and removal criteria.
 - Planning packet for `design/commander` and `design/architect` that identifies what must be architected before build planning starts.
 
 ## Workflow
 
 1. Convert the approved requirements into delivery tracks, milestones, and decision gates tied to user value instead of generic phase labels. Run the `../../grill-me-doctrine.md` intake interview first to confirm a shared understanding of scope and priorities — one design/configuration decision at a time, using the host-native planning prompt when available, always recommending an answer.
-2. Sequence the implementation work around dependencies, risky integrations, release slices, and the points where leadership must choose between options.
-3. Stress-test the plan against staffing, environment setup, launch timing, and fallback constraints so downstream phases do not inherit an impossible schedule.
-4. Return a project plan that names the milestone path, critical risks, the Decision Register (resolved, deferred, rejected options), and the next design artifact that should consume the plan.
+2. Apply YAGNI to sequencing: commit only to the release slices and decision gates needed for the current objective; record reversible defaults and reopen triggers for future-scale or speculative branches.
+3. Sequence the implementation work around dependencies, risky integrations, release slices, migration/deprecation steps, and the points where leadership must choose between options.
+4. Stress-test the plan against staffing, environment setup, launch timing, replacement readiness, rollback/fallback constraints, and consumer migration cost so downstream phases do not inherit an impossible schedule.
+5. Return a project plan that names the milestone path, critical risks, migration/deprecation posture when relevant, the Decision Register (resolved, deferred, rejected, YAGNI-deferred options), and the next design artifact that should consume the plan.
 
 ## Required Contracts
 
@@ -62,6 +65,7 @@ Route elsewhere when the need is gathering requirements (`design/researcher`), a
 
 - Tie every milestone and dependency to a requirement or constraint so the architecture phase can see why sequencing exists.
 - Mark unresolved decisions with owners and latest safe decision points instead of turning uncertainty into hidden assumptions.
+- Do not deprecate without a replacement path: plans that remove or replace behavior must identify active consumers, migration tooling/docs, advisory vs compulsory posture, and the evidence required before removal.
 - Separate rollout risk, staffing risk, and technical dependency risk so the gate can challenge the right part of the plan.
 
 ## Skip Rule

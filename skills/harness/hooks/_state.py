@@ -4,7 +4,9 @@ Shared state helper for the SupremeTeam runtime-harness hooks.
 
 Implements the Action Realization (Layer 3) and Trajectory Regulation (Layer 4)
 storage used by ``pre_tool_use.py`` and ``post_tool_use.py``. Stdlib only — no
-third-party dependencies, so the hooks run on any host Python 3.8+.
+third-party dependencies. The supported SupremeTeam install baseline is Python
+3.13+ so readiness checks, hook registration, and hook execution all share one
+interpreter requirement.
 
 Design posture (see ../../harness-doctrine.md, section 3): every function here
 FAILS OPEN. Any I/O or parse error returns a safe empty/default value and never

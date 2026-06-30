@@ -9,6 +9,7 @@ Regulation** lifecycle layers defined in `../../harness-doctrine.md`.
 | `post_tool_use.py` | `PostToolUse` / post-tool | 4 | Detects repeated failing commands, empty-output streaks, and oscillation; injects or logs a recovery hint where the host supports it. |
 | `user_prompt_submit.py` | `UserPromptSubmit` / prompt-submit | Entry routing | Adds an advisory reminder steering lifecycle requests through `admiral`; reinforces the session pin when one is active. |
 | `verify_registration.py` | diagnostic | - | Checks host-native hook config and rejects stale/unrelated same-name hook scripts. |
+| `check_readiness.py` | diagnostic | - | Reports Python version, hook registration, and `skillset-saves` active-run status together for Admiral intake. |
 | `_state.py` | helper | - | Shared fail-open state helper. |
 
 ## Design Guarantees
@@ -53,6 +54,7 @@ Verification:
 ```bash
 python skills/harness/hooks/verify_registration.py --host auto
 python skills/harness/hooks/verify_registration.py --host all
+python skills/harness/hooks/check_readiness.py --host auto --require-active-run
 ```
 
 ## Matcher Scope

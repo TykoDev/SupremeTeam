@@ -11,11 +11,12 @@
 
 1. Run the save startup check before new state is created: inspect `skillset-saves/_latest.md`, classify the directory as active/inactive/missing/unreadable/conflict, resume active reclaimable runs, or activate persistence for a new run.
 2. If persistence activation fails, warn once, attempt read-only resume from any readable latest artifacts, and continue transiently only when no coherent resume boundary can be proven.
-3. Normalize the user request with `intake-brief.yaml` so scope, constraints, upstream artifacts, and requested endpoint are visible in one place.
-4. Decide whether the run is full pipeline, partial pipeline, resume, create-skill, or create-team.
-5. Detect whether the host supports agent mode or only skill mode, then re-check that mode at every boundary and active-session turn.
-6. Reject any claimed resume path that cannot prove both approval lineage and package completeness for the next boundary.
-7. After scope confirmation and before the first sub-orchestrator delegation, engage `session-memory` to checkpoint the normalized intake. This intake checkpoint is mandatory and unconditional — it is the first engagement of every run, so even a single-stage run engages `session-memory` plus the stage sub-orchestrator. Append each engaged skill to the run-state `skills_engaged` list as it is engaged.
+3. Run `harness/hooks/check_readiness.py --host auto --require-active-run` after activation/resume so Python version, hook registration, and active save-run status are visible in one place. Record `RUNTIME_READINESS_CHECK`; warn and continue in degraded mode when hooks or Python are missing, but rerun the save startup check if no active save run is present.
+4. Normalize the user request with `intake-brief.yaml` so scope, constraints, upstream artifacts, and requested endpoint are visible in one place.
+5. Decide whether the run is full pipeline, partial pipeline, resume, create-skill, or create-team.
+6. Detect whether the host supports agent mode or only skill mode, then re-check that mode at every boundary and active-session turn.
+7. Reject any claimed resume path that cannot prove both approval lineage and package completeness for the next boundary.
+8. After scope confirmation and before the first sub-orchestrator delegation, engage `session-memory` to checkpoint the normalized intake. This intake checkpoint is mandatory and unconditional — it is the first engagement of every run, so even a single-stage run engages `session-memory` plus the stage sub-orchestrator. Append each engaged skill to the run-state `skills_engaged` list as it is engaged.
 
 ## Boundary Sequencing
 
@@ -83,6 +84,7 @@ Include this block in every sub-orchestrator delegation with values copied from 
 - Preamble Tier System: Use short progress preambles that scale from terse status to fuller context only when complexity or risk rises.
 - Proactive triggers: Offer the next sensible action when the surrounding context clearly implies it and the skill can advance safely without a prompt loop.
 - Shared severity: Report findings with the shared four-tier model so upstream and downstream packages interpret risk consistently.
+- YAGNI intake: ask only load-bearing decisions; record reversible defaults and reopen triggers for speculative branches that do not affect the next deliverable.
 
 ## Collaboration Notes
 

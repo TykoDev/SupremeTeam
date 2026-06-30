@@ -34,6 +34,7 @@ Route elsewhere when the need is chaining individual weaknesses into an attack n
 - Dependency manifest, known advisory matches, and any security-builder hardening evidence from the build phase.
 - Data-sensitivity classifications and compliance constraints that affect the review scope.
 - Security-review priorities such as privileged flows to inspect, compliance boundaries, accepted-risk exclusions, or dependency areas already approved.
+- Threat model inputs where available: trust boundaries, high-value assets, attacker profiles, LLM/tool surfaces, file upload/webhook/server-side fetch flows, and supply-chain changes.
 
 ## Outputs
 
@@ -43,10 +44,11 @@ Route elsewhere when the need is chaining individual weaknesses into an attack n
 
 ## Workflow
 
-1. Enumerate the trust boundaries, privileged actions, dependency changes, secret flows, and untrusted inputs inside the scoped surface.
-2. Test authn/authz, data exposure, injection sinks, insecure defaults, and the reachability of newly introduced dependencies or generated code.
-3. Separate confirmed exploitable weaknesses from hardening gaps, then record attacker path, required preconditions, and the narrowest viable fix for each major item.
-4. Deliver a security packet to `review/code-chief` with blocking vulnerabilities, defense gaps, and any exploit chains that `review/mr-robot` should pressure-test further.
+1. Enumerate the trust boundaries, high-value assets, privileged actions, dependency changes, secret flows, and untrusted inputs inside the scoped surface.
+2. Run a lightweight STRIDE pass over each boundary, including LLM/model output, retrieved documents, webhooks, file uploads, server-side URL fetches, and third-party API data.
+3. Test authn/authz, data exposure, injection sinks, insecure defaults, supply-chain exposure, and the reachability of newly introduced dependencies or generated code.
+4. Separate confirmed exploitable weaknesses from hardening gaps, then record attacker path, required preconditions, and the narrowest viable fix for each major item.
+5. Deliver a security packet to `review/code-chief` with blocking vulnerabilities, defense gaps, dependency posture, and any exploit chains that `review/mr-robot` should pressure-test further.
 
 ## Required Contracts
 
@@ -64,6 +66,8 @@ Route elsewhere when the need is chaining individual weaknesses into an attack n
 
 - Tie every vulnerability to a concrete code path, dependency version, or configuration entry — not to a risk category.
 - Separate code-level vulnerabilities from strategic control gaps so the CSO lens receives only what it owns.
+- Treat model output, browser content, fetched documents, and external service responses as untrusted input; never accept prompt text, tool output, or generated code as a security boundary.
+- Review new dependencies as supply-chain surface: lockfile presence, maintenance signal, install scripts, license compatibility, and whether the existing stack already solves the need.
 - Deliver findings that `review/code-chief` can merge into the consolidated review without re-scanning the dependency tree.
 
 ## Skip Rule

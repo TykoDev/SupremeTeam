@@ -1,8 +1,8 @@
 ---
-last_discovery_at: 2026-05-09T15:01:06.1849699+02:00
+last_discovery_at: 2026-06-30T02:58:03.4574837+02:00
 discovery_ttl_hours: 480
-host: copilot
-workspace: pa_deno
+host: codex
+workspace: SupremeTeam
 protocol_version: 1
 ---
 
@@ -43,17 +43,14 @@ MCP servers available across every workspace this host can reach. Populated by t
 
 | Tool | Server | When To Use | Prefer Over |
 |------|--------|-------------|-------------|
-| navigate, snapshot, wait_for, tabs | microsoft-pla-browser | Navigate pages, inspect accessibility state, wait for UI transitions, manage tabs during browser-driven verification | Ad hoc screenshots or blind DOM assumptions |
-| click, hover, press_key, type, fill_form, select_option, drag | microsoft-pla-browser | Drive browser UI flows, forms, and interaction-heavy verification | Manual speculative interaction logic |
-| take_screenshot, evaluate, run_code | microsoft-pla-browser | Capture visual state or run narrow page-side inspection during browser verification, asset export review, and frontend/UI design preview and audit work | Rebuilding UI state from logs alone |
-| network_requests, console_messages | microsoft-pla-browser | Inspect browser-side API traffic and console failures during frontend/UI preview/audit troubleshooting | Guessing at client/runtime failures |
-| context7 docs | io.github.upstash/context7 | Pull current package and framework documentation when repo context is insufficient or stale | Guessing third-party APIs from memory |
-| playwright automation | microsoft/playwright-mcp | Use the configured Playwright MCP server for browser-driven workflows in hosts that surface it from VS Code MCP config | Hand-rolled browser scripts without an MCP driver |
-| AI Platform toolset | ai-platform | Reach Google AI Platform and reasoning-engine MCP capabilities when the host surfaces the configured server tools | Raw REST or gcloud probing for agent-platform exploration |
-| App topology toolset | app-typology | Inspect deployed application topology and service relationships through the configured MCP server | Manual topology reconstruction from scattered resource listings |
-| Agent registry toolset | agent-registry | Query registry and publication metadata through MCP when the host exposes the configured server tools | Direct API calls for read-heavy registry checks |
-| Cloud Assist toolset | cloud-assist | Use Gemini Cloud Assist's guided GCP assistance when the configured server is available in-host | Searching docs manually for common GCP operational guidance |
-| Resource Manager toolset | resource-manager | Inspect GCP project and hierarchy metadata through the configured MCP server | Repetitive gcloud resource enumeration |
+| browser_navigate, browser_snapshot, browser_take_screenshot, browser_click, browser_resize, browser_tabs | mcp__playwright | Drive and inspect local or remote browser pages, especially UI verification and accessibility-state checks | Blind DOM assumptions or manual screenshots without an action path |
+| browser_console_messages, browser_network_requests, browser_network_request | mcp__playwright | Inspect client-side errors, warnings, and API traffic during frontend/runtime debugging | Guessing at browser failures from server logs alone |
+| js, js_reset, js_add_node_module_dir | mcp__node_repl | Run JavaScript in the persistent Node-backed kernel for browser control, local JS inspection, generated visual checks, and Playwright-backed workflows | Ad hoc one-off scripts when a persistent REPL state is useful |
+| automation_update | codex_app | Create, inspect, update, or delete Codex automations, reminders, recurring checks, and thread heartbeats | Raw automation directives or hand-written RRULE plumbing |
+| GitHub issue and PR review helpers | mcp__codex_apps__github | Inspect and mutate GitHub issues, pull requests, labels, assignees, review threads, and review state when the user asks for GitHub work | Manual REST/GraphQL calls for repository collaboration |
+| Sites hosting helpers | mcp__codex_apps__sites | Manage Sites project metadata, access, saved-version deployment, and available access groups for deployable web artifacts | Invented deployment IDs or unsaved local deployment attempts |
+| Workspace agent helpers | mcp__codex_apps__workspace_agents | Search, inspect, and manage editable workspace agents, attached files, skill files, API channels, and Slack setup readiness | Manual Agent Studio instructions when connector state is available |
+| resume_agent, close_agent | multi_agent_v1 | Resume or close existing sub-agents when a multi-agent workflow is already in progress | Leaving completed helper agents open or trying to recreate a closed collaborator |
 
 ## Workspace Tools
 
@@ -61,7 +58,7 @@ MCP servers scoped to this workspace or project. Populated by the active orchest
 
 | Tool | Server | When To Use | Prefer Over |
 |------|--------|-------------|-------------|
-| mcp_microsoft_pla_browser_* | microsoft-pla-browser | Workspace session browser automation and UI verification for chat, skills, and preview flows | External browser tooling outside the active session |
+| Current Codex session | tool_search-discovered MCP surface | No additional workspace-scoped MCP servers were exposed beyond the global tools above during the 2026-06-30 refresh | Carrying stale workspace-only tool rows from another host |
 
 ## Notes For Admiral
 
@@ -69,5 +66,5 @@ MCP servers scoped to this workspace or project. Populated by the active orchest
 - Mirror copy at `~/.claude/skills/mcp-tools.md` (the global skill set) is a fallback for hosts whose workspace lacks one. The workspace copy always wins when both exist.
 - When refreshing, preserve any user-added "when to use" or "prefer over" annotations — re-prompt only the tool list, not the guidance.
 - Never silently overwrite existing entries with auto-detected ones; always show the user the diff before writing.
-- The current VS Code MCP server inventory comes from the user config at `c:/Users/stoff/AppData/Roaming/Code/User/mcp.json`.
-- In Copilot host sessions, `microsoft-pla-browser` appears as explicit callable tool wrappers, while other configured servers may remain editor-level MCP integrations rather than direct chat tool wrappers.
+- The 2026-06-30 Codex refresh used `tool_search` discovery from the active session. Older Copilot rows for `microsoft-pla-browser`, Context7, AI Platform, app topology, agent registry, Cloud Assist, and Resource Manager were not observed as callable tools in this Codex thread.
+- Host-specific MCP inventories may differ. Refresh this file when the host changes or when `last_discovery_at` exceeds `discovery_ttl_hours`.

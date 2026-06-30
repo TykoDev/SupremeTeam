@@ -3,19 +3,26 @@
 ## Step 1: Install The Skills
 
 Start with the automatic installation option: add [`Install.md`](Install.md) to
-your coding agent's context and ask it to install Supreme Team. The guide tells
-the agent how to copy the grouped `skills/` tree directly into the right skill
-discovery paths, verify the install, and avoid flattening load-bearing folders.
+your coding agent's context and ask it to install Supreme Team. If you reference
+`Install.md` directly from a GitHub URL, tell the agent to use the Remote URL
+Install flow: download the repository archive to a temp directory, extract it,
+copy `skills/.` directly into the skill target, verify, then delete the temp
+files. It should not try to run local install scripts until a checkout/archive
+exists on disk.
 
-If you prefer to install manually, use the helper scripts in [`@scripts/`](scripts/).
+If you prefer to install manually from a local checkout, use the helper scripts
+in [`scripts/`](scripts/).
 They install the common `.agents/skills` target and can also add locally
-confirmed host-native mirrors.
+confirmed host-native mirrors. During upgrades, existing host-native mirrors
+such as `.codex/skills` and `.claude/skills` are refreshed instead of being left
+behind.
 
 ### Automatic Agent Install
 
 ```text
 Read Install.md and install Supreme Team for this assistant.
 Use the default all-teams install unless a safer local target is obvious.
+If Install.md came from a GitHub URL, download the repo archive and copy skills/.
 ```
 
 ### Manual Windows Install
@@ -38,6 +45,7 @@ bash ./scripts/install.sh
 | Explicit host target | `-Target Codex,Claude` | `--target codex --target claude` |
 | Register runtime hooks | `-RegisterHooks` | `--register-hooks` |
 | Custom common path | `-Destination "path"` | `--destination "path"` |
+| Custom Codex path | `-CodexDestination "path"` | `--codex-destination "path"` |
 | Custom Claude path | `-ClaudeDestination "path"` | `--claude-destination "path"` |
 | Custom Cursor path | `-CursorDestination "path"` | `--cursor-destination "path"` |
 | Custom OpenCode path | `-OpenCodeDestination "path"` | `--opencode-destination "path"` |
@@ -49,6 +57,11 @@ Available teams: `Design`, `Build`, `Review`, `Browser`, `Release`, `Safety`,
 `Testing`, or `All`.
 
 Host targets: `auto`, `codex`, `claude`, `cursor`, `opencode`.
+
+`auto` always updates the common `.agents/skills` target. It also updates
+detected host-native mirrors; Codex is mirrored only when `.codex/skills`
+already exists, while explicit `-Target Codex` / `--target codex` creates or
+updates that mirror.
 
 ### Successful Output
 
@@ -143,7 +156,10 @@ Use the qa skill to test this product and fix what's broken.
 
 ## Manual Install Fallback
 
-Use this only when the scripts cannot run.
+Use this only when the scripts cannot run. For upgrades, follow
+[`Install.md`](Install.md)'s managed multi-target direct-copy steps so existing
+`.codex/skills`, `.claude/skills`, and other host-native mirrors are refreshed.
+The short commands below install only the common target.
 
 ### macOS / Linux
 

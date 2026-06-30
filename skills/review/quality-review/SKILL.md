@@ -34,6 +34,7 @@ Route elsewhere when the concern is gating one diff for merge (`review/code-revi
 - Standards baseline such as naming conventions, layering rules, and technical-debt indicators.
 - Prior quality findings or architecture-drift notes from earlier review rounds.
 - Maintainability priorities such as architecture layers to inspect, standards exceptions, legacy areas accepted as-is, or debt categories to ignore.
+- Deprecation, migration, or simplification context: known legacy systems, replacement plans, unused abstractions, and areas where behavior must be preserved exactly.
 
 ## Outputs
 
@@ -44,9 +45,10 @@ Route elsewhere when the concern is gating one diff for merge (`review/code-revi
 ## Workflow
 
 1. Map the module boundaries, ownership seams, and architectural commitments touched by the scoped surface before naming maintainability issues.
-2. Examine duplication, abstraction pressure, dependency direction, configuration sprawl, and long-term change cost against the current architecture rather than an idealized rewrite.
-3. Separate local cleanup from structural drift, then explain how each major issue increases future delivery cost, fragility, or cognitive load.
-4. Deliver a maintainability packet to `review/code-chief` with architecture drift, debt hotspots, and a pragmatic remediation order.
+2. Apply Chesterton's Fence before recommending removal or simplification: identify what calls the code, what behavior/tests protect it, and why the structure may exist.
+3. Examine duplication, abstraction pressure, dependency direction, configuration sprawl, migration/deprecation residue, and long-term change cost against the current architecture rather than an idealized rewrite.
+4. Separate local cleanup from structural drift, then explain how each major issue increases future delivery cost, fragility, or cognitive load.
+5. Deliver a maintainability packet to `review/code-chief` with architecture drift, simplification candidates, debt hotspots, migration cleanup, and a pragmatic remediation order.
 
 ## Required Contracts
 
@@ -63,6 +65,8 @@ Route elsewhere when the concern is gating one diff for merge (`review/code-revi
 
 - Ground every quality finding in a concrete module, coupling pattern, or standards violation — not in subjective preference.
 - Distinguish systemic architecture drift from isolated code-quality issues so remediation routes correctly.
+- Prefer behavior-preserving simplification over aesthetic refactors: removing speculative abstractions, duplicate branches, or unused migration scaffolding is valuable only when the current behavior and rollback story are understood.
+- Treat zombie code as a decision, not background noise: either assign ownership and tests, or require a deprecation/migration plan with usage evidence.
 - Deliver findings that `review/code-chief` can merge into the consolidated review without re-analyzing the module graph.
 
 ## Skip Rule

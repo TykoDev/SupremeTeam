@@ -34,6 +34,7 @@ Route elsewhere when the real need is exhaustive correctness or crash analysis (
 - Local code-quality signals such as linting results, style violations, and naming conventions.
 - Change-risk indicators including affected module scope, breaking-change potential, and reviewer notes.
 - Merge-decision guidance such as release urgency, style-policy exclusions, or areas already approved by earlier review.
+- Verification story for the change: tests run, manual checks, build/lint output, and any intentionally skipped validation.
 
 ## Outputs
 
@@ -44,9 +45,10 @@ Route elsewhere when the real need is exhaustive correctness or crash analysis (
 ## Workflow
 
 1. Bound the review to the actual diff, touched interfaces, and merge context before commenting on code quality or readiness.
-2. Inspect readability, API changes, error handling, test signal, and reviewer load, and tie every concern to the changed code rather than to generic preferences.
-3. Separate merge blockers from cleanup suggestions, then explain how each major issue affects safety, maintainability, or reviewer comprehension.
-4. Deliver a merge-readiness packet to `review/code-chief` with blockers, optional cleanups, and any follow-up lenses that should inspect the same surface.
+2. Review the test evidence first, then inspect correctness signals, readability/simplicity, architecture fit, security exposure, and performance risk in that order.
+3. Apply YAGNI and dependency discipline: flag speculative abstractions, pass-through wrappers, future-proofing with no current use, unnecessary new dependencies, and refactors that relocate complexity instead of reducing it.
+4. Separate merge blockers from optional cleanup, then explain how each major issue affects safety, maintainability, reviewer comprehension, or verification confidence.
+5. Deliver a merge-readiness packet to `review/code-chief` with blockers, optional cleanups, rejected nits, and any follow-up lenses that should inspect the same surface.
 
 ## Required Contracts
 
@@ -63,6 +65,8 @@ Route elsewhere when the real need is exhaustive correctness or crash analysis (
 
 - Base every merge recommendation on observable code evidence — diffs, test results, linting output — not on intent.
 - Flag change-risk concerns and breaking-change potential before the consolidated review reaches the gate.
+- Use required vs optional language deliberately: correctness, security, contract, and verification gaps block; preference-only simplifications are optional unless the change actively worsens structure.
+- Watch change size and file size: ask for a split when one logical review cannot be done confidently, and treat generated/vendor/mechanical churn as excluded evidence unless it changes first-party behavior.
 - Deliver findings that `review/code-chief` can merge without re-diffing the change set.
 
 ## Skip Rule

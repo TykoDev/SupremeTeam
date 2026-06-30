@@ -34,19 +34,22 @@ Route elsewhere when the need is system architecture and interface contracts (`d
 - Approved API endpoint contracts and frontend/API handoff maps when the design exposes endpoint surfaces.
 - Locked stack choices, runtime targets, migration constraints, and operational commitments from the design package.
 - Questions that still affect module boundaries, migrations, rollout safety, or operational readiness.
+- Test strategy expectations from the design package, including reproduction tests for bug fixes, contract tests for endpoints, and runtime verification for UI or operational flows.
 
 ## Outputs
 
 - Implementation specification mapping delivery slices to modules, data changes, APIs, jobs, and validation work.
 - Delivery-slice dependency graph with contract-test mapping, migration order, rollback notes, and operational constraints.
+- Proof plan for each delivery slice: failing test/reproduction where behavior changes, smallest green implementation target, refactor boundary, and required verification commands.
 - Build handoff packet for `build/build-management` with sequencing, non-goals, unresolved build risks, and acceptance evidence expected from each slice.
 
 ## Workflow
 
 1. Break the approved design into delivery slices mapped to modules, API endpoint contracts, data changes, jobs, integrations, and validation needs.
-2. Order those slices by dependency, migration risk, and rollout safety so build work can proceed incrementally without hidden prerequisites.
-3. Expose the operational constraints that matter for safe delivery, such as feature flags, cutovers, backfills, observability, or support tasks.
-4. Return an implementation specification with slice order, module ownership, endpoint contract tests, test expectations, and the technical decisions that still block execution.
+2. For every behavior-changing slice, define the proof-first test path: reproduction/failing test first, minimal implementation, then refactor with tests still passing. Docs-only/static-content changes may record why TDD is not applicable.
+3. Order those slices by dependency, migration risk, rollout safety, and testability so build work can proceed incrementally without hidden prerequisites.
+4. Expose the operational constraints that matter for safe delivery, such as feature flags, cutovers, backfills, observability, support tasks, rollback steps, or removal criteria.
+5. Return an implementation specification with slice order, module ownership, endpoint contract tests, test expectations, migration/rollback notes, and the technical decisions that still block execution.
 
 ## Required Contracts
 
@@ -63,6 +66,7 @@ Route elsewhere when the need is system architecture and interface contracts (`d
 
 - Map every implementation slice back to architecture decisions and planner milestones so build work has traceable scope.
 - Spell out dependency order, migration and rollback constraints, and contract-test obligations before handoff.
+- Require tests to prove behavior, not implementation details; avoid repeated unchanged test runs as reassurance, and state which command becomes meaningful after each slice.
 - Escalate any design ambiguity that would force the builder to choose architecture during implementation.
 
 ## Skip Rule

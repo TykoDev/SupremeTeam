@@ -11,7 +11,8 @@
 - **Save protocol** — persisted runs, resumable checkpoints, audit trails, and
   recoverable handoffs in `skillset-saves/`.
 - **Runtime harness** — hook-based routing reinforcement, guarded writes,
-  dangerous-command checks, and failure-trajectory recovery hints.
+  dangerous-command checks, failure-trajectory recovery hints, and readiness
+  diagnostics for Python, hooks, and active saves.
 - **Gated pipelines** — design, build, review, browser automation, release,
   safety, testing, and QA workflows with clear ownership boundaries.
 - **Adversarial review** — gatekeepers, bug/security/quality/frontier lenses,
@@ -129,8 +130,9 @@ See [docs/gatekeepers.md](docs/gatekeepers.md) for the full pattern.
 A stdlib-only runtime harness deterministically enforces the parts of the
 contract that can be checked mechanically: `pre_tool_use.py` blocks dangerous
 commands and writes into a frozen/guarded boundary, `post_tool_use.py` detects
-degenerate trajectories and injects a recovery hint, and `user_prompt_submit.py`
-reinforces entry routing. The hooks **fail open**; the gatekeeper gate engine
+degenerate trajectories and injects a recovery hint, `user_prompt_submit.py`
+reinforces entry routing, and `check_readiness.py` reports Python/hooks/save
+readiness at Admiral startup. The hooks **fail open**; the gatekeeper gate engine
 **fails loud**. Hook registration is explicit opt-in and uses each host's native
 configuration or plugin mechanism.
 
@@ -146,6 +148,11 @@ Pipeline state is automatically saved to `skillset-saves/` in your project
 workspace as the pipeline runs, providing cross-session resume, crash recovery
 (lease-based locking, idempotent gatekeeper submissions), a chronological audit
 trail, deliverable backup, and graceful degradation if saves fail.
+
+`skillset-saves/` is generated runtime state, not source. It is ignored by Git
+and should not be committed; preserve it locally when you want resume/audit
+history, and delete it only when you intentionally want to discard local run
+state.
 
 ![Memory architecture: the persistent save system — deliverables, state files, and audit trails on disk](docs/assets/9_memory.jpg)
 

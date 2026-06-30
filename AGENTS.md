@@ -13,6 +13,10 @@
 > repository checkout unless their configured skill path points here or you have
 > copied the tree into `~/.agents/skills/` or `%USERPROFILE%\.agents\skills\`.
 
+> Repository hygiene: `skillset-saves/` is generated Admiral runtime state and
+> is intentionally ignored by Git. Do not stage or commit saved runs, locks, audit
+> trails, or local scratch directories.
+
 ## Entry Routing
 
 `admiral` is the **primary entry orchestrator** — the single front door for the
@@ -153,6 +157,7 @@ defined in `skills/harness-doctrine.md`. See `skills/harness/hooks/README.md` an
 | **post_tool_use.py** | `skills/harness/hooks/post_tool_use.py` | `PostToolUse` hook — detects repeated failures, empty-output streaks, oscillation; injects a recovery hint (Layer 4 Trajectory Regulation) |
 | **user_prompt_submit.py** | `skills/harness/hooks/user_prompt_submit.py` | `UserPromptSubmit` hook — advisory entry-routing reminder steering lifecycle requests through `admiral` |
 | **verify_registration.py** | `skills/harness/hooks/verify_registration.py` | Diagnostic — confirms the three hooks are registered in host-native hook config (run by admiral at intake) |
+| **check_readiness.py** | `skills/harness/hooks/check_readiness.py` | Diagnostic — reports Python version, hook registration, and active `skillset-saves` run status after Admiral startup |
 | **\_gatecheck.py** | `skills/harness/gatekeeper/_gatecheck.py` | Shared stdlib gate engine behind every `gatekeeper-*` skill's `scripts/check.py` — deterministic, fail-loud package checks |
 
 > Hook registration lives in host-native hook config and is installed only by

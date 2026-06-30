@@ -1,3 +1,4 @@
+# Admiral runtime state and deliverables are local workspace artifacts.
 skillset-saves/
 harness-test-work/
 __pycache__/

@@ -34,7 +34,7 @@ This skill is a component of the **Admiral** delivery pipeline; `admiral` is the
 
 ## Inputs
 
-- Admiral-normalized design request with product goals, users, constraints, technology preferences, and explicit non-goals.
+- Admiral-normalized design request with product goals, users, constraints, technology preferences, explicit non-goals, and YAGNI deferrals from intake.
 - Active design save context, prior phase verdicts, and revision lineage when resuming an interrupted design run.
 - Intake decisions, escalations, or skip requests that affect research, planning, architecture, API/UI handoff, or implementation guidance.
 
@@ -46,14 +46,14 @@ This skill is a component of the **Admiral** delivery pipeline; `admiral` is the
 
 ## Workflow
 
-1. Confirm the product goal, constraints, and technology preferences before assigning specialist work by running the `../../grill-me-doctrine.md` intake interview to a shared understanding — one question at a time, always recommending an answer.
+1. Confirm the product goal, constraints, and technology preferences before assigning specialist work by running the `../../grill-me-doctrine.md` intake interview to a shared understanding — one question at a time, always recommending an answer and deferring non-load-bearing future branches with reopen triggers.
 2. Move through research, planning, architecture, API endpoint design, interface design, and implementation guidance in dependency order.
 3. Own the design gate cycle so no phase advances without a recorded approval or explicit skip rule.
 4. Publish one consolidated design package that downstream build work can use without reinterpreting the design intent.
 
 ## Required Contracts
 
-- **Grill-Me Intake**: Before assigning any specialist work, run the intake interview in `../../grill-me-doctrine.md` — resolve every load-bearing branch one question at a time, use the planning-mode decision prompt contract for unresolved design/configuration choices, always recommend an answer, and explore the codebase instead of asking when the answer is discoverable. Record resolved, deferred, and rejected material options in the Decision Register.
+- **Grill-Me Intake**: Before assigning any specialist work, run the intake interview in `../../grill-me-doctrine.md` — resolve every load-bearing branch one question at a time, use the planning-mode decision prompt contract for unresolved design/configuration choices, always recommend an answer, explore the codebase instead of asking when the answer is discoverable, and apply YAGNI to avoid speculative commitments. Record resolved, deferred, rejected, and YAGNI-deferred material options in the Decision Register.
 - **Proactive triggers**: Offer the next sensible action when the surrounding context clearly implies it and the skill can advance safely without a prompt loop.
 - **Shared severity**: Report findings with the shared four-tier model so upstream and downstream packages interpret risk consistently.
 - **Save-Protocol Adherence**: When a Save Context block is received from admiral, persist every phase state transition, gatekeeper capture, and consolidated package to the save path. Include a `### Save Context` block in every specialist delegation. Saving is mandatory, not optional.

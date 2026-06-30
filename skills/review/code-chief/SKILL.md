@@ -37,6 +37,7 @@ This skill is a component of the **Admiral** delivery pipeline; `admiral` is the
 - Build package from `build/build-management` with implementation revision, test evidence, hardening notes, completeness certification, and unresolved build risks.
 - Active review save context, prior lens verdicts, and revision lineage when resuming an interrupted review run.
 - Scope classification for optional review surfaces: frontend presence, developer-facing surface, security governance scope, and accepted-risk claims.
+- Review constraints from the design/build packages: YAGNI decisions, migration/deprecation plan, performance budgets, threat model, and verification expectations.
 
 ## Outputs
 
@@ -46,10 +47,11 @@ This skill is a component of the **Admiral** delivery pipeline; `admiral` is the
 
 ## Workflow
 
-1. Classify the review scope, risk tier, frontend presence, developer-facing surface, and whether security governance or accepted-risk decisions are in scope before assigning review phases.
+1. Classify the review scope, risk tier, frontend presence, developer-facing surface, migration/deprecation surface, performance budget, threat model, and whether security governance or accepted-risk decisions are in scope before assigning review phases.
 2. Always run the core review sequence and add optional interface, developer-experience, or CSO oversight phases only when the surface exists.
-3. Merge specialist reports into one review package without losing conflicting evidence or skip justifications.
-4. Submit the consolidated package through a single review gate and publish prioritized remediation guidance.
+3. Require each lens to separate blockers from optional cleanup, and to distinguish behavior-preserving simplification from speculative refactoring.
+4. Merge specialist reports into one review package without losing conflicting evidence or skip justifications.
+5. Submit the consolidated package through a single review gate and publish prioritized remediation guidance.
 
 ## Required Contracts
 

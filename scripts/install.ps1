@@ -8,6 +8,8 @@ param(
 
     [string]$Destination = (Join-Path $env:USERPROFILE ".agents\skills"),
 
+    [string]$CodexDestination = (Join-Path $env:USERPROFILE ".codex\skills"),
+
     [switch]$RegisterHooks,
 
     [switch]$InstallClaude,
@@ -218,6 +220,47 @@ function Test-CommandAvailable {
     }
 }
 
+function Test-PythonMinimumVersion {
+    param(
+        [string]$Command,
+        [string[]]$Arguments = @()
+    )
+
+    try {
+        & $Command @Arguments -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 13) else 1)" *> $null
+        return $LASTEXITCODE -eq 0
+    }
+    catch {
+        return $false
+    }
+}
+
+function Find-CompatiblePythonCommand {
+    $candidates = @(
+        @{ Command = "py"; Arguments = @("-3.13") },
+        @{ Command = "python"; Arguments = @() },
+        @{ Command = "python3"; Arguments = @() }
+    )
+
+    foreach ($candidate in $candidates) {
+        if (-not (Test-CommandAvailable -Name $candidate.Command)) {
+            continue
+        }
+
+        if (Test-PythonMinimumVersion -Command $candidate.Command -Arguments $candidate.Arguments) {
+            return [pscustomobject]$candidate
+        }
+    }
+
+    return $null
+}
+
+function Write-PythonReadinessWarning {
+    if ($null -eq (Find-CompatiblePythonCommand)) {
+        Write-Warning "Python 3.13+ was not found. Skill files will still be copied, but hook verification and registration require Python 3.13 or newer."
+    }
+}
+
 function Test-HostDetected {
     param([string]$HostName)
 
@@ -276,14 +319,12 @@ function Resolve-HostTargets {
 }
 
 function Find-PythonCommand {
-    foreach ($candidate in @("python", "python3", "py")) {
-        $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
-        if ($null -ne $cmd) {
-            return $cmd.Source
-        }
+    $candidate = Find-CompatiblePythonCommand
+    if ($null -eq $candidate) {
+        throw "Python 3.13 or newer is required to register runtime harness hooks."
     }
 
-    throw "Python 3 is required to register runtime harness hooks."
+    return $candidate
 }
 
 function Register-HarnessHooks {
@@ -306,7 +347,8 @@ function Register-HarnessHooks {
         $hookArgs += @("--target", $hostName)
     }
 
-    & $python @hookArgs
+    $pythonArgs = @($python.Arguments)
+    & $python.Command @pythonArgs @hookArgs
     if ($LASTEXITCODE -ne 0) {
         throw "Hook registration failed."
     }
@@ -317,11 +359,20 @@ try {
 
     $selectedTeams = Resolve-TeamSelection -RequestedTeams $Team
     $hostTargets = @(Resolve-HostTargets -RequestedTargets $Target)
+    $normalizedRequestedTargets = @($Target | ForEach-Object { $_.ToLowerInvariant() })
+    $explicitCodexTarget = $normalizedRequestedTargets -contains "codex"
+    Write-PythonReadinessWarning
 
     Write-Host "Installing Supreme Team to $Destination"
     Install-SupremeTeam -TargetRoot $Destination -SelectedTeams $selectedTeams
 
     $mirrorSummaries = @()
+
+    if (($hostTargets -contains "codex") -and ($explicitCodexTarget -or (Test-Path -LiteralPath $CodexDestination))) {
+        Write-Host "Mirroring Supreme Team to $CodexDestination"
+        Install-SupremeTeam -TargetRoot $CodexDestination -SelectedTeams $selectedTeams
+        $mirrorSummaries += "codex=$CodexDestination"
+    }
 
     if ($hostTargets -contains "claude") {
         Write-Host "Mirroring Supreme Team to $ClaudeDestination"

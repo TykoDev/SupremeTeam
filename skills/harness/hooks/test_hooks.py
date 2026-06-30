@@ -360,5 +360,61 @@ class VerifyRegistrationTests(unittest.TestCase):
         self.assertIn("status: MISSING", result.stdout)
 
 
+class CheckReadinessTests(unittest.TestCase):
+    _BLOCK = VerifyRegistrationTests._BLOCK
+
+    def _run(self, project: Path, home: Path, *extra: str) -> subprocess.CompletedProcess:
+        env = os.environ.copy()
+        env["CLAUDE_PROJECT_DIR"] = str(project)
+        env["HOME"] = str(home)
+        env["USERPROFILE"] = str(home)
+        return subprocess.run(
+            [sys.executable, str(HOOK_DIR / "check_readiness.py"), "--host", "claude", "--project-root", str(project), *extra],
+            input="{}", text=True, capture_output=True, env=env, check=False,
+        )
+
+    def _write_settings(self, project: Path, obj) -> None:
+        d = project / ".claude"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "settings.json").write_text(json.dumps(obj), encoding="utf-8")
+
+    def test_ready_when_python_hooks_and_active_run_exist(self):
+        with _project_dir() as project, _project_dir() as home:
+            self._write_settings(project, self._BLOCK)
+            _write_run_state(
+                project,
+                "2026-06-08_active_ready",
+                "---\nstate: DESIGN_ACTIVE\nsession_pin: true\n---\n",
+            )
+            result = self._run(project, home, "--require-active-run")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("Python: ok", result.stdout)
+        self.assertIn("Hooks: registered", result.stdout)
+        self.assertIn("Saves: active", result.stdout)
+        self.assertIn("Ready: yes", result.stdout)
+
+    def test_require_active_run_fails_when_saves_are_inactive(self):
+        with _project_dir() as project, _project_dir() as home:
+            self._write_settings(project, self._BLOCK)
+            _write_run_state(
+                project,
+                "2026-06-08_done",
+                "---\nstate: DELIVERED\nsession_pin: false\n---\n",
+            )
+            result = self._run(project, home, "--require-active-run")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("Hooks: registered", result.stdout)
+        self.assertIn("Saves: inactive", result.stdout)
+        self.assertIn("Ready: no", result.stdout)
+
+    def test_json_output_reports_missing_hooks(self):
+        with _project_dir() as project, _project_dir() as home:
+            result = self._run(project, home, "--json")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        data = json.loads(result.stdout)
+        self.assertEqual(data["hooks"]["status"], "unknown")
+        self.assertEqual(data["saves"]["status"], "missing")
+
+
 if __name__ == "__main__":
     unittest.main()

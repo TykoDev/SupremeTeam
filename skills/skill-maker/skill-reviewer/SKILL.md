@@ -4,11 +4,10 @@ description: >
   Adversarial quality gate for Claude skills. Scores a skill 0-100 across 10 rubric
   dimensions, runs a structural and specification audit, and produces a findings report
   with a prioritized fix list. Use when the skill-maker orchestrator delegates a review
-  task. Also usable standalone to audit any SKILL.md — invoke when the user says
-  "review my skill", "score this skill", "audit my skill", "is this skill
-  production-ready", "rate my SKILL.md", or "check skill quality". Even trigger on
-  "how does this look" after working on a SKILL.md. Does NOT apply fixes — returns
-  findings to the orchestrator (or user) for the creator to act on.
+  task; cold lifecycle requests route through admiral and skill-maker first. Trigger on "review my skill", "score this
+  skill", "audit my skill", "is this skill production-ready", "rate my SKILL.md",
+  "check skill quality", or "how does this look" after SKILL.md work. Does NOT apply
+  fixes — returns findings for the creator to act on.
 version: 1.0.0
 ---
 
@@ -31,6 +30,10 @@ format and an abridged scorecard, for output-shape calibration.
 ---
 
 ## Phase 1 — Benchmark
+
+For cold lifecycle requests, follow `../../routing-doctrine.md`: enter admiral,
+then accept the skill-maker review handoff. An active delegation proceeds directly
+without restarting intake.
 
 Locate the skill, ingest it, measure raw metrics, score every dimension, and produce
 the scorecard.

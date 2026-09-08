@@ -10,7 +10,7 @@
 ## Continuity Sequence
 
 1. Determine whether the request is a checkpoint, a learning write, a resume, or a lookup against prior learnings.
-2. Save only the durable state needed for safe continuation: current boundary, active artifacts, blockers, and the next intended action.
+2. Write core run state only through `../../harness/hooks/save_run.py` operations, following `../../save-protocol.md` and `../../save-ownership.yaml`; put supplemental reports in the delegated phase reports path. Save only the durable state needed for safe continuation: current boundary, active artifacts, blockers, and the next intended action.
 3. Normalize learnings into short searchable entries with evidence and confidence so later sessions can query them quickly.
 4. On resume, reload only the verified artifacts and notes relevant to the immediate next step, then surface any drift or missing state.
 
@@ -35,6 +35,6 @@
 
 ## Collaboration Notes
 
-- `admiral` is the primary invoker — calls session-memory at context tier 3+ escalations, before every gatekeeper-admiral submission, at session end, and on error recovery.
+- `admiral` is the primary invoker — calls session-memory after normalized intake before the first stage delegation, at context tier 3+ escalations, before every gatekeeper-admiral submission, at session end, and on error recovery.
 - `design/commander`, `build/build-management`, and `review/code-chief` consume continuity records when long-running work spans sessions.
 - Any specialist may request a checkpoint via its orchestrator when context pressure rises.

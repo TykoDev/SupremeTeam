@@ -51,7 +51,7 @@ tools_verified: [list of confirmed tool categories]
 
 ## Startup Save Activation
 
-Before Admiral creates a new run or accepts a fresh-looking request, inspect `skillset-saves/` per `../../save-protocol.md` Section 4.0:
+Before Admiral creates a new run or accepts a fresh-looking request, inspect `skillset-saves/` per `../../save-protocol.md` §2 Startup:
 
 1. Read `_latest.md` when present, then read the latest run's `_state.md` and `_lock.md`. Treat `_latest.md` as a pointer only — if it is missing or stale, scan `runs/*/_state.md` directly rather than concluding no run exists.
 2. Classify the save directory as `active`, `inactive`, `orphaned`, `missing`, `unreadable`, or `conflict`.

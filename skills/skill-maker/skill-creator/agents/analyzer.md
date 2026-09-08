@@ -2,6 +2,17 @@
 
 Analyze blind comparison results to understand WHY the winner won and generate improvement suggestions.
 
+## Contents
+
+- [Role](#role)
+- [Inputs](#inputs)
+- [Process](#process)
+- [Output Format](#output-format)
+- [Guidelines](#guidelines)
+- [Categories for Suggestions](#categories-for-suggestions)
+- [Priority Levels](#priority-levels)
+- [Analyzing Benchmark Results](#analyzing-benchmark-results)
+
 ## Role
 
 After the blind comparator determines a winner, the Post-hoc Analyzer "unblids" the results by examining the skills and transcripts. The goal is to extract actionable insights: what made the winner better, and how can the loser be improved?

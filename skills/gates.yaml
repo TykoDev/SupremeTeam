@@ -1,0 +1,212 @@
+{
+  "schema_version": 1,
+  "kind": "supremeteam-gate-spec",
+  "purpose": "Single deterministic source of truth for every gate boundary: required evidence keys, artifact-backed evidence, sanctioned fallback values, typed evidence records, finding policy, submitters, and the workflow-protocol state transition each boundary guards. harness/gatekeeper/check.py loads this file; the boundary tables in the gatekeeper skills and docs/gatekeepers.md mirror it and the drift test test_documented_boundary_table_matches_gate_spec in harness/gatekeeper/test_gate_manifests.py fails when they disagree.",
+  "verdicts": [
+    "APPROVED",
+    "REVISE",
+    "ESCALATE"
+  ],
+  "evidence_rules": {
+    "required_evidence": "Every listed key must be present and non-falsy under the manifest's top-level evidence object.",
+    "artifact_evidence": "These keys must reference at least one path that appears in the manifest's artifact_hashes map, so the evidence is a shipped, hashed file rather than a bare claim. A key whose value exactly equals one of its sanctioned fallback_values is exempt.",
+    "fallback_values": "The only sanctioned non-artifact values for a key. Any other bare string fails the artifact-backing check.",
+    "evidence_root": "Artifact paths are manifest-relative. Inside the canonical save layout (skillset-saves/runs/<run-id>/<phase>/) the authorised evidence root is the run directory when the manifest run_id matches the directory and _state.md, so sibling phase evidence is admissible. Otherwise the root is the manifest directory. Another run, traversal, absolute/drive/UNC paths, and links leaving the root are rejected.",
+    "path_references": "Every path-shaped string in an artifact-backed evidence value (every evidence value at manifest schema 2) must be a correctly hashed artifact; free-text annotations are ignored.",
+    "manifest_schema_2": "schema_version 2 manifests must declare boundary and owner (the spec submitter), run_id when inside a run, revision equal to the single revisions value, typed records for keys listed in evidence_types, and applicability records {applicable: false, reason, scope, decided_by} instead of bare fallback strings.",
+    "applicability_records": "Only keys listed in fallback_values are waivable. A waiver is a typed applicability record naming reason, scope, and decided_by; any other bare string fails.",
+    "verdict_records": "check.py emits gate_spec_digest, package_fingerprint, and verdict_id; --verdict-out writes the durable record and --prior compares against it. A verdict is reusable only for the same boundary, submission, revision, fingerprint, and gate spec digest."
+  },
+  "boundaries": {
+    "design-to-build": {
+      "guards": "DESIGN -> BUILD",
+      "submitter": "commander",
+      "required_evidence": [
+        "decisions",
+        "architecture",
+        "interfaces",
+        "plan",
+        "acceptance",
+        "security_seed",
+        "stack_lock",
+        "ui_evidence"
+      ],
+      "artifact_evidence": [
+        "decisions",
+        "architecture",
+        "plan"
+      ]
+    },
+    "build-to-review": {
+      "guards": "BUILD -> REVIEW",
+      "submitter": "build-management",
+      "required_evidence": [
+        "approved_design_revision",
+        "implementation",
+        "tests",
+        "runtime",
+        "traceability",
+        "security_evidence"
+      ],
+      "artifact_evidence": [
+        "tests",
+        "runtime"
+      ]
+    },
+    "review-to-delivery": {
+      "guards": "REVIEW -> GATE -> COMPLETE",
+      "submitter": "code-chief",
+      "required_evidence": [
+        "review_verdict",
+        "findings",
+        "executed_probes",
+        "rendered_verification",
+        "residual_risk",
+        "revision_lineage"
+      ],
+      "artifact_evidence": [
+        "executed_probes",
+        "rendered_verification"
+      ]
+    },
+    "security-review": {
+      "guards": "security pipeline -> GATE -> COMPLETE",
+      "submitter": "cso",
+      "required_evidence": [
+        "scope",
+        "threat_model",
+        "findings",
+        "vulnerability_scan",
+        "denial_path_evidence",
+        "remediation_plan",
+        "residual_risk"
+      ],
+      "artifact_evidence": [
+        "threat_model",
+        "denial_path_evidence"
+      ]
+    },
+    "investigation-review": {
+      "guards": "investigation -> the owning phase (DESIGN, BUILD, or REVIEW)",
+      "submitter": "investigate",
+      "required_evidence": [
+        "scope",
+        "reproduction",
+        "mechanism",
+        "evidence_chain",
+        "fix_path",
+        "residual_uncertainty"
+      ],
+      "artifact_evidence": [
+        "reproduction",
+        "evidence_chain"
+      ]
+    },
+    "qa-review": {
+      "guards": "testing-and-qa pipeline -> GATE -> COMPLETE",
+      "submitter": "qa",
+      "required_evidence": [
+        "scope",
+        "test_matrix",
+        "executed_probes",
+        "defects",
+        "fixes_applied",
+        "residual_risk"
+      ],
+      "artifact_evidence": [
+        "test_matrix",
+        "executed_probes"
+      ]
+    },
+    "skill-maker-to-delivery": {
+      "guards": "skill-maker pipeline -> GATE -> COMPLETE",
+      "submitter": "skill-maker",
+      "required_evidence": [
+        "skills",
+        "team_manifest",
+        "link_report",
+        "validation_report"
+      ],
+      "artifact_evidence": [
+        "link_report",
+        "validation_report"
+      ]
+    },
+    "deploy-readiness": {
+      "guards": "GATE -> RELEASE",
+      "submitter": "ship",
+      "required_evidence": [
+        "approved_delivery",
+        "deploy_config",
+        "verification_plan",
+        "rollback_plan",
+        "human_go_required"
+      ],
+      "artifact_evidence": [
+        "deploy_config",
+        "verification_plan",
+        "rollback_plan"
+      ]
+    }
+  },
+  "fallback_values": {
+    "security_evidence": [
+      "no trust-boundary change - security-builder not engaged"
+    ],
+    "stack_lock": [
+      "no new runtime or framework - existing stack unchanged"
+    ],
+    "ui_evidence": [
+      "no user-facing surface - design system not engaged"
+    ],
+    "rendered_verification": [
+      "no visible surface changed - rendered verification not applicable"
+    ],
+    "denial_path_evidence": [
+      "static analysis only - active probes not authorized"
+    ],
+    "vulnerability_scan": [
+      "no dependency or source scan surface - scanner not engaged"
+    ],
+    "fixes_applied": [
+      "report-only run - no fixes applied"
+    ],
+    "team_manifest": [
+      "single skill - no team manifest produced"
+    ]
+  },
+  "spec_revision": 1,
+  "evidence_types": {
+    "tests": "probe",
+    "runtime": "probe",
+    "executed_probes": "probe",
+    "reproduction": "probe",
+    "evidence_chain": "probe",
+    "test_matrix": "probe",
+    "denial_path_evidence": "probe",
+    "rendered_verification": "render",
+    "vulnerability_scan": "scan",
+    "findings": "findings",
+    "security_evidence": "findings",
+    "defects": "findings",
+    "review_verdict": "verdict",
+    "stack_lock": "stack_lock",
+    "approved_design_revision": "revision_ref",
+    "approved_delivery": "revision_ref"
+  },
+  "evidence_type_rules": {
+    "scan": "Record with artifacts (hashed), tool, command, exit_code, observed_at, inputs [{path, sha256}] bound to the inspected source, and result.status in pass|fail|error|not-run|unavailable. Only pass satisfies the gate; unavailable or error is a data gap, never a clean scan.",
+    "render": "Record with hashed captures/artifacts, breakpoints, themes, inputs bound to the rendered source, and result.status pass or inferred (inferred requires a limitation statement and is labelled INFERRED - no browser available). Breakpoints cover the responsive tiers design-doctrine.md section 4 requires for the changed surface.",
+    "probe": "Record with hashed artifacts and result.status pass; executed probe logs are the artifacts. At build-to-review, tests is the test-runner log and runtime is the startup/entry-point smoke log, each a hashed file under build/evidence/; a bare count or claim is not evidence. At investigation-review, reproduction is the log that reproduces the reported failure and evidence_chain is the trace from symptom to mechanism. At qa-review, test_matrix is the executed matrix log across the declared surface.",
+    "audit": "Record with hashed artifacts and result.status pass.",
+    "findings": "Record {items: [{id, severity, status, owner?, reopen_trigger?, reason?}]}. Critical must be verified or not-applicable with reason. Major must be verified, not-applicable with reason, or deferred with owner and reopen_trigger (finding_policy.major_deferral). Minor and Info are recorded.",
+    "verdict": "APPROVED, or REVISE/ESCALATE accompanied by a challenge record {by, reason} that the gate preserves as a disputed recommendation.",
+    "stack_lock": "Record {slug, versions, overlay_sha256} validated against tech-stacks/registry.yaml (slug exists, overlay digest matches registry and file, versions intersect), or an applicability record.",
+    "revision_ref": "A non-empty approved upstream revision identifier."
+  },
+  "finding_policy": {
+    "critical": "verified-before-gate",
+    "major_deferral": "owner-and-reopen-trigger",
+    "statement": "Critical blocks every gate until a verified fix or an explicit not-applicable reason. Major blocks unless verified, not-applicable with reason, or explicitly deferred with a named owner and reopen trigger recorded in the findings record; this is the reconciled reading of 'resolve Major before a gate' and 'Major requires a remediation owner before the gate'."
+  }
+}

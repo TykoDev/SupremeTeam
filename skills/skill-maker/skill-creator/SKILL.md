@@ -7,14 +7,16 @@ description: >
   or package a skill directory — even if they only say "make this a skill" or "fix these
   findings". Handles SKILL.md authoring, supporting files, real evals, trigger tuning,
   and `.skill` packaging; leaves rubric scoring to skill-reviewer.
+version: 1.0.0
 ---
 
 # Skill Creator
 
 Draft new Claude skills, apply improvement fixes, run behavioral evals, optimize
 descriptions, and package the result. Operates in five modes — the skill-maker
-orchestrator selects the appropriate mode, or invoke standalone for any individual
-phase.
+orchestrator selects the appropriate mode. For a cold lifecycle request, follow
+`../../routing-doctrine.md`: enter admiral, then accept the skill-maker handoff.
+An active skill-maker delegation proceeds directly without restarting intake.
 
 > "Capture the user's intent, turn it into a production-quality skill, and keep
 > iterating until it works on real tasks. Leave structural scoring to the reviewer —

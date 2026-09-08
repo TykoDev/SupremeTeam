@@ -2,14 +2,13 @@
 name: browse
 description: >-
   Automates browser interactions through a structured page-reading workflow that
-  emphasizes observable evidence instead of selector guessing. Use when the user
-  asks to browse this site, test the page in a browser, walk through the interface,
-  capture browser evidence, or verify how a live flow behaves on an actual rendered
-  surface — even when they only say "click through the app and check it". Drives an
-  existing browser session; defers launching a visible workspace to
-  `browser-automation/open-browser`, loading authenticated session state to
-  `browser-automation/setup-browser-cookies`, and sharing the session with another
-  operator to `browser-automation/pair-agent`.
+  reads observable evidence instead of guessing selectors. Use when the user asks
+  to browse this site, test the page in a browser, walk through the interface,
+  capture browser evidence, or verify a live flow's rendered behavior — even when
+  they only say "click through the app and check it". Drives an existing browser
+  session; defers workspace launch to `browser-automation/open-browser`,
+  authenticated state to `browser-automation/setup-browser-cookies`, and session
+  sharing to `browser-automation/pair-agent`.
 version: 1.0.0
 ---
 

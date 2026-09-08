@@ -1,0 +1,31 @@
+schema_version: 1
+package: Supreme Team
+root: .
+include:
+  - "**/*"
+exclude:
+  - "**/__pycache__/**"
+  - "**/*.pyc"
+  - "skillset-saves/**"
+  - ".harness-state/**"
+  - "**/.harness-state/**"
+  - "harness-test-work/**"
+  - "**/*-workspace/**"
+  - "**/evals/workspace/**"
+  - "**/*.skill"
+  - "**/*.zip"
+  - "**/.env"
+  - "**/.env.*"
+  - ".git/**"
+delivery_contract:
+  generated_interpreter_caches: local-validation-residue
+  cache_files_are_publishable: false
+  runtime_state_is_publishable: false
+  save_state_is_publishable: false
+  verification: >-
+    python skills/scripts/package_check.py --root . enumerates the selected
+    files, rejects residue classes, confirms required assets, and optionally
+    writes the archive; ignore rules alone are not the delivery control.
+  applies_to:
+    - directory-delivery
+    - archive-delivery

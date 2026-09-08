@@ -13,6 +13,19 @@ interview per `grill-me-doctrine.md` before generating anything.
 Skip the entire pipeline only for genuinely backend-only systems, and record the
 skip with a one-line justification in the architecture package.
 
+## Contents
+
+- [Phase 0 — Mode Selection](#phase-0--mode-selection)
+- [Phase 1 — Detect Framework & Tailwind Version](#phase-1--detect-framework--tailwind-version)
+- [Phase 2A — Design Interview (New mode)](#phase-2a--design-interview-new-mode)
+- [Phase 2B — Existing Frontend Analysis (Existing mode)](#phase-2b--existing-frontend-analysis-existing-mode)
+- [Phase 3 — Token System](#phase-3--token-system)
+- [Phase 4 — shadcn Component Template + Install](#phase-4--shadcn-component-template--install)
+- [Phase 5 — Preview](#phase-5--preview)
+- [Phase 6 — UI/UX Specification](#phase-6--uiux-specification-design-systemmd)
+- [Phase 7 — Adversarial Design Review](#phase-7--adversarial-design-review)
+- [Edge cases & failure modes](#edge-cases--failure-modes)
+
 ---
 
 ## Phase 0 — Mode Selection

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Trajectory Regulation hook (LIFE-HARNESS Layer 4) for SupremeTeam.
+Trajectory Regulation hook (LIFE-HARNESS Layer 4) for Supreme Team.
 
 Runs as a host ``PostToolUse``/post-tool hook. It watches the evolving trajectory
 for degenerate, non-progressing patterns and injects a recovery hint as
@@ -8,7 +8,7 @@ additional context — the deterministic, per-step expression of the coarse-grai
 trajectory control that gatekeepers and session-memory already provide.
 
 Detected patterns (all mechanically certain from trajectory signatures, per
-doctrine section 3 — never from guessed intent):
+the doctrine's Principles heading — never from guessed intent):
   - repeated identical FAILING command (>= 3 times)
   - empty-output streak (>= 3 consecutive empty results)
   - two-state oscillation (A,B,A,B over the last four steps)
@@ -58,7 +58,7 @@ def _explicit_failure(data: dict):
     tool_response if one is present. Returns True (failed), False (succeeded), or
     None (no structured signal — caller falls back to the text heuristic).
 
-    This is the doctrine-§3 "mechanically certain" path: when the host reports an
+    This is the doctrine's "mechanically certain" Principles path: when the host reports an
     exit code or success flag, trust it instead of guessing from output text.
     """
     resp = data.get("tool_response")
@@ -116,7 +116,11 @@ def _emit(hint: str) -> None:
 
 def main() -> None:
     data = _state.read_hook_input()
-    session_id = data.get("session_id", "default")
+    _state.record_observation("PostToolUse", data)
+    _state.refresh_run_heartbeat(data, "PostToolUse")
+    # Scoped identity: host session id, else environment, else host process.
+    # Independent invocations without a session id never share one history.
+    session_id, _identity_source = _state.trajectory_identity(data)
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {}) or {}
 
@@ -149,7 +153,7 @@ def main() -> None:
     # Pattern 3: two-state oscillation A,B,A,B that is *not progressing*.
     # The non-progress gate (every one of the four steps failed or returned empty)
     # is essential: a healthy build->test->build->test loop is also A,B,A,B, and
-    # blocking advice there would fire on a competent trajectory (doctrine §0).
+    # blocking advice there would fire on a competent trajectory (doctrine Principles: inert on a competent trajectory).
     if len(history) >= 4:
         last4 = history[-4:]
         a, b, c, d = (h.get("sig") for h in last4)

@@ -56,7 +56,7 @@ def validate_skill(skill_path):
     unexpected_keys = set(frontmatter.keys()) - ALLOWED_PROPERTIES
     if unexpected_keys:
         return False, (
-            f"Unexpected key(s) in SKILL.md frontmatter: {', '.join(sorted(unexpected_keys))}. "
+            f"Unexpected key(s) in SKILL.md frontmatter: {', '.join(sorted(map(str, unexpected_keys)))}. "
             f"Allowed properties are: {', '.join(sorted(OFFICIAL_PROPERTIES))} "
             f"(plus SupremeTeam extensions: {', '.join(sorted(SUPREMETEAM_EXTENSIONS))})"
         )
@@ -72,6 +72,8 @@ def validate_skill(skill_path):
     if not isinstance(name, str):
         return False, f"Name must be a string, got {type(name).__name__}"
     name = name.strip()
+    if not name:
+        return False, "Name must not be empty"
     if name:
         # Check naming convention (kebab-case: lowercase with hyphens)
         if not re.match(r'^[a-z0-9-]+$', name):
@@ -87,6 +89,8 @@ def validate_skill(skill_path):
     if not isinstance(description, str):
         return False, f"Description must be a string, got {type(description).__name__}"
     description = description.strip()
+    if not description:
+        return False, "Description must not be empty"
     if description:
         # Check for angle brackets
         if '<' in description or '>' in description:
@@ -97,7 +101,7 @@ def validate_skill(skill_path):
 
     # Validate compatibility field if present (optional)
     compatibility = frontmatter.get('compatibility', '')
-    if compatibility:
+    if 'compatibility' in frontmatter:
         if not isinstance(compatibility, str):
             return False, f"Compatibility must be a string, got {type(compatibility).__name__}"
         if len(compatibility) > 500:

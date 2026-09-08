@@ -1,184 +1,170 @@
-# Pipeline Architecture
+# Architecture
 
-Supreme Team orchestrates a three-stage delivery pipeline through a single entry
-point (**admiral**), with adversarial validation at every phase boundary and a
-cross-stage gate at every handoff. Cross-cutting standalone tools (browser
-automation, release & deployment, safety guardrails, testing & QA) run outside
-the pipeline, and a runtime harness deterministically enforces the parts of the
-contract that can be checked mechanically.
+Eight pipelines, one front door.
 
-## Pipeline Flow
+Each pipeline closes at a gate boundary defined in
+[`skills/gates.yaml`](../skills/gates.yaml) and declared in
+[`skills/pipelines.yaml`](../skills/pipelines.yaml), which holds the stages, the
+stage owners, the closing boundary, and the scripts each stage needs.
 
-```
- USER REQUEST / EXISTING ARTIFACTS
-       |
-       v
-    +-----------+    intake interview (grill-me) · persisted run · mode probe
-    |  ADMIRAL  |    MCP registry freshness · harness hook registration check
-    +-----------+
-       |
-       v
- +---------------------------+     +---------------------+
- | design/commander          | --> | GATEKEEPER-ADMIRAL  |  Handoff 1:
- | researcher -> planner ->  |     | Design -> Build     |  Build-ready?
- | architect -> engineer     |     +---------------------+
- +---------------------------+
-       |
-       v
- +---------------------------+     +---------------------+
- | build/build-management    | --> | GATEKEEPER-ADMIRAL  |  Handoff 2:
- | bob-the-builder ->        |     | Build -> Review     |  Review-ready?
- | test-builder ->           |     +---------------------+
- | security-builder ->       |
- | cross-check-build-confirm |
- | [debugger] [health-check] |
- +---------------------------+
-       |
-       v
- +---------------------------+     +---------------------+
- | review/code-chief         | --> | GATEKEEPER-ADMIRAL  |  Handoff 3:
- | bug-review -> code-review |     | Review -> Delivery  |  Delivery-ready?
- | -> quality-review ->      |     +---------------------+
- | security-review -> cso -> |
- | mr-robot -> frontier ->   |
- | design-qa -> devex-review |
- +---------------------------+
-       |
-       v
-  +------------------------+
-  | FINAL DELIVERY PACKAGE |
-  +------------------------+
-```
+Those two files are the truth. This page elaborates them and is not allowed to
+contradict them: a contract test checks that every owner is on the roster, every
+boundary exists in the gate spec, every named artifact has exactly one writer, and
+every required script is actually on disk.
 
-There is no built-in cloud-provisioning stage. Production rollout is handled by
-the standalone **release-and-deployment** tools (`ship`, `land-and-deploy`,
-`setup-deploy`, `document-release`), which are invoked directly rather than as a
-pipeline stage.
+![The delivery lifecycle](assets/Intro.jpg)
+
+## The eight
+
+| Pipeline | Owner | Closes at | What it is for |
+|---|---|---|---|
+| `design` | commander | `design-to-build` | Requirements, architecture, interfaces, design system, plan, implementation spec, stack lock |
+| `build` | build-management | `build-to-review` | Implementation, tests, hardening, runtime health, completeness |
+| `review` | code-chief | `review-to-delivery` | Correctness, quality, security, frontend, visual QA, developer experience |
+| `security` | cso | `security-review` | Threat model, vulnerability scan, adversarial probe, remediation |
+| `investigation` | investigate | `investigation-review` | Reproduction, evidence chain, mechanism, bounded fix path |
+| `qa` | qa | `qa-review` | Test matrix, executed probes, defects, scoped fixes |
+| `skill-creation` | skill-maker | `skill-maker-to-delivery` | Skill and team drafting, review, packaging |
+| `release` | ship | `deploy-readiness` | Readiness, deploy config, rollout, release notes |
+
+The last five are not side channels. They run inside the same state machine as the
+first three, occupying a design-shaped or build-shaped state in their own phase
+directory, and meeting a gate at their own boundary.
+
+Production rollout still needs a fresh human decision even after
+`deploy-readiness` approves. Approval is not a trigger.
 
 ## Admiral
 
-Admiral is the **primary entry orchestrator** — the single front door for the
-entire delivery lifecycle, as fixed by `skills/routing-doctrine.md`. Every
-delivery-lifecycle request initiates through admiral so that one intake, one
-persisted run, and one cross-stage gatekeeper govern the whole pipeline. It:
+The single front door ([`routing-doctrine.md`](../skills/routing-doctrine.md)).
+For anything that is not Tier 0, it:
 
-1. Runs the startup save check, classifies any existing `skillset-saves/` run,
-   and resumes an active or orphaned run before starting a new one.
-2. Runs the **grill-me intake interview** (`skills/grill-me-doctrine.md`) to reach
-   a shared understanding before any delegation.
-3. Probes the **execution mode** (sub-agent delegation, file I/O, command
-   execution), verifies **harness hook registration**
-   (`harness/hooks/verify_registration.py`), and checks **MCP registry freshness**
-   (`skills/mcp-tools.md`, default 480h TTL).
-4. Classifies the request mode (full, partial, resume, create-skill, create-team),
-   then delegates to the owning sub-orchestrator for the earliest incomplete
+1. Runs the startup save check, classifies any existing run, and resumes a
+   coherent one before starting anything new.
+2. Runs the intake interview ([`grill-me-doctrine.md`](../skills/grill-me-doctrine.md))
+   and writes the result to `intake/report_grilling.md`. That file is the hashed
+   artifact behind the `decisions` gate key.
+3. Probes what it can actually do: sub-agent delegation, file I/O, command
+   execution. Verifies hook registration, reads the readiness map, checks MCP
+   registry freshness.
+4. Creates the run through `session-memory` and `save_run.py create` before the
+   first delegation, then checkpoints before every later one and at every returned
    boundary.
-5. Routes every returned package through **gatekeeper-admiral**, rewinding
-   downstream work when upstream approvals drift.
-6. Assembles only approved packages into a unified delivery package.
+5. Picks the earliest incomplete boundary and delegates with the same run id,
+   revision, artifact mode, execution mode, save path, and session pin.
+6. Routes every returned package through its gatekeeper, and rewinds to the
+   earliest affected boundary when upstream evidence changes.
+7. Assembles only gate-approved packages into the delivery package.
 
-Immediately after scope is confirmed at intake — and before the first
-sub-orchestrator delegation — admiral engages **session-memory** to checkpoint
-the normalized intake. Every run therefore engages at least two catalog skills
-(session-memory plus the first stage owner).
+### Tiers
 
-### Trigger Phrases
+Tier belongs to the run, not the skill
+([`execution-contract.md`](../skills/execution-contract.md)). The same skill runs
+at Tier 0 for a typo and Tier 3 for an authentication change.
 
-```
-"Run the full pipeline on this idea"
-"Design, build, and review this project"
-"Take this from idea to reviewed code"
-"Run admiral"
-"Resume the pipeline"
-"Investigate this bug / find the root cause"
-"Create a skill / build me a team of skills"
-```
+| Tier | Blast radius | Ceremony |
+|---|---|---|
+| 0 | Local, understood, reversible | Direct change, focused verification, brief note |
+| 1 | Bounded and read-only | Intake and evidence, no state change |
+| 2 | Multi-step edits, delegation, external coordination | Full route, saved run, gate package |
+| 3 | Destructive, security-sensitive, production, irreversible | Tier 2 plus explicit owner intent and a fresh human go decision |
 
-## Pipeline Modes
+### Modes
 
-| Mode | Entry condition | Path |
-|------|-----------------|------|
-| **Full pipeline** | "run the full pipeline", "ship this end to end" | Design → Build → Review → Delivery |
-| **Partial pipeline** | "just design", "just review this code" | Only the explicitly requested approved subset |
-| **Resume** | Active latest run or existing approved artifacts detected | Start from the earliest incomplete boundary after lock and lineage validation |
-| **Create-skill** | "create a skill", "build me a skill" | Intake → skill-maker → Delivery |
-| **Create-team** | "create a team", "build me a pipeline" | Intake → skill-maker team mode → Delivery |
+| Mode | Trigger | Path |
+|---|---|---|
+| Full | "run the full pipeline", "ship this end to end" | design, build, review, delivery |
+| Partial | "just design", "just review this code" | Only the approved subset asked for |
+| Resume | A coherent active or orphaned run is found | Earliest incomplete boundary, after lock and lineage checks |
+| Create-skill | "create a skill" | Intake, skill-maker, delivery |
+| Create-team | "create a team", "build me a pipeline" | Intake, skill-maker team mode, delivery |
 
-Admiral auto-detects existing artifacts. If a design package is provided, it
-skips to build. If an existing codebase is provided, it skips to review. A skip
-is honored only when the upstream artifact is fully approved, structurally
-complete, and valid for the next boundary.
+Admiral notices what already exists. A supplied design package skips to build; an
+existing codebase skips to review. A skip is honored only when the upstream
+artifact is fully approved, structurally complete, and valid for the next
+boundary.
 
-## Execution Modes
+### Execution modes
 
-Admiral operates in two execution modes depending on the host platform:
+**Agent mode** uses `skills/admiral/agent/agent-manifest.yaml`,
+`agent-protocol.md`, and the adapters in `agent/adapters/` to manage state
+programmatically and delegate sub-agents with live tool access.
 
-- **Agent mode** uses `skills/admiral/agent/agent-manifest.yaml`,
-  `agent-protocol.md`, and the adapter docs under `agent/adapters/`
-  (`claude.md`, `codex.md`, `copilot.md`) to manage state programmatically,
-  delegate sub-agents, and validate boundaries with live tool access.
-- **Skill mode** keeps the same stage sequencing, gatekeeper routing, and rewind
-  rules but expresses them as instructions the host agent carries out manually.
+**Skill mode** keeps the same stage sequencing, gate routing, and rewind rules,
+but expresses them as instructions the host carries out itself.
 
-The detected mode is recorded in the run state and re-probed before every
-boundary delegation and on every resume, so resumes never mix autonomous and
-instruction-only behavior.
+The detected mode is recorded in run state and re-probed before every boundary and
+on every resume, so a resume never mixes autonomous and instruction-only behavior
+halfway through.
 
-## Design Sub-Pipeline
+## Design
 
-Primary entry skill: **`commander`** (`skills/design/commander/SKILL.md`)
+Owner: [`commander`](../skills/design/commander/SKILL.md)
 
-```
-commander -> researcher -> gatekeeper-design -> planner -> gatekeeper-design ->
-architect -> gatekeeper-design -> engineer -> gatekeeper-design -> Design Package
+```text
+commander -> researcher -> architect -> [security-builder seed] -> planner
+          -> engineer -> stack lock -> gatekeeper-design -> design-to-build
 ```
 
-`architect` also owns the frontend/UI visual design system (design interview,
-shadcn/ui token system, component template, UI/UX spec, and adversarial design
-review) for user-facing surfaces, per `skills/design-doctrine.md`. There is no
-separate `designer` skill and no `tech-stacks/` template library.
+`architect` owns the frontend and UI design system for user-facing surfaces
+([`design-doctrine.md`](../skills/design-doctrine.md)): the component template,
+the UI/UX handoff, responsive behavior across six tiers, accessibility.
 
-Output: Approved Design Package (requirements, plan, architecture, interface
-contracts, design system, implementation spec).
+The stack lock names the registry slug, locked versions, and overlay digest from
+[`tech-stacks/registry.yaml`](../skills/tech-stacks/registry.yaml), or the
+sanctioned fallback when no runtime or framework changes. Detect the slug with
+`python skills/scripts/check_runtime.py --detect-project`.
 
-## Build Sub-Pipeline
+Out: an approved design package with requirements, architecture, interface
+contracts, design system, plan, implementation spec, and traceability.
 
-Primary entry skill: **`build-management`** (`skills/build/build-management/SKILL.md`)
+## Build
 
+Owner: [`build-management`](../skills/build/build-management/SKILL.md)
+
+```text
+build-management -> bob-the-builder -> test-builder -> [security-builder]
+                 -> health-check -> [debugger] [investigate]
+                 -> cross-check-build-confirm -> gatekeeper-build -> build-to-review
 ```
-build-management -> bob-the-builder -> gatekeeper-build ->
-test-builder -> gatekeeper-build -> security-builder -> gatekeeper-build ->
-cross-check-build-confirm -> gatekeeper-build -> Build Package
-```
 
-Utility skills **debugger** and **health-check** are available on demand within
-the build sub-pipeline for root-cause repair and runtime/startup health.
+`tests` and `runtime` are typed probe records: the test-runner log and the startup
+smoke log, each a hashed file under `build/evidence/`. A count is not evidence.
 
-Output: Production-ready code, tests, security hardening evidence, completeness
+Out: production code, tests, security evidence, runtime health, completeness
 confirmation.
 
-## Review Sub-Pipeline
+## Review
 
-Primary entry skill: **`code-chief`** (`skills/review/code-chief/SKILL.md`)
+Owner: [`code-chief`](../skills/review/code-chief/SKILL.md)
 
-```
-code-chief -> bug-review -> code-review -> quality-review -> security-review ->
-cso* -> mr-robot -> frontier* -> design-qa* -> devex-review* ->
-gatekeeper-code -> Review Package
-
-* cso engaged when scope includes security governance / release posture
-* frontier / design-qa skipped for backend-only projects with no frontend
-* devex-review engaged when targeting developer-facing surfaces
+```text
+code-chief -> bug-review -> code-review -> quality-review -> [security-review]
+           -> [mr-robot] -> [frontier] -> [design-qa] -> [devex-review]
+           -> finding triage -> gatekeeper-code -> review-to-delivery
 ```
 
-Output: Adversarially validated review reports with a merge recommendation.
+Bracketed stages are conditional. Security when a trust boundary moved. mr-robot
+when there is an exploitable surface. frontier and design-qa when visible behavior
+changed. devex-review when a developer-facing surface changed.
 
-## Cross-Cutting Subsystems
+`design-qa` produces `rendered_verification`: a typed render record with hashed
+captures, the breakpoints and themes covered, and inputs bound to the rendered
+source.
 
-| Subsystem | Purpose | Reference |
-|-----------|---------|-----------|
-| **Entry routing** | Makes admiral the enforced front door; defines skill tiers and the active-handoff loop guard | [routing.md](routing.md) · `skills/routing-doctrine.md` |
-| **Runtime harness** | Deterministic hooks (action realization, trajectory regulation, entry routing) + the gatekeeper gate engine | [harness.md](harness.md) · `skills/harness-doctrine.md` |
-| **Persistent saves** | Cross-session resume, crash recovery, audit trail | [persistent-saves.md](persistent-saves.md) · `skills/save-protocol.md` |
-| **MCP registry** | Global inventory of available MCP tools with a freshness TTL checked at intake | `skills/mcp-tools.md` |
-| **Standalone tools** | Browser automation, release & deployment, safety guardrails, testing & QA — invoked directly | [direct-invocation.md](direct-invocation.md) |
+Out: adversarially validated findings, executed probes, rendered verification,
+residual risk, and a verdict recommendation.
+
+## The pieces underneath
+
+| Subsystem | What it covers | Where |
+|---|---|---|
+| Entry routing | Front door, tiers, Tier 0, loop guard | [routing.md](routing.md), `skills/routing-doctrine.md` |
+| Gate spec | One boundary contract for required, artifact-backed, and typed evidence | [gatekeepers.md](gatekeepers.md), `skills/gates.yaml` |
+| Runtime harness | Deterministic hooks and the two gate validators | [harness.md](harness.md), `skills/harness-doctrine.md` |
+| Persistent saves | Cross-session resume, locks, journal, audit trail | [persistent-saves.md](persistent-saves.md), `skills/save-protocol.md` |
+| Contracts | Evidence standards, handoffs, delivery record, responsibility, states | `skills/contracts/` |
+| Ownership | One writer per artifact and per save path | `skills/ownership.yaml`, `skills/save-ownership.yaml` |
+| Tech stacks | 14 overlays with pinned versions and digests | `skills/tech-stacks/registry.yaml` |
+| MCP registry | Available MCP tools with a freshness TTL checked at intake | `skills/mcp-tools.md` |
+| Standalone tools | Browser, release, safety, testing | [direct-invocation.md](direct-invocation.md) |

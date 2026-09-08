@@ -38,5 +38,5 @@ Skill-maker owns the full skill creation lifecycle: intake classification, deleg
 ## Quality Contract
 
 - Score threshold for shipping: 100/100 on the 10-dimension rubric.
-- Critical findings block shipping unless the user explicitly overrides.
+- Critical findings block gate approval until a verified fix or explicit not-applicable reason, per `../gates.yaml`; a partial delivery requested by the user is not gate approval.
 - Description optimization only runs after achieving 100/100.

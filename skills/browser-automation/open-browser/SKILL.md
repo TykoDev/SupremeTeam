@@ -2,12 +2,11 @@
 name: open-browser
 description: >-
   Launches a visible browser workspace for guided interaction, debugging, and
-  collaborative automation on live product surfaces. Reuses an already-available
-  browser (installed system browser or cached Playwright browser) before installing
-  one; attaching to a running browser over CDP is opt-in only. Use when the user
-  asks to open the browser workspace, launch a visible browser, inspect the page
-  live, or prepare a live session for reuse — even when they only say "pop open a
-  browser so I can see it". Defers page interactions to `browser-automation/browse`,
+  collaborative automation on live product surfaces. Reuses an available browser
+  before installing one; CDP attachment is opt-in only. Use when the user asks to
+  open the browser workspace, launch a visible browser, inspect the page live, or
+  prepare a session for reuse — even when they only say "pop open a browser so I
+  can see it". Defers page interaction to `browser-automation/browse`,
   authenticated state to `browser-automation/setup-browser-cookies`, and session
   sharing to `browser-automation/pair-agent`.
 version: 1.0.0

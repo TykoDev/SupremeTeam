@@ -3,12 +3,11 @@ name: setup-browser-cookies
 description: >-
   Imports or prepares authenticated browser session state so later browser work can
   operate on protected surfaces safely. Use when the user asks to set up the browser
-  session, import cookies for browser work, prepare the authenticated browser, load
-  the browser access state, or verify that a protected page can be reached with the
-  intended account and tenant — even when they only say "log the browser into our
-  app". Prepares authenticated state; defers launching the workspace to
-  `browser-automation/open-browser`, driving the page to `browser-automation/browse`,
-  and sharing the session to `browser-automation/pair-agent`.
+  session, import cookies, prepare authenticated access, or verify a protected page
+  is reachable with the intended account — even when they only say "log the browser
+  into our app". Prepares authenticated state; defers workspace launch to
+  `browser-automation/open-browser`, page driving to `browser-automation/browse`,
+  and session sharing to `browser-automation/pair-agent`.
 version: 1.0.0
 ---
 

@@ -2,6 +2,15 @@
 
 Compare two outputs WITHOUT knowing which skill produced them.
 
+## Contents
+
+- [Role](#role)
+- [Inputs](#inputs)
+- [Process](#process)
+- [Output Format](#output-format)
+- [Field Descriptions](#field-descriptions)
+- [Guidelines](#guidelines)
+
 ## Role
 
 The Blind Comparator judges which output better accomplishes the eval task. You receive two outputs labeled A and B, but you do NOT know which skill produced which. This prevents bias toward a particular skill or approach.

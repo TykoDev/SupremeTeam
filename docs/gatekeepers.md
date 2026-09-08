@@ -1,84 +1,132 @@
-# The Gatekeeper Pattern
+# Gates
 
-Supreme Team enforces quality through **four adversarial gatekeepers** at two
-levels, backed by a shared deterministic gate engine. Every deliverable must
-earn approval — it is never assumed.
+Four gatekeepers stand between the phases, and none of them takes your word for
+anything. Approval is earned.
 
-## Gatekeeper Hierarchy
+| Gatekeeper | Sits at | Argues about |
+|---|---|---|
+| `gatekeeper-design` | design phase exit | Design specs, architecture decisions, design-system coherence, requirement completeness |
+| `gatekeeper-build` | build phase exit | Production code, test quality, hardening evidence, completeness claims |
+| `gatekeeper-code` | review phase exit | Review accuracy, finding evidence, severity calibration |
+| `gatekeeper-admiral` | every crossing between phases | Handoff completeness, revision lineage, cross-stage alignment |
 
-| Gatekeeper | Level | What It Validates |
-|-----------|-------|-------------------|
-| **gatekeeper-design** | Per-phase (design) | Design specs, architecture decisions, design-system coherence, requirement completeness (design→build boundary) |
-| **gatekeeper-build** | Per-phase (build) | Production code, test quality, security hardening evidence, completeness claims (build→review boundary) |
-| **gatekeeper-code** | Consolidated (review) | Review report accuracy, finding evidence, severity calibration (review→delivery boundary) |
-| **gatekeeper-admiral** | Cross-stage | Handoff completeness, cross-stage alignment, revision lineage, end-to-end coherence |
+A fifth, `skill-reviewer`, guards the skill-maker pipeline. It scores a skill 0 to
+100 across ten dimensions and hands back a prioritized fix list. It does not apply
+fixes. Admiral maps its verdicts onto the standard three: `SHIP` to APPROVED,
+`ITERATE` to REVISE, `BLOCKED` to ESCALATE.
 
-A fifth adversarial gate, **skill-reviewer**, sits inside the skill-maker
-pipeline. It scores a skill 0–100 across a 10-dimension rubric and returns a
-prioritized fix list; it does not apply fixes. Admiral maps skill-maker verdicts
-onto the standard model (`SHIP` → APPROVED, `ITERATE` → REVISE, `BLOCKED` →
-ESCALATE).
+![The gate decision loop](assets/6_review_loop.jpg)
 
-## How They Work
+## One spec, not four opinions
 
-The three per-phase gatekeepers (**design**, **build**, **code**) validate work
-within their sub-pipeline at each phase boundary. A specialist completes its
-deliverable, and the gatekeeper challenges it before the next specialist begins.
-**gatekeeper-code** uses a **consolidated** pattern — it validates the entire
-review suite once after all specialists complete.
+[`skills/gates.yaml`](../skills/gates.yaml) is the single source of truth for
+every boundary: which evidence keys are required, which must be backed by a hashed
+artifact, which fallbacks are sanctioned, how typed records are shaped, what the
+finding policy is, and the one skill allowed to submit.
 
-**gatekeeper-admiral** validates at the boundaries between stages, ensuring the
-output of one stage is suitable input for the next. It reuses a prior verdict
-only when the package revision is unchanged, and rewinds downstream work when an
-upstream approval drifts.
+`skills/harness/gatekeeper/check.py` loads it. A missing or malformed spec is an
+engine error, never a pass.
 
-## Deterministic Gate Engine
+The table below mirrors that file. A drift test in
+`skills/harness/gatekeeper/test_gate_manifests.py` fails if the two ever disagree,
+so this table cannot quietly rot.
 
-Each `gatekeeper-*` skill ships a thin `scripts/check.py` that declares only its
-boundary's required-artifact manifest and calls a shared, stdlib-only engine at
-`skills/harness/gatekeeper/_gatecheck.py`. The engine turns the *mechanically
-checkable* parts of validation into a deterministic pass so the skills no longer
-re-derive them as prose each run.
+| Boundary | Guards | Submitter | Required evidence |
+| --- | --- | --- | --- |
+| `design-to-build` | DESIGN to BUILD | commander | `decisions` `architecture` `interfaces` `plan` `acceptance` `security_seed` `stack_lock` `ui_evidence` |
+| `build-to-review` | BUILD to REVIEW | build-management | `approved_design_revision` `implementation` `tests` `runtime` `traceability` `security_evidence` |
+| `review-to-delivery` | REVIEW to GATE to COMPLETE | code-chief | `review_verdict` `findings` `executed_probes` `rendered_verification` `residual_risk` `revision_lineage` |
+| `security-review` | security pipeline to GATE to COMPLETE | cso | `scope` `threat_model` `findings` `vulnerability_scan` `denial_path_evidence` `remediation_plan` `residual_risk` |
+| `investigation-review` | investigation to the owning phase | investigate | `scope` `reproduction` `mechanism` `evidence_chain` `fix_path` `residual_uncertainty` |
+| `qa-review` | testing pipeline to GATE to COMPLETE | qa | `scope` `test_matrix` `executed_probes` `defects` `fixes_applied` `residual_risk` |
+| `skill-maker-to-delivery` | skill-maker pipeline to GATE to COMPLETE | skill-maker | `skills` `team_manifest` `link_report` `validation_report` |
+| `deploy-readiness` | GATE to RELEASE | ship | `approved_delivery` `deploy_config` `verification_plan` `rollback_plan` `human_go_required` |
 
-| Deterministic (engine) | Judgment (gatekeeper skill) |
-|------------------------|-----------------------------|
-| Required artifacts present for the boundary | Whether a present artifact is *substantively* adequate |
-| Single-revision lineage; one submission id | Whether a contradiction across artifacts is real |
-| Skip records carry the save-protocol fields | Whether a skip is *justified* for the scope |
-| Blocked-phrase / contamination markers absent | Whether prose overclaims completion |
-| Idempotency vs. a prior verdict (drift) | Whether a scope change warrants ESCALATE |
+## Evidence that has to be a file
 
-The engine reports **facts** (`PASS` / `FAIL` / `UNCHECKED`), never the verdict —
-the skill decides, citing the report. Unlike the hooks (which **fail open**), the
-gate engine **fails loud**: a gate that cannot prove a package clean must never
-silently approve it (internal error → exit `2`, blocking failure → non-zero exit).
-See `skills/harness/gatekeeper/README.md`.
+Some keys cannot be satisfied by saying so. Their value has to point at a path in
+the package's `artifact_hashes` map, which means the evidence is a real file with
+a real digest:
 
-## Adversarial Philosophy
+`decisions`, `architecture`, `plan`, `tests`, `runtime`, `executed_probes`,
+`rendered_verification`, `threat_model`, `denial_path_evidence`, `reproduction`,
+`evidence_chain`, `test_matrix`, `link_report`, `validation_report`,
+`deploy_config`, `verification_plan`, `rollback_plan`.
 
-All gatekeepers share the same core principle: **approval is earned, not given**.
+Eight keys may instead carry a typed applicability record naming `reason`,
+`scope`, and `decided_by`, and only for the exact reasons listed under
+`fallback_values`: `security_evidence`, `stack_lock`, `ui_evidence`,
+`rendered_verification`, `denial_path_evidence`, `vulnerability_scan`,
+`fixes_applied`, `team_manifest`. Any other bare string is rejected.
+
+## Typed evidence records
+
+At manifest schema 2, keys listed in `evidence_types` have to be structured
+records rather than prose.
+
+| Type | Keys | Must carry |
+|---|---|---|
+| `probe` | `tests`, `runtime`, `executed_probes`, `reproduction`, `evidence_chain`, `test_matrix`, `denial_path_evidence` | Hashed artifacts and `result.status: pass`. The executed log is the artifact. A bare count is not evidence. |
+| `scan` | `vulnerability_scan` | Hashed artifacts, tool, command, exit code, `observed_at`, `inputs` bound by sha256, and a passing status. `unavailable` or `error` is a data gap, never a clean scan. |
+| `render` | `rendered_verification` | Hashed captures, the breakpoints and themes covered, `inputs` bound to the rendered source, and pass or `inferred` with a stated limitation. |
+| `findings` | `findings`, `security_evidence`, `defects` | Items with id, severity, status. Critical must be verified or not-applicable with a reason. Major must be verified, not-applicable with a reason, or deferred with a named owner and reopen trigger. |
+| `verdict` | `review_verdict` | APPROVED, or REVISE/ESCALATE with a challenge record naming `by` and `reason`. |
+| `stack_lock` | `stack_lock` | Registry slug, versions, and overlay sha256, checked against `skills/tech-stacks/registry.yaml`. |
+| `revision_ref` | `approved_design_revision`, `approved_delivery` | A non-empty approved upstream revision identifier. |
+
+`inputs` is the part that stops evidence going stale. It binds a record to the
+project source it describes, so when that source changes the evidence fails as
+`input hash drift` instead of quietly continuing to look valid.
+
+## The two validators
+
+| Validator | Input | Question it answers |
+|---|---|---|
+| `skills/harness/gatekeeper/check.py` | a gate manifest | Does this submission carry the evidence the boundary requires, hashed and bound? |
+| `skills/harness/gatekeeper/_gatecheck.py`, via each `gatekeeper-*/scripts/check.py` | a phase package directory | Are the deliverables present, lineage-consistent, and free of blocked phrases? |
+
+Both report facts. Neither issues a verdict. The gatekeeper combines their output
+with judgment:
+
+| The validator settles | The gatekeeper decides |
+|---|---|
+| Required evidence present and artifact-backed | Whether a present artifact is actually adequate |
+| Single-revision lineage, one submission id, correct submitter | Whether a contradiction across artifacts is real |
+| Artifact existence, SHA-256 hashes, input binding | Whether a scope change warrants ESCALATE |
+| Blocked phrases and broken local links | Whether the prose overclaims completion |
+| Idempotency drift against a prior verdict | Whether a waiver reason is honest |
+
+Hooks fail open. Gate validators do the opposite and fail loud: a gate that cannot
+prove a package is clean must never approve it. Internal error is exit 2, package
+defect is exit 1.
+
+## Verdicts
+
+| Verdict | What happens |
+|---|---|
+| APPROVED | Advance to the next phase or stage |
+| REVISE | Back to the owning sub-orchestrator with the exact missing fact and the earliest rewind boundary |
+| ESCALATE | Comes to you for a decision |
+
+Two revision cycles per boundary. After that the boundary is marked disputed and
+escalated with both positions written down. Remediation always goes back to the
+owner. Gatekeepers never edit a package themselves.
+
+Every verdict record carries `verdict_id`, `package_fingerprint`, and
+`gate_spec_digest`. It is reusable only when `check.py --prior` reports
+`prior_reusable: true`, which needs the same boundary, submission, revision,
+fingerprint, and gate spec.
+
+## The posture
+
+Every gatekeeper looks for gaps, contradictions, and unsupported claims. It
+demands evidence-backed answers to its challenges, reports findings with the same
+four severities (Critical, Major, Minor, Info), enforces the revision cap, writes
+every verdict into the audit trail, and rejects packages that add a cross-cutting
+constraint without naming its lifecycle layer, or put one later than where it can
+actually be enforced ([`harness-doctrine.md`](../skills/harness-doctrine.md) §5).
+
 A review that finds nothing is the most suspicious review of all.
 
-Each gatekeeper:
-- Identifies gaps, contradictions, and unsupported claims
-- Requires evidence-backed responses to challenges
-- Reports findings with the shared four-tier severity model (`critical`,
-  `major`, `minor`, `info`)
-- Enforces a maximum revision-cycle cap before escalation
-- Documents every verdict for audit-trail traceability
-- Rejects packages that add a cross-cutting constraint without naming its
-  lifecycle layer, or that place it later than where it is enforceable
-  (`skills/harness-doctrine.md` §5)
-
-## Verdict Routing
-
-| Verdict | Action |
-|---------|--------|
-| **APPROVED** | Advance to the next phase or stage |
-| **REVISE** | Return to the owning sub-orchestrator with specific findings to address |
-| **ESCALATE** | Surface the blocking issue to the user for a decision |
-
-Maximum cross-stage revision cycles per boundary: **2**. If still failing after
-2 attempts, the boundary is marked DISPUTED and escalated with both positions
-documented. Remediation is always pushed back to the owning sub-orchestrator —
-gatekeepers never edit a package locally.
+Validator usage and the regression suites:
+[`skills/harness/gatekeeper/README.md`](../skills/harness/gatekeeper/README.md).

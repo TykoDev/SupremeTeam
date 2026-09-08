@@ -29,8 +29,10 @@ $sourceRoot = Join-Path $repoRoot "skills"
 
 # Core components are always installed. They contain the Admiral pipeline spine
 # (entry orchestrator, cross-stage gate, memory, investigation, skill-maker), the
-# runtime harness (hooks + deterministic gate engine), and the root doctrine and
-# protocol files every skill resolves by relative path.
+# runtime harness (hooks, save lifecycle, gate validators), the orchestration
+# contracts (gates, pipelines, ownership, manifests, canonical contracts,
+# tech-stack registry, shared scripts, validation suites), and the root doctrine
+# and protocol files every skill resolves by relative path.
 $coreItems = @(
     "admiral",
     "gatekeeper-admiral",
@@ -38,10 +40,23 @@ $coreItems = @(
     "investigate",
     "skill-maker",
     "harness",
+    "contracts",
+    "scripts",
+    "validation",
+    "tech-stacks",
+    "gates.yaml",
+    "pipelines.yaml",
+    "ownership.yaml",
+    "save-ownership.yaml",
+    "team-manifest.yaml",
+    "runtime-manifest.yaml",
+    "package-manifest.yaml",
+    "execution-contract.md",
     "design-doctrine.md",
     "grill-me-doctrine.md",
     "harness-doctrine.md",
     "mcp-tools.md",
+    "performance-doctrine.md",
     "routing-doctrine.md",
     "save-protocol.md"
 )
@@ -232,14 +247,38 @@ function Test-CommandAvailable {
     }
 }
 
+function Get-MinimumPythonVersion {
+    # skills/runtime-manifest.yaml is the runtime contract and is plain JSON.
+    # Reading it here keeps the installer from refusing an interpreter the
+    # project declares supported. The fallback covers an unreadable manifest.
+    $manifest = Join-Path $sourceRoot "runtime-manifest.yaml"
+
+    try {
+        if (Test-Path -LiteralPath $manifest) {
+            $value = (Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json).runtime.python.minimum
+            if ($value -match '^\d+\.\d+$') {
+                return $value
+            }
+        }
+    }
+    catch {
+        # fall through to the default
+    }
+
+    return "3.9"
+}
+
 function Test-PythonMinimumVersion {
     param(
         [string]$Command,
         [string[]]$Arguments = @()
     )
 
+    $parts = (Get-MinimumPythonVersion) -split '\\.'
+    $probe = "import sys; raise SystemExit(0 if sys.version_info >= ($($parts[0]), $($parts[1])) else 1)"
+
     try {
-        & $Command @Arguments -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 13) else 1)" *> $null
+        & $Command @Arguments -c $probe *> $null
         return $LASTEXITCODE -eq 0
     }
     catch {
@@ -249,7 +288,7 @@ function Test-PythonMinimumVersion {
 
 function Find-CompatiblePythonCommand {
     $candidates = @(
-        @{ Command = "py"; Arguments = @("-3.13") },
+        @{ Command = "py"; Arguments = @("-3") },
         @{ Command = "python"; Arguments = @() },
         @{ Command = "python3"; Arguments = @() }
     )
@@ -269,7 +308,8 @@ function Find-CompatiblePythonCommand {
 
 function Write-PythonReadinessWarning {
     if ($null -eq (Find-CompatiblePythonCommand)) {
-        Write-Warning "Python 3.13+ was not found. Skill files will still be copied, but hook verification and registration require Python 3.13 or newer."
+        $minimum = Get-MinimumPythonVersion
+        Write-Warning "No Python $minimum+ interpreter was found. Skill files will still be copied, but hook verification and registration require Python $minimum or newer."
     }
 }
 
@@ -333,7 +373,7 @@ function Resolve-HostTargets {
 function Find-PythonCommand {
     $candidate = Find-CompatiblePythonCommand
     if ($null -eq $candidate) {
-        throw "Python 3.13 or newer is required to register runtime harness hooks."
+        throw "Python $(Get-MinimumPythonVersion) or newer is required to register runtime harness hooks."
     }
 
     return $candidate

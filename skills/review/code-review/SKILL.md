@@ -20,7 +20,7 @@ Evaluates merge readiness, local code quality, change risk, and clarity so the d
 
 ## Use This Skill When
 
-Use this lens to judge **a specific change for merge** — readability, change risk, test signal, and reviewer load on the diff in front of you:
+Use this lens to judge **a specific change for merge** — readability, change risk, test signal, and reviewer load on the diff under judgment:
 
 - "review the code" / "check merge readiness" — weigh blockers against the merge decision
 - "audit this change" — bound the review to the actual diff and touched interfaces

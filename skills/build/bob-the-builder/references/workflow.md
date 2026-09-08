@@ -11,7 +11,7 @@
 
 1. Confirm the approved scope, affected modules, and expected evidence for the build boundary.
 2. Identify prerequisite gaps before editing anything.
-3. Apply the change in the smallest coherent implementation slices you can defend.
+3. Apply the change in the smallest coherent implementation slices that can be defended.
 4. Run the validation that proves the change works and record any remaining risk honestly.
 5. Package the result so the build gate can review concrete evidence instead of promises.
 

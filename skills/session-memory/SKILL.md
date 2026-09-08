@@ -97,12 +97,13 @@ Skip only when there is no durable state worth saving and no relevant learning t
 Session-memory writes checkpoints and learnings to `skillset-saves/` when invoked by an orchestrator during a persistence-active run.
 
 Invocation triggers (orchestrators call session-memory at these points):
+- After normalized intake, before the first stage delegation — mandatory intake checkpoint
 - Context tier 3+ escalations — checkpoint before compaction
 - Before every gatekeeper-admiral submission — checkpoint current state
 - At session end — final checkpoint
 - On error recovery — record learning
 
-Checkpoints are written to `skillset-saves/runs/{run-id}/admiral/` or the pipeline-level save path provided by the invoking orchestrator.
+Core run records (`_state.md`, `_lock.md`, `_audit-trail.md`, `_latest.md`, journals, and history) are written only through `../harness/hooks/save_run.py` operations; never edit them directly. Read `../save-protocol.md` and `../save-ownership.yaml` before writing. Store supplemental checkpoint and learning reports in the declared phase `reports/` path supplied by the orchestrator, then reference that evidence in the checkpoint operation. Do not create an undeclared `admiral/` phase directory.
 
 ## References
 

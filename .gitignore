@@ -1,5 +1,7 @@
-# Admiral runtime state and deliverables are local workspace artifacts.
+# Runtime state and local run deliverables; never commit.
 skillset-saves/
+.harness-state/
 harness-test-work/
 __pycache__/
 *.pyc
+.pytest_cache/

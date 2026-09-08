@@ -4,11 +4,10 @@ description: >-
   Validates design-phase deliverables before a design package can advance to the
   next design activity or leave the design pipeline. Use when the user asks to
   validate the design deliverable, review design phase output, check design
-  readiness, challenge this design packet, or verify whether the design package is
-  coherent enough for build consumption — even when they only ask "is the design
-  done?". Gates the design→build boundary specifically; defers the build→review
-  gate to `build/gatekeeper-build`, the review→delivery gate to
-  `review/gatekeeper-code`, and the cross-stage delivery gate to `gatekeeper-admiral`.
+  readiness, or challenge this design packet — even when they only ask "is the
+  design done?". Gates the design→build boundary specifically; defers the
+  build→review gate to `build/gatekeeper-build`, the review→delivery gate to
+  `review/gatekeeper-code`, and the cross-stage gate to `gatekeeper-admiral`.
 version: 1.0.0
 ---
 
@@ -50,7 +49,7 @@ Run the deterministic gate engine **before** applying judgment:
 python scripts/check.py <package-dir> [--prior <prior-verdict-file>] [--json]
 ```
 
-`scripts/check.py` declares this boundary's required-artifact manifest (research evidence, project plan, architecture decisions, stack locks, implementation spec) and calls the shared engine at `../../harness/gatekeeper/_gatecheck.py`. API contracts and the frontend/UI handoff are **conditional**: the script cannot know whether endpoints or a user-facing surface are in scope, so it reports their absence as `UNCHECKED` for you to resolve against the actual scope and the `../architect/references/api-endpoint-design.md` / `../../design-doctrine.md` contracts. The engine also mechanizes single-revision lineage, skip-record completeness, the blocked-phrase scan, idempotency drift, and harness-doctrine §5 structure, returning `PASS` / `FAIL` / `UNCHECKED` findings plus a `gate_status`. It **never emits a verdict** and never judges design coherence — apply judgment to the findings to choose `APPROVED` / `REVISE` / `ESCALATE`. The script fails loud — a blocking failure exits non-zero, an internal error exits 2. See `../../harness/gatekeeper/README.md`.
+`scripts/check.py` declares this boundary's required-artifact manifest (research evidence, project plan, architecture decisions, stack locks, implementation spec) and calls the shared engine at `../../harness/gatekeeper/_gatecheck.py`. API contracts and the frontend/UI handoff are **conditional**: the script cannot know whether endpoints or a user-facing surface are in scope, so it reports their absence as `UNCHECKED`, to be resolved against the actual scope and the `../architect/references/api-endpoint-design.md` / `../../design-doctrine.md` contracts. The engine also mechanizes single-revision lineage, skip-record completeness, the blocked-phrase scan, idempotency drift, and harness-doctrine §5 structure, returning `PASS` / `FAIL` / `UNCHECKED` findings plus a `gate_status`. It **never emits a verdict** and never judges design coherence — apply judgment to the findings to choose `APPROVED` / `REVISE` / `ESCALATE`. The script fails loud — a blocking failure exits non-zero, an internal error exits 2. See `../../harness/gatekeeper/README.md`.
 
 ## Workflow
 

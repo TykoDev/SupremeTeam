@@ -1,0 +1,97 @@
+schema_version: 1
+kind: supremeteam-save-ownership
+purpose: >-
+  Machine-readable path policy for everything written under skillset-saves/ and
+  .harness-state/. One writer per path class; every generated artifact, report,
+  manifest, evidence file, package, and verdict has a declared destination.
+  save-protocol.md section 3 points here; ownership.yaml keeps the artifact-level
+  owner map and validation/test_save_contracts.py checks that the two agree.
+  Patterns are fnmatch globs relative to the project root.
+notes:
+  - "Product source stays in the application's own layout. It is never written under skillset-saves; evidence that depends on it is snapshotted into <phase>/evidence/ with source path, revision, and sha256 provenance (typed-record inputs in gates.yaml)."
+  - "Nothing under a run is deleted by automation. Superseded revisions move to _history/."
+classes:
+  - id: core-run-record
+    writer: session-memory
+    tool: skills/harness/hooks/save_run.py
+    patterns:
+      - skillset-saves/_latest.md
+      - skillset-saves/runs/*/_state.md
+      - skillset-saves/runs/*/_lock.md
+      - skillset-saves/runs/*/_audit-trail.md
+      - skillset-saves/runs/*/_journal.json
+      - skillset-saves/runs/*/_history/*
+    rule: Written only through save_run.py operations; the pre-tool hook denies direct edit-tool writes.
+  - id: grilling-log
+    writer: admiral
+    patterns:
+      - skillset-saves/runs/*/intake/report_grilling.md
+      - skillset-saves/runs/*/intake/intake-brief.md
+    rule: The hashed artifact behind the decisions gate key; sibling phases reference it as ../intake/report_grilling.md.
+  - id: phase-manifest
+    writer: phase-lead
+    patterns:
+      - skillset-saves/runs/*/*/manifest.json
+      - skillset-saves/runs/*/*/manifest.yaml
+    rule: One gate submission per phase revision; schema_version 2 shape from gates.yaml.
+  - id: phase-reports
+    writer: phase-lead-or-delegated-specialist
+    patterns:
+      - skillset-saves/runs/*/*/reports/*
+      - skillset-saves/runs/*/*/report_*.md
+      - skillset-saves/runs/*/*/deliverable_*.md
+      - skillset-saves/runs/*/*/review-packet.md
+    rule: Reports, plans, summaries. A delegated specialist writes only the report named in its delegation.
+  - id: phase-artifacts
+    writer: phase-lead-or-delegated-specialist
+    patterns:
+      - skillset-saves/runs/*/*/artifacts/*
+    rule: Normalized data, generated tokens and components, design-system snapshots, generated assets.
+  - id: phase-evidence
+    writer: phase-lead-or-delegated-specialist
+    patterns:
+      - skillset-saves/runs/*/*/evidence/*
+    rule: Command logs, scan records (scan_record.py), captures, DOM dumps. Immutable per revision.
+  - id: phase-packages
+    writer: phase-lead
+    patterns:
+      - skillset-saves/runs/*/*/packages/*
+    rule: Exported archives (skill packages, release bundles); package_skill.py and package_check.py accept this as --out.
+  - id: gate-verdict
+    writer: gatekeeper
+    tool: skills/harness/gatekeeper/check.py --verdict-out
+    patterns:
+      - skillset-saves/runs/*/*/verdict_*.json
+      - skillset-saves/runs/*/*/verdict_*.md
+    rule: The boundary's gatekeeper writes verdicts and never modifies the submission.
+  - id: harness-guards
+    writer: safety-guardrails
+    patterns:
+      - .harness-state/guard-state.json
+    rule: Owner-controlled protections with owner, scope, created_at, and released_at metadata; never expired by age. The pre-tool hook denies writes inside an unreleased boundary.
+  - id: harness-trajectories
+    writer: harness-hooks
+    patterns:
+      - .harness-state/trajectories/*/*
+    rule: Per project, run, and session identity; pruned after seven days; advisory only.
+  - id: harness-observations
+    writer: harness-hooks
+    patterns:
+      - .harness-state/observations/*
+    rule: Post-tool trajectory observations; advisory only, never gate evidence.
+phase_directories:
+  - intake
+  - design
+  - build
+  - review
+  - security
+  - investigation
+  - qa
+  - delivery
+  - release
+  - skill-creation
+phase_subdirectories:
+  - reports
+  - artifacts
+  - evidence
+  - packages

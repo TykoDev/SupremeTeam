@@ -18,7 +18,9 @@ requested_teams=()
 requested_targets=()
 
 # Core components are always installed: the Admiral pipeline spine, the runtime
-# harness (hooks + deterministic gate engine), and the root doctrine/protocol files.
+# harness (hooks, save lifecycle, gate validators), the orchestration contracts
+# (gates, pipelines, ownership, manifests, canonical contracts, tech-stack
+# registry, shared scripts, validation suites), and the root doctrine files.
 core_items=(
     admiral
     gatekeeper-admiral
@@ -26,10 +28,23 @@ core_items=(
     investigate
     skill-maker
     harness
+    contracts
+    scripts
+    validation
+    tech-stacks
+    gates.yaml
+    pipelines.yaml
+    ownership.yaml
+    save-ownership.yaml
+    team-manifest.yaml
+    runtime-manifest.yaml
+    package-manifest.yaml
+    execution-contract.md
     design-doctrine.md
     grill-me-doctrine.md
     harness-doctrine.md
     mcp-tools.md
+    performance-doctrine.md
     routing-doctrine.md
     save-protocol.md
 )
@@ -291,9 +306,27 @@ resolve_targets() {
     fi
 }
 
+minimum_python_version() {
+    # skills/runtime-manifest.yaml is the runtime contract and is plain JSON.
+    # Reading it here keeps the installer from refusing an interpreter the
+    # project declares supported. The fallback covers an unreadable manifest.
+    local manifest="$source_root/runtime-manifest.yaml" value
+    if [[ -f "$manifest" ]]; then
+        value="$(sed -n 's/.*"minimum"[[:space:]]*:[[:space:]]*"\([0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p' "$manifest" | head -n 1)"
+        if [[ -n "$value" ]]; then
+            printf '%s' "$value"
+            return 0
+        fi
+    fi
+    printf '3.9'
+}
+
 python_satisfies_minimum() {
-    local candidate="$1"
-    "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 13) else 1)' >/dev/null 2>&1
+    local candidate="$1" minimum major minor
+    minimum="$(minimum_python_version)"
+    major="${minimum%%.*}"
+    minor="${minimum##*.}"
+    "$candidate" -c "import sys; raise SystemExit(0 if sys.version_info >= ($major, $minor) else 1)" >/dev/null 2>&1
 }
 
 find_compatible_python() {
@@ -310,7 +343,7 @@ find_compatible_python() {
 
 warn_python_readiness() {
     if ! find_compatible_python >/dev/null 2>&1; then
-        printf 'Warning: Python 3.13+ was not found. Skill files will still be copied, but hook verification and registration require Python 3.13 or newer.\n' >&2
+        printf 'Warning: no Python %s+ interpreter was found. Skill files will still be copied, but hook verification and registration require Python %s or newer.\n' "$(minimum_python_version)" "$(minimum_python_version)" >&2
     fi
 }
 
@@ -321,7 +354,7 @@ find_python() {
         return 0
     fi
 
-    die "Python 3.13 or newer is required to register runtime harness hooks."
+    die "Python $(minimum_python_version) or newer is required to register runtime harness hooks."
 }
 
 register_harness_hooks() {

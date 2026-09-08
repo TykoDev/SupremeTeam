@@ -1,0 +1,313 @@
+{
+  "schema_version": 1,
+  "kind": "supremeteam-pipeline-spec",
+  "purpose": "Machine-readable definition of every Supreme Team pipeline: ordered stages, stage owners, the gate boundary that closes the pipeline, and the deterministic scripts each pipeline must run. Owners must exist in team-manifest.yaml, boundaries in gates.yaml, and script paths on disk; validation/test_pipeline_contracts.py enforces all three. The prose workflows in the owning SKILL.md files elaborate these stages and must not contradict them.",
+  "pipelines": {
+    "design": {
+      "owner": "commander",
+      "boundary": "design-to-build",
+      "stages": [
+        {
+          "step": "intake-grilling",
+          "owner": "admiral",
+          "artifact": "grilling-log"
+        },
+        {
+          "step": "research",
+          "owner": "researcher"
+        },
+        {
+          "step": "architecture",
+          "owner": "architect"
+        },
+        {
+          "step": "interface-and-design-system",
+          "owner": "architect",
+          "when": "user-facing surface",
+          "artifact": "design-system"
+        },
+        {
+          "step": "security-seed",
+          "owner": "security-builder",
+          "when": "trust boundary"
+        },
+        {
+          "step": "plan",
+          "owner": "planner"
+        },
+        {
+          "step": "implementation-spec",
+          "owner": "engineer"
+        },
+        {
+          "step": "stack-lock",
+          "owner": "commander"
+        },
+        {
+          "step": "phase-gate",
+          "owner": "gatekeeper-design"
+        }
+      ],
+      "scripts": [
+        "skills/scripts/check_runtime.py",
+        "skills/scripts/validate_manifests.py"
+      ]
+    },
+    "build": {
+      "owner": "build-management",
+      "boundary": "build-to-review",
+      "stages": [
+        {
+          "step": "implementation",
+          "owner": "bob-the-builder"
+        },
+        {
+          "step": "test-surface",
+          "owner": "test-builder",
+          "artifact": "tests"
+        },
+        {
+          "step": "security-checkpoint",
+          "owner": "security-builder",
+          "when": "trust boundary",
+          "artifact": "security-evidence"
+        },
+        {
+          "step": "runtime-health",
+          "owner": "health-check",
+          "artifact": "runtime"
+        },
+        {
+          "step": "debugging",
+          "owner": "debugger",
+          "when": "reproduced build-phase failure"
+        },
+        {
+          "step": "investigation",
+          "owner": "investigate",
+          "when": "unknown failure mechanism"
+        },
+        {
+          "step": "completeness-cross-check",
+          "owner": "cross-check-build-confirm"
+        },
+        {
+          "step": "phase-gate",
+          "owner": "gatekeeper-build"
+        }
+      ],
+      "scripts": []
+    },
+    "review": {
+      "owner": "code-chief",
+      "boundary": "review-to-delivery",
+      "stages": [
+        {
+          "step": "correctness-review",
+          "owner": "bug-review",
+          "artifact": "bug-findings"
+        },
+        {
+          "step": "merge-readiness-review",
+          "owner": "code-review"
+        },
+        {
+          "step": "maintainability-review",
+          "owner": "quality-review"
+        },
+        {
+          "step": "security-review",
+          "owner": "security-review",
+          "when": "trust boundary changed"
+        },
+        {
+          "step": "penetration-review",
+          "owner": "mr-robot",
+          "when": "exploitable surface"
+        },
+        {
+          "step": "frontend-review",
+          "owner": "frontier",
+          "when": "visible behavior changed"
+        },
+        {
+          "step": "visual-qa",
+          "owner": "design-qa",
+          "when": "visible surface changed",
+          "artifact": "rendered-verification"
+        },
+        {
+          "step": "developer-experience-review",
+          "owner": "devex-review",
+          "when": "developer-facing surface changed"
+        },
+        {
+          "step": "finding-triage",
+          "owner": "code-chief",
+          "artifact": "review-verdict"
+        },
+        {
+          "step": "phase-gate",
+          "owner": "gatekeeper-code"
+        }
+      ],
+      "scripts": []
+    },
+    "security": {
+      "owner": "cso",
+      "boundary": "security-review",
+      "stages": [
+        {
+          "step": "scope-and-threat-model",
+          "owner": "cso",
+          "artifact": "threat-model"
+        },
+        {
+          "step": "posture-assessment",
+          "owner": "security-review",
+          "artifact": "vulnerability-scan"
+        },
+        {
+          "step": "adversarial-probe",
+          "owner": "mr-robot",
+          "artifact": "denial-path-evidence"
+        },
+        {
+          "step": "triage",
+          "owner": "cso"
+        },
+        {
+          "step": "remediation",
+          "owner": "security-builder",
+          "when": "fixes authorized"
+        },
+        {
+          "step": "package",
+          "owner": "cso",
+          "artifact": "security-review-package"
+        }
+      ],
+      "scripts": [
+        "skills/scripts/scan_record.py"
+      ]
+    },
+    "investigation": {
+      "owner": "investigate",
+      "boundary": "investigation-review",
+      "stages": [
+        {
+          "step": "scope-and-reproduction",
+          "owner": "investigate",
+          "artifact": "reproduction"
+        },
+        {
+          "step": "evidence-chain",
+          "owner": "investigate",
+          "artifact": "evidence-chain"
+        },
+        {
+          "step": "mechanism",
+          "owner": "investigate"
+        },
+        {
+          "step": "bounded-fix-path",
+          "owner": "investigate",
+          "artifact": "fix-path"
+        },
+        {
+          "step": "return-to-owning-phase",
+          "owner": "admiral"
+        }
+      ],
+      "scripts": []
+    },
+    "qa": {
+      "owner": "qa",
+      "boundary": "qa-review",
+      "stages": [
+        {
+          "step": "scope-and-matrix",
+          "owner": "qa",
+          "artifact": "test-matrix"
+        },
+        {
+          "step": "browser-session",
+          "owner": "open-browser",
+          "when": "browser surface under test"
+        },
+        {
+          "step": "evidence-capture",
+          "owner": "qa",
+          "delegate": "browse",
+          "when": "browser surface under test",
+          "artifact": "executed-probes"
+        },
+        {
+          "step": "defect-record",
+          "owner": "qa",
+          "artifact": "defects"
+        },
+        {
+          "step": "scoped-fixes",
+          "owner": "qa",
+          "when": "fixes authorized"
+        },
+        {
+          "step": "rerun-until-stable",
+          "owner": "qa"
+        }
+      ],
+      "scripts": []
+    },
+    "skill-creation": {
+      "owner": "skill-maker",
+      "boundary": "skill-maker-to-delivery",
+      "stages": [
+        {
+          "step": "intake",
+          "owner": "skill-maker"
+        },
+        {
+          "step": "draft",
+          "owner": "skill-creator"
+        },
+        {
+          "step": "review",
+          "owner": "skill-reviewer"
+        },
+        {
+          "step": "package",
+          "owner": "skill-maker"
+        }
+      ],
+      "scripts": [
+        "skills/skill-maker/skill-creator/scripts/quick_validate.py"
+      ]
+    },
+    "release": {
+      "owner": "ship",
+      "boundary": "deploy-readiness",
+      "stages": [
+        {
+          "step": "readiness",
+          "owner": "ship"
+        },
+        {
+          "step": "setup",
+          "owner": "setup-deploy",
+          "when": "first deployment"
+        },
+        {
+          "step": "land-and-deploy",
+          "owner": "land-and-deploy",
+          "when": "human go decision recorded"
+        },
+        {
+          "step": "document",
+          "owner": "document-release"
+        }
+      ],
+      "scripts": []
+    }
+  }
+}

@@ -2,13 +2,12 @@
 name: pair-agent
 description: >-
   Pairs a remote collaborator to a browser session using short-lived setup access
-  and scoped session credentials. Use when the user asks to pair another agent to
-  the browser, set up remote browser access, share a browser session safely, issue
-  pairing access, or hand a live browser to another operator without exposing a
-  broader environment than necessary — even when they only say "let my teammate
-  drive this browser". Shares an existing session; defers launching the workspace
-  to `browser-automation/open-browser`, loading authenticated state to
-  `browser-automation/setup-browser-cookies`, and driving the page to
+  and scoped session credentials. Use when the user asks to pair another agent,
+  share a browser session safely, issue pairing access, or hand a live browser to
+  another operator without exposing the wider environment — even when they only say
+  "let my teammate drive this browser". Shares an existing session; defers launch
+  to `browser-automation/open-browser`, authenticated state to
+  `browser-automation/setup-browser-cookies`, and page driving to
   `browser-automation/browse`.
 version: 1.0.0
 ---

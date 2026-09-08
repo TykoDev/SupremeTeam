@@ -1,79 +1,117 @@
-# Gatekeeper Deterministic Gate Engine
+# Gate Validation
 
-Shared, stdlib-only Python behind every `gatekeeper-*` skill's `scripts/check.py`.
-It turns the *mechanically checkable* parts of a package validation into a
-deterministic pass so the gatekeeper skills no longer re-derive them as prose
-each run. It is the gate-side companion to `../hooks/` (Action Realization /
-Trajectory Regulation), built on the same conventions in `../../harness-doctrine.md`.
+Two validators run at a boundary. They check different things and neither issues
+a verdict; the gatekeeper skill maps their facts to
+`APPROVED | REVISE | ESCALATE`.
 
-| File | Purpose |
-| --- | --- |
-| `_gatecheck.py` | The engine: frontmatter parsing, package discovery, the six checks, the report model, and CLI rendering. |
-| `test_gatecheck.py` | Stdlib `unittest` regression suite for every check. |
+| Validator | Input | Answers |
+| --- | --- | --- |
+| `check.py` | a gate manifest (`manifest.json`) | Does this submission carry the evidence [`../../gates.yaml`](../../gates.yaml) requires for this boundary, correctly hashed and bound? |
+| `_gatecheck.py` (via each `gatekeeper-*/scripts/check.py`) | a phase package directory | Are the phase's markdown deliverables present, lineage-consistent, and free of blocked phrases? |
 
-Each gatekeeper ships a thin `scripts/check.py` that declares **only** its
-boundary's required-artifact manifest and calls `main_with_manifest`. The wrapper
-locates this engine by walking up to the repo root (`harness/gatekeeper/_gatecheck.py`),
-so the skills package independently of their directory depth.
+A phase submits both: the directory check confirms the package is shaped, the
+boundary check confirms the evidence contract is met.
 
-## What is deterministic vs. what stays the model's job
+**Tier 0 is outside the pipeline.** Eligible minor tasks follow the
+[Tier 0 fast path](../../routing-doctrine.md#tier-0-fast-path): focused
+verification and a brief completion note, without a gate manifest, verdict, or
+full security audit. There is no Tier 0 boundary and no automatic APPROVED
+verdict. Once work enters a pipeline, all required evidence applies; a tier label
+cannot waive a gate, security evidence, or active-run ownership.
 
-By design (harness-doctrine §2.4: *residual reasoning is out of scope for the
-harness*), the engine reports **facts**, never a verdict:
+## check.py: the boundary validator
 
-| Deterministic (engine) | Judgment (gatekeeper skill) |
-| --- | --- |
-| Required artifacts present for the boundary | Whether a present artifact is *substantively* adequate |
-| Single-revision lineage; one submission id | Whether a contradiction across artifacts is real |
-| Skip records carry the save-protocol §2 fields | Whether a skip is *justified* for the scope |
-| Blocked-phrase / contamination markers absent | Whether prose overclaims completion |
-| Idempotency vs. a prior verdict (drift detection) | Whether a scope change warrants ESCALATE |
-| harness-doctrine §5 structure (layer + regression note) | Whether the intervention is correctly layered |
-| `APPROVED` / `REVISE` / `ESCALATE` ← **never** the script | ✅ the skill decides, citing the report |
+Its boundary table is not hardcoded. It loads `skills/gates.yaml`, the canonical
+gate spec, and a missing or malformed spec is an engine error (exit 2), never a
+pass. Against that spec it verifies required boundary evidence, artifact-backed
+evidence (keys listed under `artifact_evidence` must reference a hashed file in
+the package unless the value is a sanctioned fallback), submission and revision
+identity, single-revision lineage, artifact existence and SHA-256 hashes, blocked
+phrases, local Markdown links, and idempotency drift against an optional prior
+verdict record. A hash-mismatched artifact is still scanned for blocked phrases
+and broken links.
 
-Each finding is `PASS` (condition held), `FAIL` (condition violated), or
-`UNCHECKED` (could not be decided deterministically — the model must resolve it,
-e.g. conditional artifacts, §5 substance). The report's `gate_status` summarizes:
-`STRUCTURE_OK`, `NEEDS_JUDGMENT`, or `BLOCKERS_PRESENT`.
-
-## Posture: fail loud, not fail open
-
-`../hooks/` **fail open** — a hook that errors lets the action proceed. A gate is
-the opposite: it must **fail loud**. A gate that cannot prove a package is clean
-must never silently approve it. So an internal error becomes an `ERROR`
-gate-status with exit code `2`, a missing/empty package is a `critical` `FAIL`,
-and any blocking failure is a non-zero exit — a caller that only reads the return
-code never mistakes a defect for a pass.
-
-Severities use the shared four-tier model: `critical`, `major`, `minor`, `info`.
-
-## Usage
-
-```bash
-python <gate>/scripts/check.py <package-dir> [--prior <verdict-file>] [--json] [--blocked-phrases <file>]
+```text
+python skills/harness/gatekeeper/check.py \
+  --boundary design-to-build \
+  --package skillset-saves/runs/<run>/design/manifest.json \
+  [--prior <previous verdict>] \
+  [--verdict-out <phase>/verdict_<boundary>.json] \
+  [--gates skills/gates.yaml]
 ```
 
-- `--prior` — a previous `gatekeeper-verdict.md` / handoff file for idempotency
-  (drift) comparison. Keep it **outside** the package directory.
-- `--json` — emit the structured report instead of markdown (for orchestrators).
-- `--blocked-phrases` — extra phrases (one per line; a `re:` prefix marks a regex)
-  appended to `DEFAULT_BLOCKED_PHRASES`.
+Exit 0 for a mechanically clean package, 1 for a package defect, 2 for an engine
+or input failure (including an unknown `--boundary`, which emits the
+`engine_error` JSON envelope on stderr). The result carries
+`mechanical_only: true`; human judgment still owns semantic quality.
 
-Exit codes: `0` no blocking failure · `1` one or more blocking failures · `2`
-the gate could not run (validate by hand).
+**Evidence root.** Artifact paths are manifest-relative. Inside the canonical
+save layout (`skillset-saves/runs/<run-id>/<phase>/`) the authorised root is the
+run directory when the manifest `run_id` matches the directory and the run's
+`_state.md`, so `../intake/report_grilling.md` is admissible. Anywhere else the
+root is the manifest directory. Another run, traversal, absolute, drive, or UNC
+paths, and links leaving the root fail with a structured failure, never an engine
+error.
 
-## Blocked-phrase list
+**Manifest schema 2.** Adds `boundary` (must match `--boundary`), `owner` (must
+match the spec `submitter`), `run_id`, typed records for keys named in
+`evidence_types` (scan, render, probe, audit, findings, verdict, stack_lock,
+revision_ref), `inputs` that bind evidence to project files by sha256 (stale
+evidence fails as `input hash drift`), and applicability records instead of bare
+fallback strings. Schema 1 flat packages keep working.
 
-`gatekeeper-admiral` owns the scan; all gates run it. The default list targets
-hollow-completion claims and contamination markers (`TODO`/`FIXME`/`XXX`/`HACK`,
-`trust me`, `100% complete`, `lorem ipsum`, …). Per the doctrine, any hit is a
-blocking package defect. Extend, don't fork, via `--blocked-phrases`.
+**Verdict records.** `--verdict-out <path>` writes the result with `verdict_id`,
+`package_fingerprint`, and `gate_spec_digest`; `--prior <record>` compares
+against it and reports `prior_reusable` plus `idempotency_drift`. A verdict is
+reusable only for the same boundary, submission, revision, fingerprint, and gate
+spec digest.
 
-## Tests
+## Boundaries
 
-```bash
-python -m unittest discover -s SupremeTeam/harness/gatekeeper -p "test_*.py"
+`gates.yaml` (spec revision 1) carries eight boundaries. Each names the
+transition it guards and the single skill permitted to submit it. The
+human-readable table lives in [`../../../docs/gatekeepers.md`](../../../docs/gatekeepers.md)
+and a drift test asserts it matches `gates.yaml` exactly.
+
+Sixteen evidence keys are artifact-backed, meaning the value must reference a
+path in the package's `artifact_hashes` map rather than a bare claim:
+`decisions`, `architecture`, `plan`, `tests`, `runtime`, `executed_probes`,
+`rendered_verification`, `threat_model`, `denial_path_evidence`, `reproduction`,
+`evidence_chain`, `test_matrix`, `link_report`, `validation_report`,
+`deploy_config`, `verification_plan`, and `rollback_plan`. Eight keys accept a
+sanctioned applicability record instead (`security_evidence`, `stack_lock`,
+`ui_evidence`, `rendered_verification`, `denial_path_evidence`,
+`vulnerability_scan`, `fixes_applied`, `team_manifest`), and only the exact
+reasons listed under `fallback_values` are accepted; any other bare string fails
+the artifact-backing check.
+
+## _gatecheck.py: the package-shape validator
+
+The shared engine behind each `gatekeeper-*/scripts/check.py`. It scans a phase
+package directory for required artifacts by file pattern, verifies single-value
+`revision:` lineage, checks skip records, scans for blocked phrases, compares
+against a prior verdict for idempotency, and applies the harness-doctrine §5
+structural check. It reports PASS / FAIL / UNCHECKED facts.
+
+```text
+python skills/design/gatekeeper-design/scripts/check.py <package-dir> [--prior <verdict>] [--json]
 ```
 
-Run after any change to the engine or a gate manifest. harness-doctrine §3
-requires a regression check before a gate behavior change ships.
+Both validators fail loud. A hook that errors lets the action proceed; a gate
+that cannot prove a package clean must never approve it, so an internal error
+becomes an `UNCHECKED` finding and a non-zero exit, never a hidden PASS.
+
+## Regression tests
+
+```text
+python -m unittest discover -s skills/harness/gatekeeper -p "test_*.py"
+```
+
+`test_gate_manifests.py` covers the flat-package contract, every boundary's
+complete package, every sanctioned fallback, missing evidence, artifact backing,
+lineage, hashing, scanning, and engine errors, plus the drift test against
+`docs/gatekeepers.md`. `test_gate_run_layout.py` covers the canonical save
+layout: same-run sibling evidence, cross-run and link escapes, revision, owner,
+and boundary identity, typed result records, the finding policy, waivers,
+YAML-comment specs, quoted diagnostic markers, and verdict reuse.
+`test_gatecheck.py` covers the package-shape engine.

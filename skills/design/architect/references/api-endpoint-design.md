@@ -4,6 +4,15 @@ Architect owns API endpoint design whenever the system exposes HTTP, RPC, webhoo
 
 Run the `../../grill-me-doctrine.md` planning-mode decision prompt contract before locking endpoint behavior. Auto-resolve framework, router, schema, auth, and serialization conventions from the codebase when discoverable; ask the user only for policy and product decisions the code cannot answer.
 
+## Contents
+
+- [Endpoint Inventory](#endpoint-inventory)
+- [Endpoint Contract Template](#endpoint-contract-template)
+- [Error Envelope](#error-envelope)
+- [Frontend Handoff](#frontend-handoff)
+- [Acceptance Checklist](#acceptance-checklist)
+- [Failure Modes](#failure-modes)
+
 ## Endpoint Inventory
 
 Start every API package with an inventory table:

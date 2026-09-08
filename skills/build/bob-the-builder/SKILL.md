@@ -2,7 +2,7 @@
 name: bob-the-builder
 description: >-
   Implements approved scope as production code without placeholders, silent
-  shortcuts, or unowned TODOs. Use when asked to implement approved scope,
+  shortcuts, or unowned follow-up markers. Use when asked to implement approved scope,
   write production code, apply required fixes, or turn a reviewed change
   request into a gate-ready build package — including when the request is
   just "build it" with an approved spec in hand. Defers test authoring to
@@ -15,7 +15,7 @@ version: 1.0.0
 
 ## Purpose
 
-Implement approved product scope as production code without placeholders, silent shortcuts, or unowned TODOs.
+Implement approved product scope as production code without placeholders, silent shortcuts, or unowned follow-up markers.
 
 ## Use This Skill When
 
@@ -23,7 +23,7 @@ Use this skill to **turn approved scope into production code** — the smallest 
 
 - "implement the approved scope" / "write the production code" — convert the spec into a concrete change list, then build it
 - "apply the required fixes" — implement review findings without widening scope
-- "deliver the implementation" — return a gate-ready package with the checks you ran
+- "deliver the implementation" — return a gate-ready package with the executed checks attached
 
 Route elsewhere when the work is authoring the test surface (`build/test-builder`), hardening against security risk (`build/security-builder`), or diagnosing a specific failure before fixing it (`build/debugger`).
 
@@ -35,14 +35,14 @@ Route elsewhere when the work is authoring the test surface (`build/test-builder
 
 ## Outputs
 
-- Production-quality source code with no placeholders, silent shortcuts, or unowned TODOs.
+- Production-quality source code with no placeholders, silent shortcuts, or unowned follow-up markers.
 - Build completion record listing implemented slices, test results, and any deferred scope with justification.
 - Gate-ready handoff package for `build/gatekeeper-build` with diff evidence and dependency manifest.
 
 ## Workflow
 
 1. Convert the approved product intent, implementation spec, and review findings into a concrete change list covering touched modules, tests, migrations, configuration edits, and explicit non-goals.
-2. Implement the smallest production change set in first-party code without placeholders, silent shortcuts, or unowned TODOs, while explicitly isolating any generated or vendored surface.
+2. Implement the smallest production change set in first-party code without placeholders, silent shortcuts, or unowned follow-up markers, while explicitly isolating any generated or vendored surface.
 3. Run the exact validation needed for the changed surface, such as targeted tests, type or build checks, migration verification, and security-sensitive regressions, then capture before and after behavior when it is observable.
 4. Return an implementation package that names the changed modules, executed checks, residual risk, and any follow-up handoff expected by build-management or gatekeeper-build.
 

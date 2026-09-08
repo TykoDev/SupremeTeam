@@ -1,0 +1,721 @@
+schema_version: 1
+name: Supreme Team artifact ownership contract
+purpose: One authoritative writer for each pipeline decision and handoff artifact.
+source_of_truth: >-
+  This file is the artifact-level owner map for every pipeline in pipelines.yaml.
+  Path-level write grants inside skillset-saves live in save-ownership.yaml; the
+  two files must agree (validation/test_save_contracts.py). Stage artifacts named
+  in pipelines.yaml must appear here as an artifact id
+  (validation/test_pipeline_contracts.py).
+
+owners:
+  admiral:
+    role: intake, routing, run lifecycle ownership, cross-stage boundaries, and delivery assembly
+    writes:
+      - grilling-log
+      - intake-brief
+      - delivery-package
+      - cross-stage-handoff
+    does_not_write:
+      - design-package
+      - build-package
+      - review-package
+      - gate-verdict
+  commander:
+    role: design phase lead; owns the design contract and the locked stack
+    writes:
+      - design-package
+      - stack-lock
+      - design-traceability
+    consumes:
+      - grilling-log
+      - intake-brief
+    does_not_write:
+      - build-package
+      - gate-verdict
+  build-management:
+    role: build phase lead; owns the changed artifact set and its implementation evidence
+    writes:
+      - build-package
+      - build-traceability
+    consumes:
+      - design-package
+      - stack-lock
+    does_not_write:
+      - design-package
+      - review-verdict
+  code-chief:
+    role: review phase lead; owns finding triage and the review verdict recommendation
+    writes:
+      - review-package
+      - review-verdict
+      - findings
+    consumes:
+      - build-package
+      - design-package
+    does_not_write:
+      - build-package
+      - gate-verdict
+  researcher:
+    role: requirements, domain evidence, and prior-art grounding
+    writes:
+      - requirements-brief
+    does_not_write:
+      - architecture
+      - plan
+  architect:
+    role: system architecture, interface contracts, and the frontend design system
+    writes:
+      - architecture
+      - interface-contract
+      - design-system
+    consumes:
+      - requirements-brief
+    does_not_write:
+      - implementation
+      - plan
+  planner:
+    role: delivery plan, milestones, rollout shape, and decision gates
+    writes:
+      - plan
+    consumes:
+      - architecture
+    does_not_write:
+      - architecture
+      - implementation-spec
+  engineer:
+    role: implementation specification, delivery slices, and dependency order
+    writes:
+      - implementation-spec
+    consumes:
+      - architecture
+      - plan
+    does_not_write:
+      - implementation
+  bob-the-builder:
+    role: production implementation of approved scope
+    writes:
+      - implementation
+    consumes:
+      - implementation-spec
+      - stack-lock
+    does_not_write:
+      - tests
+      - security-evidence
+  test-builder:
+    role: automated test surface across intended scope and key failure paths
+    writes:
+      - tests
+    does_not_write:
+      - implementation
+      - runtime
+  security-builder:
+    role: implementation hardening and the build-phase security checkpoint
+    writes:
+      - security-evidence
+      - security-seed
+    does_not_write:
+      - threat-model
+      - findings
+  health-check:
+    role: runtime health, startup readiness, and environment dependency proof
+    writes:
+      - runtime
+    does_not_write:
+      - tests
+      - implementation
+  cross-check-build-confirm:
+    role: internal completeness cross-check of the build package
+    writes:
+      - completeness-report
+    does_not_write:
+      - implementation
+      - gate-verdict
+  debugger:
+    role: root cause of a reproduced build-phase failure and a bounded fix path
+    writes:
+      - debug-report
+    does_not_write:
+      - implementation
+  investigate:
+    role: root-cause analysis when the failure mechanism is still unclear
+    writes:
+      - reproduction
+      - evidence-chain
+      - fix-path
+      - investigation-package
+    does_not_write:
+      - implementation
+      - review-verdict
+  bug-review:
+    role: correctness defects, broken invariants, crash paths, data-corruption risk
+    writes:
+      - bug-findings
+    does_not_write:
+      - findings
+      - implementation
+      - review-verdict
+  code-review:
+    role: merge readiness, local code quality, and change risk
+    writes:
+      - merge-readiness-report
+    does_not_write:
+      - implementation
+  quality-review:
+    role: maintainability, architecture drift, standards compliance, tech-debt pressure
+    writes:
+      - maintainability-report
+    does_not_write:
+      - architecture
+  security-review:
+    role: defensive posture, dependency exposure, access-control and data-handling risk
+    writes:
+      - vulnerability-scan
+    does_not_write:
+      - threat-model
+      - denial-path-evidence
+  cso:
+    role: security leadership; owns the threat model, accepted risk, and release posture
+    writes:
+      - threat-model
+      - remediation-plan
+      - security-review-package
+    consumes:
+      - vulnerability-scan
+      - denial-path-evidence
+    does_not_write:
+      - implementation
+  mr-robot:
+    role: adversarial penetration testing and exploit-path proof
+    writes:
+      - denial-path-evidence
+    does_not_write:
+      - remediation-plan
+      - implementation
+  frontier:
+    role: frontend performance, accessibility, robustness, and component behavior
+    writes:
+      - frontend-review-report
+    does_not_write:
+      - design-system
+      - rendered-verification
+  design-qa:
+    role: visual quality assurance and rendered evidence for a changed surface
+    writes:
+      - rendered-verification
+    consumes:
+      - design-system
+    does_not_write:
+      - design-system
+      - implementation
+  devex-review:
+    role: onboarding, tool ergonomics, docs clarity, and integration friction
+    writes:
+      - devex-report
+    does_not_write:
+      - implementation
+  qa:
+    role: systematic product testing with recorded evidence and scoped fixes
+    writes:
+      - test-matrix
+      - executed-probes
+      - defects
+      - qa-package
+    does_not_write:
+      - review-verdict
+      - gate-verdict
+  session-memory:
+    role: run lifecycle record, checkpoints, and durable learnings
+    writes:
+      - run-state
+      - audit-trail
+      - checkpoint
+    does_not_write:
+      - design-package
+      - build-package
+      - review-package
+  skill-maker:
+    role: skill and coordinated-team creation, review cycles, and packaging
+    writes:
+      - skills
+      - generated-team-manifest
+      - skill-package
+    consumes:
+      - skill-review-scorecard
+    does_not_write:
+      - skill-review-scorecard
+  skill-creator:
+    role: skill drafting, supporting files, evals, and trigger tuning
+    writes:
+      - skill-draft
+      - validation-report
+    does_not_write:
+      - skill-review-scorecard
+  skill-reviewer:
+    role: adversarial quality gate for skills
+    writes:
+      - skill-review-scorecard
+      - link-report
+    does_not_write:
+      - skill-draft
+  ship:
+    role: release readiness, launch sequencing, verification, and follow-up
+    writes:
+      - deploy-readiness-package
+      - verification-plan
+    consumes:
+      - deploy-config
+    does_not_write:
+      - deploy-config
+      - release-record
+  setup-deploy:
+    role: durable deployment settings and environment conventions
+    writes:
+      - deploy-config
+      - rollback-plan
+    does_not_write:
+      - release-record
+  land-and-deploy:
+    role: merge, rollout, verification, and post-release checks
+    writes:
+      - release-record
+    consumes:
+      - deploy-readiness-package
+    does_not_write:
+      - deploy-config
+  document-release:
+    role: release notes, operational follow-up, and product documentation trail
+    writes:
+      - release-notes
+    does_not_write:
+      - release-record
+  gatekeeper-admiral:
+    role: cross-stage adversarial validator
+    writes:
+      - gate-verdict
+    does_not_write:
+      - design-package
+      - build-package
+      - review-package
+  gatekeeper-design:
+    role: design phase-exit validator
+    writes:
+      - gate-verdict
+    does_not_write:
+      - design-package
+  gatekeeper-build:
+    role: build phase-exit validator
+    writes:
+      - gate-verdict
+    does_not_write:
+      - build-package
+  gatekeeper-code:
+    role: review phase-exit validator
+    writes:
+      - gate-verdict
+    does_not_write:
+      - review-package
+  guard:
+    role: combined intent check and write boundary
+    writes:
+      - guard-record
+    does_not_write:
+      - gate-verdict
+  freeze:
+    role: path boundary lock
+    writes:
+      - guard-record
+    does_not_write:
+      - gate-verdict
+
+artifacts:
+  - id: grilling-log
+    owner: admiral
+    before: the first phase delegation
+    evidence:
+      - resolved decisions with source
+      - rejected options with rationale
+      - deferred branches with owner and reopen trigger
+      - non-goals
+  - id: intake-brief
+    owner: admiral
+    before: the first phase delegation
+    evidence:
+      - bounded goal and scope
+      - preamble tier and rationale
+      - constraints and acceptance conditions
+  - id: delivery-package
+    owner: admiral
+    before: run completion
+    evidence:
+      - traceability matrix
+      - approved artifact set with hashes
+      - open disputes and next actions
+  - id: cross-stage-handoff
+    owner: admiral
+    before: every gatekeeper-admiral submission
+    evidence:
+      - submission id
+      - revision lineage
+      - package path and hashes
+  - id: design-package
+    owner: commander
+    before: design-to-build
+    evidence:
+      - architecture and interface contracts
+      - plan and acceptance matrix
+      - decision register
+  - id: stack-lock
+    owner: commander
+    before: design-to-build
+    evidence:
+      - registry slug
+      - locked versions
+      - overlay sha256, or the sanctioned fallback value
+  - id: design-traceability
+    owner: commander
+    before: design-to-build
+    evidence:
+      - requirement to artifact mapping
+      - proven and unproven status per row
+  - id: requirements-brief
+    owner: researcher
+    before: architecture
+    evidence:
+      - observed sources with paths
+      - constraints and non-goals
+      - open questions
+  - id: architecture
+    owner: architect
+    before: plan and implementation spec
+    evidence:
+      - component boundaries and data flow
+      - invariants and failure behavior
+      - trust boundaries
+  - id: interface-contract
+    owner: architect
+    before: implementation
+    evidence:
+      - endpoint or interface inventory
+      - request and response shapes
+      - error taxonomy
+  - id: design-system
+    owner: architect
+    before: design-to-build for a user-facing surface
+    evidence:
+      - component template per design-doctrine.md section 5
+      - UI/UX handoff template per design-doctrine.md section 5
+      - responsive behavior across the six tiers
+      - accessibility expectations
+  - id: plan
+    owner: planner
+    before: design-to-build
+    evidence:
+      - milestones and delivery slices
+      - rollout and rollback shape
+      - risk handling
+  - id: implementation-spec
+    owner: engineer
+    before: implementation
+    evidence:
+      - delivery slices in dependency order
+      - operational constraints
+  - id: implementation
+    owner: bob-the-builder
+    before: build-to-review
+    evidence:
+      - changed artifact set with hashes
+      - no placeholders or unowned TODOs
+  - id: tests
+    owner: test-builder
+    before: build-to-review
+    evidence:
+      - test-runner log as a hashed file
+      - intended scope and key failure paths covered
+  - id: runtime
+    owner: health-check
+    before: build-to-review
+    evidence:
+      - startup or entry-point smoke log as a hashed file
+      - environment dependency status
+  - id: build-package
+    owner: build-management
+    before: build-to-review
+    evidence:
+      - approved design revision
+      - changed artifact set with hashes
+      - test and runtime evidence paths
+  - id: build-traceability
+    owner: build-management
+    before: build-to-review
+    evidence:
+      - design decision to changed artifact mapping
+      - proven and unproven status per row
+  - id: security-seed
+    owner: security-builder
+    before: design-to-build
+    evidence:
+      - trust boundaries the design introduces or moves
+      - controls the build must implement, or the sanctioned fallback value
+  - id: security-evidence
+    owner: security-builder
+    before: build-to-review
+    evidence:
+      - graded findings record
+      - controls implemented, or the sanctioned fallback value
+  - id: completeness-report
+    owner: cross-check-build-confirm
+    before: build-to-review
+    evidence:
+      - promised scope versus delivered artifacts
+      - unresolved gaps
+  - id: debug-report
+    owner: debugger
+    before: returning a fix path to build-management
+    evidence:
+      - reproduction steps
+      - isolated cause
+      - bounded fix path
+  - id: reproduction
+    owner: investigate
+    before: investigation-review
+    evidence:
+      - log that reproduces the reported failure
+      - environment and inputs
+  - id: evidence-chain
+    owner: investigate
+    before: investigation-review
+    evidence:
+      - trace from symptom to mechanism
+      - each link observed, not inferred
+  - id: fix-path
+    owner: investigate
+    before: investigation-review
+    evidence:
+      - smallest change that addresses the mechanism
+      - owning phase for the change
+  - id: investigation-package
+    owner: investigate
+    before: investigation-review
+    evidence:
+      - scope and residual uncertainty
+      - reproduction and evidence chain paths
+  - id: findings
+    owner: code-chief
+    before: review-to-delivery
+    evidence:
+      - graded items with id, severity, status
+      - owner and reopen trigger for every deferred Major
+  - id: bug-findings
+    owner: bug-review
+    before: finding triage
+    evidence:
+      - correctness defects with reproduction or code location
+      - severity per item
+  - id: merge-readiness-report
+    owner: code-review
+    before: finding triage
+    evidence:
+      - change risk assessment
+      - clarity and local quality notes
+  - id: maintainability-report
+    owner: quality-review
+    before: finding triage
+    evidence:
+      - architecture drift observations
+      - tech-debt pressure with locations
+  - id: vulnerability-scan
+    owner: security-review
+    before: security-review
+    evidence:
+      - scanner tool, command, exit code
+      - inputs bound by sha256, or the sanctioned fallback value
+  - id: threat-model
+    owner: cso
+    before: security-review
+    evidence:
+      - assets, actors, and trust boundaries
+      - abuse cases with severity
+  - id: denial-path-evidence
+    owner: mr-robot
+    before: security-review
+    evidence:
+      - executed probe log for unauthorized, malformed, replayed, expired, and over-broad requests
+      - observed denial at the boundary, or the sanctioned fallback value
+  - id: remediation-plan
+    owner: cso
+    before: security-review
+    evidence:
+      - fix owner per finding
+      - accepted risk with reopen trigger
+  - id: security-review-package
+    owner: cso
+    before: security-review
+    evidence:
+      - scope and residual risk
+      - threat model and denial-path evidence paths
+  - id: frontend-review-report
+    owner: frontier
+    before: finding triage
+    evidence:
+      - performance, accessibility, and robustness observations
+      - component behavior notes
+  - id: rendered-verification
+    owner: design-qa
+    before: review-to-delivery
+    evidence:
+      - captures across the declared breakpoints and themes
+      - inputs bound to the rendered source, or the sanctioned fallback value
+  - id: devex-report
+    owner: devex-review
+    before: finding triage
+    evidence:
+      - onboarding and tooling friction with locations
+      - docs clarity gaps
+  - id: review-package
+    owner: code-chief
+    before: review-to-delivery
+    evidence:
+      - consolidated findings
+      - proof gaps
+      - residual risk
+  - id: review-verdict
+    owner: code-chief
+    before: review-to-delivery
+    evidence:
+      - APPROVED, or REVISE/ESCALATE with a challenge record
+  - id: test-matrix
+    owner: qa
+    before: qa-review
+    evidence:
+      - executed matrix log across the declared surface
+      - environment and build under test
+  - id: executed-probes
+    owner: qa
+    before: qa-review
+    evidence:
+      - probe log as a hashed file
+      - result status per probe
+  - id: defects
+    owner: qa
+    before: qa-review
+    evidence:
+      - graded items with id, severity, status
+      - reproduction for every Critical
+  - id: qa-package
+    owner: qa
+    before: qa-review
+    evidence:
+      - scope and residual risk
+      - fixes applied, or the sanctioned fallback value
+  - id: run-state
+    owner: session-memory
+    before: every delegation and every returned boundary
+    evidence:
+      - run id, status, revision, active owner
+      - evidence paths and artifact hashes
+  - id: audit-trail
+    owner: session-memory
+    before: run completion
+    evidence:
+      - append-only event log with timestamps
+  - id: checkpoint
+    owner: session-memory
+    before: every delegation
+    evidence:
+      - expected revision
+      - registered evidence hashes
+  - id: skills
+    owner: skill-maker
+    before: skill-maker-to-delivery
+    evidence:
+      - skill paths with hashes
+      - trigger language and description
+  - id: skill-draft
+    owner: skill-creator
+    before: skill review
+    evidence:
+      - SKILL.md and supporting files
+      - eval set
+  - id: skill-review-scorecard
+    owner: skill-reviewer
+    before: skill-maker-to-delivery
+    evidence:
+      - rubric score per dimension
+      - prioritized fix list
+  - id: link-report
+    owner: skill-reviewer
+    before: skill-maker-to-delivery
+    evidence:
+      - resolved and broken link inventory
+  - id: validation-report
+    owner: skill-creator
+    before: skill-maker-to-delivery
+    evidence:
+      - quick_validate.py output as a hashed file
+  - id: generated-team-manifest
+    owner: skill-maker
+    before: skill-maker-to-delivery
+    evidence:
+      - roster and topology, or the sanctioned fallback value
+  - id: skill-package
+    owner: skill-maker
+    before: skill-maker-to-delivery
+    evidence:
+      - packaged archive path with hash
+  - id: deploy-config
+    owner: setup-deploy
+    before: deploy-readiness
+    evidence:
+      - environment settings and target
+      - secrets handling policy
+  - id: verification-plan
+    owner: ship
+    before: deploy-readiness
+    evidence:
+      - post-release checks and their pass conditions
+  - id: rollback-plan
+    owner: setup-deploy
+    before: deploy-readiness
+    evidence:
+      - rollback trigger and procedure
+      - data considerations
+  - id: deploy-readiness-package
+    owner: ship
+    before: deploy-readiness
+    evidence:
+      - approved delivery revision
+      - human go decision requirement
+  - id: release-record
+    owner: land-and-deploy
+    before: run completion after a release
+    evidence:
+      - release result and timestamps
+      - post-release verification evidence
+  - id: release-notes
+    owner: document-release
+    before: run completion after a release
+    evidence:
+      - changes, operational follow-up, and known issues
+  - id: gate-verdict
+    owner: gatekeeper
+    before: any state advance past a boundary
+    evidence:
+      - APPROVED, REVISE, or ESCALATE
+      - verdict id, package fingerprint, gate spec digest
+  - id: guard-record
+    owner: safety-guardrails
+    before: a destructive or boundary-sensitive action
+    evidence:
+      - owner, scope, created_at
+      - released_at when lifted
+
+handoff_rules:
+  - Owners may consume upstream artifacts but may not silently rewrite them.
+  - Each active artifact has exactly one writer identified by owner, path, and revision.
+  - A reader returns REVISE to the writer instead of editing the artifact.
+  - Ownership transfers only through a new handoff with a new revision.
+  - "gate-verdict has exactly one writer per boundary - gatekeeper-admiral at a cross-stage boundary, and the phase gatekeeper (gatekeeper-design, gatekeeper-build, gatekeeper-code) at its own phase exit."
+  - Gatekeepers write gate-verdict and never repair a submission.
+  - land-and-deploy never changes an approved package without a new revision.
+  - The selected guard or freeze owner never widens a path boundary while applying a check.

@@ -22,7 +22,7 @@ Validate cross-stage packages and decide whether they are ready to advance betwe
 
 This skill is the cross-stage gatekeeper of the **Admiral** delivery pipeline; `admiral` is the primary entry orchestrator (see `../routing-doctrine.md`). Before doing any work, run the **active-handoff check** — a handoff is present when the prompt carries a `### Save Context` block, an active run lock / `session_pin: true` exists under `skillset-saves/`, or the invocation explicitly submits a boundary package for a verdict.
 
-- **Handoff present** → proceed; you are validating a boundary inside an Admiral run.
+- **Handoff present** → proceed; an Admiral run is active and this boundary is being validated inside it.
 - **No handoff (cold/direct invocation)** → do not run standalone. Start `admiral` first so a real boundary package, evidence bundle, and approval lineage exist to validate, then accept the submission back. This is the loop guard: Admiral submits with the handoff signal, so a routed call proceeds immediately and never re-bootstraps Admiral.
 
 ## Use This Skill When
@@ -44,9 +44,37 @@ This skill is the cross-stage gatekeeper of the **Admiral** delivery pipeline; `
 - Cross-stage findings naming missing or mismatched artifacts, approval-lineage breaks, blocked-phrase hits, or next-consumer contract gaps.
 - Remediation routing note that sends fixes back to the owning orchestrator and identifies any downstream rewind or user escalation.
 
-## Deterministic Pre-Check (script)
+## Deterministic Pre-Check (two validators)
 
-Run the deterministic gate engine **before** applying judgment:
+Run both validators **before** applying judgment. Neither issues a verdict.
+
+**1. The boundary validator.** `../harness/gatekeeper/check.py` loads the
+canonical gate spec `../gates.yaml` and checks the submission's evidence
+contract:
+
+```bash
+python ../harness/gatekeeper/check.py \
+  --boundary <design-to-build|build-to-review|review-to-delivery|security-review|investigation-review|qa-review|skill-maker-to-delivery|deploy-readiness> \
+  --package <phase>/manifest.json \
+  [--prior <phase>/verdict_<boundary>.json] \
+  --verdict-out <phase>/verdict_<boundary>.json
+```
+
+It verifies that every required key is present, that artifact-backed keys point
+at hashed files, that typed records (`scan`, `render`, `probe`, `audit`,
+`findings`, `verdict`, `stack_lock`, `revision_ref`) are shaped correctly and
+bound to their source by sha256, that the revision lineage holds one value, that
+the declared `owner` is the boundary's only permitted submitter, and that no
+blocked phrase or broken local link is present. A missing or malformed gate spec
+is an engine error (exit 2), never a pass. Exit 0 is a mechanical fact, not
+approval.
+
+Reuse a prior verdict only when the result reports `prior_reusable: true`, which
+requires the same boundary, submission, revision, package fingerprint, and gate
+spec digest.
+
+**2. The package-shape validator.** `scripts/check.py` checks the phase package
+directory itself:
 
 ```bash
 python scripts/check.py <package-dir> [--prior <prior-verdict-file>] [--json]
@@ -56,8 +84,8 @@ python scripts/check.py <package-dir> [--prior <prior-verdict-file>] [--json]
 
 ## Workflow
 
-1. Classify the submission as design-to-build, build-to-review, review-to-delivery, or skill-maker-to-delivery, and verify the exact package set expected for that handoff.
-2. Run `scripts/check.py` on the package, then check whether the cross-stage submission is actually ready by reading its structural findings (approval lineage, revision delta, skip justifications, blocked-phrase cleanliness) and applying judgment to the next-consumer contract.
+1. Classify the submission against `../gates.yaml`: one of `design-to-build`, `build-to-review`, `review-to-delivery`, `security-review`, `investigation-review`, `qa-review`, `skill-maker-to-delivery`, or `deploy-readiness`. Confirm the declared `boundary` and `owner` match the spec, and read the required-evidence list for that boundary from the spec rather than from memory.
+2. Run both validators (see above), then judge what they cannot: whether a present artifact is substantively adequate, whether a contradiction across artifacts is real, whether a waiver reason is honest, and whether the next-consumer contract holds.
 3. Decide `APPROVED`, `REVISE`, or `ESCALATE` with a handoff-specific rationale that names the missing package element, conflicting approval, or unresolved risk-acceptance question.
 4. Reuse an existing verdict only when the same submission id and package revision recur; otherwise record how the resubmission changed before another handoff is allowed.
 
@@ -66,6 +94,10 @@ python scripts/check.py <package-dir> [--prior <prior-verdict-file>] [--json]
 - **Shared severity**: Report findings with the shared four-tier model so upstream and downstream packages interpret risk consistently.
 - **Forbidden-strings scan ownership**: Own the scan that rejects blocked phrases and treat any hit inside the candidate package as a blocking defect.
 - **Harness-doctrine citation**: When a package adds or changes a cross-cutting runtime intervention, evaluate it against `../harness-doctrine.md` §5 and cite the violated section by number in the verdict. A doctrine violation is a `REVISE` (or `ESCALATE` when it needs a scope decision).
+- **Gate spec is authoritative**: `../gates.yaml` is the only source of required evidence, artifact-backed keys, sanctioned fallback values, typed record shapes, submitters, and the finding policy. Never accept an evidence key this file does not list for the boundary, and never invent a waiver reason it does not sanction.
+- **Finding policy**: A Critical finding blocks until it is verified or marked not-applicable with a reason. A Major finding blocks unless it is verified, not-applicable with a reason, or deferred with a named owner and a reopen trigger recorded in the findings record.
+- **Evidence standard**: Apply `../contracts/evidence-standards.md`. A gate-affecting claim is `exact` plus `observed` or `corroborated`; an unavailable check is a data gap, never approval.
+- **Workflow protocol**: Every verdict names the transition it guards per `../contracts/workflow-protocol.md`. An invalid transition returns `ESCALATE` and is never silently coerced.
 
 ## Verdict Model
 
@@ -91,14 +123,26 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | The declared boundary does not match the attached package set, such as a build-to-review handoff without build approval lineage | Return `REVISE` with the missing boundary evidence and refuse to infer readiness from summary text alone. |
 | A resubmission reuses the previous submission id but changes package contents without a revision delta | Treat the prior verdict as non-transferable, require a fresh boundary summary, and flag the silent drift. |
 | A blocked phrase appears inside a generated delivery artifact or handoff narrative | Return `REVISE` and require the submitting orchestrator to clean the package before any downstream stage consumes it. |
+| The boundary validator exits 2 (missing or malformed gate spec, unknown boundary, unreadable manifest) | Return `ESCALATE`. An engine failure is never approval, and the gate spec is never bypassed to keep a run moving. |
+| Evidence references a project file whose sha256 no longer matches (`input hash drift`) | Return `REVISE` to the evidence owner. The source changed after the evidence was captured, so the evidence no longer proves the claim. |
+| A required key carries a bare string that is not a sanctioned fallback value | Return `REVISE`. Only the exact reasons in `../gates.yaml` `fallback_values` are accepted, and at manifest schema 2 they must be typed applicability records naming reason, scope, and decided_by. |
 
 ## Save Protocol
 
-Gatekeepers do not write directly to `skillset-saves/`. The delegating orchestrator captures the gatekeeper verdict and writes it to the appropriate `gatekeeper-verdict.md` or `gatekeeper-admiral_handoff-{N}.md` file. Return verdict output inline as usual.
+A gatekeeper writes exactly one path class: the durable verdict record at
+`skillset-saves/runs/{run-id}/{phase}/verdict_{boundary}.json`, produced by
+`check.py --verdict-out` (`../save-ownership.yaml`, class `gate-verdict`). It
+never modifies the submission, its evidence, or the run record. The delegating
+orchestrator captures the semantic verdict in its handoff record. When
+persistence is inactive, return the verdict inline and preserve the run and
+revision.
 
 ## References
 
-- `scripts/check.py` for the deterministic gate engine wrapper and this boundary's artifact manifest.
+- `../gates.yaml` for the canonical boundary contract: required evidence, artifact-backed keys, sanctioned fallbacks, typed records, submitters, and the finding policy.
+- `../harness/gatekeeper/check.py` for the boundary validator and `--verdict-out` / `--prior` semantics.
+- `scripts/check.py` for the package-shape validator and this boundary's artifact manifest.
+- `../contracts/evidence-standards.md`, `../contracts/handoff-templates.md`, and `../contracts/workflow-protocol.md` for the evidence, submission, and transition contracts.
 - `../harness/gatekeeper/README.md` for the engine, the deterministic-vs-judgment split, and the fail-loud posture.
 - `references/workflow.md` for the detailed boundary-validation sequence and verdict rules.
 - `references/examples.md` for concrete cross-stage handoff examples.

@@ -66,7 +66,7 @@ This means skill file paths must stay repository-relative or point at the local
 Codex confines file writes to the repository root and any explicitly mounted workspaces. The save-protocol probe MUST run inside the repo root:
 
 1. Compute the workspace root from the agent's `cwd` (do not hard-code drive letters).
-2. Before probing, inspect `{workspace}/skillset-saves/_latest.md` and classify the save directory per `save-protocol.md` Section 4.0. If an active reclaimable run exists, resume it before creating a new run.
+2. Before probing, inspect `{workspace}/skillset-saves/_latest.md` and classify the save directory per `save-protocol.md` §2 Startup. If an active reclaimable run exists, resume it before creating a new run.
 3. Probe path: `{workspace}/skillset-saves/_probe-{run-id}.tmp`. If the workspace root is read-only or writes return `EACCES`/`EPERM`, set `Persistence active: no`, surface a single user warning, attempt read-only resume from any readable latest artifacts, and continue in transient mode only if no coherent boundary can be proven.
 4. Path normalization: record forward-slash, workspace-relative paths in every save file. Resolve to OS-native form only at the I/O boundary.
 5. Never probe outside the workspace — the sandbox will deny the write and the failure will be misread as "no persistence" when the real cause is path scope.

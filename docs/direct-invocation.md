@@ -1,64 +1,66 @@
-# Direct Skill Invocation
+# Calling Skills Directly
 
-How a skill is reached depends on its routing tier (see
-[routing.md](routing.md) and `skills/routing-doctrine.md`):
+Short version: standalone tools you call whenever you want. Pipeline skills you
+can also name directly, they just start at `admiral` first. Small reversible work
+skips all of it and just gets done.
 
-- **Standalone tools** (`safety-guardrails/*`, `browser-automation/*`,
-  `release-and-deployment/*`, `testing-and-qa/*`) are out of routing scope and
-  can be invoked directly at any time.
-- **In-scope pipeline skills** (`design/commander`, `build/build-management`,
-  `review/code-chief`, `skill-maker`, `investigate`, `session-memory`,
-  `gatekeeper-admiral`) are components of the Admiral pipeline. When reached cold
-  — without an active Admiral handoff — they hand off to `admiral` first so the
-  run gets one intake, one persisted state, and one cross-stage gate. They still
-  run their specialist work; they just route through admiral to start it.
-- **Internal specialists** (e.g. `architect`, `bob-the-builder`, `mr-robot`, the
-  stage gatekeepers) are reached via their owning sub-orchestrator, not as a
-  user entry point.
+The rules behind that are in [routing.md](routing.md).
 
-If your tool supports native skill routing, invoke a skill by name. Otherwise,
-reference the matching `skills/.../SKILL.md` file explicitly.
+## Standalone tools
 
-## Standalone Tools (invoke directly)
+Out of routing scope. No pipeline, no intake, no gate. Just call them.
 
-| Task | Skill | Example Prompt |
-|------|-------|----------------|
-| Open a visible browser | `open-browser` | "Use the open-browser skill to launch a browser workspace" |
-| Drive a live page | `browse` | "Use the browse skill to click through the app and capture evidence" |
-| Authenticate a browser | `setup-browser-cookies` | "Use the setup-browser-cookies skill to log the browser into our app" |
-| Share a browser session | `pair-agent` | "Use the pair-agent skill to let my teammate drive this browser" |
-| Run a release | `ship` | "Use the ship skill to coordinate this release" |
-| Merge & deploy | `land-and-deploy` | "Use the land-and-deploy skill to get this branch live" |
-| Configure deploys | `setup-deploy` | "Use the setup-deploy skill to set up the deploy config" |
-| Write release notes | `document-release` | "Use the document-release skill to write up what shipped" |
-| Lock a path | `freeze` | "Use the freeze skill to protect src/payments from edits" |
-| Combined guard | `guard` | "Use the guard skill to lock things down while we work" |
-| Confirm before risk | `careful` | "Use the careful skill before this destructive step" |
-| Lift a lock | `unfreeze` | "Use the unfreeze skill to open the area back up" |
-| Test & fix | `qa` | "Use the qa skill to test this product and fix what's broken" |
-| Test, report only | `qa-only` | "Use the qa-only skill — just tell me what's broken" |
-| Measure performance | `benchmark` | "Use the benchmark skill to compare performance" |
+| You want | Skill | Say something like |
+|---|---|---|
+| A visible browser | `open-browser` | "Use the open-browser skill to launch a browser workspace" |
+| To drive a live page | `browse` | "Use the browse skill to click through the app and capture evidence" |
+| An authenticated browser | `setup-browser-cookies` | "Use the setup-browser-cookies skill to log the browser into our app" |
+| To share a browser session | `pair-agent` | "Use the pair-agent skill to let my teammate drive this browser" |
+| To run a release | `ship` | "Use the ship skill to coordinate this release" |
+| To merge and deploy | `land-and-deploy` | "Use the land-and-deploy skill to get this branch live" |
+| Deploy config | `setup-deploy` | "Use the setup-deploy skill to set up the deploy config" |
+| Release notes | `document-release` | "Use the document-release skill to write up what shipped" |
+| To lock a path | `freeze` | "Use the freeze skill to protect src/payments from edits" |
+| Locks plus intent checks | `guard` | "Use the guard skill to lock things down while we work" |
+| A confirmation before something risky | `careful` | "Use the careful skill before this destructive step" |
+| To unlock | `unfreeze` | "Use the unfreeze skill to open the area back up" |
+| Testing with fixes | `qa` | "Use the qa skill to test this product and fix what's broken" |
+| Testing without fixes | `qa-only` | "Use the qa-only skill, just tell me what's broken" |
+| A performance comparison | `benchmark` | "Use the benchmark skill to compare performance" |
 
-## Pipeline Skills (route through admiral)
+## Pipeline work
 
-| What you need | Entry skill | Prompt |
-|---------------|-------------|--------|
-| Full pipeline (idea to reviewed code) | `admiral` | `Use the admiral skill to design, build, and review [your idea].` |
-| Design a system | `admiral` (delegates `commander`) | `Design [your idea].` |
-| Build from a plan | `admiral` (delegates `build-management`) | `Implement this approved design.` |
-| Review existing code | `admiral` (delegates `code-chief`) | `Review this codebase.` |
-| Investigate a bug | `admiral` (delegates `investigate`) | `Find the root cause of this failure.` |
-| Create a skill / team | `skill-maker` | `Create a skill that [behavior].` |
-| Checkpoint / resume | `session-memory` | `Save where we are.` / `Resume from saved state.` |
+You do not have to say "admiral". Say what you want; routing handles it.
 
-> A bare request to one of the in-scope skills (e.g. "Design [idea]") is honored
-> — it just initiates through admiral first. Naming admiral explicitly is never
-> wrong, but it is not required for the pipeline to engage.
+| You want | Goes to | Say something like |
+|---|---|---|
+| The whole thing, idea to reviewed code | `admiral` | `Use the admiral skill to design, build, and review [your idea].` |
+| A design | `admiral`, delegating `commander` | `Design [your idea].` |
+| Code from an approved plan | `admiral`, delegating `build-management` | `Implement this approved design.` |
+| A review | `admiral`, delegating `code-chief` | `Review this codebase.` |
+| To find out why something broke | `admiral`, delegating `investigate` | `Find the root cause of this failure.` |
+| A security audit | `admiral`, delegating `cso` | `Audit this codebase for security issues.` |
+| Product testing | `admiral`, delegating `qa` | `Test this product and fix what's broken.` |
+| A new skill or team | `skill-maker` | `Create a skill that [behavior].` |
+| To save or resume | `session-memory` | `Save where we are.` / `Resume from saved state.` |
 
-## Fallback for Tools Without Skill Routing
+Naming a pipeline skill directly is fine. "Design this thing" is honored, it just
+initiates through admiral so the run gets one intake, one persisted state, and one
+cross-stage gate. Naming admiral explicitly is never wrong, and never required.
 
-If your assistant does not auto-route skills, provide `AGENTS.md` and the
-specific `SKILL.md` file as context, then issue the task request:
+Every one of these closes at its own gate boundary. The boundary table and the
+evidence each needs is in [gatekeepers.md](gatekeepers.md).
+
+## Internal specialists
+
+`architect`, `bob-the-builder`, `mr-robot`, the stage gatekeepers, and the rest of
+the skills under `design/`, `build/`, and `review/` are reached through their
+owning sub-orchestrator. They are not user entry points, and calling one cold will
+route you back through the front door.
+
+## If your tool has no skill routing
+
+Provide `AGENTS.md` and the specific `SKILL.md` as context, then ask:
 
 ```text
 Provide AGENTS.md and skills/admiral/SKILL.md, then ask: "Run the full pipeline for [description]."

@@ -16,7 +16,7 @@
 **Output:**
 - Constraint: the approved scope excludes schema redesign.
 - Result: implement the feature within the current schema, attach migration-free validation evidence, and escalate the future redesign as out of scope.
-- Residual risk: note the follow-up debt without leaving an unowned TODO in the delivered surface.
+- Residual risk: note the follow-up debt without leaving an unowned follow-up marker in the delivered surface.
 
 ## Example 3
 

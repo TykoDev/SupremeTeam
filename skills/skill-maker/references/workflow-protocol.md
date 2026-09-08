@@ -38,7 +38,9 @@ REVIEW_ACTIVE ──→ REVIEW_COMPLETE
 IMPROVE_ACTIVE ──→ IMPROVE_COMPLETE ──→ REVIEW_ACTIVE
                                         (iteration N+1)
 
-OPTIMIZE_ACTIVE ──→ OPTIMIZE_COMPLETE ──→ PACKAGE_ACTIVE
+OPTIMIZE_ACTIVE ──→ OPTIMIZE_COMPLETE
+                       ├─ files changed ──→ REVIEW_ACTIVE ──SHIP──→ PACKAGE_ACTIVE
+                       └─ unchanged, matching review ──→ PACKAGE_ACTIVE
 
 PACKAGE_ACTIVE ──→ DELIVERED
 
@@ -86,7 +88,7 @@ into the review handoff template. Transition to REVIEW_ACTIVE.
 
 ```
 if score == 100 and no critical findings:
-    → OPTIMIZE_ACTIVE
+    → PACKAGE_ACTIVE if optimization already completed, otherwise OPTIMIZE_ACTIVE
 elif iteration_count >= max_iterations (5):
     → USER_DECISION (max iterations reached)
 elif score == previous_score for 2 consecutive iterations:
@@ -112,9 +114,10 @@ iteration number + previous scorecard + eval results. Transition to REVIEW_ACTIV
 - `best_description` from optimizer
 - Trigger eval scores (before/after)
 
-**Optional re-review:** If the optimized description changed more than just
-trigger phrases (e.g., scope was narrowed), run a quick Stage 2 review to confirm
-the score holds. If score drops, revert to pre-optimization description.
+**Required re-review:** Any changed description invalidates the review of the
+previous files. Return to Stage 2 for the revised files; after SHIP, proceed to
+packaging without repeating optimization. Resolve review findings through the
+normal improve/review loop. If no files changed, retain the matching review.
 
 ### PACKAGE_ACTIVE → DELIVERED
 
@@ -167,8 +170,10 @@ If the conversation is interrupted mid-pipeline:
 
 1. **Identify last completed state** — check which files exist, what the last
    scorecard shows, what iteration the log reflects.
-2. **Resume from the next state** — do not re-run completed stages unless the user
-   asks.
+2. **Validate lineage before resuming** — verify that the artifacts still match
+   the reviewed revision and saved gate verdict. Re-run the earliest affected
+   stage when files changed or evidence is missing; file existence alone does not
+   prove completion. Otherwise resume from the next incomplete state.
 3. **Re-read the skill** — always re-read SKILL.md and key reference files on resume
    to avoid stale context.
 
@@ -179,7 +184,7 @@ Resume entry points:
 | SKILL.md exists, no scorecard | REVIEW_ACTIVE (iteration 1) |
 | Scorecard exists, score < 100 | IMPROVE_ACTIVE (iteration N+1) |
 | Scorecard at 100, no `.skill` file | OPTIMIZE_ACTIVE |
-| `.skill` file exists | DELIVERED (just present report) |
+| `.skill` file exists | Verify package contents, revision lineage, and the required Admiral boundary verdict; resume the earliest incomplete stage if any check fails. Only matching approved evidence permits delivery. |
 
 ---
 

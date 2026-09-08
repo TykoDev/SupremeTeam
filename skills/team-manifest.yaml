@@ -1,0 +1,38 @@
+schema_version: 1
+name: Supreme Team
+front_door: admiral
+session_memory: session-memory
+cross_stage_gatekeeper: gatekeeper-admiral
+intake_doctrine: grill-me-doctrine
+design_system_doctrine: design-doctrine
+skill_count: 47
+phase_leads: [commander, build-management, code-chief]
+phase_gatekeepers: [gatekeeper-design, gatekeeper-build, gatekeeper-code]
+pipeline_owners: [cso, investigate, qa, skill-maker, ship]
+specialists:
+  - researcher
+  - planner
+  - architect
+  - engineer
+  - bob-the-builder
+  - test-builder
+  - security-builder
+  - cross-check-build-confirm
+  - debugger
+  - health-check
+  - bug-review
+  - code-review
+  - quality-review
+  - security-review
+  - mr-robot
+  - frontier
+  - design-qa
+  - devex-review
+creation: [skill-maker, skill-creator, skill-reviewer]
+release: [ship, setup-deploy, land-and-deploy, document-release]
+safety: [careful, freeze, guard, unfreeze]
+browser: [browse, open-browser, setup-browser-cookies, pair-agent]
+testing: [qa, qa-only, benchmark]
+hosts: [codex, claude-code, copilot, cursor, opencode]
+state_root: skillset-saves
+verdicts: [APPROVED, REVISE, ESCALATE]

@@ -2,6 +2,16 @@
 
 Evaluate expectations against an execution transcript and outputs.
 
+## Contents
+
+- [Role](#role)
+- [Inputs](#inputs)
+- [Process](#process)
+- [Grading Criteria](#grading-criteria)
+- [Output Format](#output-format)
+- [Field Descriptions](#field-descriptions)
+- [Guidelines](#guidelines)
+
 ## Role
 
 The Grader reviews a transcript and output files, then determines whether each expectation passes or fails. Provide clear evidence for each judgment.

@@ -1,0 +1,87 @@
+schema_version: 1
+kind: supremeteam-tech-stack-registry
+overlays:
+  - slug: angular
+    path: tech-stacks/angular.md
+    framework: Angular
+    versions: [19]
+    source: _refs/global/tech-stacks/angular.md
+    sha256: 668a93aae7e988b702f435d394e79285164f10adc341acf802cfdcb7b15a8e23
+  - slug: astro
+    path: tech-stacks/astro.md
+    framework: Astro
+    versions: [5]
+    source: _refs/global/tech-stacks/astro.md
+    sha256: 3300e3891944d1e2fdab1262d25b356c817a6dd8a9e58d5f13edb4c9f7005e59
+  - slug: bun-typescript
+    path: tech-stacks/bun-typescript.md
+    framework: Bun + TypeScript
+    versions: [1.2]
+    source: _refs/global/tech-stacks/bun-typescript.md
+    sha256: 1793c0b435c6662a6664fa25c90d85f035a8b635ebf317b0566c0260a6d0d9f6
+  - slug: deno-typescript
+    path: tech-stacks/deno-typescript.md
+    framework: Deno + TypeScript
+    versions: [2]
+    source: _refs/global/tech-stacks/deno-typescript.md
+    sha256: a1afd468785cd3077688876f5cc86b9c19db904b5a8d0b0e3064f7f63eca577b
+  - slug: dotnet-aspnet
+    path: tech-stacks/dotnet-aspnet.md
+    framework: .NET / ASP.NET Core
+    versions: [9]
+    source: _refs/global/tech-stacks/dotnet-aspnet.md
+    sha256: 02c343d7a76e80e4f551323bd8f53c699605616db64e3d175e97bb44d00d29d1
+  - slug: go-gin
+    path: tech-stacks/go-gin.md
+    framework: Go / Gin
+    versions: [1.23]
+    source: _refs/global/tech-stacks/go-gin.md
+    sha256: ac3663a2fa56e51c03beeed9a251ff7f74b250b7445b8b82b0f129fdcba50410
+  - slug: node-typescript
+    path: tech-stacks/node-typescript.md
+    framework: Node.js + TypeScript
+    versions: [22, 5]
+    source: _refs/global/tech-stacks/node-typescript.md
+    sha256: e8d06dc75f1d3921e21aa5d5e170eb3a3a3d39bea3a377c36e9f5300f45096cd
+  - slug: python-fastapi
+    path: tech-stacks/python-fastapi.md
+    framework: Python + FastAPI
+    versions: [3.12, 0.115]
+    source: _refs/global/tech-stacks/python-fastapi.md
+    sha256: 5a346dbaf15ba9890032aa6ca9cd95d85152c2663583584f546add80c66c611d
+  - slug: react-nextjs
+    path: tech-stacks/react-nextjs.md
+    framework: React + Next.js
+    versions: [19, 15]
+    source: _refs/global/tech-stacks/react-nextjs.md
+    sha256: 676452db8dbd64749c34f1a01c4ce8702c65213fd12a3046238993b2067f6281
+  - slug: react-tanstack
+    path: tech-stacks/react-tanstack.md
+    framework: React + TanStack Start
+    versions: [19, 8]
+    source: _refs/global/tech-stacks/react-tanstack.md
+    sha256: faf4420f6c9a208bbb42fdf410226746e41ebb37cbca5026b6cd41ab58b1c71c
+  - slug: rust-axum
+    path: tech-stacks/rust-axum.md
+    framework: Rust + Axum
+    versions: [2024, 0.8]
+    source: _refs/global/tech-stacks/rust-axum.md
+    sha256: 3242a66f3157fa81208516687bd70e33188e8afb315b57090184dd28dd37557f
+  - slug: svelte-sveltekit
+    path: tech-stacks/svelte-sveltekit.md
+    framework: Svelte + SvelteKit
+    versions: [5]
+    source: _refs/global/tech-stacks/svelte-sveltekit.md
+    sha256: e245af51eb241e4682d5a158b39a0c2b95dd92d0b5858eae8851d33f22932868
+  - slug: vite-spa
+    path: tech-stacks/vite-spa.md
+    framework: Vite SPA
+    versions: [8]
+    source: _refs/global/tech-stacks/vite-spa.md
+    sha256: 318e5893dc0dfa3c80eb52ee59f5145378c807959025adbee7d06978418c79c4
+  - slug: vue-nuxt
+    path: tech-stacks/vue-nuxt.md
+    framework: Vue + Nuxt
+    versions: [3, 3.14]
+    source: _refs/global/tech-stacks/vue-nuxt.md
+    sha256: 2ce53535c04e15ea7dbcc59374e98c04e7a20b0764c421f0440ac6bd3fca4b77

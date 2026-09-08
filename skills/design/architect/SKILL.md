@@ -2,13 +2,13 @@
 name: architect
 description: >-
   Transforms the approved plan into a system architecture with interfaces,
-  API endpoint contracts, component boundaries, data flow, and technology rationale, and owns the
-  frontend/UI visual design system (design interview, shadcn/ui token system,
-  component template, preview, UI/UX spec, and adversarial design review) for
-  user-facing surfaces. Use when the user asks to design the architecture,
-  define system boundaries, write the architecture package, lock the component
-  model, design the UI, build a design system, set up shadcn/ui tokens and
-  components, produce UI/UX specs, or audit a design system.
+  API endpoint contracts, component boundaries, data flow, and technology rationale,
+  and owns the frontend/UI visual design system (design interview, shadcn/ui token
+  system, component template, preview, UI/UX spec, adversarial design review) for
+  user-facing surfaces. Use when the user asks to design the architecture, define
+  boundaries, write the architecture package, lock the component model, design the
+  UI, build a design system, set up shadcn/ui tokens, produce UI/UX specs, or audit
+  a design system.
 version: 1.0.0
 ---
 

@@ -1,127 +1,166 @@
 # Runtime Harness
 
-The runtime harness adapts the **interface** between the model and its
-environment — not the model itself. It is Supreme Team's adaptation of
-*LIFE-HARNESS: Adapting the Interface, Not the Model*, and is specified in
-`skills/harness-doctrine.md`. It gives skill authors and gatekeepers a shared
-vocabulary, a failure taxonomy, and a deterministic enforcement layer where the
-host supports it.
+The harness adapts the interface between the model and its environment. Not the
+model. The interface.
 
-## Model-Agnostic Principle
+It exists because doctrine written in prose is a suggestion. A hook that refuses
+to let a write land is not. Where the host supports interception, the harness
+turns a rule into a mechanism. Where it does not, the rule stays advisory and says
+so rather than pretending.
 
-Supreme Team runs across whatever backbone the host provides. Every harness
-intervention must **rescue a weak backbone without degrading a strong one**. An
-intervention that helps a small/local model but interferes with a competent
-model's correct action is a defect, not a feature. When in doubt, the
-intervention does nothing.
+Specified in [`skills/harness-doctrine.md`](../skills/harness-doctrine.md).
 
-## The Four Lifecycle Layers
+![The four lifecycle layers](assets/7_harness.jpg)
 
-| # | Layer | When it acts | What it does |
-|---|-------|--------------|--------------|
-| 1 | **Environment Contract** | before interaction | Make stable tool, policy, and format constraints explicit (design-doctrine, grill-me intake, MCP registry, intake briefs). |
-| 2 | **Procedural Skill** | task conditioning | Retrieve a compact, reusable procedure for the current task and surface it before work starts (the skill library itself, session-memory learnings). |
-| 3 | **Action Realization** | before execution | Validate, canonicalize, or **block** a generated action before it touches the environment (`safety-guardrails`, save-protocol write probe, **`pre_tool_use.py`**). |
-| 4 | **Trajectory Regulation** | after execution | Detect degenerate patterns (loops, stagnation, empty-output streaks, budget exhaustion) and inject recovery (gatekeepers, session-memory, admiral rewind, **`post_tool_use.py`**). |
+## The rule that governs the other rules
 
-Skills are instructions running *inside* the host loop and do not own that loop.
-The only place Supreme Team can deterministically intercept a tool call is a
-host hook or plugin lifecycle, so Layers 3 and 4 have both an advisory expression
-(skill prose) and, where the host supports compatible hooks, a deterministic one
-(`harness/hooks/`).
+Supreme Team runs on whatever model the host gives it. So every intervention has
+to rescue a weak backbone without getting in a strong one's way. An intervention
+that helps a small model but interferes with a competent model doing the right
+thing is a defect, not a feature.
 
-## Hooks
+When in doubt, the intervention does nothing.
 
-Located at `skills/harness/hooks/`. Stdlib-only (supported install baseline:
-Python 3.13+), **fail open** (any
-internal error exits 0 and lets the action proceed), and inert on the strong case
-(each rule fires only on a mechanically certain signal).
+## Four layers
 
-| Hook | Event | Layer | Behavior |
-|------|-------|-------|----------|
-| `pre_tool_use.py` | `PreToolUse` | 3 | Blocks dangerous shell commands and writes into a frozen/guarded boundary, *before* execution. |
-| `post_tool_use.py` | `PostToolUse` | 4 | Detects repeated failing commands, empty-output streaks, and A,B,A,B oscillation; injects a recovery hint. |
-| `user_prompt_submit.py` | `UserPromptSubmit` | — | Advisory entry-routing reminder steering lifecycle requests through admiral when no run is active; reinforces the session pin when one is. Silent on slash commands. |
-| `verify_registration.py` | diagnostic | — | Confirms host-native hook config points at Supreme Team's three hooks (exit 0 registered / 1 missing / 2 unknown). Run by admiral at intake; emits a `REGISTER_PROMPT` when any are missing. |
-| `check_readiness.py` | diagnostic | — | Combines Python version, hook registration, and `skillset-saves` active-run status so Admiral can report runtime readiness after activation/resume. |
+Every cross-cutting constraint belongs to exactly one of these, and to the
+earliest one where it can actually be enforced.
 
-### Registration
+| # | Layer | When it acts | What it does | Where it lives |
+|---|---|---|---|---|
+| 1 | Environment Contract | before interaction | Makes tool, policy, and format constraints explicit | `design-doctrine.md`, `grill-me-doctrine.md`, `mcp-tools.md`, `tech-stacks/registry.yaml`, intake briefs |
+| 2 | Procedural Skill | task conditioning | Surfaces a compact reusable procedure before work starts | the skill library, `session-memory` learnings, `pipelines.yaml` |
+| 3 | Action Realization | before execution | Validates, canonicalizes, or blocks a generated action | `safety-guardrails/*`, the save write probe, `pre_tool_use.py` |
+| 4 | Trajectory Regulation | after execution | Catches loops, stagnation, and empty-output streaks; injects recovery | gatekeepers, checkpoints, rewind rules, `post_tool_use.py` |
 
-Hook registration is explicit opt-in in the installers:
-`-RegisterHooks` on Windows and `--register-hooks` on macOS/Linux. The installer
-writes host-native config: Codex `~/.codex/hooks.json`, Claude Code
-`~/.claude/settings.json`, Cursor a local `supremeteam-hooks` plugin, and
-OpenCode a local plugin script. See `skills/harness/hooks/README.md`. Admiral
-never blocks a run on a failed registration check — it warns and continues, and
-flags that entry routing is advisory-only until the prompt hook is registered.
+Skills are instructions running inside the host's loop. They do not own that loop.
+The only deterministic place to intercept is a host hook, so layers 3 and 4 have
+two expressions: advisory prose in the skills, and where the host allows it, real
+enforcement under `skills/harness/hooks/`.
 
-Admiral also runs the readiness diagnostic after save activation/resume:
+## The hooks
+
+Stdlib only. Fail open, meaning any internal error exits 0 and your action
+proceeds. Inert on the strong case, meaning each rule fires only on a
+mechanically certain signal.
+
+| File | Event | Layer | What it does |
+|---|---|---|---|
+| `pre_tool_use.py` | `PreToolUse` | 3 | Blocks dangerous shell commands, writes into a frozen or guarded boundary, and direct edit-tool writes to core run files |
+| `post_tool_use.py` | `PostToolUse` | 4 | Records repeated failures, empty-output streaks, and oscillation; refreshes the pinned run's heartbeat from real activity |
+| `user_prompt_submit.py` | `UserPromptSubmit` | routing | Points lifecycle work at `admiral`, reinforces the session pin, stays quiet on slash commands |
+| `save_run.py` | CLI | persistence | The only writer of the run record |
+| `verify_registration.py` | diagnostic | | Inspects host hook config without touching it. Exit 0 registered, 1 missing, 2 unknown |
+| `repair_registration.py` | diagnostic | | Previews a scoped registration repair; writes only with `--apply` |
+| `check_readiness.py` | diagnostic | | Reports Python, hooks, and saves as a capability map |
+
+## Readiness is a map, not a verdict
 
 ```bash
+python skills/harness/hooks/check_readiness.py --host auto
 python skills/harness/hooks/check_readiness.py --host auto --require-active-run
 ```
 
-This diagnostic is report-only. It does not install Python, register hooks, or
-create save state; it names which dimension is degraded so the user can approve
-the appropriate follow-up.
+Each capability is reported on its own: `python_runtime`, `hooks_configured`,
+`hooks_executable`, `hooks_observed`, `saves_readable`, `active_run`,
+`deterministic_validators`. Missing hooks cost you deterministic enforcement and
+nothing else; save reading and the validators keep working.
 
-### Guard / freeze integration
+`hooks_observed` stays `unverified` until a hook actually fires. Reading config
+proves registration, never execution, and the diagnostic refuses to blur the two.
 
-`pre_tool_use.py` enforces the boundary recorded by the `guard` and `freeze`
-skills at `.harness-state/guard-state.json` under `SUPREMETEAM_PROJECT_DIR`, a
-known host workspace variable, the current working directory, or the OS temp
-fallback: `frozen_globs`, `blocked_globs`, and `allow_dangerous`. When the file
-is absent or empty (the default), only the built-in destructive-pattern guard
-applies. `unfreeze` clears `frozen_globs`.
+Use `--require-active-run` on a resume. A fresh intake has no run yet, so
+demanding one there always reports not ready.
 
-## Deterministic Gate Engine
+The diagnostic is report-only. It will not install Python, register hooks, or
+create save state. Admiral never blocks a run on a failed check either: it warns,
+records the result, and notes that routing is advisory until the prompt-submit
+hook is registered.
 
-Located at `skills/harness/gatekeeper/`. The gate-side companion to the hooks:
-a shared, stdlib-only engine (`_gatecheck.py`) behind every `gatekeeper-*` skill's
-`scripts/check.py`. Each gate ships a thin wrapper that declares only its
-boundary's required-artifact manifest and calls the engine, which locates itself
-by walking up to the skill-set root — so the skills package independently of
-their directory depth.
+## Registration
 
-The engine reports **facts** (`PASS` / `FAIL` / `UNCHECKED`), never a verdict.
-Unlike the hooks (which fail open), the gate engine **fails loud**: a gate that
-cannot prove a package clean must never silently approve it (internal error →
-exit `2`, blocking failure → non-zero exit). See [gatekeepers.md](gatekeepers.md)
-and `skills/harness/gatekeeper/README.md`.
+Opt-in, always: `-RegisterHooks` on Windows, `--register-hooks` on macOS and
+Linux.
 
-## Failure Taxonomy
+Codex, Claude Code, and Copilot take native JSON hook config, which means
+`verify_registration.py` can read it back and confirm the command is genuinely
+executable. Cursor and OpenCode load a plugin package instead, so the installer
+writes it but reports it as not machine-verifiable rather than claiming a state it
+cannot check.
 
-When a recurring failure is observed, it is classified by the **earliest**
-matching category so a downstream symptom never masks the root interface failure:
-
-1. **Action-realization failure** — reasonable intent not submitted in executable
-   form (plain-text "tool call", invalid args). → Layer 3.
-2. **Environment-contract mismatch** — executable but violates tool bounds,
-   ordering, or argument semantics. → Layer 1.
-3. **Trajectory degeneration** — valid actions, but the episode loops, stagnates,
-   or exhausts budget without progress. → Layer 4.
-4. **Residual reasoning failure** — protocol followed but the logic is wrong.
-   **Out of scope for the harness** — interface tricks must not paper over
-   reasoning errors.
-
-Categories 1–3 are harness-addressable; routing a category-4 reasoning failure to
-a harness intervention is itself a doctrine violation.
-
-## Engineering Non-Negotiables
-
-Every harness intervention — a doctrine clause, a hook rule, a guard boundary —
-must be **local and minimal**, **evidence-triggered**, **never override ambiguous
-reasoning**, use **no oracle / hidden labels**, ship with a **mandatory
-regression check**, and **fail open**. Hook changes must run the stdlib suite at
-`harness/hooks/test_hooks.py` (or add an equivalent case); gate-engine changes run
-`harness/gatekeeper/test_gatecheck.py`.
-
-## Testing
+When a hook is missing, `verify_registration.py` emits a `REGISTER_PROMPT` and
+Admiral offers the preview:
 
 ```bash
-# Hooks
-python -m unittest discover -s skills/harness/hooks -p "test_*.py"
+python skills/harness/hooks/repair_registration.py --host claude --scope project
+python skills/harness/hooks/repair_registration.py --host claude --scope project --apply
+```
 
-# Gate engine
-python -m unittest discover -s SupremeTeam/harness/gatekeeper -p "test_*.py"
+Preview is the default. `--apply` needs your approval, and global host config is
+never touched silently.
+
+`scripts/install_hooks.py` and `repair_registration.py` share one definition of
+the hook set, the matchers, and the command format, so a first install and a later
+repair cannot disagree about what should be registered.
+
+## Guard and freeze
+
+`pre_tool_use.py` enforces the boundary that `guard` and `freeze` record in
+`.harness-state/guard-state.json`: `frozen_globs`, `blocked_globs`, and
+`allow_dangerous`.
+
+The state helper resolves that path under `SUPREMETEAM_PROJECT_DIR` first, then a
+known host workspace variable, then the working directory, then an isolated temp
+fallback. With the file absent or empty, only the built-in destructive-pattern
+guard applies. `unfreeze` clears `frozen_globs`.
+
+## Gate validation
+
+Two validators run at a boundary. `check.py` loads
+[`skills/gates.yaml`](../skills/gates.yaml) and validates a manifest's evidence
+contract. `_gatecheck.py`, behind each `gatekeeper-*/scripts/check.py`, validates
+the shape of the phase package. Both report facts, never a verdict.
+
+Where the hooks fail open, these fail loud. A gate that cannot prove a package is
+clean must never approve it. Internal error is exit 2, package defect is exit 1.
+See [gatekeepers.md](gatekeepers.md).
+
+## Classifying a failure
+
+Take the earliest category that matches, so a downstream symptom never masks the
+root interface failure.
+
+1. **Action-realization failure.** Reasonable intent, not submitted in executable
+   form: a plain-text "tool call", invalid arguments. Layer 3.
+2. **Environment-contract mismatch.** Executable, but violates tool bounds,
+   ordering, or argument semantics. Layer 1.
+3. **Trajectory degeneration.** Valid actions, but the episode loops, stalls, or
+   burns its budget without progress. Layer 4.
+4. **Residual reasoning failure.** The protocol was followed and the logic is
+   simply wrong. Not the harness's problem.
+
+Categories 1 through 3 are harness-addressable. Routing a category 4 failure to a
+harness intervention is itself a doctrine violation.
+
+Worked example: a command exits zero, then a unit test fails because the logic is
+wrong. That is category 4. `post_tool_use.py` deliberately stays silent, because a
+failing test is a well-formed signal the model can already act on, and correlating
+two tool calls by causal inference is exactly the kind of guessing the harness is
+not allowed to do.
+
+## Non-negotiables
+
+Every intervention is local and minimal, evidence-triggered, never overrides
+ambiguous reasoning, uses no oracle or hidden labels, ships with a regression
+check, and fails open.
+
+## Tests
+
+```bash
+python -m unittest discover -s skills/harness/hooks -p "test_*.py"
+python -m unittest discover -s skills/harness/gatekeeper -p "test_*.py"
+python -m unittest discover -s skills/validation -p "test_*.py"
+python skills/scripts/validate_manifests.py
+python skills/scripts/check_runtime.py
+python skills/scripts/package_check.py --root .
 ```

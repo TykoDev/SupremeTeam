@@ -1,151 +1,136 @@
-# Directory Structure
+# Where Everything Lives
 
-## Repository Layout
+## The repository
 
-```
+```text
 SupremeTeam/
-├── README.md                             # Project overview and value proposition
-├── QUICK-START.md                        # Installation and first-use guide
-├── Install.md                            # Detailed AI-agent installation procedure
-├── AGENTS.md                             # Authoritative skill manifest for discovery
+├── README.md                             # Start here
+├── QUICK-START.md                        # Install and first run
+├── Install.md                            # The full installation procedure
+├── AGENTS.md                             # Flat skill index for tool discovery
 ├── scripts/
 │   ├── install.ps1                       # Windows installer
-│   └── install.sh                        # macOS / Linux installer
+│   ├── install.sh                        # macOS and Linux installer
+│   └── install_hooks.py                  # Registers hooks, then verifies them
 ├── docs/
-│   ├── architecture.md                   # Pipeline architecture and modes
-│   ├── skills.md                         # Complete skill inventory
-│   ├── gatekeepers.md                    # Gatekeeper pattern + deterministic gate engine
-│   ├── routing.md                        # Entry-routing doctrine and skill tiers
-│   ├── harness.md                        # Runtime harness (hooks + gate engine)
-│   ├── persistent-saves.md               # Save system documentation
-│   ├── direct-invocation.md              # Standalone skill usage
-│   └── directory-structure.md            # This file
+│   ├── architecture.md                   # Pipelines, tiers, execution modes
+│   ├── skills.md                         # Every skill and what it owns
+│   ├── gatekeepers.md                    # Boundaries, evidence, verdicts
+│   ├── routing.md                        # How a request finds its skill
+│   ├── harness.md                        # Hooks, readiness, gate validators
+│   ├── persistent-saves.md               # Save layout, locks, resume
+│   ├── direct-invocation.md              # Calling skills directly
+│   ├── directory-structure.md            # This file
+│   └── assets/                           # Diagrams used across the docs
 └── skills/
-    ├── admiral/                          # Primary entry orchestrator
-    │   ├── SKILL.md
+    ├── gates.yaml                        # Gate spec: 8 boundaries
+    ├── pipelines.yaml                    # Pipeline map: 8 pipelines
+    ├── ownership.yaml                    # One writer per artifact
+    ├── save-ownership.yaml               # One writer per save path class
+    ├── team-manifest.yaml                # Roster
+    ├── runtime-manifest.yaml             # Runtime floor, launchers, commands
+    ├── package-manifest.yaml             # Packaging and delivery contract
+    ├── execution-contract.md             # Preamble clauses and tiers
+    ├── routing-doctrine.md               # Entry routing, Tier 0, session pin
+    ├── grill-me-doctrine.md              # Intake interview
+    ├── design-doctrine.md                # Design system and its gate evidence
+    ├── harness-doctrine.md               # Lifecycle layers, taxonomy, rules
+    ├── performance-doctrine.md           # Measured optimization
+    ├── save-protocol.md                  # Save layout, lifecycle, resume
+    ├── mcp-tools.md                      # MCP registry with a freshness TTL
+    ├── contracts/                        # Six canonical cross-phase contracts
+    ├── tech-stacks/                      # 14 stack overlays + registry.yaml
+    ├── scripts/                          # Shared deterministic tooling
+    │   ├── data_formats.py               # JSON and YAML with a stdlib fallback
+    │   ├── output_paths.py               # Resolves every generated destination
+    │   ├── check_runtime.py              # Runtime contract + stack detection
+    │   ├── scan_record.py                # Typed scan evidence records
+    │   ├── validate_manifests.py         # Manifest and cross-reference contracts
+    │   └── package_check.py              # Packaging enumeration and residue check
+    ├── validation/                       # Contract test suites
+    ├── harness/
+    │   ├── hooks/                        # 3 lifecycle hooks, save_run.py, diagnostics
+    │   └── gatekeeper/                   # check.py (gate spec) + _gatecheck.py (shape)
+    ├── admiral/                          # The front door
     │   ├── references/                   # workflow.md, examples.md
     │   └── agent/                        # agent-manifest.yaml, agent-protocol.md, adapters/
-    ├── gatekeeper-admiral/               # Cross-stage validator (+ scripts/check.py)
-    ├── design/                           # Design sub-pipeline (6 skills)
-    │   ├── commander/
-    │   ├── researcher/
-    │   ├── planner/
-    │   ├── architect/                    # also owns the frontend/UI design system
-    │   ├── engineer/
-    │   └── gatekeeper-design/
-    ├── build/                            # Build sub-pipeline (8 skills)
-    │   ├── build-management/
-    │   ├── bob-the-builder/
-    │   ├── test-builder/
-    │   ├── security-builder/
-    │   ├── cross-check-build-confirm/
-    │   ├── debugger/
-    │   ├── health-check/
-    │   └── gatekeeper-build/
-    ├── review/                           # Review sub-pipeline (11 skills)
-    │   ├── code-chief/
-    │   ├── bug-review/
-    │   ├── code-review/
-    │   ├── quality-review/
-    │   ├── security-review/
-    │   ├── cso/
-    │   ├── mr-robot/
-    │   ├── frontier/
-    │   ├── design-qa/
-    │   ├── devex-review/
-    │   └── gatekeeper-code/
-    ├── investigate/                      # Root-cause analysis (in-scope component)
-    ├── skill-maker/                      # Skill/team creation orchestrator
-    │   ├── skill-creator/
-    │   └── skill-reviewer/
-    ├── session-memory/                   # Cross-session state & learnings manager
-    ├── browser-automation/               # Standalone tools (4)
-    │   ├── browse/
-    │   ├── open-browser/
-    │   ├── setup-browser-cookies/
-    │   └── pair-agent/
-    ├── release-and-deployment/           # Standalone tools (4)
-    │   ├── ship/
-    │   ├── land-and-deploy/
-    │   ├── setup-deploy/
-    │   └── document-release/
-    ├── safety-guardrails/                # Standalone tools (4)
-    │   ├── guard/
-    │   ├── careful/
-    │   ├── freeze/
-    │   └── unfreeze/
-    ├── testing-and-qa/                   # Standalone tools (3)
-    │   ├── qa/
-    │   ├── qa-only/
-    │   └── benchmark/
-    ├── harness/                          # Runtime harness (infrastructure)
-    │   ├── hooks/                        # pre/post tool-use, user-prompt-submit, verify_registration
-    │   └── gatekeeper/                   # _gatecheck.py deterministic gate engine
-    ├── routing-doctrine.md
-    ├── grill-me-doctrine.md
-    ├── design-doctrine.md
-    ├── harness-doctrine.md
-    ├── mcp-tools.md
-    └── save-protocol.md
+    ├── gatekeeper-admiral/               # Cross-stage validator
+    ├── design/                           # commander, researcher, planner, architect,
+    │                                     # engineer, gatekeeper-design
+    ├── build/                            # build-management, bob-the-builder, test-builder,
+    │                                     # security-builder, cross-check-build-confirm,
+    │                                     # debugger, health-check, gatekeeper-build
+    ├── review/                           # code-chief, bug-review, code-review,
+    │                                     # quality-review, security-review, cso, mr-robot,
+    │                                     # frontier, design-qa, devex-review, gatekeeper-code
+    ├── investigate/                      # Investigation pipeline owner
+    ├── skill-maker/                      # skill-creator, skill-reviewer
+    ├── session-memory/                   # Run record and durable learnings
+    ├── browser-automation/               # browse, open-browser, setup-browser-cookies, pair-agent
+    ├── release-and-deployment/           # ship, land-and-deploy, setup-deploy, document-release
+    ├── safety-guardrails/                # guard, careful, freeze, unfreeze
+    └── testing-and-qa/                   # qa, qa-only, benchmark
 ```
 
-Generated local directories are intentionally excluded from the repository:
+## What never gets committed
 
-| Path | Purpose | Git status |
-|------|---------|------------|
-| `skillset-saves/` | Admiral runtime saves, locks, audit trails, and local run deliverables | Ignored; do not commit |
-| `harness-test-work/` | Temporary harness regression-test workspace | Ignored; do not commit |
-| `temp/` | Local scratch/comparison inputs, when present | Remove before committing |
+| Path | What it holds | Status |
+|---|---|---|
+| `skillset-saves/` | Run state, locks, audit trails, evidence, gate packages | Ignored. Never commit |
+| `.harness-state/` | Guard records and trajectory observations | Ignored. Never commit |
+| `harness-test-work/` | Temporary harness regression workspace | Ignored. Never commit |
+| `**/__pycache__/`, `*.pyc` | Interpreter caches | Ignored. Never publish |
 
-## Skills Directory
+Ignore rules are not the delivery control, though.
+`python skills/scripts/package_check.py --root .` enumerates exactly what
+`package-manifest.yaml` selects, rejects residue, and confirms the required assets
+are there.
 
-The grouped `skills/` hierarchy is load-bearing. The root doctrine and protocol
-files, the runtime harness, and each skill's `references/` and `scripts/`
-subdirectories are consumed by relative paths inside the skill files.
+## The tree shape is load-bearing
 
-**Do not flatten, rename, or partially extract individual skill folders without
-their dependencies.**
+The root contracts, doctrines, manifests, `scripts/`, `harness/`, and each skill's
+`references/` and `scripts/` are resolved by relative path from inside skill
+files. Flatten the tree, rename a directory, or extract a skill without its
+dependencies and things break in ways that are annoying to diagnose.
 
-### Nesting Convention
+Why things sit where they do:
 
 - `admiral`, `gatekeeper-admiral`, `investigate`, `skill-maker`, and
-  `session-memory` sit directly under `skills/` (depth 2) because they are
-  cross-cutting Admiral-pipeline components
-- Pipeline-stage skills nest under their category directory (`design/`,
-  `build/`, `review/`) at depth 3
-- Standalone tools nest under their group directory (`browser-automation/`,
-  `release-and-deployment/`, `safety-guardrails/`, `testing-and-qa/`)
-- The six doctrine/protocol files and the `harness/` tree live at the skill-set
-  root so every skill can resolve them by relative path
-- `AGENTS.md` provides the authoritative flat index for tool discovery
-  regardless of nesting depth
+  `session-memory` are directly under `skills/` because they are cross-cutting.
+- Pipeline-stage skills nest under their category (`design/`, `build/`,
+  `review/`).
+- Standalone tools nest under their group.
+- Contracts, doctrines, manifests, `scripts/`, `validation/`, `tech-stacks/`, and
+  `harness/` live at the skill-set root so every skill can resolve them.
+- `AGENTS.md` is the flat index, so nesting depth never matters for discovery.
 
-## Installed Layout
+## After installation
 
-After running the installer, the target directory mirrors the `skills/` subtree.
-Core components are always installed; selected team directories are added
-alongside them.
+The target mirrors the `skills/` subtree.
 
-| Target | Linux / macOS | Windows |
-|--------|---------------|---------|
+| Target | macOS / Linux | Windows |
+|---|---|---|
 | Agent skills | `~/.agents/skills/` | `%USERPROFILE%\.agents\skills\` |
 | Codex mirror | `~/.codex/skills/` | `%USERPROFILE%\.codex\skills\` |
 | Claude Code mirror | `~/.claude/skills/` | `%USERPROFILE%\.claude\skills\` |
 | Cursor mirror | `~/.cursor/skills/` | `%USERPROFILE%\.cursor\skills\` |
 | OpenCode mirror | `~/.config/opencode/skills/` | `%USERPROFILE%\.config\opencode\skills\` |
 
-The common target is always installed. Existing host-native mirrors are refreshed
-during upgrades so old Supreme Team copies do not remain discoverable. Codex and
-Cursor are mirrored automatically only when their host-native skill directory
-already contains Supreme Team files, or when the corresponding host target is
-selected explicitly; project-level `.cursor/skills/` is a custom destination.
+The common target is always installed. Existing mirrors get refreshed on upgrade
+so a stale copy does not stay discoverable. Codex and Cursor are mirrored only
+when their directory already holds Supreme Team files, or when you name that host
+explicitly.
 
-## Critical Dependencies
+## What depends on what
 
-| Component | Depends On |
-|-----------|-----------|
-| All skills | The root doctrine/protocol files: `routing-doctrine.md`, `grill-me-doctrine.md`, `save-protocol.md` (and, for relevant skills, `design-doctrine.md`, `harness-doctrine.md`, `mcp-tools.md`) |
-| `admiral` (intake) | `harness/hooks/verify_registration.py`, `mcp-tools.md`, `save-protocol.md` |
-| Every `gatekeeper-*` skill | `harness/gatekeeper/_gatecheck.py` (located by walking up to the skill-set root) |
-| `design/architect` (UI work) | `design-doctrine.md` (frontend/UI design-system doctrine) |
-| Deterministic entry routing / guard enforcement | `harness/hooks/` registered in host-native hook config with `-RegisterHooks` / `--register-hooks` |
+| Component | Needs |
+|---|---|
+| Every skill | The root doctrines: `routing-doctrine.md`, `grill-me-doctrine.md`, `save-protocol.md`, and where relevant `design-doctrine.md`, `harness-doctrine.md`, `performance-doctrine.md`, `mcp-tools.md` |
+| Every gate boundary | `gates.yaml` and `harness/gatekeeper/check.py` |
+| Every `gatekeeper-*` skill | `harness/gatekeeper/_gatecheck.py`, found by walking up to the skill-set root |
+| `admiral` at intake | `harness/hooks/verify_registration.py`, `check_readiness.py`, `save_run.py`, `mcp-tools.md` |
+| `session-memory` | `harness/hooks/save_run.py` as the only writer of the run record |
+| `commander` for the stack lock | `tech-stacks/registry.yaml`, `scripts/check_runtime.py` |
+| `architect` for UI work | `design-doctrine.md` |
+| Shared tooling | `scripts/data_formats.py` for every JSON and YAML read |
+| Deterministic routing and guards | `harness/hooks/` registered with `-RegisterHooks` or `--register-hooks` |

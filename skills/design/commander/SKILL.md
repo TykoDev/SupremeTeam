@@ -22,7 +22,7 @@ Run the design pipeline from initial scope to an approved design package with re
 
 This skill is a component of the **Admiral** delivery pipeline; `admiral` is the primary entry orchestrator (see `../../routing-doctrine.md`). Before doing any work, run the **active-handoff check** — a handoff is present when the prompt carries a `### Save Context` block, an active run lock / `session_pin: true` exists under `skillset-saves/`, or the invocation explicitly names this skill as the owning sub-orchestrator for the design boundary.
 
-- **Handoff present** → proceed; you are running inside an Admiral run.
+- **Handoff present** → proceed; the run is active inside an Admiral run.
 - **No handoff (cold/direct invocation)** → do not run standalone. Start `admiral` first and let it run intake, persistence, and gatekeeping, then accept the delegation back. This is the loop guard: Admiral's own delegations always carry the handoff signal, so a delegated call proceeds immediately and never re-bootstraps Admiral.
 
 ## Use This Skill When

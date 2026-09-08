@@ -3,12 +3,11 @@ name: skill-maker
 description: >
   End-to-end orchestrator for creating, reviewing, improving, optimizing, and packaging Claude
   skills and coordinated skill teams. Use when the user says "create a skill", "make a skill",
-  "build me a skill", "write a skill", "run the skill pipeline", "review this skill", "harden
-  this skill", "take this skill to 100", "ship this skill", "make it production-ready", "create
-  and review a skill", "iterate this skill to perfection", or describes a desired skill behavior
-  without naming skill-maker. Also use when `admiral` delegates skill or team creation. Routes
-  all drafting, evals, fixes, rubric scoring, and packaging to specialists; do not use for
-  general code review, architecture, or non-skill authoring tasks.
+  "write a skill", "run the skill pipeline", "review this skill", "harden
+  this skill", "take this skill to 100", "ship this skill", "make it production-ready", or
+  describes a desired skill behavior without naming it. Also use when `admiral` delegates
+  skill or team creation. Routes drafting, evals, fixes, scoring, and packaging to specialists;
+  not for general code review, architecture, or non-skill authoring.
 version: 1.0.0
 ---
 
@@ -16,8 +15,8 @@ version: 1.0.0
 
 Single entry point for the full skill creation, adversarial review, and iterative
 improvement lifecycle. Delegates all substantive work to two specialists — never
-modifies skill output directly. Skill-maker can be invoked standalone or as a
-delegated sub-orchestrator inside admiral (the SupremeTeam pipeline orchestrator).
+modifies skill output directly. Cold lifecycle requests first enter admiral;
+skill-maker then runs as its delegated sub-orchestrator under the routing contract.
 
 > "Orchestrate, delegate, gate. The orchestrator routes work and enforces the quality
 > loop. It never writes skill content or scores rubric dimensions — that is the
@@ -159,7 +158,7 @@ Delegate to **skill-reviewer**.
 - Iteration history (if iteration > 1)
 
 **On return:**
-- If **SHIP** → proceed to Stage 4 (Optimize)
+- If **SHIP** → proceed to Stage 4 (Optimize), or Stage 5 when this is the re-review after optimization
 - If **ITERATE** → proceed to Stage 3 (Improve)
 - If **BLOCKED** → surface critical findings to user, get guidance, then either
   proceed to Stage 3 or abort
@@ -203,9 +202,10 @@ Delegate to **skill-creator** in Optimize mode.
 - Trigger eval results (before/after accuracy)
 - `best_description` selected by test-set score
 
-**On return:** If the optimized description differs materially from the reviewed one,
-optionally run a quick re-review (Stage 2) to confirm the score holds. Otherwise
-proceed to Stage 5.
+**On return:** If the optimized description changed, return to Stage 2 to review
+the exact revised files before packaging. After that review passes, proceed to
+Stage 5 without repeating optimization. If no file changed, reuse the matching
+review and proceed to Stage 5.
 
 ---
 
@@ -236,7 +236,7 @@ changes summary.
 | Max review-improve cycles | 5 |
 | Plateau detection | If score unchanged for 2 consecutive iterations, escalate |
 | Plateau escalation | Present findings to user with: "Score plateaued at X/100. The remaining findings may need your input. Options: (a) override and ship, (b) provide guidance on specific findings, (c) abort." |
-| Critical finding policy | Any finding with severity "critical" blocks shipping. User can override with explicit acknowledgment. |
+| Critical finding policy | Critical blocks gate approval until a verified fix or an explicit not-applicable reason, per `../gates.yaml`. A user-requested partial delivery does not constitute gate approval. |
 | Score threshold for optimization | 100/100 (description optimization only runs after perfect score) |
 
 ### What the orchestrator never does

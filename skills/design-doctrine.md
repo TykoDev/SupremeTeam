@@ -1,115 +1,160 @@
 # Frontend Design Doctrine
 
-Binding rules for every frontend design and review skill in the catalog (`architect`, `design-qa`, `frontier`, and `commander`). These constraints are non-negotiable. A deliverable that violates them is not gate-eligible.
+Binding rules for every frontend design and review skill: `architect`,
+`design-qa`, `frontier`, `commander`, and `gatekeeper-design`. A deliverable that
+violates them is not gate-eligible. Reviewers cite this doctrine by section
+number.
 
-## 1. Unified, Quiet Surface
+## 1. Unified, quiet surface
 
-- One coherent surface per screen. The page reads as a single composition, not a grid of competing tiles.
-- **No card containers as a default layout primitive.** Do not wrap unrelated content in bordered, elevated, or background-tinted boxes to force visual grouping. Use spacing, typographic hierarchy, and dividers instead.
-- Cards are permitted **only** when the content is genuinely a discrete, repeating, selectable entity (e.g. a product tile in a catalog grid, a media item in a gallery). Even then, prefer the lightest possible treatment — no shadow stacks, no nested cards, no card-inside-card.
-- No decorative chrome. No gradients, glows, or background patterns unless they carry a specific functional or brand meaning that the doctrine cannot otherwise express.
+- One coherent surface per screen. The page reads as a single composition, not a
+  grid of competing tiles.
+- No card containers as a default layout primitive. Do not wrap unrelated content
+  in bordered, elevated, or tinted boxes to force grouping. Use spacing,
+  typographic hierarchy, and dividers.
+- Cards are permitted only when the content is a discrete, repeating, selectable
+  entity (a product tile in a catalog grid, a media item in a gallery). Even
+  then use the lightest treatment: no shadow stacks, no nested cards.
+- No decorative chrome. No gradients, glows, or background patterns unless they
+  carry a functional or brand meaning this doctrine cannot otherwise express.
 
-## 2. Restraint and Information Density
+## 2. Restraint and information density
 
-- Every element must earn its place. If removing it would not measurably hurt the user task, remove it.
-- Prefer one strong primary action per view. Demote everything else.
-- No duplicated navigation, no redundant labels, no helper text restating what a field already says.
-- Long pages are acceptable; cluttered pages are not. A scannable, sparse layout beats a packed one.
+- Every element earns its place. If removing it would not measurably hurt the
+  user task, remove it.
+- One strong primary action per view. Demote everything else.
+- No duplicated navigation, no redundant labels, no helper text restating what a
+  field already says.
+- Long pages are acceptable; cluttered pages are not.
 
-## 3. Harmony and Order
+## 3. Harmony and order
 
-- Use a single spacing scale (4 / 8 / 12 / 16 / 24 / 32 / 48 / 64 px or equivalent rem). No off-scale values.
-- Use a single typographic scale with at most six steps. One sans-serif family unless a second is justified by brand.
-- Use a constrained palette: one neutral ramp, one accent, one semantic set (success / warning / danger / info). No ad-hoc colors.
-- Avoid one-note palettes dominated by one hue family; vary neutrals, accent, and semantic colors enough that states remain distinguishable.
-- Align to a consistent grid. Optical alignment beats pixel-perfect when they conflict, but never both at once on the same surface.
-- Border radius, shadow elevation, and stroke weight each have **one** chosen value used everywhere unless a specific component documents an exception.
-- Letter spacing defaults to `0`; negative tracking requires a recorded brand exception and must not reduce readability.
+- One spacing scale (4 / 8 / 12 / 16 / 24 / 32 / 48 / 64 px or the rem
+  equivalent). No off-scale values.
+- One typographic scale with at most six steps. One sans-serif family unless a
+  second is justified by brand.
+- A constrained palette: one neutral ramp, one accent, one semantic set
+  (success / warning / danger / info). No ad-hoc colors, and no one-note palette
+  dominated by a single hue family, so states stay distinguishable.
+- One border radius, one shadow elevation, and one stroke weight used
+  everywhere unless a specific component documents the exception.
+- Align to a consistent grid. Optical alignment beats pixel-perfect when they
+  conflict, but never both on the same surface.
+- Letter spacing defaults to `0`; negative tracking requires a recorded brand
+  exception and must not reduce readability.
 
-## 4. Responsive From Mobile to Ultrawide
+## 4. Responsive from mobile to ultrawide
 
-Every design and every implementation must work and look correct across the full range:
-
-| Tier | Width range | Required behavior |
+| Tier | Width | Required behavior |
 | --- | --- | --- |
-| Small mobile | 320–374 px | Single column, no horizontal scroll, tap targets ≥ 44 px, no truncation of primary content. |
-| Mobile | 375–639 px | Single column, comfortable reading measure, sticky primary action where relevant. |
-| Tablet | 640–1023 px | Optional two-column where it improves scanning, never forced. |
-| Desktop | 1024–1439 px | Multi-region layouts permitted; max content measure 72ch for prose. |
-| Large desktop | 1440–1919 px | Centered max-width container; do not stretch text-heavy regions edge-to-edge. |
-| Ultrawide | ≥ 1920 px | Hard cap on content width (typically 1440–1600 px); use surrounding whitespace, not extra columns. |
+| Small mobile | 320-374 px | Single column, no horizontal scroll, tap targets at least 44 px, no truncation of primary content |
+| Mobile | 375-639 px | Single column, comfortable measure, sticky primary action where relevant |
+| Tablet | 640-1023 px | Optional two-column where it improves scanning, never forced |
+| Desktop | 1024-1439 px | Multi-region layouts permitted; 72ch maximum measure for prose |
+| Large desktop | 1440-1919 px | Centered max-width container; do not stretch text regions edge to edge |
+| Ultrawide | 1920 px and above | Hard content-width cap (typically 1440-1600 px); use whitespace, not extra columns |
 
-- Use token-based typography that does not scale directly with viewport width. Fluid spacing is allowed where it improves layout rhythm; body copy must remain readable and stable.
-- Use container queries when the component, not the viewport, drives the layout shift.
-- Fixed-format elements such as boards, tables, toolbars, counters, and tiles need stable dimensions (`minmax`, aspect ratio, min/max bounds, or container-relative sizing) so hover states, labels, icons, loading text, and dynamic content do not shift the layout.
-- Text must not overlap adjacent content or overflow its control. Move text to another line, shorten copy, or use safe dynamic constraints before accepting truncation of primary content.
-- Test every state (empty, loading, error, success, permission-denied) at each tier. State coverage at one breakpoint does not count.
+- Token-based typography that does not scale directly with viewport width.
+  Fluid spacing is allowed where it improves rhythm; body copy stays readable.
+- Container queries when the component, not the viewport, drives the shift.
+- Fixed-format elements (boards, tables, toolbars, counters, tiles) need stable
+  dimensions (`minmax`, aspect ratio, min/max bounds, or container-relative
+  sizing) so hover states, labels, icons, and dynamic content do not shift the
+  layout.
+- Text must not overlap adjacent content or overflow its control. Wrap, shorten,
+  or constrain before accepting truncation of primary content.
+- Test every state (empty, loading, error, success, permission-denied) at each
+  tier. Coverage at one breakpoint does not count.
 
-## 5. shadcn/ui as the Component Foundation
+## 5. shadcn/ui as the component foundation
 
-- **Every interface design must include a shadcn/ui component template.** This is mandatory output for any `architect` package that includes a user-facing surface.
-- **Every interface design must include a UI/UX handoff template.** Route inventory, screen states, API/data dependencies, validation behavior, and responsive evidence are mandatory output for any user-facing surface.
-- Use shadcn/ui components as the default building blocks: `Button`, `Input`, `Label`, `Form`, `Dialog`, `Sheet`, `DropdownMenu`, `Tabs`, `Table`, `Toast`, `Tooltip`, `Separator`, `ScrollArea`, etc. Do not hand-roll equivalents.
-- Use the project's existing icon library, or `lucide-react` by default, for familiar icon actions. Icon-only buttons need accessible names and tooltips when the meaning is not universal.
-- Style via Tailwind utility classes and shadcn's CSS variable tokens (`--background`, `--foreground`, `--primary`, `--border`, `--radius`, etc.). No inline styles, no one-off CSS files for things tokens already cover.
-- Theming uses shadcn's `cn()` helper and the `class-variance-authority` (`cva`) pattern for variants.
-- Dark mode must work out of the box via the `.dark` class and the standard token overrides.
-- Custom components extend shadcn primitives; they do not replace them. If a primitive does not exist, build a new one in the same shape (Radix-based, token-driven, variant-typed).
+- Every interface design includes a shadcn/ui component template. Mandatory
+  output for any `architect` package with a user-facing surface.
+- Every interface design includes a UI/UX handoff template: route inventory,
+  screen states, API and data dependencies, validation behavior, and responsive
+  evidence.
+- Use shadcn/ui primitives as the default building blocks (`Button`, `Input`,
+  `Label`, `Form`, `Dialog`, `Sheet`, `DropdownMenu`, `Tabs`, `Table`, `Toast`,
+  `Tooltip`, `Separator`, `ScrollArea`). Do not hand-roll equivalents.
+- Use the project's icon library, or `lucide-react` by default. Icon-only
+  buttons need accessible names and tooltips when the meaning is not universal.
+- Style via Tailwind utilities and shadcn CSS variable tokens (`--background`,
+  `--foreground`, `--primary`, `--border`, `--radius`). No inline styles and no
+  one-off CSS for what tokens already cover.
+- Variants use the `cn()` helper and the `class-variance-authority` pattern.
+- Dark mode works through the `.dark` class and standard token overrides.
+- Custom components extend shadcn primitives in the same shape (Radix-based,
+  token-driven, variant-typed); they do not replace them.
 
-### Required Component Design Template
-
-Every design deliverable includes this section, filled out concretely (not as placeholder text):
+### Required component template
 
 ```markdown
 ## Component Template (shadcn/ui)
 
-**Primitives used**: [list, e.g. Button, Input, Form, Dialog, Card-only-if-justified]
+**Primitives used**: [e.g. Button, Input, Form, Dialog, Card-only-if-justified]
 **New components introduced**: [name + one-line purpose, or "none"]
-**Token overrides**: [list any --primary, --radius, etc. changes, or "defaults"]
-**Variant matrix**: [for each new/customized component: variants × sizes × states]
-**Composition example**: [short JSX/TSX snippet showing the component composed for the primary screen]
-**Responsive behavior**: [how the component reflows across the six tiers above]
-**Dark mode**: [confirmed working / token deltas required]
-**Accessibility**: [keyboard map, ARIA, focus order, contrast ratios verified]
+**Token overrides**: [--primary, --radius, etc., or "defaults"]
+**Variant matrix**: [per new or customized component: variants x sizes x states]
+**Composition example**: [short TSX snippet for the primary screen]
+**Responsive behavior**: [reflow across the six tiers above]
+**Dark mode**: [confirmed working, or token deltas required]
+**Accessibility**: [keyboard map, ARIA, focus order, verified contrast ratios]
 ```
 
-A design package missing this section is incomplete and must not pass the design gate.
-
-### Required UI/UX Handoff Template
-
-Every user-facing design deliverable also includes this section, filled out concretely:
+### Required UI/UX handoff
 
 ```markdown
 ## UI/UX Handoff
 
-**Route / screen inventory**: [route, purpose, primary user, entry points, exit points]
-**Workflow and state matrix**: [loading, empty, error, success, permission-denied, disabled, optimistic/pending mutation states per screen]
-**API / data dependency map**: [screen -> endpoint/query/mutation -> cache key/state owner -> retry behavior]
-**Forms and validation**: [field-level client validation, server validation, error placement, success feedback]
-**Responsive evidence**: [behavior at small mobile, mobile, tablet, desktop, large desktop, ultrawide]
-**Interaction details**: [keyboard path, focus management, destructive confirmations, undo/retry affordances]
-**Text fit / overflow checks**: [long labels, narrow controls, localization-sensitive strings, empty/error copy]
+**Route / screen inventory**: [route, purpose, primary user, entry and exit points]
+**Workflow and state matrix**: [loading, empty, error, success, permission-denied, disabled, optimistic per screen]
+**API / data dependency map**: [screen -> endpoint -> cache key / state owner -> retry behavior]
+**Forms and validation**: [client validation, server validation, error placement, success feedback]
+**Responsive evidence**: [behavior at each of the six tiers]
+**Interaction details**: [keyboard path, focus management, destructive confirmations, undo and retry]
+**Text fit / overflow checks**: [long labels, narrow controls, localization-sensitive strings]
 **Copy and empty-state rules**: [labels, error copy, empty-state action, permission-denied language]
 ```
 
-A design package missing this section is incomplete and must not pass the design gate.
+Both sections are filled concretely, not with placeholder text. A design package
+missing either one does not pass the design gate.
 
-## 6. Accessibility as a First-Class Constraint
+## 6. Accessibility as correctness
 
-- WCAG 2.2 AA minimum for text contrast (4.5:1 body, 3:1 large/UI).
-- Visible focus rings on every interactive element. Never `outline: none` without an equivalent custom indicator.
-- Semantic HTML before ARIA. Use ARIA only to fill gaps the platform does not cover.
+- WCAG 2.2 AA minimum for text contrast (4.5:1 body, 3:1 large and UI).
+- Visible focus rings on every interactive element. Never `outline: none` without
+  an equivalent custom indicator.
+- Semantic HTML before ARIA. Use ARIA only to fill platform gaps.
 - Honor `prefers-reduced-motion` for any non-essential motion.
 
-## 7. Gate Behavior
+An inaccessible flow is a broken flow, not a polish item.
 
-The frontend gate (`gatekeeper-design`) and review skills (`design-qa`, `frontier`) must reject any package that:
+## 7. Gate behavior
+
+`gatekeeper-design`, `design-qa`, and `frontier` reject any package that:
 
 - Uses cards as a default grouping primitive without specific justification.
-- Lacks the shadcn Component Template section.
-- Lacks the UI/UX Handoff section with route inventory, state matrix, API/data dependency map, validation behavior, and responsive evidence.
-- Lacks documented behavior for all six responsive tiers.
-- Introduces off-scale spacing, ad-hoc colors, or a second typographic family without a recorded exception.
-- Treats accessibility or responsive coverage as a follow-up.
+- Lacks the component template section (§5).
+- Lacks the UI/UX handoff section with route inventory, state matrix, API and
+  data dependency map, validation behavior, and responsive evidence (§5).
+- Lacks documented behavior for all six responsive tiers (§4).
+- Introduces off-scale spacing, ad-hoc colors, or a second typographic family
+  without a recorded exception (§3).
+- Treats accessibility or responsive coverage as follow-up work (§6).
 
-Reviewers cite this doctrine by section number when issuing findings.
+## 8. Gate evidence
+
+Two keys in [gates.yaml](gates.yaml) carry this doctrine mechanically:
+
+- `ui_evidence` at `design-to-build`, submitted by `commander`. It states that
+  the design package contains the §5 component template and UI/UX handoff, or
+  carries the applicability record for the sanctioned fallback
+  `no user-facing surface - design system not engaged`.
+- `rendered_verification` at `review-to-delivery`, submitted by `code-chief` and
+  produced by `design-qa`. It is a typed `render` record: hashed captures, the
+  breakpoints and themes covered, and `inputs` bound to the rendered source by
+  sha256. A run with no visible change carries the applicability record for
+  `no visible surface changed - rendered verification not applicable`.
+
+A render record with `result.status: inferred` is accepted only with a stated
+limitation and is labelled as inferred, never as observed.

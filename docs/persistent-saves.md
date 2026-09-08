@@ -1,86 +1,124 @@
 # Persistent Saves
 
-Supreme Team includes a persistent save system that writes pipeline state,
-deliverables, gatekeeper verdicts, and audit trails to disk as the pipeline
-runs. This removes dependency on the context window and enables cross-session
-resume.
+Everything the pipeline produces goes to disk while it runs: run state,
+deliverables, evidence, verdicts. So the next session resumes from evidence rather
+than from memory, which is the only kind of resume that survives a crash.
 
-## How It Works
+Full contract in [`skills/save-protocol.md`](../skills/save-protocol.md).
 
-When admiral (or any sub-orchestrator in standalone mode) starts a pipeline run,
-it creates a `skillset-saves/` directory in the **active project's workspace
-root**:
+![Crash recovery and state validation](assets/10_recovery.jpg)
 
+## Layout
+
+Saves live in `skillset-saves/` inside the project you are working on, never in
+the Supreme Team source tree.
+
+```text
+skillset-saves/
+  _latest.md                       # pointer: run_id, revision, updated_at
+  runs/{run-id}/
+    _state.md                      # run state
+    _lock.md                       # lock with heartbeat
+    _audit-trail.md                # append-only events
+    _journal.json                  # exists only mid-publish
+    _history/                      # rev-<n>.state.json / rev-<n>.lock.json
+    intake/report_grilling.md      # the hashed decisions artifact
+    design/                        # one directory per phase
+      manifest.json                #   the gate submission
+      reports/                     #   reports, plans, summaries
+      artifacts/                   #   tokens, components, snapshots
+      evidence/                    #   command logs, scans, captures
+      packages/                    #   exported archives
+      verdict_design-to-build.json #   the gatekeeper's durable verdict
+    build/  review/  security/  investigation/  qa/  skill-creation/  release/
 ```
 
-## Repository Hygiene
+Your application source keeps its own layout. Evidence that depends on it binds by
+`path` plus `sha256`, so a changed source file fails the gate as `input hash
+drift` instead of silently going stale.
 
-`skillset-saves/` is local runtime state. It contains run locks, audit trails,
-handoff packages, and resumable deliverables for the current workspace. The
-directory is intentionally listed in `.gitignore` and must not be committed to
-the Supreme Team source repository.
+## One writer per path
 
-Keep `skillset-saves/` when you want Admiral to resume or audit a local run.
-Delete it only when you intentionally want to discard local run history.
-your-project/
-├── skillset-saves/
-│   ├── _index.md          # Registry of all pipeline runs
-│   ├── _latest.md         # Pointer to active run
-│   ├── _save-protocol.md  # Self-documenting copy of save specification
-│   └── runs/
-│       └── run-001_2026-04-07_my-project/
-│           ├── _state.md          # State machine snapshot (resume file)
-│           ├── _lock.md           # Advisory session lock (lease-based)
-│           ├── _audit-trail.md    # Every state transition logged
-│           ├── design/            # Design phase deliverables + verdicts
-│           ├── build/             # Build phase deliverables + verdicts
-│           └── review/            # Review phase reports + verdicts
-├── src/
-└── ...
+This is the rule that keeps concurrent phases from stepping on each other.
+
+`session-memory` owns the run record and writes it only through
+`skills/harness/hooks/save_run.py`. Each phase lead owns its phase directory. A
+specialist writes only the artifact its delegation named. Gatekeepers write
+verdicts and never touch a submission.
+
+[`save-ownership.yaml`](../skills/save-ownership.yaml) is the path-level policy;
+[`ownership.yaml`](../skills/ownership.yaml) is the artifact-level owner map.
+`skills/validation/test_save_contracts.py` checks the two agree, and
+`pre_tool_use.py` denies edit-tool writes to core run files outright.
+
+## Lifecycle
+
+```bash
+python skills/harness/hooks/save_run.py create     --run-id <run> --evidence <path>
+python skills/harness/hooks/save_run.py checkpoint --run-id <run> --expect-revision <n> --evidence <path>
+python skills/harness/hooks/save_run.py status     --run-id <run>
+python skills/harness/hooks/save_run.py complete   --run-id <run>
+python skills/harness/hooks/save_run.py recover    --run-id <run> --reason "<why>" [--rollback]
 ```
 
-## Key Features
+`create` runs a write, read, and delete probe before claiming anything, and
+refuses while another run holds the session pin. Persistence is active only once
+it returns `ok`.
 
-- **Cross-session resume**: Start a pipeline, close the conversation, come back
-  later — admiral detects the active run and offers to resume from exactly where
-  you left off
-- **Failure state recovery**: Crash-resilient state machine with
-  `{PHASE}_GATE_PENDING`, `{PHASE}_GATE_REVISE`, `{PHASE}_FAILED`, and
-  `DISPUTED_AWAITING_USER` states — session crashes never cause duplicate
-  submissions or lost verdicts
-- **Lease-based session locking**: `_lock.md` with heartbeat refresh prevents
-  concurrent session corruption and enables stale-session detection on resume
-- **Sub-orchestrator support**: Each sub-orchestrator (commander,
-  build-management, code-chief) participates in the save tree with full lock
-  lifecycle, skip-records, and resume protocol. Per the entry-routing doctrine,
-  delivery-lifecycle work initiates through admiral, so a sub-orchestrator
-  reached cold hands off to admiral first rather than starting an independent run
-- **Idempotent gatekeeper submissions**: Every handoff carries a unique
-  `submission_id`; on resume, existing verdicts are detected before resubmission
-- **State-artifact consistency validation**: On every resume, a 6-step check
-  detects and corrects orphaned verdicts, orphaned packages, pending
-  escalations, and state/artifact desync
-- **Session boundary tracking**: `SESSION_START`, `SESSION_CRASH_DETECTED`,
-  `SESSION_RESUME`, and `SESSION_END` events with session IDs for crash
-  detection
-- **Context degradation tiers**: Four-tier system (Normal -> Save-Degraded ->
-  Context-Pressured -> Double-Degraded) with automatic detection and user
-  notification when artifacts are passed by reference instead of inline
-- **Deliverable backup**: Every SRS, architecture doc, test report, and security
-  audit is saved to disk as it's produced
-- **Audit trail**: Complete chronological log of every state transition,
-  gatekeeper verdict, session boundary, and revision cycle
-- **Graceful degradation**: If saves fail or are unavailable, the pipeline
-  continues with in-context artifacts; critical state transitions retry once
-  before warning the user about persistence gaps
-- **Self-documenting**: A copy of `skills/save-protocol.md` is placed in
-  `skillset-saves/` so the directory structure is understandable on its own
+Checkpoint before every delegation and at every returned boundary. Each checkpoint
+snapshots the previous revision into `_history/`, registers evidence hashes,
+refreshes the heartbeat, and publishes state, lock, and pointer atomically behind
+`_journal.json`.
 
-The save check runs at admiral startup: it classifies the latest run as
-active/inactive/orphaned/missing/unreadable, resumes an active or recoverable
-run before starting a new one, and rebuilds a missing or stale `_latest.md`
-pointer by scanning `runs/`. A lost pointer is never treated as a lost run.
+An interrupted publish shows up as `interrupted` and is repaired with
+`recover --rollback`. While the journal exists, every other operation is refused
+rather than layering a second partial write on top of the first.
 
-See `skills/save-protocol.md` for the complete specification — directory
-structure, file formats, the write-capability probe, mode re-check, session pin,
-save triggers, and the resume protocol.
+Exit codes matter here. 0 is `ok`. 1 is `refused`, which is a contract violation to
+resolve, never something to work around by hand-editing save files. 2 is
+`degraded`, meaning the write failed and nothing coherent was published.
+
+## Locks and staleness
+
+A lock records owner, status, session pin, revision, and an ISO-8601 heartbeat.
+Active state needs a pinned, held lock. Terminal state needs an unpinned, released
+one. A lock goes stale when its heartbeat is more than 30 minutes old.
+
+With hooks registered, `post_tool_use.py` refreshes the heartbeat from real host
+activity, throttled to once every five minutes, so an attended run does not go
+stale mid-phase. It will not revive a lock that is already stale.
+
+Reclaiming a stale lock requires `recover --reason`, which writes the stale lock's
+path, heartbeat, owner, and sha256 into the audit trail before taking it. Nothing
+disappears quietly.
+
+## What startup sees
+
+`save_run.py status` (or the readiness diagnostic) classifies saved state as
+active, inactive, complete, stale, orphaned, conflicting, corrupt, interrupted,
+missing, or unreadable. Only a coherent fresh active or orphaned record reinforces
+the session pin.
+
+`_latest.md` is a pointer, not the truth. When it is missing, stale, or disagrees
+with a reclaimable run, scan `runs/` before concluding there is nothing to resume.
+
+A lost pointer is not a lost run.
+
+## Resume and rewind
+
+On resume, verify the pointer, lock, owner, revision, referenced artifacts,
+hashes, and evidence before picking a state. Then continue from the next
+incomplete boundary.
+
+When upstream evidence changes, rewind to the earliest affected boundary and
+invalidate only the verdicts that actually depend on it. A verdict survives only
+when `check.py --prior` reports `prior_reusable: true`.
+
+## Repository hygiene
+
+`skillset-saves/` is local runtime state: locks, audit trails, gate packages, and
+resumable deliverables for the current workspace. It is in `.gitignore` and should
+stay there.
+
+Keep it to resume or audit a run. Delete it when you actually mean to throw that
+history away.

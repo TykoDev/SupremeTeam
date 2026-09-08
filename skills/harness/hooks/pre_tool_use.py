@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Action Realization hook (LIFE-HARNESS Layer 3) for SupremeTeam.
+Action Realization hook (LIFE-HARNESS Layer 3) for Supreme Team.
 
 Runs as a host ``PreToolUse``/pre-tool hook. It validates a generated action
 *before* the host executes it and BLOCKS the ones that would deterministically
 fail or violate an active guard/freeze boundary. This is the deterministic
-expression of the otherwise-advisory ``safety-guardrails`` skills.
+enforcement of the recorded `.harness-state/guard-state.json` guard/freeze boundary.
 
 Doctrine (../../harness-doctrine.md):
-  - section 3: local & minimal, evidence-triggered, fail open.
-  - section 0: inert on a competent action. Every rule below fires only on a
+  - Principles: local & minimal, evidence-triggered, fail open.
+  - Principles: inert on a competent action. Every rule below fires only on a
     mechanically certain signal (a literal dangerous pattern or a path inside a
     recorded frozen boundary) — never on ambiguous intent — so a strong backbone
     is unaffected.
@@ -28,8 +28,15 @@ import _state
 # Literal, unambiguous destructive shell patterns. Conservative on purpose:
 # only catch commands that are almost never a legitimate agent action.
 _DANGEROUS = [
-    (r"\brm\s+-rf\s+(/|~|\$HOME|\*)(\s|$)", "recursive force-delete of a root/home/glob target"),
-    (r"\brm\s+-rf\s+--no-preserve-root", "recursive delete with --no-preserve-root"),
+    (r"\brm\s+(?:-\S+\s+)*--no-preserve-root", "recursive delete with --no-preserve-root"),
+    # PowerShell / cmd equivalents of a recursive drive, root, or home wipe. The
+    # target must be a *bare* root (C:\, /, ~, $HOME); a path underneath it does
+    # not match, so `Remove-Item -Recurse -Force .\build` stays allowed.
+    (r"\b(?:Remove-Item|ri|rd|rmdir|del|erase)\b(?=[^\n;|&]*\s-(?:Recurse|r)\b)[^\n;|&]*?\s['\"]?"
+     r"(?:[A-Za-z]:[\\/]?|/|~|\$HOME|\$env:USERPROFILE)['\"]?(?:\s|$|;)",
+     "recursive delete of a drive, root, or home target"),
+    (r"\brd\s+/s\b[^\n;|&]*\s[A-Za-z]:\\?(?:\s|$)", "recursive removal of a drive root"),
+    (r"\bformat(?:\.com)?\s+[A-Za-z]:(?:\s|$)", "format of a drive"),
     (r":\(\)\s*\{\s*:\|:&\s*\}\s*;:", "shell fork bomb"),
     (r"\bmkfs(\.\w+)?\s+/dev/", "filesystem format of a device"),
     (r"\bdd\b.*\bof=/dev/(sd|nvme|hd)", "raw disk overwrite via dd"),
@@ -46,8 +53,44 @@ _DANGEROUS = [
      "force-push to a protected branch (main/master)"),
 ]
 
+# `rm` with a recursive flag in any spelling (-rf, -fr, -Rf, -r -f, --recursive)
+# against a bare root, home, or glob target. Flags are parsed rather than
+# pattern-matched so flag order and combination cannot slip past the guard.
+_RM_CALL = re.compile(r"(?:^|[\s;&|(`])rm\s+((?:-{1,2}[\w-]+\s+)+)((?:[^\s;&|]+\s*)+)")
+_ROOT_TARGET = re.compile(r"^['\"]?(?:/|/\*|~|~/\*|\$HOME|\$HOME/\*|\$env:USERPROFILE|\*)['\"]?$")
+
+
+def _rm_wipes_root(cmd: str) -> bool:
+    for match in _RM_CALL.finditer(cmd):
+        flags = match.group(1).split()
+        recursive = any(
+            flag == "--recursive" or (flag.startswith("-") and not flag.startswith("--") and any(c in "rR" for c in flag[1:]))
+            for flag in flags
+        )
+        if not recursive:
+            continue
+        for target in match.group(2).split():
+            if not target.startswith("-") and _ROOT_TARGET.match(target):
+                return True
+    return False
+
+
 # Tools whose input names a filesystem path we can match against a boundary.
 _PATH_KEYS = ("file_path", "path", "notebook_path")
+
+# Core save-protocol files with a single sanctioned writer (save_run.py).
+_CORE_SAVE_FILE = re.compile(
+    r"(?:^|/)skillset-saves/(?:_latest\.md|runs/[^/]+/(?:_state\.md|_lock\.md|_audit-trail\.md|_journal\.json|_history/[^/]+))$"
+)
+# The same files named anywhere inside a shell command (redirect, tee, cp, mv...).
+_CORE_SAVE_TOKEN = re.compile(
+    r"skillset-saves/(?:_latest\.md|runs/[^\s\"'/]+/(?:_state\.md|_lock\.md|_audit-trail\.md|_journal\.json|_history/))"
+)
+_CORE_SAVE_REASON = (
+    "Blocked by harness Action Realization layer: core save files are written only by "
+    "skills/harness/hooks/save_run.py (create/checkpoint/heartbeat/complete/release/recover) "
+    "so revision lineage, history snapshots, and the audit trail stay coherent."
+)
 
 
 def _deny(reason: str) -> None:
@@ -81,9 +124,9 @@ def _written_paths(tool_input: dict) -> list:
 # coreutil, an in-place editor, a mutating git subcommand, or a mutating
 # PowerShell cmdlet/alias. A read-only command (cat/grep/ls/Get-Content) that
 # merely *references* a frozen path is NOT a write and must pass — blocking it
-# would violate harness-doctrine §0 (inert on a competent action). When mutation
+# would violate the doctrine's Principles (inert on a competent action). When mutation
 # cannot be determined, treat the command as non-mutating and let it proceed
-# (fail open / §0), rather than guessing.
+# (fail open per Principles), rather than guessing.
 _SHELL_MUTATION = re.compile(
     r">>?|>\|"                                                      # output redirection
     r"|(?<![\w.-])(?:rm|mv|cp|ln|dd|tee|truncate|shred|install|"    # mutating coreutils
@@ -112,6 +155,30 @@ def _path_token_present(cmd_norm: str, token: str) -> bool:
     return bool(re.search(pat, cmd_norm))
 
 
+def _glob_variants(glob: str) -> list:
+    """Expand a guard glob into the fnmatch patterns a target path is checked
+    against.
+
+    Host tools report absolute target paths (``D:/proj/src/payments/x.py``,
+    ``/home/u/proj/src/payments/x.py``) while guard globs are usually written
+    relative to the project root (``src/payments/**``). ``fnmatch`` requires a
+    full-string match, so a relative glob — one that does not start with a
+    drive letter, ``/``, or ``**`` — is additionally matched with a leading
+    ``*/`` prefix. The prefix anchors the glob's first literal segment at a
+    path-separator boundary, so the absolute form of a frozen path is caught
+    without loosening the boundary (``mysrc/payments/x.py`` still does not
+    match ``*/src/payments/**``). Backslashes are normalized to forward
+    slashes before matching.
+    """
+    g = str(glob).replace("\\", "/")
+    base = g.rstrip("/")
+    variants = [g, base + "/**"]
+    is_relative = not (g.startswith("/") or g.startswith("**") or re.match(r"^[A-Za-z]:", g))
+    if is_relative:
+        variants += ["*/" + g, "*/" + base + "/**"]
+    return variants
+
+
 def _glob_path_tokens(glob: str) -> list:
     """Return conservative literal path tokens for a guard glob.
 
@@ -133,6 +200,8 @@ def _glob_path_tokens(glob: str) -> list:
 
 def main() -> None:
     data = _state.read_hook_input()
+    _state.record_observation("PreToolUse", data)
+    _state.refresh_run_heartbeat(data, "PreToolUse")
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {}) or {}
     if not isinstance(tool_input, dict):
@@ -150,8 +219,14 @@ def main() -> None:
                     f"If this is genuinely intended, the owner must lift the guard "
                     f"(set allow_dangerous in .harness-state/guard-state.json) or use a narrower command."
                 )
+        if _rm_wipes_root(cmd):
+            _deny(
+                "Blocked by harness Action Realization layer: recursive delete of a root/home/glob target. "
+                "If this is genuinely intended, the owner must lift the guard "
+                "(set allow_dangerous in .harness-state/guard-state.json) or use a narrower command."
+            )
 
-    # --- Rule B: write into a frozen/blocked boundary (guard & freeze skills)
+    # --- Rule B: write into a frozen/blocked boundary (guard & freeze boundary)
     frozen = list(guard.get("frozen_globs", []) or []) + list(guard.get("blocked_globs", []) or [])
     if frozen:
         # Path-naming tools (Edit/Write/NotebookEdit): match the declared target
@@ -159,8 +234,8 @@ def main() -> None:
         if tool_name in ("Edit", "Write", "NotebookEdit"):
             candidates = _written_paths(tool_input)
             for glob in frozen:
-                g = str(glob).replace("\\", "/")
-                if any(fnmatch.fnmatch(p, g) or fnmatch.fnmatch(p, g.rstrip("/") + "/**") for p in candidates):
+                variants = _glob_variants(glob)
+                if any(fnmatch.fnmatch(p, v) for p in candidates for v in variants):
                     _deny(
                         f"Blocked by harness Action Realization layer: target is inside a frozen "
                         f"boundary ({glob}). Lift the freeze via the unfreeze skill before editing here."
@@ -180,6 +255,52 @@ def main() -> None:
                             f"Blocked by harness Action Realization layer: a mutating command targets a "
                             f"frozen boundary ({glob}). Lift the freeze via the unfreeze skill before proceeding."
                         )
+
+    # --- Rule D: read-only run. While an unreleased read_only record exists
+    # (recorded by explore-lead for the explore pipeline), the only writable
+    # locations are the record's allow globs (the run's own save path) and the
+    # harness state directory; save_run.py keeps writing the run records. An
+    # edit-tool write elsewhere, or a mutating shell command that names no
+    # allowed path, is denied. Read-only commands pass untouched.
+    read_only = guard.get("read_only") or []
+    if read_only:
+        allow = [".harness-state/**"]
+        for record in read_only:
+            allow += [str(g) for g in (record.get("allow") or []) if g]
+        run_ids = ", ".join(str(r.get("run_id", "?")) for r in read_only)
+        reason = (
+            f"Blocked by harness Action Realization layer: run {run_ids} is read-only (explore pipeline). "
+            "Only the run's own save path may change; record a branch decision and release the read_only "
+            "record in .harness-state/guard-state.json before changing anything else."
+        )
+        if tool_name in ("Edit", "Write", "NotebookEdit"):
+            for target in _written_paths(tool_input):
+                if not any(fnmatch.fnmatch(target, v) for g in allow for v in _glob_variants(g)):
+                    _deny(reason)
+        elif tool_name in ("Bash", "PowerShell"):
+            cmd = _command_text(tool_input)
+            if cmd and "save_run.py" not in cmd and _command_mutates(cmd):
+                cmd_norm = cmd.replace("\\", "/")
+                tokens = [t for g in allow for t in _glob_path_tokens(g)]
+                if not any(_path_token_present(cmd_norm, token) for token in tokens):
+                    _deny(reason)
+
+    # --- Rule C: core save files have one writer (save_run.py). A direct edit
+    # tool call on _state.md/_lock.md/_audit-trail.md/_latest.md/_journal.json
+    # under skillset-saves would bypass revision lineage, the history snapshot,
+    # and the append-only audit trail. A *mutating* shell command that names one
+    # of those files (redirect, tee, cp, mv, Set-Content...) is denied the same
+    # way unless it invokes save_run.py itself; read-only references pass. The
+    # save reader still classifies an incoherent result as corrupt, so this is
+    # a discipline aid, not the only line of defence.
+    if tool_name in ("Edit", "Write", "NotebookEdit"):
+        for target in _written_paths(tool_input):
+            if _CORE_SAVE_FILE.search(target):
+                _deny(_CORE_SAVE_REASON)
+    elif tool_name in ("Bash", "PowerShell"):
+        cmd = _command_text(tool_input)
+        if cmd and "save_run.py" not in cmd and _command_mutates(cmd) and _CORE_SAVE_TOKEN.search(cmd.replace("\\", "/")):
+            _deny(_CORE_SAVE_REASON)
 
     # No rule fired — stay silent and let the action proceed.
 

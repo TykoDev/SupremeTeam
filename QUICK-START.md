@@ -1,6 +1,8 @@
 # Quick Start
 
-Five steps. The first one is the only one that is strictly required.
+Five steps. The first one is the only one that is strictly required. Supreme Team
+needs **Python 3.13 or newer** for the runtime harness, hook verification, and
+readiness checks.
 
 ## 1. Install the skills
 
@@ -11,6 +13,7 @@ Pick one of the two setup options below.
 ```text
 Read Install.md and install Supreme Team for this assistant.
 Use the default all-teams install unless a safer local target is obvious.
+Register the runtime hooks as part of the install.
 If Install.md came from a GitHub URL, download the repo archive and copy skills/.
 ```
 
@@ -163,15 +166,17 @@ unresolved.
 
 Security, deployment, and production changes never qualify, however small.
 
-## If the scripts will not run
+## Manual install
 
-Manual copy of the common target. For upgrades, follow
+Copy the skills folder content into the common target, then register the hooks.
+Needs **Python 3.13 or newer** for the hook step. For upgrades, follow
 [Install.md](Install.md) instead so existing host mirrors get refreshed too.
 
 ```bash
 cd /path/to/SupremeTeam
 mkdir -p "$HOME/.agents/skills"
 cp -R skills/. "$HOME/.agents/skills/"
+python scripts/install_hooks.py --target claude --hook-root "$HOME/.agents/skills/harness/hooks"
 ```
 
 ```powershell
@@ -179,4 +184,8 @@ cd C:\path\to\SupremeTeam
 $destination = Join-Path $env:USERPROFILE ".agents\skills"
 New-Item -ItemType Directory -Force -Path $destination | Out-Null
 Copy-Item -Recurse -Force (Join-Path "skills" "*") -Destination $destination
+python scripts\install_hooks.py --target claude --hook-root "$destination\harness\hooks"
 ```
+
+Swap `--target` for your host (`codex`, `claude`, `copilot`; `cursor`/`opencode`
+write a plugin package). Skip the hook line to leave routing and guards advisory.

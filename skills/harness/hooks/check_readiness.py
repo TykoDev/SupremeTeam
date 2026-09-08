@@ -92,7 +92,7 @@ def _observations_for(project_root: Path, hook_states: dict) -> dict:
     return {"summary": summary, "events": events}
 
 
-def declared_minimum(default: str = "3.9") -> str:
+def declared_minimum(default: str = "3.13") -> str:
     """Read the Python floor from runtime-manifest.yaml, the runtime contract.
 
     A hardcoded second opinion here would let readiness report "too old" on a

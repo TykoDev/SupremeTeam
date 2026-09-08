@@ -83,11 +83,11 @@ single-team install: every skill resolves the root doctrine files, and every
 
 ## Python
 
-The harness, hook verifier, and registration helper need Python **3.9+**
+The harness, hook verifier, and registration helper need **Python 3.13 or newer**
 ([`skills/runtime-manifest.yaml`](skills/runtime-manifest.yaml) is the authority).
 Check with `python --version`, `py -3 --version`, or `python3 --version`. If none
-is compatible, ask before installing one; the skill files still copy without it,
-but hook verification and registration stay unavailable.
+is 3.13+, ask before installing one; the skill files still copy without it, but
+hook verification and registration stay unavailable.
 
 ## Runtime hooks
 
@@ -125,21 +125,28 @@ Once a run is active, one command covers Python, hooks, and saves:
 python skills/harness/hooks/check_readiness.py --host auto --require-active-run
 ```
 
-## Manual copy (fallback)
+## Manual install (fallback)
 
-If the scripts will not run, copy the common target by hand. This skips host-mirror
-refresh and stale-file cleanup, so prefer the installer for upgrades.
+If the scripts will not run, copy the skills folder content into the common target
+by hand, then register the hooks. This skips host-mirror refresh and stale-file
+cleanup, so prefer the installer for upgrades. Needs **Python 3.13 or newer** for
+the hook step.
 
 ```powershell
 $destination = Join-Path $env:USERPROFILE ".agents\skills"
 New-Item -ItemType Directory -Force -Path $destination | Out-Null
 Copy-Item -Recurse -Force (Join-Path "skills" "*") -Destination $destination
+python scripts\install_hooks.py --target claude --hook-root "$destination\harness\hooks"
 ```
 
 ```bash
 mkdir -p "$HOME/.agents/skills"
 cp -R skills/. "$HOME/.agents/skills/"
+python scripts/install_hooks.py --target claude --hook-root "$HOME/.agents/skills/harness/hooks"
 ```
+
+Swap `--target` for your host (`codex`, `claude`, `copilot`; `cursor`/`opencode`
+write a plugin package). Skip the hook line to leave routing and guards advisory.
 
 ## When it goes wrong
 

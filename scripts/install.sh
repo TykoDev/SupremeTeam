@@ -318,7 +318,7 @@ minimum_python_version() {
             return 0
         fi
     fi
-    printf '3.9'
+    printf '3.13'
 }
 
 python_satisfies_minimum() {

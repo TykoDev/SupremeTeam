@@ -265,7 +265,7 @@ function Get-MinimumPythonVersion {
         # fall through to the default
     }
 
-    return "3.9"
+    return "3.13"
 }
 
 function Test-PythonMinimumVersion {

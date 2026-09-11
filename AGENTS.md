@@ -169,6 +169,7 @@ Not skills. These are the files the skills are checked against.
 | `skills/routing-doctrine.md` | Entry routing, precedence, Tier 0 fast path, loop guard, session pin |
 | `skills/grill-me-doctrine.md` | Intake interview; produces the hashed decisions artifact |
 | `skills/design-doctrine.md` | Frontend design system, responsive tiers, accessibility, gate evidence |
+| `skills/taste-doctrine.md` | Canonical semantics, provenance, lifecycle, scope, and deterministic resolution for user presentation and interaction preferences |
 | `skills/harness-doctrine.md` | Lifecycle layers, failure taxonomy, engineering non-negotiables |
 | `skills/performance-doctrine.md` | Measured optimization, baselines, regression budgets |
 | `skills/save-protocol.md` | Save layout, startup, ownership, state and audit, resume and rewind |
@@ -214,7 +215,7 @@ never approve it.
 
 **47 skills**: Admiral 2, Design 6, Build 8, Review 11, Investigate 1,
 Skill-Maker 3, Session-Memory 1, Browser 4, Release 4, Safety 4, Testing 3. Plus
-the runtime harness, seven doctrine and protocol files, six canonical contracts,
+the runtime harness, eight doctrine and protocol files, six canonical contracts,
 and the machine-readable specs.
 
 `admiral`, `gatekeeper-admiral`, `investigate`, `skill-maker`, and

@@ -259,6 +259,21 @@
       ],
       "scripts": []
     },
+    "taste": {
+      "owner": "taste",
+      "boundary": "taste-review",
+      "stages": [
+        {"step": "intake", "owner": "taste", "artifact": "taste-intake"},
+        {"step": "diff", "owner": "taste", "artifact": "preference-diff"},
+        {"step": "confirmation", "owner": "taste", "artifact": "taste-confirmation"},
+        {"step": "conflict-analysis", "owner": "taste", "artifact": "taste-conflict-analysis"},
+        {"step": "persistence", "owner": "taste", "artifact": "taste-persistence-result"},
+        {"step": "effective-profile", "owner": "taste", "artifact": "effective-taste-profile"},
+        {"step": "consumer-handoff", "owner": "taste", "artifact": "taste-consumer-handoff"},
+        {"step": "package", "owner": "taste", "artifact": "taste-package"}
+      ],
+      "scripts": ["skills/harness/gatekeeper/check.py"]
+    },
     "skill-creation": {
       "owner": "skill-maker",
       "boundary": "skill-maker-to-delivery",

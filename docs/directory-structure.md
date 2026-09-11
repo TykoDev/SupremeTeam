@@ -23,7 +23,7 @@ SupremeTeam/
 │   ├── directory-structure.md            # This file
 │   └── assets/                           # Diagrams used across the docs
 └── skills/
-    ├── gates.yaml                        # Gate spec: 8 boundaries
+    ├── gates.yaml                        # Gate spec: 9 boundaries
     ├── pipelines.yaml                    # Pipeline map: 8 pipelines
     ├── ownership.yaml                    # One writer per artifact
     ├── save-ownership.yaml               # One writer per save path class

@@ -224,6 +224,19 @@ owners:
     does_not_write:
       - review-verdict
       - gate-verdict
+  taste:
+    role: preference intake, confirmation, conflict resolution, persistence, and effective-profile handoff
+    writes:
+      - taste-intake
+      - preference-diff
+      - taste-confirmation
+      - taste-conflict-analysis
+      - taste-persistence-result
+      - effective-taste-profile
+      - taste-consumer-handoff
+      - taste-package
+    does_not_write:
+      - gate-verdict
   session-memory:
     role: run lifecycle record, checkpoints, and durable learnings
     writes:
@@ -669,6 +682,38 @@ artifacts:
     evidence:
       - environment settings and target
       - secrets handling policy
+  - id: taste-intake
+    owner: taste
+    before: taste-review
+    evidence: [scope, intent, before revision]
+  - id: preference-diff
+    owner: taste
+    before: taste-review
+    evidence: [changed id sets, before and after digests]
+  - id: taste-confirmation
+    owner: taste
+    before: taste-review
+    evidence: [actor and timestamp, confirmed scope, exact candidate ids, source run]
+  - id: taste-conflict-analysis
+    owner: taste
+    before: taste-review
+    evidence: [conflicting ids, precedence decision, unresolved conflicts, accessibility and policy collisions]
+  - id: taste-persistence-result
+    owner: taste
+    before: taste-review
+    evidence: [requested destinations, committed revisions and hashes, atomicity and rollback results]
+  - id: effective-taste-profile
+    owner: taste
+    before: taste-review
+    evidence: [effective entries with source scope and source id, immutable digest]
+  - id: taste-consumer-handoff
+    owner: taste
+    before: taste-review
+    evidence: [consuming pipeline, effective-profile digest, applicability summary]
+  - id: taste-package
+    owner: taste
+    before: taste-review
+    evidence: [complete taste-review manifest and artifact hashes]
   - id: verification-plan
     owner: ship
     before: deploy-readiness

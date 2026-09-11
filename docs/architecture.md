@@ -14,7 +14,7 @@ every required script is actually on disk.
 
 ![The delivery lifecycle](assets/Intro.jpg)
 
-## The eight
+## The nine
 
 | Pipeline | Owner | Closes at | What it is for |
 |---|---|---|---|
@@ -24,10 +24,11 @@ every required script is actually on disk.
 | `security` | cso | `security-review` | Threat model, vulnerability scan, adversarial probe, remediation |
 | `investigation` | investigate | `investigation-review` | Reproduction, evidence chain, mechanism, bounded fix path |
 | `qa` | qa | `qa-review` | Test matrix, executed probes, defects, scoped fixes |
+| `taste` | taste | `taste-review` | Preference confirmation, conflict analysis, persistence, effective-profile handoff |
 | `skill-creation` | skill-maker | `skill-maker-to-delivery` | Skill and team drafting, review, packaging |
 | `release` | ship | `deploy-readiness` | Readiness, deploy config, rollout, release notes |
 
-The last five are not side channels. They run inside the same state machine as the
+The last six are not side channels. They run inside the same state machine as the
 first three, occupying a design-shaped or build-shaped state in their own phase
 directory, and meeting a gate at their own boundary.
 

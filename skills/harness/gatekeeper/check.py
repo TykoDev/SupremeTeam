@@ -33,8 +33,7 @@ Manifest schema
 ``schema_version`` 1 (default when absent) is the legacy flat-package shape.
 ``schema_version`` 2 additionally requires ``boundary``, ``owner``, and
 ``run_id`` (inside a run), forbids bare-string fallbacks in favour of typed
-applicability records, and validates typed evidence records (scan, render,
-probe, audit, findings, verdict, stack_lock, revision_ref) declared in the
+applicability records, and validates typed evidence records declared in the
 gate spec.
 
 Output: a JSON report on stdout. On engine error a JSON object carrying
@@ -119,6 +118,13 @@ def load_gate_spec(path: Path) -> dict:
             raise Engine(f"gate spec boundary {name!r} artifact_evidence not in required_evidence: {unknown}")
         if not isinstance(boundary.get("submitter"), str) or not boundary.get("submitter"):
             raise Engine(f"gate spec boundary {name!r} must name a submitter")
+        boundary_fallbacks = boundary.get("fallback_values", {})
+        if not isinstance(boundary_fallbacks, dict):
+            raise Engine(f"gate spec boundary {name!r} fallback_values must be a JSON object")
+        for key, values in boundary_fallbacks.items():
+            if key not in required or not isinstance(values, list) or not all(
+                    isinstance(v, str) and v for v in values):
+                raise Engine(f"gate spec boundary {name!r} has invalid fallback_values for {key!r}")
     fallbacks = spec.get("fallback_values", {})
     if not isinstance(fallbacks, dict):
         raise Engine("gate spec fallback_values must be a JSON object")
@@ -317,7 +323,7 @@ class Package:
         """True when value is a typed not-applicable record for a waivable key."""
         if not isinstance(value, dict) or value.get("applicable") is not False:
             return False
-        waivable = set(self.spec.get("fallback_values", {}))
+        waivable = set(self.spec.get("fallback_values", {})) | set(self.boundary.get("fallback_values", {}))
         if key not in waivable:
             self.failures.append(f"evidence not waivable: {key}")
             return True
@@ -327,7 +333,8 @@ class Package:
         return True
 
     def fallback_match(self, key: str, value: object) -> bool:
-        allowed = self.spec.get("fallback_values", {}).get(key, [])
+        allowed = (self.boundary.get("fallback_values", {}).get(key)
+                   or self.spec.get("fallback_values", {}).get(key, []))
         if isinstance(value, str):
             return value in allowed
         if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str):
@@ -385,6 +392,71 @@ class Package:
             # this package's own revision; it must be a non-empty scalar identifier.
             if isinstance(value, bool) or not isinstance(value, (str, int)) or not str(value).strip():
                 self.failures.append(f"{key} must name an approved upstream revision")
+        elif kind in {"preference_diff", "confirmation", "conflict_analysis",
+                      "persistence_result", "effective_profile", "consumer_handoff"}:
+            self.check_taste_record(key, kind, value)
+
+    def check_taste_record(self, key: str, kind: str, value: object) -> None:
+        """Validate the preference-management records used by taste-review."""
+        if not isinstance(value, dict):
+            self.failures.append(f"{key} must be a typed {kind} record at schema 2")
+            return
+        list_fields = {
+            "preference_diff": ("added", "updated", "deprecated", "revoked", "unchanged"),
+            "confirmation": ("candidate_ids",),
+            "conflict_analysis": ("conflicting_ids", "unresolved_conflicts",
+                                  "accessibility_policy_collisions"),
+            "persistence_result": ("requested_destinations", "committed_revisions"),
+            "effective_profile": ("entries",),
+        }.get(kind, ())
+        scalar_fields = {
+            "preference_diff": ("before_digest", "after_digest"),
+            "confirmation": ("actor", "timestamp", "confirmed_scope", "source_run"),
+            "conflict_analysis": ("precedence_decision",),
+            "persistence_result": ("hashes", "atomicity_status", "rollback_result"),
+            "effective_profile": ("digest",),
+            "consumer_handoff": ("consuming_pipeline", "effective_profile_digest",
+                                 "applicability_summary"),
+        }[kind]
+        for field in list_fields:
+            if not isinstance(value.get(field), list):
+                self.failures.append(f"{key} record requires list field {field}")
+        for field in scalar_fields:
+            if field == "hashes":
+                continue
+            item = value.get(field)
+            if not isinstance(item, str) or not item.strip():
+                self.failures.append(f"{key} record requires {field}")
+        id_fields = {
+            "preference_diff": list_fields,
+            "confirmation": ("candidate_ids",),
+            "conflict_analysis": list_fields,
+        }.get(kind, ())
+        for field in id_fields:
+            items = value.get(field)
+            if isinstance(items, list) and any(not isinstance(item, str) or not item.strip()
+                                               for item in items):
+                self.failures.append(f"{key} record requires string ids in {field}")
+        digest_fields = {
+            "preference_diff": ("before_digest", "after_digest"),
+            "effective_profile": ("digest",),
+            "consumer_handoff": ("effective_profile_digest",),
+        }.get(kind, ())
+        for field in digest_fields:
+            if not HEX64.match(str(value.get(field, "")).lower()):
+                self.failures.append(f"{key} record requires sha256 {field}")
+        if kind == "persistence_result":
+            hashes = value.get("hashes")
+            if not isinstance(hashes, dict) or not hashes or any(
+                    not HEX64.match(str(item).lower()) for item in hashes.values()):
+                self.failures.append(f"{key} record requires a non-empty hashes map of sha256 values")
+        if kind == "effective_profile" and isinstance(value.get("entries"), list):
+            for index, entry in enumerate(value["entries"]):
+                if not isinstance(entry, dict) or any(
+                        not str(entry.get(field, "")).strip()
+                        for field in ("id", "source_scope", "source_id")):
+                    self.failures.append(
+                        f"{key}.entries[{index}] requires id, source_scope, and source_id")
 
     def check_result_record(self, key: str, kind: str, value: object) -> None:
         if not isinstance(value, dict):

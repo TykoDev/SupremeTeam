@@ -87,6 +87,7 @@ phase_directories:
   - security
   - investigation
   - qa
+  - taste
   - delivery
   - release
   - skill-creation

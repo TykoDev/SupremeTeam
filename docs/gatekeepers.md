@@ -41,6 +41,7 @@ so this table cannot quietly rot.
 | `qa-review` | testing pipeline to GATE to COMPLETE | qa | `scope` `test_matrix` `executed_probes` `defects` `fixes_applied` `residual_risk` |
 | `skill-maker-to-delivery` | skill-maker pipeline to GATE to COMPLETE | skill-maker | `skills` `team_manifest` `link_report` `validation_report` |
 | `deploy-readiness` | GATE to RELEASE | ship | `approved_delivery` `deploy_config` `verification_plan` `rollback_plan` `human_go_required` |
+| `taste-review` | TASTE_PREVIEW to CONFIRMED_WRITE | taste | `effective_taste_profile` `taste_change_preview` `taste_review_record` `human_confirmation` |
 
 ## Evidence that has to be a file
 

@@ -1,6 +1,6 @@
 # Architecture
 
-Eight pipelines, one front door.
+Nine pipelines, one front door.
 
 Each pipeline closes at a gate boundary defined in
 [`skills/gates.yaml`](../skills/gates.yaml) and declared in
@@ -14,7 +14,7 @@ every required script is actually on disk.
 
 ![The delivery lifecycle](assets/Intro.jpg)
 
-## The eight
+## The nine
 
 | Pipeline | Owner | Closes at | What it is for |
 |---|---|---|---|
@@ -26,8 +26,9 @@ every required script is actually on disk.
 | `qa` | qa | `qa-review` | Test matrix, executed probes, defects, scoped fixes |
 | `skill-creation` | skill-maker | `skill-maker-to-delivery` | Skill and team drafting, review, packaging |
 | `release` | ship | `deploy-readiness` | Readiness, deploy config, rollout, release notes |
+| `taste` | taste | `taste-review` | Preference inheritance, safe previews, review, and confirmed atomic commits |
 
-The last five are not side channels. They run inside the same state machine as the
+The last six are not side channels. They run inside the same state machine as the
 first three, occupying a design-shaped or build-shaped state in their own phase
 directory, and meeting a gate at their own boundary.
 

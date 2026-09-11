@@ -147,6 +147,21 @@
         "verification_plan",
         "rollback_plan"
       ]
+    },
+    "taste-review": {
+      "guards": "TASTE_PREVIEW -> CONFIRMED_WRITE",
+      "submitter": "taste",
+      "required_evidence": [
+        "effective_taste_profile",
+        "taste_change_preview",
+        "taste_review_record",
+        "human_confirmation"
+      ],
+      "artifact_evidence": [
+        "effective_taste_profile",
+        "taste_change_preview",
+        "taste_review_record"
+      ]
     }
   },
   "fallback_values": {
@@ -175,7 +190,7 @@
       "single skill - no team manifest produced"
     ]
   },
-  "spec_revision": 1,
+  "spec_revision": 2,
   "evidence_types": {
     "tests": "probe",
     "runtime": "probe",

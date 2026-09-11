@@ -224,6 +224,22 @@ owners:
     does_not_write:
       - review-verdict
       - gate-verdict
+  taste:
+    role: preference pipeline owner; resolves profiles, previews changes, and commits confirmed mutations
+    writes:
+      - effective-taste-profile
+      - taste-change-preview
+      - taste-profile
+    consumes:
+      - taste-review-record
+    does_not_write:
+      - taste-review-record
+  taste-review:
+    role: read-only preference provenance, conflict, redaction, and confirmation reviewer
+    writes:
+      - taste-review-record
+    does_not_write:
+      - taste-profile
   session-memory:
     role: run lifecycle record, checkpoints, and durable learnings
     writes:
@@ -709,6 +725,31 @@ artifacts:
     evidence:
       - owner, scope, created_at
       - released_at when lifted
+
+  - id: effective-taste-profile
+    owner: taste
+    before: taste mutation preview
+    evidence:
+      - inherited global and project inputs with canonical hashes
+      - explicit-instruction precedence and unresolved conflicts
+  - id: taste-change-preview
+    owner: taste
+    before: human confirmation
+    evidence:
+      - immutable before and proposed after records
+      - expected revisions and canonical hashes
+  - id: taste-review-record
+    owner: taste-review
+    before: taste-review gate
+    evidence:
+      - provenance and redaction validation
+      - conflict and confirmation recommendation
+  - id: taste-profile
+    owner: taste
+    before: confirmed preference commit
+    evidence:
+      - atomically written canonical profile
+      - immutable run before and after record
 
 handoff_rules:
   - Owners may consume upstream artifacts but may not silently rewrite them.

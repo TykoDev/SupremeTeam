@@ -150,6 +150,15 @@ class SaveLifecycleTests(unittest.TestCase):
         proc = subprocess.run([sys.executable, str(HOOKS / "pre_tool_use.py")], input=payload, text=True, capture_output=True, env=env, check=False)
         self.assertEqual(proc.stdout.strip(), "")
 
+    def test_direct_edit_of_durable_taste_profile_is_denied_by_hook(self):
+        env = os.environ.copy()
+        env["CLAUDE_PROJECT_DIR"] = str(self.project)
+        payload = json.dumps({"tool_name": "Write", "tool_input": {
+            "file_path": str(self.project / "skillset-saves/preferences/taste.json")}})
+        proc = subprocess.run([sys.executable, str(HOOKS / "pre_tool_use.py")],
+                              input=payload, text=True, capture_output=True, env=env, check=False)
+        self.assertIn("taste_prefs.py", proc.stdout)
+
 
 class OutputPathTests(unittest.TestCase):
     def test_every_kind_resolves_inside_project(self):
@@ -239,6 +248,11 @@ class PackageCheckTests(unittest.TestCase):
         code, report = run(PACKAGE_CHECK, "--root", str(ROOT.parent))
         self.assertEqual(code, 0, report)
 
+    def test_preference_state_is_excluded_from_packages(self):
+        manifest = load_data(ROOT / "package-manifest.yaml")
+        self.assertIn("skillset-saves/**", manifest["exclude"])
+        self.assertIn(".supremeteam/**", manifest["exclude"])
+
 
 class OwnershipAgreementTests(unittest.TestCase):
     def test_save_ownership_agrees_with_ownership_and_pipelines(self):
@@ -264,8 +278,11 @@ class OwnershipAgreementTests(unittest.TestCase):
         pipelines = json.loads((ROOT / "pipelines.yaml").read_text(encoding="utf-8"))["pipelines"]
         for name in pipelines:
             with self.subTest(pipeline=name):
-                self.assertIn(name.replace("skill-creation", "skill-creation"), directories | {"design", "build", "review"})
+                phase = "preferences" if name == "taste" else name
+                self.assertIn(phase, directories | {"design", "build", "review"})
         self.assertIn("skills/scripts/scan_record.py", pipelines["security"]["scripts"])
+        self.assertIn("preferences", directories)
+        self.assertIn("skills/taste/taste_prefs.py", pipelines["taste"]["scripts"])
 
     def test_save_protocol_points_at_the_machine_contracts(self):
         protocol = (ROOT / "save-protocol.md").read_text(encoding="utf-8")

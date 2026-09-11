@@ -17,7 +17,7 @@ Kinds and destinations (relative to the project root):
     evidence    skillset-saves/runs/<run>/<phase>/evidence/<name>                  command logs, scan records, captures
     packages    skillset-saves/runs/<run>/<phase>/packages/<name>                  exported archives
     verdict     skillset-saves/runs/<run>/<phase>/verdict_<boundary>.json          writer: gatekeeper
-    preferences skillset-saves/preferences/taste.md                                writer: taste via taste_prefs.py
+    preferences skillset-saves/preferences/taste.json                                writer: taste via taste_prefs.py
     trajectory  .harness-state/trajectories/<run>/<session>.json                   writer: post_tool_use hook
     guards      .harness-state/guard-state.json                                    writer: guard/freeze/unfreeze
     product     <project>/<name>  (application source stays in the application's layout; snapshot into evidence with provenance)

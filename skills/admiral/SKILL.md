@@ -210,7 +210,7 @@ Persistence is mandatory when file-system tools are available. For the full save
 
 ## References
 
-- `gates.yaml` (skill set root) for the canonical gate spec: eight boundaries with their required evidence, artifact-backed keys, sanctioned fallbacks, typed records, and submitters.
+- `gates.yaml` (skill set root) for the canonical gate spec: nine boundaries with their required evidence, artifact-backed keys, sanctioned fallbacks, typed records, and submitters.
 - `pipelines.yaml` (skill set root) for the eight pipelines, their ordered stages, stage owners, closing boundary, and required scripts.
 - `ownership.yaml` and `save-ownership.yaml` (skill set root) for the one-writer contracts at artifact and path level.
 - `execution-contract.md` (skill set root) for the canonical preamble clauses and the tier table.

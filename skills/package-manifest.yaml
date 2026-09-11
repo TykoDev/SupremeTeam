@@ -8,6 +8,7 @@ exclude:
   - "**/*.pyc"
   - "skillset-saves/**"
   - ".harness-state/**"
+  - ".supremeteam/**"
   - "**/.harness-state/**"
   - "harness-test-work/**"
   - "**/*-workspace/**"

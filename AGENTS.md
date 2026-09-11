@@ -26,7 +26,7 @@ ordinary conversation.
 | Tier | Skills |
 |---|---|
 | Entry orchestrator | `admiral` |
-| In-scope, defers to admiral when reached cold | `design/commander`, `build/build-management`, `review/code-chief`, `skill-maker`, `investigate`, `session-memory`, `gatekeeper-admiral` |
+| In-scope, defers to admiral when reached cold | `design/commander`, `build/build-management`, `review/code-chief`, `taste`, `skill-maker`, `investigate`, `session-memory`, `gatekeeper-admiral` |
 | Internal specialists | every skill under `design/`, `build/`, `review/` not listed above |
 | Standalone tools | `safety-guardrails/*`, `browser-automation/*`, `release-and-deployment/*`, `testing-and-qa/*` |
 
@@ -44,8 +44,9 @@ Declared in `skills/pipelines.yaml`, gated by `skills/gates.yaml`.
 | `qa` | `qa` | `qa-review` |
 | `skill-creation` | `skill-maker` | `skill-maker-to-delivery` |
 | `release` | `ship` | `deploy-readiness` |
+| `taste` | `taste` | `taste-review` |
 
-## The 47 skills
+## The 49 skills
 
 ### Admiral layer
 
@@ -108,6 +109,13 @@ of 14 overlays behind `stack_lock`, not a skill.
 | **skill-reviewer** | `skills/skill-maker/skill-reviewer/SKILL.md` | Adversarial quality gate; scores 0 to 100 across ten rubric dimensions |
 | **session-memory** | `skills/session-memory/SKILL.md` | Owns the run record and durable learnings; writes only through `harness/hooks/save_run.py` |
 
+### Taste (2)
+
+| Skill | Path | Role |
+|---|---|---|
+| **taste** | `skills/taste/SKILL.md` | Preference pipeline owner; previewed, revision-safe project and global profiles |
+| **taste-review** | `skills/taste/taste-review/SKILL.md` | Read-only provenance, conflict, redaction, and confirmation review |
+
 ### Browser automation (4, standalone)
 
 | Skill | Path | Role |
@@ -152,8 +160,8 @@ Not skills. These are the files the skills are checked against.
 
 | File | Purpose |
 |---|---|
-| `skills/gates.yaml` | Eight boundaries: required and artifact-backed evidence, sanctioned fallbacks, typed records, finding policy, submitters |
-| `skills/pipelines.yaml` | Eight pipelines: ordered stages, owners, closing boundary, required scripts |
+| `skills/gates.yaml` | Nine boundaries: required and artifact-backed evidence, sanctioned fallbacks, typed records, finding policy, submitters |
+| `skills/pipelines.yaml` | Nine pipelines: ordered stages, owners, closing boundary, required scripts |
 | `skills/ownership.yaml` | One writer per design and handoff artifact |
 | `skills/save-ownership.yaml` | One writer per path class under `skillset-saves/` and `.harness-state/` |
 | `skills/team-manifest.yaml` | The roster every owner and submitter is checked against |
@@ -212,7 +220,7 @@ never approve it.
 
 ## Layout
 
-**47 skills**: Admiral 2, Design 6, Build 8, Review 11, Investigate 1,
+**49 skills**: Admiral 2, Design 6, Build 8, Review 11, Taste 2, Investigate 1,
 Skill-Maker 3, Session-Memory 1, Browser 4, Release 4, Safety 4, Testing 3. Plus
 the runtime harness, seven doctrine and protocol files, six canonical contracts,
 and the machine-readable specs.

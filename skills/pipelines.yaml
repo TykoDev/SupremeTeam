@@ -308,6 +308,37 @@
         }
       ],
       "scripts": []
+    },
+    "taste": {
+      "owner": "taste",
+      "boundary": "taste-review",
+      "stages": [
+        {
+          "step": "resolve-effective-profile",
+          "owner": "taste",
+          "artifact": "effective-taste-profile"
+        },
+        {
+          "step": "preview-mutation",
+          "owner": "taste",
+          "artifact": "taste-change-preview"
+        },
+        {
+          "step": "preference-review",
+          "owner": "taste-review",
+          "artifact": "taste-review-record"
+        },
+        {
+          "step": "confirmed-commit",
+          "owner": "taste",
+          "when": "human confirmation recorded",
+          "artifact": "taste-profile"
+        }
+      ],
+      "scripts": [
+        "skills/taste/taste_prefs.py",
+        "skills/scripts/validate_manifests.py"
+      ]
     }
   }
 }

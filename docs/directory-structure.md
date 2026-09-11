@@ -23,8 +23,8 @@ SupremeTeam/
 │   ├── directory-structure.md            # This file
 │   └── assets/                           # Diagrams used across the docs
 └── skills/
-    ├── gates.yaml                        # Gate spec: 8 boundaries
-    ├── pipelines.yaml                    # Pipeline map: 8 pipelines
+    ├── gates.yaml                        # Gate spec: 9 boundaries
+    ├── pipelines.yaml                    # Pipeline map: 9 pipelines
     ├── ownership.yaml                    # One writer per artifact
     ├── save-ownership.yaml               # One writer per save path class
     ├── team-manifest.yaml                # Roster
@@ -66,6 +66,7 @@ SupremeTeam/
     ├── investigate/                      # Investigation pipeline owner
     ├── skill-maker/                      # skill-creator, skill-reviewer
     ├── session-memory/                   # Run record and durable learnings
+    ├── taste/                            # Taste pipeline and preference store tooling
     ├── browser-automation/               # browse, open-browser, setup-browser-cookies, pair-agent
     ├── release-and-deployment/           # ship, land-and-deploy, setup-deploy, document-release
     ├── safety-guardrails/                # guard, careful, freeze, unfreeze

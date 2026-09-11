@@ -22,6 +22,19 @@ classes:
       - skillset-saves/runs/*/_journal.json
       - skillset-saves/runs/*/_history/*
     rule: Written only through save_run.py operations; the pre-tool hook denies direct edit-tool writes.
+  - id: durable-taste-profile
+    writer: taste
+    tool: skills/taste/taste_prefs.py
+    patterns:
+      - skillset-saves/preferences/taste.json
+      - skillset-saves/preferences/migration-evidence/*
+    rule: Durable project profile is outside run directories; writes are previewed, revision checked, and atomic.
+  - id: taste-run-evidence
+    writer: taste
+    tool: skills/taste/taste_prefs.py
+    patterns:
+      - skillset-saves/runs/*/preferences/*
+    rule: Immutable before/after, rollback, migration, and review evidence for each Taste run.
   - id: grilling-log
     writer: admiral
     patterns:
@@ -90,6 +103,7 @@ phase_directories:
   - delivery
   - release
   - skill-creation
+  - preferences
 phase_subdirectories:
   - reports
   - artifacts

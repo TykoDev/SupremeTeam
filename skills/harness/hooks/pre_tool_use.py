@@ -91,6 +91,13 @@ _CORE_SAVE_REASON = (
     "skills/harness/hooks/save_run.py (create/checkpoint/heartbeat/complete/release/recover) "
     "so revision lineage, history snapshots, and the audit trail stay coherent."
 )
+_TASTE_FILE = re.compile(r"(?:^|/)skillset-saves/preferences/(?:taste\.json|taste\.md)$")
+_TASTE_TOKEN = re.compile(r"skillset-saves/preferences/(?:taste\.json|taste\.md)")
+_TASTE_REASON = (
+    "Blocked by harness Action Realization layer: durable Taste preferences are written "
+    "only by skills/taste/taste_prefs.py so preview, confirmation, revision checks, and "
+    "migration evidence cannot be bypassed."
+)
 
 
 def _deny(reason: str) -> None:
@@ -297,10 +304,14 @@ def main() -> None:
         for target in _written_paths(tool_input):
             if _CORE_SAVE_FILE.search(target):
                 _deny(_CORE_SAVE_REASON)
+            if _TASTE_FILE.search(target):
+                _deny(_TASTE_REASON)
     elif tool_name in ("Bash", "PowerShell"):
         cmd = _command_text(tool_input)
         if cmd and "save_run.py" not in cmd and _command_mutates(cmd) and _CORE_SAVE_TOKEN.search(cmd.replace("\\", "/")):
             _deny(_CORE_SAVE_REASON)
+        if cmd and "taste_prefs.py" not in cmd and _command_mutates(cmd) and _TASTE_TOKEN.search(cmd.replace("\\", "/")):
+            _deny(_TASTE_REASON)
 
     # No rule fired — stay silent and let the action proceed.
 

@@ -68,7 +68,7 @@ spec digest.
 
 ## Boundaries
 
-`gates.yaml` (spec revision 1) carries eight boundaries. Each names the
+`gates.yaml` (spec revision 2) carries nine boundaries. Each names the
 transition it guards and the single skill permitted to submit it. The
 human-readable table lives in [`../../../docs/gatekeepers.md`](../../../docs/gatekeepers.md)
 and a drift test asserts it matches `gates.yaml` exactly.

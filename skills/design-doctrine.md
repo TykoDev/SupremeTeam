@@ -5,6 +5,39 @@ Binding rules for every frontend design and review skill: `architect`,
 violates them is not gate-eligible. Reviewers cite this doctrine by section
 number.
 
+## 0. Decision provenance and effective Taste
+
+Every design-system decision must trace to exactly one governing source:
+
+1. an effective Taste entry from the immutable snapshot resolved for this design revision;
+2. an explicit instruction from the current run;
+3. an existing project convention observed in the current project; or
+4. a documented designer/architect judgment, including its rationale.
+
+Commander obtains the effective-profile snapshot from Admiral/Taste when project
+or global Taste storage exists. The snapshot records its canonical digest,
+project and global source revisions, resolved entries, shadowed entries,
+unresolved conflicts, and applicability decision. Commander and Architect may
+consume it but never edit either preference store. Design feedback not already in
+the effective profile is a Taste candidate: record its source context, proposed
+preference, rationale, and affected artifacts, then route it through Admiral to
+the Taste pipeline for confirmation.
+
+The design package contains a traceability table with, at minimum, `decision_id`,
+`provenance_kind`, `effective_preference_id` (when applicable),
+`taste_snapshot_digest`, `design_system_artifacts`, and
+`rendered_verification_evidence`. Do not substitute mutable current Taste state
+for the digest-bound snapshot during design or review.
+
+Immediately before `design-to-build`, compare both recorded source revisions to
+Taste. Any change invalidates the snapshot and requires re-resolution and replay
+of affected decisions. A revision changed after design approval does not silently
+invalidate the run: record it as a candidate for the next design revision unless
+the user explicitly requests replay. Report a project preference that conflicts
+with approved project design; do not apply it retroactively. Treat revocation of
+a preference used by an active design as drift and ask the user whether to retain
+the approved design or replay with a newly resolved snapshot.
+
 ## 1. Unified, quiet surface
 
 - One coherent surface per screen. The page reads as a single composition, not a
@@ -141,10 +174,17 @@ An inaccessible flow is a broken flow, not a polish item.
 - Introduces off-scale spacing, ad-hoc colors, or a second typographic family
   without a recorded exception (§3).
 - Treats accessibility or responsive coverage as follow-up work (§6).
+- Lacks decision provenance or Taste traceability required by §0, or evaluates against a Taste digest other than the one approved with the design.
 
 ## 8. Gate evidence
 
-Two keys in [gates.yaml](gates.yaml) carry this doctrine mechanically:
+Three keys in [gates.yaml](gates.yaml) carry this doctrine mechanically:
+
+- `taste_snapshot` at `design-to-build`, submitted by `commander`. It is a
+  shipped, hashed snapshot artifact with the fields and traceability table from
+  §0. When no saved Taste profile is available, it carries the typed
+  applicability record for the sanctioned fallback
+  `no saved Taste profile available`.
 
 - `ui_evidence` at `design-to-build`, submitted by `commander`. It states that
   the design package contains the §5 component template and UI/UX handoff, or

@@ -37,16 +37,17 @@ This skill is a component of the **Admiral** delivery pipeline; `admiral` is the
 - Admiral-normalized design request with product goals, users, constraints, technology preferences, explicit non-goals, and YAGNI deferrals from intake.
 - Active design save context, prior phase verdicts, and revision lineage when resuming an interrupted design run.
 - Intake decisions, escalations, or skip requests that affect research, planning, architecture, API/UI handoff, or implementation guidance.
+- An effective-profile snapshot requested from Admiral/Taste whenever project or global Taste storage exists. It must carry the canonical digest, project and global source revisions, resolved entries, shadowed entries, unresolved conflicts, and applicability decision.
 
 ## Outputs
 
-- Design package combining research evidence, delivery plan, architecture/API/UI contracts, implementation spec, and Decision Register.
+- Design package combining research evidence, delivery plan, architecture/API/UI contracts, implementation spec, Decision Register, and `taste_snapshot` (or its sanctioned no-profile applicability record).
 - `design/gatekeeper-design` submission record with phase approvals, revision id, skip justifications, and unresolved design risks.
 - Design escalation packet naming the conflicting requirement, blocked decision, owner, and recommended default.
 
 ## Workflow
 
-1. Confirm the product goal, constraints, and technology preferences before assigning specialist work by running the `../../grill-me-doctrine.md` intake interview to a shared understanding — one question at a time, always recommending an answer and deferring non-load-bearing future branches with reopen triggers.
+1. Confirm the product goal, constraints, and technology preferences before assigning specialist work by running the `../../grill-me-doctrine.md` intake interview to a shared understanding — one question at a time, always recommending an answer and deferring non-load-bearing future branches with reopen triggers. If either Taste store exists, ask Admiral/Taste to resolve and return the effective-profile snapshot; do not reconstruct it from mutable stores. If no saved profile is available, record the `taste_snapshot` applicability fallback with reason, scope, and decider.
 2. Move through research, planning, architecture, API endpoint design, interface design, and implementation guidance in dependency order.
 3. Own the design gate cycle so no phase advances without a recorded approval or explicit skip rule.
 4. Publish one consolidated design package that downstream build work can use without reinterpreting the design intent.
@@ -57,6 +58,9 @@ This skill is a component of the **Admiral** delivery pipeline; `admiral` is the
 - **Proactive triggers**: Offer the next sensible action when the surrounding context clearly implies it and the skill can advance safely without a prompt loop.
 - **Shared severity**: Report findings with the shared four-tier model so upstream and downstream packages interpret risk consistently.
 - **Save-Protocol Adherence**: When a Save Context block is received from admiral, persist every phase state transition, gatekeeper capture, and consolidated package to the save path. Include a `### Save Context` block in every specialist delegation. Saving is mandatory, not optional.
+- **Taste read boundary**: Commander and Architect may consume the resolved snapshot but must not edit the project or global preference store. New design feedback is emitted as Taste candidate records (source context, proposed preference, rationale, and affected artifacts) and routed through Admiral to the Taste pipeline for user confirmation; it is not treated as an effective preference in the current run unless Taste confirms it and Commander re-resolves before the gate.
+- **Taste revision and drift**: Recheck the snapshot's project and global source revisions immediately before `design-to-build`. A changed revision before that gate invalidates the snapshot and requires Admiral/Taste re-resolution plus replay of affected design decisions. A change after approval is a next-revision candidate unless the user explicitly requests replay. Report a project preference that conflicts with an approved project design rather than applying it retroactively. Surface revocation of a preference used by an active design as drift and obtain a user decision.
+- **Taste traceability**: For each effective preference used, record a row from preference id and snapshot digest to the resulting design-system artifact(s), decision provenance, and the rendered-verification evidence slot that review must fill. Explicit run instructions, existing project conventions, and documented architect judgment use the same table with their provenance kind but no invented Taste id.
 
 ## Delegation Surface
 
@@ -83,6 +87,8 @@ Skip only when an upstream artifact is fully approved, structurally complete, an
 | Research, planning, architecture, or interface work disagree on target users, scope, or locked stack assumptions | Freeze package assembly, preserve the contradictory phase outputs, and route the mismatch back to the owning phase instead of normalizing it inside the final package. |
 | A phase deliverable looks polished but lacks the gatekeeper-design approval record for the current revision | Keep the phase closed, record the missing approval lineage, and rerun the gate before any later phase advances. |
 | An upstream design change invalidates downstream phase work already assembled into the package | Invalidate the affected downstream artifacts, log the drift explicitly, and replay the pipeline from the earliest changed boundary. |
+| A Taste source revision differs from the snapshot before `design-to-build` | Invalidate `taste_snapshot`, request re-resolution from Admiral/Taste, and replay every affected design-system decision before resubmission. |
+| A used Taste entry is revoked, or a project preference conflicts with an already approved project design | Surface drift and ask the user whether to replay; never mutate either store or retroactively rewrite the approved design. |
 | A requested skip would leave a required frontend, architecture, or implementation artifact absent from the design package | Reject the skip, name the missing boundary, and require an explicit scoped exception before proceeding. |
 | A requested skip would leave an API endpoint contract absent for a surface the build must implement | Reject the skip, require `design/architect` to produce the endpoint inventory and contracts, or record a scoped backend-only/no-endpoint exception. |
 

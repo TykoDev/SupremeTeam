@@ -86,6 +86,7 @@ class BoundaryManifestTests(unittest.TestCase):
         for boundary, key in (
             ("design-to-build", "ui_evidence"),
             ("design-to-build", "stack_lock"),
+            ("design-to-build", "taste_snapshot"),
             ("build-to-review", "security_evidence"),
             ("review-to-delivery", "rendered_verification"),
             ("security-review", "threat_model"),

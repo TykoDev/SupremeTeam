@@ -35,6 +35,7 @@ Route elsewhere when the concern is purely visual hierarchy, tokens, and polish 
 - Browser screenshots, Lighthouse reports, or console/network evidence when already captured.
 - Interface-review priorities such as required viewports, accessibility targets, performance budgets, or interactions explicitly out of scope.
 - Performance baselines or budgets when performance is claimed, including Core Web Vitals, bundle-size, interaction latency, or endpoint timing evidence where applicable.
+- The immutable Taste snapshot approved with the design, including its canonical digest and preference-to-artifact traceability rows.
 
 ## Outputs
 
@@ -44,7 +45,7 @@ Route elsewhere when the concern is purely visual hierarchy, tokens, and polish 
 
 ## Workflow
 
-1. Map the rendered flows, components, states, and viewports actually in scope before judging the interface behavior.
+1. Confirm the Taste snapshot digest equals the digest in the approved design package, then map the rendered flows, components, states, and viewports actually in scope before judging the interface behavior. Do not consult mutable current Taste stores as the conformance baseline.
 2. Inspect accessibility, interaction resilience, loading and error states, and component behavior with concrete viewport or runtime evidence.
 3. For performance claims, measure before recommending optimization: capture baseline symptom, identify the bottleneck, and verify improvement evidence instead of approving speculative micro-optimizations.
 4. Separate release-blocking UI failures from polish issues, then explain user impact, affected devices, and the most likely root cause for each major item.
@@ -54,6 +55,7 @@ Route elsewhere when the concern is purely visual hierarchy, tokens, and polish 
 
 - **Shared severity**: Report findings with the shared four-tier model so upstream and downstream packages interpret risk consistently.
 - **Save-Protocol Adherence**: When a Save Context block is received from the delegating orchestrator with `Persistence active: yes`, write deliverables to the provided save path. Saving is mandatory when persistence is active.
+- **Digest-bound Taste conformance**: Bind applicable behavior/accessibility findings and rendered evidence to the effective preference ids and exact snapshot digest used at design time. Treat later changes as reported drift or next-revision candidates unless the user explicitly requests replay.
 
 ## Collaboration Surface
 
@@ -80,6 +82,7 @@ Skip only when the surface required by the review lens does not exist, such as a
 | A responsive, keyboard, or assistive-technology issue appears plausible but the relevant state or breakpoint is missing | Record the incomplete evidence boundary and stop short of calling the issue confirmed across all devices or interaction modes. |
 | Component behavior depends on shared design-system code or feature flags outside the provided scope | Name the external dependency and keep the finding focused on the visible impact instead of inventing the hidden implementation. |
 | The observed defect is purely visual-fidelity drift rather than runtime behavior or accessibility | Hand the item to `review/design-qa` while keeping only the user-facing behavior risk in the frontier report. |
+| Current Taste revisions differ from the approved snapshot, or a used preference was revoked | Continue against the approved digest, report drift and affected traceability rows, and request a user retain/replay decision for revocation; never apply current global state retroactively. |
 
 ## Save Protocol
 

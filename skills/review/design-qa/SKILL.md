@@ -34,6 +34,7 @@ Route elsewhere when the concern is runtime performance, accessibility, or compo
 - Visual hierarchy spec, responsive layout targets, and interaction-polish expectations from the design package.
 - Prior design-qa findings or design-review scorecards when the surface is being re-evaluated.
 - Design-review priorities such as target breakpoints, brand-token exceptions, animation polish expectations, or excluded screens.
+- The immutable `taste_snapshot` artifact approved at `design-to-build`, its canonical digest, and preference-to-artifact traceability rows.
 
 ## Outputs
 
@@ -43,7 +44,7 @@ Route elsewhere when the concern is runtime performance, accessibility, or compo
 
 ## Workflow
 
-1. Compare the rendered screens against the intended visual hierarchy, token usage, spacing rhythm, typography, responsive composition, and interaction polish.
+1. Verify the supplied snapshot digest matches the digest recorded in the approved design package, then compare the rendered screens against the intended visual hierarchy, token usage, spacing rhythm, typography, responsive composition, and interaction polish. Never resolve against mutable current project or global Taste state.
 2. Inspect alignment, contrast, component composition, motion, and breakpoint behavior using screenshots, recordings, or rendered UI evidence.
 3. Separate fidelity breaks from intentional product tradeoffs, then explain which screen, state, or breakpoint is affected and why the deviation weakens the design system.
 4. Deliver a visual QA packet to `review/code-chief` with evidence anchors, affected states, and any runtime-behavior handoff needed from `review/frontier`.
@@ -53,6 +54,7 @@ Route elsewhere when the concern is runtime performance, accessibility, or compo
 - **Before/After Evidence**: Capture observable state before and after each intervention so improvements can be verified instead of asserted.
 - **Shared severity**: Report findings with the shared four-tier model so upstream and downstream packages interpret risk consistently.
 - **Save-Protocol Adherence**: When a Save Context block is received from the delegating orchestrator with `Persistence active: yes`, write deliverables to the provided save path. Saving is mandatory when persistence is active.
+- **Digest-bound Taste conformance**: Fill the design traceability rows with rendered-verification evidence for each applicable effective preference id and judge conformance only against the exact design-time snapshot digest. Later Taste changes are drift/candidates, not silent review criteria.
 
 ## Collaboration Surface
 
@@ -78,6 +80,7 @@ Skip only when the surface required by the review lens does not exist — for th
 | The screenshots or recordings do not cover the breakpoint or state where the deviation is suspected | Mark the finding as partial, name the missing breakpoint or state, and request the additional evidence before broadening the claim. |
 | Motion or interaction polish is mentioned but no recording captures the transition | Describe the gap, request motion evidence, and keep the report focused on the static fidelity issues that are actually visible. |
 | A deviation may be intentional product direction rather than a design-system miss | Ask for the governing design decision or note the ambiguity instead of treating every difference as a defect. |
+| Current Taste state differs from the approved snapshot | Preserve the design-time digest as the review baseline and report the difference as drift; replay only on explicit user request. A revoked used preference requires a user decision. |
 
 ## Save Protocol
 

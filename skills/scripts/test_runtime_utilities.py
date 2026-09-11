@@ -7,9 +7,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
-from output_paths import resolve
+from output_paths import global_data_root, resolve
 from package_check import REQUIRED_ASSET_GLOBS
 
 
@@ -17,6 +18,17 @@ SCRIPTS = Path(__file__).resolve().parent
 
 
 class RuntimeUtilitiesTests(unittest.TestCase):
+    def test_preference_paths_are_explicit_and_global_stays_outside_checkout(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as home:
+            root = Path(directory).resolve()
+            project_json, project_md = resolve(root, "project_preferences")
+            self.assertEqual(project_json, root / "skillset-saves/preferences/taste.json")
+            self.assertEqual(project_md, root / "skillset-saves/preferences/taste.md")
+            with mock.patch.dict("os.environ", {"SUPREMETEAM_HOME": home}, clear=False):
+                self.assertEqual(global_data_root(), Path(home).resolve())
+                global_json, global_md = resolve(root, "global_preferences")
+                self.assertNotIn(root, global_json.parents)
+                self.assertEqual(global_md.parent, global_json.parent)
     def test_declared_pipelines_have_output_destinations(self):
         pipelines = json.loads((SCRIPTS.parent / "pipelines.yaml").read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as directory:

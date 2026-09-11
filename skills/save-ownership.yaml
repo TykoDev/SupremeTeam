@@ -11,6 +11,12 @@ notes:
   - "Product source stays in the application's own layout. It is never written under skillset-saves; evidence that depends on it is snapshotted into <phase>/evidence/ with source path, revision, and sha256 provenance (typed-record inputs in gates.yaml)."
   - "Nothing under a run is deleted by automation. Superseded revisions move to _history/."
 classes:
+  - id: taste-preferences
+    writer: taste
+    tool: skills/taste/taste_prefs.py
+    patterns:
+      - skillset-saves/preferences/taste.md
+    rule: Taste is the sole semantic owner; canonical project preference mutation occurs atomically through taste_prefs.py.
   - id: core-run-record
     writer: session-memory
     tool: skills/harness/hooks/save_run.py
@@ -90,6 +96,7 @@ phase_directories:
   - delivery
   - release
   - skill-creation
+  - taste
 phase_subdirectories:
   - reports
   - artifacts

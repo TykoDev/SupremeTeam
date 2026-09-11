@@ -41,6 +41,7 @@ so this table cannot quietly rot.
 | `qa-review` | testing pipeline to GATE to COMPLETE | qa | `scope` `test_matrix` `executed_probes` `defects` `fixes_applied` `residual_risk` |
 | `skill-maker-to-delivery` | skill-maker pipeline to GATE to COMPLETE | skill-maker | `skills` `team_manifest` `link_report` `validation_report` |
 | `deploy-readiness` | GATE to RELEASE | ship | `approved_delivery` `deploy_config` `verification_plan` `rollback_plan` `human_go_required` |
+| `taste-review` | taste pipeline to GATE to COMPLETE | taste | `scope` `intake` `preference_diff` `effective_profile` `policy_check` `confirmation` `consumer_handoff` |
 
 ## Evidence that has to be a file
 
@@ -51,7 +52,8 @@ a real digest:
 `decisions`, `architecture`, `plan`, `tests`, `runtime`, `executed_probes`,
 `rendered_verification`, `threat_model`, `denial_path_evidence`, `reproduction`,
 `evidence_chain`, `test_matrix`, `link_report`, `validation_report`,
-`deploy_config`, `verification_plan`, `rollback_plan`.
+`deploy_config`, `verification_plan`, `rollback_plan`, `preference_diff`,
+`effective_profile`, `consumer_handoff`.
 
 Eight keys may instead carry a typed applicability record naming `reason`,
 `scope`, and `decided_by`, and only for the exact reasons listed under

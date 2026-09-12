@@ -2,7 +2,7 @@
 name: admiral
 description: >-
   SupremeTeam primary entry orchestrator for design, build, review, ship,
-  investigate, checkpoint/resume, and skill or team creation. Routes every
+  investigate, explicit Taste preference management, checkpoint/resume, and skill or team creation. Routes every
   delivery-lifecycle request under one intake, one save-protocol run, and one
   gatekeeper. Use when the user says: run the full pipeline, ship end to end,
   resume from a checkpoint, design/build this project, review or audit this
@@ -25,7 +25,7 @@ in-scope request (design, build, review, ship, investigate, checkpoint/resume, g
 validation, skill/team creation) initiates here so that one intake, one persisted run, and
 one cross-stage gatekeeper govern the whole pipeline. The in-scope sub-orchestrators and
 utilities (`design/commander`, `build/build-management`, `review/code-chief`, `skill-maker`,
-`investigate`, `session-memory`, `gatekeeper-admiral`) defer to Admiral when reached without
+`investigate`, `taste`, `session-memory`, `gatekeeper-admiral`) defer to Admiral when reached without
 an active Admiral handoff; Admiral reaches them by name through its delegation surface, so
 its own delegations always carry the handoff signal and never bounce back. Only Tier-4
 standalone tools (`safety-guardrails/*`, `browser-automation/*`, `release-and-deployment/*`,
@@ -129,6 +129,7 @@ The workflow below applies after Tier 0 has been ruled out.
 - `review/code-chief`
 - `gatekeeper-admiral`
 - `skill-maker` for on-demand skill and team creation
+- `taste` for explicit preference inspection and lifecycle mutation
 - `session-memory` for cross-session checkpoints and durable learnings
 
 ## Mandatory Intake Engagement
@@ -168,6 +169,7 @@ Skip only when an upstream artifact is fully approved, structurally complete, an
 | Product testing with recorded evidence | `testing-and-qa/qa`, or `qa-only` for a report-only run | `qa-review` |
 | Skill or coordinated team creation | `skill-maker` | `skill-maker-to-delivery` |
 | Release preparation and rollout | `release-and-deployment/ship`, then `land-and-deploy` after a fresh human go decision | `deploy-readiness` |
+| Explicit Taste management | `taste`; ordinary design only consumes its effective-profile handoff | `taste-review` |
 | Checkpoint or resume | `session-memory` plus the earliest incomplete owner | the pending boundary |
 
 Frontend and UI work stays inside the design and review pipelines: `architect`
@@ -211,8 +213,8 @@ Persistence is mandatory when file-system tools are available. For the full save
 
 ## References
 
-- `gates.yaml` (skill set root) for the canonical gate spec: eight boundaries with their required evidence, artifact-backed keys, sanctioned fallbacks, typed records, and submitters.
-- `pipelines.yaml` (skill set root) for the eight pipelines, their ordered stages, stage owners, closing boundary, and required scripts.
+- `gates.yaml` (skill set root) for the canonical gate spec: nine boundaries with their required evidence, artifact-backed keys, sanctioned fallbacks, typed records, and submitters.
+- `pipelines.yaml` (skill set root) for the nine pipelines, their ordered stages, stage owners, closing boundary, and required scripts.
 - `ownership.yaml` and `save-ownership.yaml` (skill set root) for the one-writer contracts at artifact and path level.
 - `execution-contract.md` (skill set root) for the canonical preamble clauses and the tier table.
 - `contracts/` (skill set root) for evidence standards, handoff templates, the workflow state machine, the responsibility matrix, universal frameworks, and the delivery template.

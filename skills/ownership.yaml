@@ -9,6 +9,14 @@ source_of_truth: >-
   (validation/test_pipeline_contracts.py).
 
 owners:
+  taste:
+    role: preference lifecycle owner, canonical writer, consumer handoff owner, and Taste gate submitter
+    writes:
+      - preference-profile
+      - taste-consumer-handoff
+    does_not_write:
+      - downstream-design-artifacts
+
   admiral:
     role: intake, routing, run lifecycle ownership, cross-stage boundaries, and delivery assembly
     writes:
@@ -697,6 +705,18 @@ artifacts:
     before: run completion after a release
     evidence:
       - changes, operational follow-up, and known issues
+  - id: preference-profile
+    owner: taste
+    before: taste-review
+    evidence:
+      - revisioned global and project records plus the effective merged profile
+      - atomic writer result
+  - id: taste-consumer-handoff
+    owner: taste
+    before: taste-review
+    evidence:
+      - source revisions, effective preferences, provenance, and intended consumers
+      - accessibility and conflict decisions
   - id: gate-verdict
     owner: gatekeeper
     before: any state advance past a boundary

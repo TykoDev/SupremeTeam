@@ -147,6 +147,24 @@
         "verification_plan",
         "rollback_plan"
       ]
+    },
+    "taste-review": {
+      "guards": "taste pipeline -> GATE -> COMPLETE",
+      "submitter": "taste",
+      "required_evidence": [
+        "scope",
+        "intake",
+        "preference_diff",
+        "effective_profile",
+        "policy_check",
+        "confirmation",
+        "consumer_handoff"
+      ],
+      "artifact_evidence": [
+        "preference_diff",
+        "effective_profile",
+        "consumer_handoff"
+      ]
     }
   },
   "fallback_values": {

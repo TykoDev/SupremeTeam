@@ -101,6 +101,7 @@ phase_directories:
   - delivery
   - release
   - skill-creation
+  - taste
 phase_subdirectories:
   - reports
   - artifacts

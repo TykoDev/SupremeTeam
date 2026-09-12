@@ -150,6 +150,19 @@ class SaveLifecycleTests(unittest.TestCase):
         proc = subprocess.run([sys.executable, str(HOOKS / "pre_tool_use.py")], input=payload, text=True, capture_output=True, env=env, check=False)
         self.assertEqual(proc.stdout.strip(), "")
 
+    def test_direct_edit_of_project_taste_state_is_denied_but_reads_pass(self):
+        env = os.environ.copy()
+        env["CLAUDE_PROJECT_DIR"] = str(self.project)
+        for path in ("taste.json", "taste.md", "taste.journal.jsonl", "taste.lock", "_history/revision-1.json"):
+            with self.subTest(path=path):
+                target = self.project / "skillset-saves/preferences" / path
+                payload = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(target)}})
+                proc = subprocess.run([sys.executable, str(HOOKS / "pre_tool_use.py")], input=payload, text=True, capture_output=True, env=env, check=False)
+                self.assertIn("skills/taste/taste_prefs.py", proc.stdout)
+        payload = json.dumps({"tool_name": "Read", "tool_input": {"file_path": str(self.project / "skillset-saves/preferences/taste.json")}})
+        proc = subprocess.run([sys.executable, str(HOOKS / "pre_tool_use.py")], input=payload, text=True, capture_output=True, env=env, check=False)
+        self.assertEqual(proc.stdout.strip(), "")
+
 
 class OutputPathTests(unittest.TestCase):
     def test_every_kind_resolves_inside_project(self):
@@ -162,7 +175,7 @@ class OutputPathTests(unittest.TestCase):
             "packages": dict(run_id="r1", phase="skill-creation", name="my-skill.skill"),
             "verdict": dict(run_id="r1", phase="review", boundary="review-to-delivery"),
             "core": dict(run_id="r1", name="_state.md"),
-            "preferences": {},
+            "project_preferences": {},
             "trajectory": dict(run_id="r1", session="abc"),
             "product": dict(name="src/app.css"),
             "design_spec": {},
@@ -170,7 +183,11 @@ class OutputPathTests(unittest.TestCase):
         for kind, kwargs in cases.items():
             with self.subTest(kind=kind):
                 target = resolve(root, kind, **kwargs)
-                target.resolve().relative_to(root.resolve())
+                if isinstance(target, tuple):
+                    for item in target:
+                        item.resolve().relative_to(root.resolve())
+                else:
+                    target.resolve().relative_to(root.resolve())
         with self.assertRaises(ValueError):
             resolve(root, "artifacts", run_id="r1", phase="design", name="../escape.css")
         with self.assertRaises(ValueError):

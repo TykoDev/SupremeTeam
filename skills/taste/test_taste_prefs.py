@@ -1,62 +1,61 @@
+"""Contract tests for the standard-library Taste preference writer."""
+from __future__ import annotations
+
 import json
+import os
+from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-import taste_prefs
 
 SCRIPT = Path(__file__).with_name("taste_prefs.py")
 
-class TasteWriterTests(unittest.TestCase):
-    def test_atomic_upsert_and_project_override_resolution(self):
-        global_record = taste_prefs.upsert(taste_prefs.blank_record("global"), {"id": "density", "value": "roomy", "kind": "preference", "source": "explicit"})
-        project_record = taste_prefs.upsert(taste_prefs.blank_record("project"), {"id": "density", "value": "compact", "kind": "preference", "source": "explicit"})
-        resolved = taste_prefs.resolve(global_record, project_record)
-        self.assertEqual(resolved["preferences"][0]["value"], "compact")
-        self.assertEqual(resolved["preferences"][0]["effective_scope"], "project")
 
-    def test_validation_rejects_duplicate_ids(self):
-        record = taste_prefs.blank_record("global")
-        item = {"id": "tone", "value": "direct"}
-        record["preferences"] = [item, item]
-        with self.assertRaisesRegex(taste_prefs.PreferenceError, "duplicate"):
-            taste_prefs.validate_record(record)
+class TastePreferencesTests(unittest.TestCase):
+    def setUp(self):
+        project_tmp = tempfile.TemporaryDirectory(); global_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(project_tmp.cleanup); self.addCleanup(global_tmp.cleanup)
+        self.project, self.global_home = Path(project_tmp.name), Path(global_tmp.name)
+        self.env = {**os.environ, "SUPREMETEAM_HOME": str(self.global_home), "SUPREMETEAM_OWNER": "test-owner"}
 
-    def test_inferred_write_requires_confirmation(self):
-        with tempfile.TemporaryDirectory() as directory:
-            result = subprocess.run([sys.executable, str(SCRIPT), "upsert", "--scope", "project", "--id", "tone", "--value", "direct", "--source", "inferred", "--project-root", directory], text=True, capture_output=True)
-            self.assertEqual(result.returncode, 2)
-            self.assertIn("requires --confirm", result.stderr)
-            self.assertFalse((Path(directory) / "skillset-saves/preferences/taste.md").exists())
+    def run_cli(self, *args: str) -> tuple[int, dict]:
+        process = subprocess.run([sys.executable, str(SCRIPT), "--project-root", str(self.project), *args], text=True, capture_output=True, env=self.env)
+        return process.returncode, json.loads(process.stdout)
 
-    def test_promote_requires_confirmation_then_writes_global(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            global_file = root / "global.json"
-            project_file = root / "project.json"
-            taste_prefs.atomic_write(project_file, taste_prefs.upsert(taste_prefs.blank_record("project"), {"id": "tone", "value": "direct", "kind": "preference", "source": "explicit"}))
-            base = [sys.executable, str(SCRIPT), "promote", "--id", "tone", "--global-file", str(global_file), "--project-file", str(project_file)]
-            self.assertEqual(subprocess.run(base, capture_output=True).returncode, 2)
-            self.assertEqual(subprocess.run(base + ["--confirm"], capture_output=True).returncode, 0)
-            self.assertEqual(json.loads(global_file.read_text())["preferences"][0]["id"], "tone")
+    def test_project_lifecycle_history_and_stale_writer(self):
+        code, result = self.run_cli("set", "--scope", "project", "--id", "ui.density", "--value", '"compact"')
+        self.assertEqual(code, 0, result)
+        record = json.loads((self.project / "skillset-saves/preferences/taste.json").read_text())
+        self.assertEqual(record["revision"], 1); self.assertEqual(record["entries"]["ui.density"]["state"], "active")
+        code, result = self.run_cli("deprecate", "--scope", "project", "--expect-revision", "0", "--id", "ui.density")
+        self.assertEqual(code, 1); self.assertEqual(result["error"]["code"], "stale_revision")
+        code, result = self.run_cli("revoke", "--scope", "project", "--expect-revision", "1", "--id", "ui.density")
+        self.assertEqual(code, 0, result)
+        record = json.loads((self.project / "skillset-saves/preferences/taste.json").read_text())
+        self.assertIn("ui.density", record["tombstones"])
+        self.assertEqual(len(list((self.project / "skillset-saves/preferences/_history").glob("*.json"))), 1)
 
-    def test_bulk_revoke_requires_confirmation(self):
-        with tempfile.TemporaryDirectory() as directory:
-            result = subprocess.run([sys.executable, str(SCRIPT), "revoke", "--scope", "project", "--id", "one", "--id", "two", "--project-root", directory], text=True, capture_output=True)
-            self.assertEqual(result.returncode, 2)
-            self.assertIn("bulk revocation requires --confirm", result.stderr)
+    def test_both_writes_and_effective_project_override(self):
+        code, result = self.run_cli("set", "--scope", "both", "--id", "format.style", "--value", '"brief"')
+        self.assertEqual(code, 0, result)
+        self.assertTrue((self.project / "skillset-saves/preferences/taste.md").exists())
+        self.assertTrue((self.global_home / "preferences/taste.json").exists())
+        code, result = self.run_cli("effective")
+        self.assertEqual(code, 0); self.assertEqual(result["entries"]["format.style"]["source_scope"], "project")
 
-    def test_global_reset_and_import_require_confirmation(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            global_file = root / "global.json"
-            for operation in (["reset", "--scope", "global"], ["import", "--scope", "global", "--input", str(root / "missing.json")]):
-                result = subprocess.run([sys.executable, str(SCRIPT), *operation, "--global-file", str(global_file), "--project-file", str(root / "project.json")], text=True, capture_output=True)
-                self.assertEqual(result.returncode, 2)
-                self.assertIn("requires --confirm", result.stderr)
+    def test_sensitive_values_rejected_or_redacted_and_corruption_preserved(self):
+        code, result = self.run_cli("set", "--scope", "project", "--id", "unsafe", "--value", '"person@example.com"')
+        self.assertEqual(code, 1); self.assertEqual(result["error"]["code"], "sensitive_input")
+        code, result = self.run_cli("set", "--scope", "project", "--redact", "--id", "safe", "--value", '"person@example.com"')
+        self.assertEqual(code, 0, result)
+        target = self.project / "skillset-saves/preferences/taste.json"
+        target.write_bytes(b"not-json\x00recovery")
+        code, result = self.run_cli("reset", "--scope", "project", "--expect-revision", "1")
+        self.assertEqual(code, 1); self.assertEqual(result["error"]["code"], "corrupt_record")
+        self.assertEqual(target.read_bytes(), b"not-json\x00recovery")
+
 
 if __name__ == "__main__":
     unittest.main()

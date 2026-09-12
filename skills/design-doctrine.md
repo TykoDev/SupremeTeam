@@ -5,6 +5,12 @@ Binding rules for every frontend design and review skill: `architect`,
 violates them is not gate-eligible. Reviewers cite this doctrine by section
 number.
 
+User presentation and interaction preferences are governed by
+[Taste Doctrine](taste-doctrine.md). Apply effective Taste where multiple valid
+design choices remain, but this doctrine's mandatory accessibility and gate
+requirements cannot be overridden. Surface conflicts instead of silently
+normalizing either side.
+
 ## 1. Unified, quiet surface
 
 - One coherent surface per screen. The page reads as a single composition, not a

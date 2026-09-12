@@ -13,9 +13,11 @@ triggers:
 inputs:
   - project goal, user needs, and scope constraints
   - technology preferences and prohibited options
+  - effective-profile snapshot from Admiral/Taste when project or global Taste storage exists; snapshot includes canonical digest, project and global source revisions, resolved entries, shadowed entries, unresolved conflicts, and applicability decision
   - persistence context when delegated or resumed
 outputs:
   - consolidated design package
+  - taste_snapshot artifact, or the sanctioned no-profile applicability record
   - phase approval records
   - stack-lock registry for downstream consumers
 severity_model: shared 4-tier (Critical | Major | Minor | Info)
@@ -24,6 +26,7 @@ required_contracts:
   - Shared severity
   - Stack-lock continuity
   - Pipeline-owned gate routing
+  - Read-only Taste consumption and candidate feedback routing
 authoring_rules:
   - First-principles wording only
   - No provenance or comparison language

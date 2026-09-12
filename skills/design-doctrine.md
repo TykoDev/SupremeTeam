@@ -147,10 +147,17 @@ An inaccessible flow is a broken flow, not a polish item.
 - Introduces off-scale spacing, ad-hoc colors, or a second typographic family
   without a recorded exception (§3).
 - Treats accessibility or responsive coverage as follow-up work (§6).
+- Lacks decision provenance or Taste traceability required by §0, or evaluates against a Taste digest other than the one approved with the design.
 
 ## 8. Gate evidence
 
-Two keys in [gates.yaml](gates.yaml) carry this doctrine mechanically:
+Three keys in [gates.yaml](gates.yaml) carry this doctrine mechanically:
+
+- `taste_snapshot` at `design-to-build`, submitted by `commander`. It is a
+  shipped, hashed snapshot artifact with the fields and traceability table from
+  §0. When no saved Taste profile is available, it carries the typed
+  applicability record for the sanctioned fallback
+  `no saved Taste profile available`.
 
 - `ui_evidence` at `design-to-build`, submitted by `commander`. It states that
   the design package contains the §5 component template and UI/UX handoff, or

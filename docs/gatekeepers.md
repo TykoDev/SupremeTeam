@@ -33,7 +33,7 @@ so this table cannot quietly rot.
 
 | Boundary | Guards | Submitter | Required evidence |
 | --- | --- | --- | --- |
-| `design-to-build` | DESIGN to BUILD | commander | `decisions` `architecture` `interfaces` `plan` `acceptance` `security_seed` `stack_lock` `ui_evidence` |
+| `design-to-build` | DESIGN to BUILD | commander | `decisions` `architecture` `interfaces` `plan` `acceptance` `security_seed` `stack_lock` `taste_snapshot` `ui_evidence` |
 | `build-to-review` | BUILD to REVIEW | build-management | `approved_design_revision` `implementation` `tests` `runtime` `traceability` `security_evidence` |
 | `review-to-delivery` | REVIEW to GATE to COMPLETE | code-chief | `review_verdict` `findings` `executed_probes` `rendered_verification` `residual_risk` `revision_lineage` |
 | `security-review` | security pipeline to GATE to COMPLETE | cso | `scope` `threat_model` `findings` `vulnerability_scan` `denial_path_evidence` `remediation_plan` `residual_risk` |
@@ -58,7 +58,7 @@ a real digest:
 
 Eleven keys may instead carry a typed applicability record naming `reason`,
 `scope`, and `decided_by`, and only for the exact reasons listed under
-`fallback_values`: `security_evidence`, `stack_lock`, `ui_evidence`,
+`fallback_values`: `security_evidence`, `stack_lock`, `taste_snapshot`, `ui_evidence`,
 `rendered_verification`, `denial_path_evidence`, `vulnerability_scan`,
 `fixes_applied`, `team_manifest`, `before_revision`, `consumer_handoff`,
 `residual_uncertainty`. Any other bare string is rejected. `confirmation` has no

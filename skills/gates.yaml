@@ -29,12 +29,14 @@
         "acceptance",
         "security_seed",
         "stack_lock",
+        "taste_snapshot",
         "ui_evidence"
       ],
       "artifact_evidence": [
         "decisions",
         "architecture",
-        "plan"
+        "plan",
+        "taste_snapshot"
       ]
     },
     "build-to-review": {
@@ -206,6 +208,9 @@
     "ui_evidence": [
       "no user-facing surface - design system not engaged"
     ],
+    "taste_snapshot": [
+      "no saved Taste profile available"
+    ],
     "rendered_verification": [
       "no visible surface changed - rendered verification not applicable"
     ],
@@ -222,7 +227,7 @@
       "single skill - no team manifest produced"
     ]
   },
-  "spec_revision": 1,
+  "spec_revision": 2,
   "evidence_types": {
     "tests": "probe",
     "runtime": "probe",

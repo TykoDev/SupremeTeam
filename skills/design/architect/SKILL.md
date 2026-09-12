@@ -39,6 +39,7 @@ Transform the approved plan into a system architecture with interfaces, API endp
 - Questions that still affect ownership boundaries, data flow, or non-functional targets.
 - Brand and personality keywords, target users, layout intent, and dark-mode requirement when the surface is user-facing.
 - Frontend framework and Tailwind major version (v3 HSL channels vs v4 OKLCH function form), plus any existing `components.json`/`globals.css` when redesigning an existing frontend.
+- Commander's immutable effective Taste snapshot for this design revision, including its canonical digest and source revisions, or the sanctioned no-profile applicability record.
 
 ## Outputs
 
@@ -62,6 +63,7 @@ Transform the approved plan into a system architecture with interfaces, API endp
 - **Grill-Me Intake**: Before producing the architecture or any visual design output, run the intake interview in `../../grill-me-doctrine.md` — resolve every load-bearing branch one question at a time, use the planning-mode decision prompt contract for unresolved design/configuration choices, always recommend an answer, and explore the codebase and existing artifacts instead of asking when the answer is discoverable. Include the Decision Register in the architecture package.
 - **API Endpoint Contract**: When the architecture exposes API, webhook, event-ingest, or internal service endpoints, satisfy `references/api-endpoint-design.md`: endpoint inventory, per-endpoint schemas, auth/authorization, error envelope, idempotency, observability, versioning, frontend handoff, and contract tests are mandatory.
 - **Frontend Doctrine Adherence**: When the package includes a user-facing surface, satisfy `design-doctrine.md` (quiet surface, shadcn/ui foundation, responsive tiers, accessibility), include the mandatory shadcn Component Template section, and pass the adversarial design review in `references/visual-design-system.md` before declaring the UI done.
+- **Decision provenance and Taste boundary**: Trace every design-system decision to an effective Taste entry in the supplied snapshot, an explicit current-run instruction, an existing project convention, or a documented designer/architect judgment. Record the snapshot digest and preference id for Taste-derived decisions. Consume the snapshot read-only; never edit project or global Taste storage. Emit newly discovered feedback as a Taste candidate and route it through Commander/Admiral to the Taste pipeline for confirmation.
 - **Threat Model Seed**: When the design touches authentication, authorization, sensitive data, external inputs, LLM/model output, file upload, webhook, dependency execution, or server-side fetches, include a lightweight STRIDE-oriented trust-boundary summary so security-review and mr-robot do not have to infer the attack surface from scratch.
 - **Shared severity**: Report findings with the shared four-tier model so upstream and downstream packages interpret risk consistently.
 - **Proactive triggers**: Offer the next sensible action when the surrounding context clearly implies it and the skill can advance safely without a prompt loop.
@@ -76,6 +78,7 @@ Transform the approved plan into a system architecture with interfaces, API endp
 
 - Prove each component boundary and data-flow decision against a requirement, constraint, or non-functional target.
 - Validate API and UI handoff contracts explicitly when those surfaces are in scope, including auth, state, validation, and contract-test implications.
+- Include traceability rows linking each effective preference id and the exact snapshot digest to design-system artifacts and the rendered-verification evidence that will validate them.
 - For user-facing surfaces, separate data/state ownership from presentation composition, cover loading/empty/error/success/permission-denied states, and avoid over-configured components that should be composition.
 - Call out architecture tradeoffs the build team must not reinterpret silently, especially deployment, data ownership, and failure-mode assumptions.
 
@@ -92,6 +95,8 @@ Skip only when the requested scope proves the specialist artifact is genuinely o
 | A critical external dependency or data contract is referenced but never specified well enough for implementation or integration planning | Preserve the missing contract as a blocker and refuse to treat the architecture as build-ready. |
 | An API endpoint is named without the endpoint contract template, auth/authorization model, error envelope, or contract tests | Treat the API surface as not build-ready and reopen the architecture package before downstream implementation. |
 | The proposed design quietly commits the project to an irreversible stack or deployment choice that was never approved upstream | Surface the hidden commitment as an explicit decision and route it back through the design owner before locking the architecture. |
+| The Taste snapshot is absent despite available storage, has unresolved conflicts affecting the surface, or its source revisions have changed | Stop the affected design decisions and return to Commander for Admiral/Taste resolution; do not read or repair the stores directly. |
+| A preference used by the active design is revoked | Report digest-bound drift with affected artifacts and require a user replay/retain decision. |
 
 ## Save Protocol
 

@@ -93,6 +93,7 @@ class EvidenceRootTests(unittest.TestCase):
                 "plan": "reports/plan.md", "acceptance": "smoke + contract tests",
                 "security_seed": "no external trust boundary",
                 "stack_lock": {"applicable": False, "reason": "no new runtime", "scope": "whole run", "decided_by": "commander"},
+                "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
                 "ui_evidence": {"applicable": False, "reason": "no user-facing surface", "scope": "whole run", "decided_by": "architect"},
             },
             "artifact_hashes": {"../intake/report_grilling.md": sha256(self.fx.grilling),
@@ -113,6 +114,7 @@ class EvidenceRootTests(unittest.TestCase):
         for key in ("schema_version", "boundary", "owner"):
             data.pop(key)
         data["evidence"]["stack_lock"] = "no new runtime or framework - existing stack unchanged"
+        data["evidence"]["taste_snapshot"] = "no saved Taste profile available"
         data["evidence"]["ui_evidence"] = "no user-facing surface - design system not engaged"
         proc = run_cli("design-to-build", self.fx.write_manifest("design", data))
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -357,6 +359,7 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
                 "interfaces": "REST", "plan": "reports/plan.md", "acceptance": "smoke + contract tests",
                 "security_seed": "no external trust boundary",
                 "stack_lock": {"slug": entry["slug"], "versions": entry["versions"], "overlay_sha256": entry["sha256"]},
+                "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
                 "ui_evidence": {"applicable": False, "reason": "no user-facing surface", "scope": "whole run", "decided_by": "architect"},
             },
             "artifact_hashes": {"../intake/report_grilling.md": sha256(self.fx.grilling),

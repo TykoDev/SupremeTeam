@@ -71,6 +71,12 @@ MANIFEST = gc.Manifest(
             content_marker=r"stack|lock|version|dependency",
         ),
         gc.ArtifactSpec(
+            key="taste_snapshot",
+            label="effective Taste profile snapshot",
+            patterns=("*taste*snapshot*", "*effective*profile*"),
+            content_marker=r"canonical digest|source revisions|resolved entries|applicability",
+        ),
+        gc.ArtifactSpec(
             key="impl_spec",
             label="implementation specification",
             patterns=("*spec*.md", "*implementation*.md", "deliverable_*spec*.md"),

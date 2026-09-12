@@ -1,6 +1,6 @@
 # The Skills
 
-48 of them. Three delivery pipelines, a few cross-cutting components, and four
+49 of them. Three delivery pipelines, a few cross-cutting components, and four
 groups of standalone tools you can call whenever you like.
 
 The roster is declared in
@@ -11,7 +11,7 @@ that suite would fail.
 
 For the flat machine-readable index with paths, see [AGENTS.md](../AGENTS.md).
 
-![Phases, sub-pipelines, and the 48-skill breakdown](assets/1_Overview.jpg)
+![Phases, sub-pipelines, and the 49-skill breakdown](assets/1_Overview.jpg)
 
 ## Admiral layer (2)
 
@@ -83,6 +83,13 @@ The biggest group, because this is where most of the value is.
 | **skill-reviewer** | Adversarial quality gate. Scores 0 to 100 across ten dimensions and returns a prioritized fix list |
 | **session-memory** | Cross-session state and durable learnings. Checkpoints and resume |
 | **taste** | Preference lifecycle owner and sole semantic writer; resolves global and project profiles and submits the Taste gate |
+
+## Taste (2)
+
+| Skill | What it does |
+|---|---|
+| **taste** | Owns preference intake, canonical writes, effective-profile resolution, and the Taste gate submission |
+| **taste-review** | Read-only review of provenance, conflicts, redaction, confirmation, and persistence safety |
 
 ## Standalone tools (15)
 

@@ -270,9 +270,14 @@
         {"step": "persistence", "owner": "taste", "artifact": "taste-persistence-result"},
         {"step": "effective-profile", "owner": "taste", "artifact": "effective-taste-profile"},
         {"step": "consumer-handoff", "owner": "taste", "artifact": "taste-consumer-handoff"},
-        {"step": "package", "owner": "taste", "artifact": "taste-package"}
+        {"step": "package", "owner": "taste", "artifact": "taste-package"},
+        {"step": "review", "owner": "taste-review", "artifact": "taste-review-record"}
       ],
-      "scripts": ["skills/harness/gatekeeper/check.py"]
+      "scripts": [
+        "skills/taste/taste_prefs.py",
+        "skills/scripts/validate_manifests.py",
+        "skills/harness/gatekeeper/check.py"
+      ]
     },
     "skill-creation": {
       "owner": "skill-maker",
@@ -323,56 +328,6 @@
         }
       ],
       "scripts": []
-    },
-    "taste": {
-      "owner": "taste",
-      "boundary": "taste-review",
-      "stages": [
-        {
-          "step": "scope-and-intake",
-          "owner": "taste"
-        },
-        {
-          "step": "load-current-preferences",
-          "owner": "taste"
-        },
-        {
-          "step": "preference-elicitation",
-          "owner": "taste"
-        },
-        {
-          "step": "normalization",
-          "owner": "taste"
-        },
-        {
-          "step": "conflict-and-policy-check",
-          "owner": "taste"
-        },
-        {
-          "step": "confirmation",
-          "owner": "taste"
-        },
-        {
-          "step": "atomic-persistence",
-          "owner": "taste"
-        },
-        {
-          "step": "effective-profile-resolution",
-          "owner": "taste"
-        },
-        {
-          "step": "consumer-handoff",
-          "owner": "taste"
-        },
-        {
-          "step": "phase-gate",
-          "owner": "taste"
-        }
-      ],
-      "scripts": [
-        "skills/taste/taste_prefs.py",
-        "skills/scripts/validate_manifests.py"
-      ]
     }
   }
 }

@@ -134,6 +134,7 @@
         "persistence_result",
         "effective_profile",
         "consumer_handoff",
+        "taste_review_record",
         "residual_uncertainty"
       ],
       "artifact_evidence": [
@@ -141,7 +142,8 @@
         "confirmation",
         "conflict_analysis",
         "persistence_result",
-        "effective_profile"
+        "effective_profile",
+        "taste_review_record"
       ],
       "fallback_values": {
         "before_revision": ["new store - no prior revision"],
@@ -177,24 +179,6 @@
         "deploy_config",
         "verification_plan",
         "rollback_plan"
-      ]
-    },
-    "taste-review": {
-      "guards": "taste pipeline -> GATE -> COMPLETE",
-      "submitter": "taste",
-      "required_evidence": [
-        "scope",
-        "intake",
-        "preference_diff",
-        "effective_profile",
-        "policy_check",
-        "confirmation",
-        "consumer_handoff"
-      ],
-      "artifact_evidence": [
-        "preference_diff",
-        "effective_profile",
-        "consumer_handoff"
       ]
     }
   },

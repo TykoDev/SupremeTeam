@@ -281,8 +281,10 @@ class OwnershipAgreementTests(unittest.TestCase):
         pipelines = json.loads((ROOT / "pipelines.yaml").read_text(encoding="utf-8"))["pipelines"]
         for name in pipelines:
             with self.subTest(pipeline=name):
-                self.assertIn(name.replace("skill-creation", "skill-creation"), directories | {"design", "build", "review"})
+                phase = "preferences" if name == "taste" else name
+                self.assertIn(phase, directories | {"design", "build", "review"})
         self.assertIn("skills/scripts/scan_record.py", pipelines["security"]["scripts"])
+        self.assertIn("skills/taste/taste_prefs.py", pipelines["taste"]["scripts"])
 
     def test_save_protocol_points_at_the_machine_contracts(self):
         protocol = (ROOT / "save-protocol.md").read_text(encoding="utf-8")

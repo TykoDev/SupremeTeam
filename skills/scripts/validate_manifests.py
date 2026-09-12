@@ -216,9 +216,69 @@ def check_package(package: dict[str, Any], errors: list[str]) -> None:
         if contract.get(key) is not False:
             errors.append(f"package-manifest.yaml: delivery_contract.{key} must be false")
     excludes = set(_names(package.get("exclude", [])))
-    for required in ("**/__pycache__/**", "**/*.pyc", "skillset-saves/**", ".harness-state/**"):
+    for required in ("**/__pycache__/**", "**/*.pyc", "skillset-saves/**", ".harness-state/**", ".supremeteam/**"):
         if required not in excludes:
             errors.append(f"package-manifest.yaml: exclude must contain {required}")
+
+
+def check_pipeline_mirrors(root: Path, team: dict[str, Any], ownership: dict[str, Any],
+                           gates: dict[str, Any], errors: list[str]) -> int:
+    pipelines = _load(root / "pipelines.yaml", errors).get("pipelines", {})
+    save = _load(root / "save-ownership.yaml", errors)
+    if not isinstance(pipelines, dict) or not pipelines:
+        errors.append("pipelines.yaml: pipelines must be a non-empty mapping")
+        return 0
+    members = team_members(team)
+    artifact_owner = {str(x.get("id")): str(x.get("owner")) for x in ownership.get("artifacts", [])
+                      if isinstance(x, dict)}
+    boundary_owners: dict[str, list[str]] = {}
+    for name, pipeline in pipelines.items():
+        if pipeline.get("owner") not in members:
+            errors.append(f"pipelines.yaml: {name} owner is not a team member")
+        boundary = str(pipeline.get("boundary", ""))
+        boundary_owners.setdefault(boundary, []).append(name)
+        for stage in pipeline.get("stages", []):
+            owner, artifact = stage.get("owner"), stage.get("artifact")
+            if owner not in members:
+                errors.append(f"pipelines.yaml: {name}/{stage.get('step')} owner is not a team member")
+            if artifact and artifact_owner.get(str(artifact)) != owner:
+                errors.append(f"pipelines.yaml: {name}/{stage.get('step')} artifact {artifact!r} writer mismatch")
+        for script in pipeline.get("scripts", []):
+            if not str(script).startswith("skills/") or not (root.parent / str(script)).is_file():
+                errors.append(f"pipelines.yaml: {name} required script {script!r} does not exist")
+    gate_names = set(gates.get("boundaries", {}) or {})
+    if set(boundary_owners) != gate_names:
+        errors.append("pipelines.yaml and gates.yaml boundary lists differ")
+    for boundary, owners in boundary_owners.items():
+        if len(owners) != 1:
+            errors.append(f"pipelines.yaml: boundary {boundary!r} is owned by {owners}")
+    phases = set(save.get("phase_directories", []) or [])
+    for pipeline in pipelines:
+        phase = "preferences" if pipeline == "taste" else pipeline
+        if phase not in phases:
+            errors.append(f"save-ownership.yaml: missing phase directory {phase!r} for {pipeline}")
+
+    skill_count = len(list(root.glob("**/SKILL.md")))
+    if team.get("skill_count") != skill_count or len(members) != skill_count:
+        errors.append(f"team-manifest.yaml: skill_count/members must match {skill_count} skill directories")
+    mirrors = {
+        root.parent / "AGENTS.md": (f"## The {skill_count} skills", f"**{skill_count} skills**", "| `taste` | `taste` | `taste-review` |"),
+        root.parent / "README.md": (f"{skill_count} skills · {len(pipelines)} pipelines",),
+        root.parent / "docs/architecture.md": ("Nine pipelines", "| `taste` | taste | `taste-review` |"),
+        root.parent / "docs/skills.md": (f"{skill_count} of them.", "## Taste (2)"),
+        root.parent / "docs/gatekeepers.md": ("| `taste-review` |",),
+        root.parent / "docs/directory-structure.md": (f"Gate spec: {len(gate_names)} boundaries", f"Pipeline map: {len(pipelines)} pipelines"),
+    }
+    for path, needles in mirrors.items():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            errors.append(f"documentation mirror unreadable: {path.name} ({exc})")
+            continue
+        for needle in needles:
+            if needle not in text:
+                errors.append(f"documentation mirror {path.name} is missing {needle!r}")
+    return len(pipelines)
 
 
 def check_agent_manifest(root: Path, errors: list[str]) -> int:
@@ -263,6 +323,7 @@ def validate(root: Path) -> dict[str, Any]:
     check_gates(gates, set(ownership.get("owners", {}) or {}), errors)
     check_runtime(runtime, root, errors)
     check_package(package, errors)
+    pipeline_count = check_pipeline_mirrors(root, team, ownership, gates, errors)
     delegate_count = check_agent_manifest(root, errors)
 
     return {
@@ -271,6 +332,7 @@ def validate(root: Path) -> dict[str, Any]:
         "ownership_owner_count": len(ownership.get("owners", {}) or {}),
         "ownership_artifact_count": len(artifact_ids),
         "gate_boundary_count": len(gates.get("boundaries", {}) or {}),
+        "pipeline_count": pipeline_count,
         "agent_delegate_count": delegate_count,
         "errors": sorted(set(errors)),
         "ok": not errors,

@@ -9,6 +9,7 @@ exclude:
   - "skillset-saves/**"
   - "skillset-saves/preferences/**"
   - ".harness-state/**"
+  - ".supremeteam/**"
   - "**/.harness-state/**"
   - "harness-test-work/**"
   - "**/*-workspace/**"

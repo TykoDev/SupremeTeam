@@ -213,10 +213,11 @@ def stage(record: dict[str, Any], destination: dict[str, Path]) -> tuple[Path, P
     return staged[0], staged[1]
 
 
-def commit_pair(records: list[tuple[str, dict[str, Any], dict[str, Path], bool]]) -> None:
+def commit_pair(records: list[tuple[str, dict[str, Any], dict[str, Path], bool]], *, locks_held: bool = False) -> None:
     locks, staged, backups, replaced = [], [], [], []
     try:
-        locks = lock([item[2] for item in records])
+        if not locks_held:
+            locks = lock([item[2] for item in records])
         for scope, record, dest, existed in records:
             pair = stage(record, dest); staged.append(pair)
             backup = {}
@@ -368,24 +369,32 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.output).write_text(json.dumps(export, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             return emit(True, output=str(Path(args.output).resolve()), redacted=True)
         scopes = selected_scopes(args.scope)
-        current = {scope: load(root, scope) for scope in scopes}
-        expectations = expected_revisions(args.expect_revision, scopes)
-        for scope, (record, existed) in current.items():
-            expected = expectations[scope]
-            if existed and expected is None:
-                raise TasteError("revision_required", "--expect-revision is required for an existing store", scope=scope, actual_revision=record["revision"])
-            if expected is not None and expected != record["revision"]:
-                raise TasteError("stale_revision", "expected revision does not match canonical store", scope=scope, expected=expected, actual=record["revision"])
-        if args.command == "promote" and args.scope not in {"global", "both"}: raise TasteError("invalid_scope", "promote writes global scope (or both)")
-        if args.command == "specialize" and args.scope not in {"project", "both"}: raise TasteError("invalid_scope", "specialize writes project scope (or both)")
-        source_scope = "project" if args.command == "promote" else "global"
-        source = load(root, source_scope)[0] if args.command in {"promote", "specialize"} else None
-        records = []
-        for scope in scopes:
-            updated = mutate(current[scope][0], args.command, args, source)
-            validate(updated, scope)
-            records.append((scope, updated, paths(root, scope), current[scope][1]))
-        commit_pair(records)
+        destinations = {scope: paths(root, scope) for scope in scopes}
+        held = lock(list(destinations.values()))
+        try:
+            # Re-read and compare revisions only after every destination lock is
+            # held, preventing two writers from validating the same revision.
+            current = {scope: load(root, scope) for scope in scopes}
+            expectations = expected_revisions(args.expect_revision, scopes)
+            for scope, (record, existed) in current.items():
+                expected = expectations[scope]
+                if existed and expected is None:
+                    raise TasteError("revision_required", "--expect-revision is required for an existing store", scope=scope, actual_revision=record["revision"])
+                if expected is not None and expected != record["revision"]:
+                    raise TasteError("stale_revision", "expected revision does not match canonical store", scope=scope, expected=expected, actual_revision=record["revision"])
+            if args.command == "promote" and args.scope not in {"global", "both"}: raise TasteError("invalid_scope", "promote writes global scope (or both)")
+            if args.command == "specialize" and args.scope not in {"project", "both"}: raise TasteError("invalid_scope", "specialize writes project scope (or both)")
+            source_scope = "project" if args.command == "promote" else "global"
+            source = load(root, source_scope)[0] if args.command in {"promote", "specialize"} else None
+            records = []
+            for scope in scopes:
+                updated = mutate(current[scope][0], args.command, args, source)
+                validate(updated, scope)
+                records.append((scope, updated, destinations[scope], current[scope][1]))
+            commit_pair(records, locks_held=True)
+        finally:
+            for path in held:
+                path.unlink(missing_ok=True)
         return emit(True, command=args.command, stores={s: {"revision": r["revision"], "digest": r["canonical_record_digest"]} for s, r, _, _ in records})
     except TasteError as exc:
         return emit(False, error={"code": exc.code, "message": exc.message, **exc.details})

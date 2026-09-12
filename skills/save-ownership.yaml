@@ -98,11 +98,10 @@ phase_directories:
   - security
   - investigation
   - qa
-  - taste
+  - preferences
   - delivery
   - release
   - skill-creation
-  - taste
 phase_subdirectories:
   - reports
   - artifacts

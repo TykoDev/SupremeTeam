@@ -86,6 +86,20 @@ class PipelineContractTests(unittest.TestCase):
             with self.subTest(boundary=name):
                 self.assertIn(boundary["submitter"], self.members)
 
+    def test_taste_pipeline_contract_is_complete(self):
+        taste = self.spec["pipelines"]["taste"]
+        self.assertIn(taste["owner"], self.members)
+        for stage in taste["stages"]:
+            self.assertIn(stage["owner"], self.members)
+            if stage.get("artifact"):
+                self.assertIn(stage["artifact"], self.artifact_ids)
+        owners = [name for name, pipeline in self.spec["pipelines"].items()
+                  if pipeline["boundary"] == "taste-review"]
+        self.assertEqual(owners, ["taste"])
+        self.assertIn("taste-review", self.gates["boundaries"])
+        for script in taste["scripts"]:
+            self.assertTrue((ROOT.parent / script).is_file(), script)
+
 
 class StageArtifactOwnershipTests(unittest.TestCase):
     """A stage that produces an artifact must be run by that artifact's owner.

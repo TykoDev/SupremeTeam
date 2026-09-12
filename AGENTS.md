@@ -26,7 +26,7 @@ ordinary conversation.
 | Tier | Skills |
 |---|---|
 | Entry orchestrator | `admiral` |
-| In-scope, defers to admiral when reached cold | `design/commander`, `build/build-management`, `review/code-chief`, `skill-maker`, `investigate`, `session-memory`, `gatekeeper-admiral` |
+| In-scope, defers to admiral when reached cold | `design/commander`, `build/build-management`, `review/code-chief`, `skill-maker`, `investigate`, `taste`, `session-memory`, `gatekeeper-admiral` |
 | Internal specialists | every skill under `design/`, `build/`, `review/` not listed above |
 | Standalone tools | `safety-guardrails/*`, `browser-automation/*`, `release-and-deployment/*`, `testing-and-qa/*` |
 
@@ -45,8 +45,9 @@ Declared in `skills/pipelines.yaml`, gated by `skills/gates.yaml`.
 | `taste` | `taste` | `taste-review` |
 | `skill-creation` | `skill-maker` | `skill-maker-to-delivery` |
 | `release` | `ship` | `deploy-readiness` |
+| `taste` | `taste` | `taste-review` |
 
-## The 47 skills
+## The 48 skills
 
 ### Admiral layer
 
@@ -99,7 +100,7 @@ of 14 overlays behind `stack_lock`, not a skill.
 | **devex-review** | `skills/review/devex-review/SKILL.md` | Onboarding, tooling, docs clarity, integration friction |
 | **gatekeeper-code** | `skills/review/gatekeeper-code/SKILL.md` | Review phase-exit validator |
 
-### Cross-cutting (5)
+### Cross-cutting (6)
 
 | Skill | Path | Role |
 |---|---|---|
@@ -108,6 +109,7 @@ of 14 overlays behind `stack_lock`, not a skill.
 | **skill-creator** | `skills/skill-maker/skill-creator/SKILL.md` | Drafts and improves skills: authoring, supporting files, evals, packaging |
 | **skill-reviewer** | `skills/skill-maker/skill-reviewer/SKILL.md` | Adversarial quality gate; scores 0 to 100 across ten rubric dimensions |
 | **session-memory** | `skills/session-memory/SKILL.md` | Owns the run record and durable learnings; writes only through `harness/hooks/save_run.py` |
+| **taste** | `skills/taste/SKILL.md` | Preference lifecycle pipeline owner, canonical writer, consumer handoff owner, and Taste gate submitter |
 
 ### Browser automation (4, standalone)
 
@@ -153,8 +155,8 @@ Not skills. These are the files the skills are checked against.
 
 | File | Purpose |
 |---|---|
-| `skills/gates.yaml` | Eight boundaries: required and artifact-backed evidence, sanctioned fallbacks, typed records, finding policy, submitters |
-| `skills/pipelines.yaml` | Eight pipelines: ordered stages, owners, closing boundary, required scripts |
+| `skills/gates.yaml` | Nine boundaries: required and artifact-backed evidence, sanctioned fallbacks, typed records, finding policy, submitters |
+| `skills/pipelines.yaml` | Nine pipelines: ordered stages, owners, closing boundary, required scripts |
 | `skills/ownership.yaml` | One writer per design and handoff artifact |
 | `skills/save-ownership.yaml` | One writer per path class under `skillset-saves/` and `.harness-state/` |
 | `skills/team-manifest.yaml` | The roster every owner and submitter is checked against |
@@ -170,6 +172,7 @@ Not skills. These are the files the skills are checked against.
 | `skills/routing-doctrine.md` | Entry routing, precedence, Tier 0 fast path, loop guard, session pin |
 | `skills/grill-me-doctrine.md` | Intake interview; produces the hashed decisions artifact |
 | `skills/design-doctrine.md` | Frontend design system, responsive tiers, accessibility, gate evidence |
+| `skills/taste-doctrine.md` | Canonical semantics, provenance, lifecycle, scope, and deterministic resolution for user presentation and interaction preferences |
 | `skills/harness-doctrine.md` | Lifecycle layers, failure taxonomy, engineering non-negotiables |
 | `skills/performance-doctrine.md` | Measured optimization, baselines, regression budgets |
 | `skills/save-protocol.md` | Save layout, startup, ownership, state and audit, resume and rewind |
@@ -215,11 +218,11 @@ never approve it.
 
 **47 skills**: Admiral 2, Design 6, Build 8, Review 11, Investigate 1,
 Skill-Maker 3, Session-Memory 1, Browser 4, Release 4, Safety 4, Testing 3. Plus
-the runtime harness, seven doctrine and protocol files, six canonical contracts,
+the runtime harness, eight doctrine and protocol files, six canonical contracts,
 and the machine-readable specs.
 
-`admiral`, `gatekeeper-admiral`, `investigate`, `skill-maker`, and
-`session-memory` sit directly under `skills/` because they are cross-cutting.
+`admiral`, `gatekeeper-admiral`, `investigate`, `skill-maker`, `session-memory`,
+and `taste` sit directly under `skills/` because they are cross-cutting.
 Pipeline-stage skills nest under their category directory; standalone tools under
 their group. This manifest is the authoritative flat index regardless of depth.
 

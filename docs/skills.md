@@ -1,6 +1,6 @@
 # The Skills
 
-47 of them. Three delivery pipelines, a few cross-cutting components, and four
+48 of them. Three delivery pipelines, a few cross-cutting components, and four
 groups of standalone tools you can call whenever you like.
 
 The roster is declared in
@@ -11,7 +11,7 @@ that suite would fail.
 
 For the flat machine-readable index with paths, see [AGENTS.md](../AGENTS.md).
 
-![Phases, sub-pipelines, and the 47-skill breakdown](assets/1_Overview.jpg)
+![Phases, sub-pipelines, and the 48-skill breakdown](assets/1_Overview.jpg)
 
 ## Admiral layer (2)
 
@@ -73,7 +73,7 @@ The biggest group, because this is where most of the value is.
 | **devex-review** | Developer experience: onboarding, tooling, docs clarity, integration friction |
 | **gatekeeper-code** | Reviews the reviewers. Validates the consolidated review package |
 
-## Cross-cutting (5)
+## Cross-cutting (6)
 
 | Skill | What it does |
 |---|---|
@@ -82,6 +82,7 @@ The biggest group, because this is where most of the value is.
 | **skill-creator** | Drafts and improves skills: authoring, supporting files, evals, trigger tuning, packaging |
 | **skill-reviewer** | Adversarial quality gate. Scores 0 to 100 across ten dimensions and returns a prioritized fix list |
 | **session-memory** | Cross-session state and durable learnings. Checkpoints and resume |
+| **taste** | Preference lifecycle owner and sole semantic writer; resolves global and project profiles and submits the Taste gate |
 
 ## Standalone tools (15)
 
@@ -132,8 +133,8 @@ Not skills, but load-bearing. See [architecture.md](architecture.md),
 
 | File | Purpose |
 |---|---|
-| `gates.yaml` | Eight boundaries: required and artifact-backed evidence, fallbacks, typed records, finding policy, submitters |
-| `pipelines.yaml` | Eight pipelines: ordered stages, owners, closing boundary, required scripts |
+| `gates.yaml` | Nine boundaries: required and artifact-backed evidence, fallbacks, typed records, finding policy, submitters |
+| `pipelines.yaml` | Nine pipelines: ordered stages, owners, closing boundary, required scripts |
 | `ownership.yaml` | One writer per design and handoff artifact |
 | `save-ownership.yaml` | One writer per path class under `skillset-saves/` and `.harness-state/` |
 | `team-manifest.yaml` | The roster everything else is checked against |

@@ -2,7 +2,7 @@
 name: admiral
 description: >-
   SupremeTeam primary entry orchestrator for design, build, review, ship,
-  investigate, checkpoint/resume, and skill or team creation. Routes every
+  investigate, explicit Taste preference management, checkpoint/resume, and skill or team creation. Routes every
   delivery-lifecycle request under one intake, one save-protocol run, and one
   gatekeeper. Use when the user says: run the full pipeline, ship end to end,
   resume from a checkpoint, design/build this project, review or audit this
@@ -25,7 +25,7 @@ in-scope request (design, build, review, ship, investigate, checkpoint/resume, g
 validation, skill/team creation) initiates here so that one intake, one persisted run, and
 one cross-stage gatekeeper govern the whole pipeline. The in-scope sub-orchestrators and
 utilities (`design/commander`, `build/build-management`, `review/code-chief`, `skill-maker`,
-`investigate`, `session-memory`, `gatekeeper-admiral`) defer to Admiral when reached without
+`investigate`, `taste`, `session-memory`, `gatekeeper-admiral`) defer to Admiral when reached without
 an active Admiral handoff; Admiral reaches them by name through its delegation surface, so
 its own delegations always carry the handoff signal and never bounce back. Only Tier-4
 standalone tools (`safety-guardrails/*`, `browser-automation/*`, `release-and-deployment/*`,
@@ -117,6 +117,7 @@ The workflow below applies after Tier 0 has been ruled out.
 - **Gate Spec Authority**: `../gates.yaml` is the single source of truth for every boundary: required evidence, artifact-backed keys, sanctioned fallback values, typed record shapes, submitters, and the finding policy. `../pipelines.yaml` is the matching stage map. Never accept or require an evidence key these files do not declare.
 - **Stack Lock**: `stack_lock` is required gate evidence at `design-to-build`. It names the registry slug, locked versions, and overlay sha256 from `../tech-stacks/registry.yaml`, or carries the sanctioned fallback `no new runtime or framework - existing stack unchanged`. Detect the slug deterministically with `python skills/scripts/check_runtime.py --detect-project`; never introduce a runtime, framework, or dependency without recording the decision and its owner.
 - **Design System Evidence**: For a user-facing surface, expect the design package to carry the component template and UI/UX handoff required by `../design-doctrine.md` §5, submitted as `ui_evidence` at `design-to-build`, and rendered verification from `design-qa` as `rendered_verification` at `review-to-delivery`. A run with no user-facing surface carries the sanctioned applicability record instead.
+- **Taste**: For presentation or interaction choices, inspect and resolve applicable user Taste under `../taste-doctrine.md`. Keep the current explicit instruction highest, preserve project-over-global precedence and provenance, and surface conflicts with mandatory accessibility, safety, security, legal, or gate requirements rather than normalizing them.
 - **One Writer**: `../ownership.yaml` and `../save-ownership.yaml` are the write contracts. Admiral writes intake, routing, the grilling log, cross-stage handoffs, and the delivery package; `session-memory` writes the run record through `save_run.py` only; each phase lead writes its own phase directory; gatekeepers write verdicts and never repair a submission.
 - **Canonical Contracts**: Apply `../contracts/evidence-standards.md` at every evidence claim, `../contracts/handoff-templates.md` at every delegation and gate submission, `../contracts/workflow-protocol.md` at every state transition, `../contracts/responsibility-matrix.md` when ownership is unclear, and `../contracts/delivery-template.md` at `RUN_COMPLETE`.
 - **MCP Registry Freshness**: Read `mcp-tools.md` at intake. If the file is missing, empty, or `last_discovery_at` is older than `discovery_ttl_hours` (canonical in `mcp-tools.md`; default 480h), pause and prompt the user to confirm or refresh the inventory before proceeding; on refresh, rewrite the file with a new `last_discovery_at` and append `MCP_REGISTRY_CHECK` with `action=refreshed` to the audit trail.
@@ -128,6 +129,7 @@ The workflow below applies after Tier 0 has been ruled out.
 - `review/code-chief`
 - `gatekeeper-admiral`
 - `skill-maker` for on-demand skill and team creation
+- `taste` for explicit preference inspection and lifecycle mutation
 - `session-memory` for cross-session checkpoints and durable learnings
 
 ## Mandatory Intake Engagement
@@ -167,6 +169,7 @@ Skip only when an upstream artifact is fully approved, structurally complete, an
 | Product testing with recorded evidence | `testing-and-qa/qa`, or `qa-only` for a report-only run | `qa-review` |
 | Skill or coordinated team creation | `skill-maker` | `skill-maker-to-delivery` |
 | Release preparation and rollout | `release-and-deployment/ship`, then `land-and-deploy` after a fresh human go decision | `deploy-readiness` |
+| Explicit Taste management | `taste`; ordinary design only consumes its effective-profile handoff | `taste-review` |
 | Checkpoint or resume | `session-memory` plus the earliest incomplete owner | the pending boundary |
 
 Frontend and UI work stays inside the design and review pipelines: `architect`
@@ -211,7 +214,7 @@ Persistence is mandatory when file-system tools are available. For the full save
 ## References
 
 - `gates.yaml` (skill set root) for the canonical gate spec: nine boundaries with their required evidence, artifact-backed keys, sanctioned fallbacks, typed records, and submitters.
-- `pipelines.yaml` (skill set root) for the eight pipelines, their ordered stages, stage owners, closing boundary, and required scripts.
+- `pipelines.yaml` (skill set root) for the nine pipelines, their ordered stages, stage owners, closing boundary, and required scripts.
 - `ownership.yaml` and `save-ownership.yaml` (skill set root) for the one-writer contracts at artifact and path level.
 - `execution-contract.md` (skill set root) for the canonical preamble clauses and the tier table.
 - `contracts/` (skill set root) for evidence standards, handoff templates, the workflow state machine, the responsibility matrix, universal frameworks, and the delivery template.
@@ -220,6 +223,7 @@ Persistence is mandatory when file-system tools are available. For the full save
 - `harness/hooks/save_run.py` for the run lifecycle operations `session-memory` uses.
 - `routing-doctrine.md` (skill set root) for the entry-routing contract that makes Admiral the canonical front door, the in-scope vs standalone tiers, the active-handoff loop guard, and the `UserPromptSubmit` reinforcement hook.
 - `grill-me-doctrine.md` (skill set root) for the binding intake interview protocol run at intake before any delegation.
+- `taste-doctrine.md` (skill set root) for the canonical scope, provenance, lifecycle, and deterministic resolution of user-authored or explicitly confirmed presentation and interaction preferences.
 - `references/workflow.md` for the detailed intake, sequencing, rewind, and delivery rules.
 - `references/examples.md` for concrete full-pipeline, resume, and skill-maker request patterns.
 - `intake-brief.yaml` for the normalized intake surface Admiral passes into a new run.

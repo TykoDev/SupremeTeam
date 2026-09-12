@@ -10,7 +10,18 @@ purpose: >-
 notes:
   - "Product source stays in the application's own layout. It is never written under skillset-saves; evidence that depends on it is snapshotted into <phase>/evidence/ with source path, revision, and sha256 provenance (typed-record inputs in gates.yaml)."
   - "Nothing under a run is deleted by automation. Superseded revisions move to _history/."
+  - "Global Taste state is governed by the same taste writer, skills/taste/taste_prefs.py, but lives in a deterministic user-data directory outside every checkout and therefore lies outside this project-relative glob policy."
 classes:
+  - id: project-taste-preferences
+    writer: taste
+    tool: skills/taste/taste_prefs.py
+    patterns:
+      - skillset-saves/preferences/taste.json
+      - skillset-saves/preferences/taste.md
+      - skillset-saves/preferences/_history/*
+      - skillset-saves/preferences/taste.journal.jsonl
+      - skillset-saves/preferences/taste.lock
+    rule: Canonical JSON, rendered view, revision history, journal, and lock are written only through taste_prefs.py; corrupt canonical bytes are never overwritten.
   - id: core-run-record
     writer: session-memory
     tool: skills/harness/hooks/save_run.py
@@ -91,6 +102,7 @@ phase_directories:
   - delivery
   - release
   - skill-creation
+  - taste
 phase_subdirectories:
   - reports
   - artifacts

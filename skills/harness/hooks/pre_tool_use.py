@@ -92,6 +92,16 @@ _CORE_SAVE_REASON = (
     "so revision lineage, history snapshots, and the audit trail stay coherent."
 )
 
+# Durable project Taste state has one sanctioned writer. This rule is limited
+# to path-addressed edit tools: reads remain available and shell behavior is not
+# guessed from ambiguous command text.
+_TASTE_SAVE_PATH = re.compile(r"(?:^|/)skillset-saves/preferences/(?:taste\.(?:json|md)|taste\.journal\.jsonl|taste\.lock|_history(?:/.*)?)$")
+_TASTE_SAVE_REASON = (
+    "Blocked by harness Action Realization layer: durable project Taste records, views, "
+    "history, journals, and locks are written only by skills/taste/taste_prefs.py. "
+    "Use that command's mutation subcommands instead of an edit tool."
+)
+
 
 def _deny(reason: str) -> None:
     out = {
@@ -297,6 +307,8 @@ def main() -> None:
         for target in _written_paths(tool_input):
             if _CORE_SAVE_FILE.search(target):
                 _deny(_CORE_SAVE_REASON)
+            if _TASTE_SAVE_PATH.search(target):
+                _deny(_TASTE_SAVE_REASON)
     elif tool_name in ("Bash", "PowerShell"):
         cmd = _command_text(tool_input)
         if cmd and "save_run.py" not in cmd and _command_mutates(cmd) and _CORE_SAVE_TOKEN.search(cmd.replace("\\", "/")):

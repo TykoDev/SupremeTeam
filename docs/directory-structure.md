@@ -24,7 +24,7 @@ SupremeTeam/
 │   └── assets/                           # Diagrams used across the docs
 └── skills/
     ├── gates.yaml                        # Gate spec: 9 boundaries
-    ├── pipelines.yaml                    # Pipeline map: 8 pipelines
+    ├── pipelines.yaml                    # Pipeline map: 9 pipelines
     ├── ownership.yaml                    # One writer per artifact
     ├── save-ownership.yaml               # One writer per save path class
     ├── team-manifest.yaml                # Roster
@@ -66,6 +66,7 @@ SupremeTeam/
     ├── investigate/                      # Investigation pipeline owner
     ├── skill-maker/                      # skill-creator, skill-reviewer
     ├── session-memory/                   # Run record and durable learnings
+    ├── taste/                            # Preference lifecycle owner and atomic writer
     ├── browser-automation/               # browse, open-browser, setup-browser-cookies, pair-agent
     ├── release-and-deployment/           # ship, land-and-deploy, setup-deploy, document-release
     ├── safety-guardrails/                # guard, careful, freeze, unfreeze
@@ -96,7 +97,7 @@ dependencies and things break in ways that are annoying to diagnose.
 Why things sit where they do:
 
 - `admiral`, `gatekeeper-admiral`, `investigate`, `skill-maker`, and
-  `session-memory` are directly under `skills/` because they are cross-cutting.
+  `session-memory`, and `taste` are directly under `skills/` because they are cross-cutting.
 - Pipeline-stage skills nest under their category (`design/`, `build/`,
   `review/`).
 - Standalone tools nest under their group.

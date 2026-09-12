@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "kind": "supremeteam-pipeline-spec",
-  "purpose": "Machine-readable definition of every Supreme Team pipeline: ordered stages, stage owners, the gate boundary that closes the pipeline, and the deterministic scripts each pipeline must run. Owners must exist in team-manifest.yaml, boundaries in gates.yaml, and script paths on disk; validation/test_pipeline_contracts.py enforces all three. The prose workflows in the owning SKILL.md files elaborate these stages and must not contradict them.",
+  "purpose": "Machine-readable definition of every Supreme Team pipeline, including Taste: ordered stages, stage owners, the gate boundary that closes the pipeline, and the deterministic scripts each pipeline must run. Owners must exist in team-manifest.yaml, boundaries in gates.yaml, and script paths on disk; validation/test_pipeline_contracts.py enforces all three. The prose workflows in the owning SKILL.md files elaborate these stages and must not contradict them.",
   "pipelines": {
     "design": {
       "owner": "commander",
@@ -323,6 +323,56 @@
         }
       ],
       "scripts": []
+    },
+    "taste": {
+      "owner": "taste",
+      "boundary": "taste-review",
+      "stages": [
+        {
+          "step": "scope-and-intake",
+          "owner": "taste"
+        },
+        {
+          "step": "load-current-preferences",
+          "owner": "taste"
+        },
+        {
+          "step": "preference-elicitation",
+          "owner": "taste"
+        },
+        {
+          "step": "normalization",
+          "owner": "taste"
+        },
+        {
+          "step": "conflict-and-policy-check",
+          "owner": "taste"
+        },
+        {
+          "step": "confirmation",
+          "owner": "taste"
+        },
+        {
+          "step": "atomic-persistence",
+          "owner": "taste"
+        },
+        {
+          "step": "effective-profile-resolution",
+          "owner": "taste"
+        },
+        {
+          "step": "consumer-handoff",
+          "owner": "taste"
+        },
+        {
+          "step": "phase-gate",
+          "owner": "taste"
+        }
+      ],
+      "scripts": [
+        "skills/taste/taste_prefs.py",
+        "skills/scripts/validate_manifests.py"
+      ]
     }
   }
 }

@@ -73,12 +73,12 @@ transition it guards and the single skill permitted to submit it. The
 human-readable table lives in [`../../../docs/gatekeepers.md`](../../../docs/gatekeepers.md)
 and a drift test asserts it matches `gates.yaml` exactly.
 
-Sixteen evidence keys are artifact-backed, meaning the value must reference a
+Nineteen evidence keys are artifact-backed, meaning the value must reference a
 path in the package's `artifact_hashes` map rather than a bare claim:
 `decisions`, `architecture`, `plan`, `tests`, `runtime`, `executed_probes`,
 `rendered_verification`, `threat_model`, `denial_path_evidence`, `reproduction`,
 `evidence_chain`, `test_matrix`, `link_report`, `validation_report`,
-`deploy_config`, `verification_plan`, and `rollback_plan`. Eight keys accept a
+`deploy_config`, `verification_plan`, `rollback_plan`, `preference_diff`, `effective_profile`, and `consumer_handoff`. Eight keys accept a
 sanctioned applicability record instead (`security_evidence`, `stack_lock`,
 `ui_evidence`, `rendered_verification`, `denial_path_evidence`,
 `vulnerability_scan`, `fixes_applied`, `team_manifest`), and only the exact

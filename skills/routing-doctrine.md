@@ -25,7 +25,7 @@ of scope, not through an opt-out.
 | Tier | Skills | Entry behavior |
 | --- | --- | --- |
 | Entry orchestrator | `admiral` | The front door. Lifecycle work initiates here. |
-| In-scope (must defer) | `design/commander`, `build/build-management`, `review/code-chief`, `skill-maker`, `investigate`, `session-memory`, `gatekeeper-admiral` | Components of the Admiral pipeline. Reached without an active handoff, they hand off to `admiral` first. |
+| In-scope (must defer) | `design/commander`, `build/build-management`, `review/code-chief`, `skill-maker`, `investigate`, `taste`, `session-memory`, `gatekeeper-admiral` | Components of the Admiral pipeline. Reached without an active handoff, they hand off to `admiral` first. |
 | Internal specialists | every skill under `design/`, `build/`, `review/` not listed above | Reached only through the owning sub-orchestrator. |
 | Standalone tools | `safety-guardrails/*`, `browser-automation/*`, `release-and-deployment/*`, `testing-and-qa/*` | Out of routing scope; invokable directly at any time. |
 
@@ -91,7 +91,19 @@ pipeline, never as a parallel lifecycle.
 Frontend and UI work stays inside the design and review pipelines: `architect`
 owns the design system per [design-doctrine.md](design-doctrine.md), and
 `design-qa` and `frontier` own its review evidence. There is no separate
-frontend pipeline.
+frontend pipeline. [Taste](taste-doctrine.md) is a canonical semantic input for
+user-authored or explicitly confirmed presentation and interaction preferences;
+it does not create a route, pipeline, gate, or bypass of Admiral precedence.
+
+Explicit preference lifecycle requests run the `taste` pipeline under Taste and
+close at `taste-review`. Triggers include “remember that I prefer…”, “save this
+style globally”, “only use this preference in this project”, “show my effective
+taste”, “promote this project preference”, and “forget/revoke this preference”.
+A direct standalone utility never mutates Taste unless the request explicitly
+invokes preference management. Ordinary application design consumes the resolved
+Taste handoff without opening a mutation pipeline. Scope-changing and destructive
+actions require confirmation; promotion to global scope, global reset, bulk
+import, and bulk revocation must never be inferred from casual feedback.
 
 ## The active-handoff check (loop guard)
 

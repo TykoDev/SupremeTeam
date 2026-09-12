@@ -91,7 +91,9 @@ pipeline, never as a parallel lifecycle.
 Frontend and UI work stays inside the design and review pipelines: `architect`
 owns the design system per [design-doctrine.md](design-doctrine.md), and
 `design-qa` and `frontier` own its review evidence. There is no separate
-frontend pipeline.
+frontend pipeline. [Taste](taste-doctrine.md) is a canonical semantic input for
+user-authored or explicitly confirmed presentation and interaction preferences;
+it does not create a route, pipeline, gate, or bypass of Admiral precedence.
 
 ## The active-handoff check (loop guard)
 

@@ -24,6 +24,7 @@ every required script is actually on disk.
 | `security` | cso | `security-review` | Threat model, vulnerability scan, adversarial probe, remediation |
 | `investigation` | investigate | `investigation-review` | Reproduction, evidence chain, mechanism, bounded fix path |
 | `qa` | qa | `qa-review` | Test matrix, executed probes, defects, scoped fixes |
+| `taste` | taste | `taste-review` | Preference confirmation, conflict analysis, persistence, effective-profile handoff |
 | `skill-creation` | skill-maker | `skill-maker-to-delivery` | Skill and team drafting, review, packaging |
 | `release` | ship | `deploy-readiness` | Readiness, deploy config, rollout, release notes |
 | `taste` | taste | `taste-review` | Preference intake, normalization, atomic persistence, effective profile, consumer handoff |

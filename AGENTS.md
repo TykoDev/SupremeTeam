@@ -42,6 +42,7 @@ Declared in `skills/pipelines.yaml`, gated by `skills/gates.yaml`.
 | `security` | `cso` | `security-review` |
 | `investigation` | `investigate` | `investigation-review` |
 | `qa` | `qa` | `qa-review` |
+| `taste` | `taste` | `taste-review` |
 | `skill-creation` | `skill-maker` | `skill-maker-to-delivery` |
 | `release` | `ship` | `deploy-readiness` |
 | `taste` | `taste` | `taste-review` |

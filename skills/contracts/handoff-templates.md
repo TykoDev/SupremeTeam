@@ -102,6 +102,40 @@ python skills/harness/gatekeeper/check.py \
 Exit 0 is a mechanical fact, not approval. The gatekeeper maps the result to
 `APPROVED`, `REVISE`, or `ESCALATE`.
 
+## Taste package example
+
+This schema-2 package uses the shared checker at `taste-review`. Artifact-backed
+records include their report path in `artifacts`; the abbreviated digests below
+must be replaced by full SHA-256 values in a real package.
+
+```yaml
+schema_version: 2
+run_id: taste-42
+boundary: taste-review
+owner: taste
+submission_id: taste-42-r3
+revision: 3
+revisions: [3]
+evidence:
+  scope: repository preferences
+  intent: revoke pref-old and promote pref-new
+  before_revision: 2
+  preference_diff: {artifacts: [evidence/preference-diff.json], added: [pref-new], updated: [], deprecated: [], revoked: [pref-old], unchanged: [pref-a], before_digest: "<sha256>", after_digest: "<sha256>"}
+  confirmation: {artifacts: [evidence/confirmation.json], actor: user, timestamp: "2026-09-11T12:00:00Z", confirmed_scope: repository, candidate_ids: [pref-new, pref-old], source_run: taste-42}
+  conflict_analysis: {artifacts: [evidence/conflicts.json], conflicting_ids: [], precedence_decision: repository-over-user, unresolved_conflicts: [], accessibility_policy_collisions: []}
+  policy_check: passed
+  persistence_result: {artifacts: [evidence/persistence.json], requested_destinations: [skillset-saves/preferences/taste.md], committed_revisions: [3], hashes: {skillset-saves/preferences/taste.md: "<sha256>"}, atomicity_status: committed, rollback_result: not-required}
+  effective_profile: {artifacts: [evidence/effective-profile.json], entries: [{id: pref-new, source_scope: repository, source_id: taste-42}], digest: "<sha256>"}
+  consumer_handoff: {consuming_pipeline: design, effective_profile_digest: "<sha256>", applicability_summary: applies to UI design decisions}
+  residual_uncertainty: none observed
+artifact_hashes:
+  evidence/preference-diff.json: "<sha256>"
+  evidence/confirmation.json: "<sha256>"
+  evidence/conflicts.json: "<sha256>"
+  evidence/persistence.json: "<sha256>"
+  evidence/effective-profile.json: "<sha256>"
+```
+
 ## Delegate obligations
 
 The delegate writes only the named artifact inside the supplied boundary. It

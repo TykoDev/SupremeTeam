@@ -31,6 +31,9 @@ behavior when work is rewound, resumed, or unable to proceed.
 | ESCALATE | admiral | Evidence, ownership, or approval cannot be resolved safely | INTAKE, REVISE, BLOCKED |
 | BLOCKED | current run owner | A required input, permission, or decision is unavailable | INTAKE, DESIGN, BUILD, REVIEW, GATE, RELEASE, REVISE, ESCALATE, SAFETY |
 | COMPLETE | admiral | The approved delivery boundary and required release verification are recorded | no normal transition; reopen through REVISE with a new revision |
+| TASTE_ACTIVE | taste | Preference management begins with bounded scope and intent | TASTE_GATE_PENDING, BLOCKED, ESCALATE, SAFETY |
+| TASTE_GATE_PENDING | taste | A taste package is ready for `taste-review` | COMPLETE, DESIGN, BUILD, REVIEW, RELEASE, TASTE_GATE_REVISE, BLOCKED, ESCALATE, SAFETY |
+| TASTE_GATE_REVISE | taste | The taste gate returns a bounded correction | TASTE_ACTIVE, TASTE_GATE_PENDING, BLOCKED, ESCALATE, SAFETY |
 
 The transition record names `from_state`, `to_state`, `run_id`, `revision`,
 `owner`, `reason`, `evidence_paths`, and `next_action`. An invalid transition is
@@ -80,13 +83,18 @@ boundary it validates, and every boundary guards a specific transition.
 | `security-review` | security pipeline to `GATE -> COMPLETE` | cso | gatekeeper-admiral |
 | `investigation-review` | investigation to the owning phase | investigate | gatekeeper-admiral |
 | `qa-review` | testing pipeline to `GATE -> COMPLETE` | qa | gatekeeper-admiral |
+| `taste-review` | `TASTE_ACTIVE -> TASTE_GATE_PENDING -> COMPLETE` or consuming pipeline | taste | gatekeeper-admiral |
 | `skill-maker-to-delivery` | skill-maker pipeline to `GATE -> COMPLETE` | skill-maker | gatekeeper-admiral |
 | `deploy-readiness` | `GATE -> RELEASE` | ship | gatekeeper-admiral |
 
 The phase gatekeeper validates inside its sub-pipeline; `gatekeeper-admiral`
-validates the same boundary as the cross-stage handoff. The security,
-investigation, qa, skill-creation, and release pipelines run inside this state
-machine, not beside it: their work occupies `DESIGN`-shaped or `BUILD`-shaped
+validates the same boundary as the cross-stage handoff. The taste pipeline uses
+its explicit `TASTE_*` states: approval at
+`TASTE_GATE_PENDING` transitions either to `COMPLETE` for preference-only work
+or returns the immutable effective-profile handoff to the applicable consuming
+pipeline; revision returns to `TASTE_GATE_REVISE` and then `TASTE_ACTIVE`.
+The security, investigation, qa, skill-creation, and release pipelines run
+inside this state machine, not beside it: their work occupies `DESIGN`-shaped or `BUILD`-shaped
 states in their own phase directory and meets the gate at the boundary named
 above. `gates.yaml` is the single source of truth for each boundary's required
 evidence; a boundary or key added there must be reflected here and in

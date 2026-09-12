@@ -118,6 +118,35 @@
         "executed_probes"
       ]
     },
+    "taste-review": {
+      "guards": "TASTE -> GATE -> COMPLETE or consuming pipeline",
+      "submitter": "taste",
+      "required_evidence": [
+        "scope",
+        "intent",
+        "before_revision",
+        "preference_diff",
+        "confirmation",
+        "conflict_analysis",
+        "policy_check",
+        "persistence_result",
+        "effective_profile",
+        "consumer_handoff",
+        "residual_uncertainty"
+      ],
+      "artifact_evidence": [
+        "preference_diff",
+        "confirmation",
+        "conflict_analysis",
+        "persistence_result",
+        "effective_profile"
+      ],
+      "fallback_values": {
+        "before_revision": ["new store - no prior revision"],
+        "consumer_handoff": ["preference management only - no downstream consumer"],
+        "residual_uncertainty": ["none observed"]
+      }
+    },
     "skill-maker-to-delivery": {
       "guards": "skill-maker pipeline -> GATE -> COMPLETE",
       "submitter": "skill-maker",
@@ -210,7 +239,13 @@
     "review_verdict": "verdict",
     "stack_lock": "stack_lock",
     "approved_design_revision": "revision_ref",
-    "approved_delivery": "revision_ref"
+    "approved_delivery": "revision_ref",
+    "preference_diff": "preference_diff",
+    "confirmation": "confirmation",
+    "conflict_analysis": "conflict_analysis",
+    "persistence_result": "persistence_result",
+    "effective_profile": "effective_profile",
+    "consumer_handoff": "consumer_handoff"
   },
   "evidence_type_rules": {
     "scan": "Record with artifacts (hashed), tool, command, exit_code, observed_at, inputs [{path, sha256}] bound to the inspected source, and result.status in pass|fail|error|not-run|unavailable. Only pass satisfies the gate; unavailable or error is a data gap, never a clean scan.",
@@ -220,7 +255,13 @@
     "findings": "Record {items: [{id, severity, status, owner?, reopen_trigger?, reason?}]}. Critical must be verified or not-applicable with reason. Major must be verified, not-applicable with reason, or deferred with owner and reopen_trigger (finding_policy.major_deferral). Minor and Info are recorded.",
     "verdict": "APPROVED, or REVISE/ESCALATE accompanied by a challenge record {by, reason} that the gate preserves as a disputed recommendation.",
     "stack_lock": "Record {slug, versions, overlay_sha256} validated against tech-stacks/registry.yaml (slug exists, overlay digest matches registry and file, versions intersect), or an applicability record.",
-    "revision_ref": "A non-empty approved upstream revision identifier."
+    "revision_ref": "A non-empty approved upstream revision identifier.",
+    "preference_diff": "Record {added, updated, deprecated, revoked, unchanged: [preference ids], before_digest, after_digest}. Every id collection is explicit and both digests are sha256 values.",
+    "confirmation": "Record {actor, timestamp, confirmed_scope, candidate_ids, source_run}. candidate_ids is the exact candidate-id set. Confirmation is never waivable: inferred preferences and any global write, promotion, reset, or revocation require this explicit record.",
+    "conflict_analysis": "Record {conflicting_ids, precedence_decision, unresolved_conflicts, accessibility_policy_collisions}.",
+    "persistence_result": "Record {requested_destinations, committed_revisions, hashes, atomicity_status, rollback_result}.",
+    "effective_profile": "Record {entries: [{id, source_scope, source_id}], digest}. Every effective entry carries its source scope and source id.",
+    "consumer_handoff": "Record {consuming_pipeline, effective_profile_digest, applicability_summary}. The digest is the immutable effective-profile sha256."
   },
   "finding_policy": {
     "critical": "verified-before-gate",

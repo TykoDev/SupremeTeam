@@ -63,6 +63,11 @@ delegates_to:
     handoff: skill-package or team-package
     verdict_source: gatekeeper-admiral (handoff-4)
     optional: true
+  - name: taste
+    skill_path: taste
+    handoff: taste-review package and consumer handoff
+    verdict_source: gatekeeper-admiral (taste-review)
+    optional: true
   - name: session-memory
     skill_path: session-memory
     handoff: checkpoint or learning record

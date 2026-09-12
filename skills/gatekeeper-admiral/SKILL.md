@@ -54,7 +54,7 @@ contract:
 
 ```bash
 python ../harness/gatekeeper/check.py \
-  --boundary <design-to-build|build-to-review|review-to-delivery|security-review|investigation-review|qa-review|skill-maker-to-delivery|deploy-readiness> \
+  --boundary <design-to-build|build-to-review|review-to-delivery|security-review|investigation-review|qa-review|taste-review|skill-maker-to-delivery|deploy-readiness> \
   --package <phase>/manifest.json \
   [--prior <phase>/verdict_<boundary>.json] \
   --verdict-out <phase>/verdict_<boundary>.json
@@ -84,7 +84,7 @@ python scripts/check.py <package-dir> [--prior <prior-verdict-file>] [--json]
 
 ## Workflow
 
-1. Classify the submission against `../gates.yaml`: one of `design-to-build`, `build-to-review`, `review-to-delivery`, `security-review`, `investigation-review`, `qa-review`, `skill-maker-to-delivery`, or `deploy-readiness`. Confirm the declared `boundary` and `owner` match the spec, and read the required-evidence list for that boundary from the spec rather than from memory.
+1. Classify the submission against `../gates.yaml`: one of `design-to-build`, `build-to-review`, `review-to-delivery`, `security-review`, `investigation-review`, `qa-review`, `taste-review`, `skill-maker-to-delivery`, or `deploy-readiness`. Confirm the declared `boundary` and `owner` match the spec, and read the required-evidence list for that boundary from the spec rather than from memory.
 2. Run both validators (see above), then judge what they cannot: whether a present artifact is substantively adequate, whether a contradiction across artifacts is real, whether a waiver reason is honest, and whether the next-consumer contract holds.
 3. Decide `APPROVED`, `REVISE`, or `ESCALATE` with a handoff-specific rationale that names the missing package element, conflicting approval, or unresolved risk-acceptance question.
 4. Reuse an existing verdict only when the same submission id and package revision recur; otherwise record how the resubmission changed before another handoff is allowed.

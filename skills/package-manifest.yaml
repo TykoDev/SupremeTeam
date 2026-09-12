@@ -7,6 +7,7 @@ exclude:
   - "**/__pycache__/**"
   - "**/*.pyc"
   - "skillset-saves/**"
+  - "skillset-saves/preferences/**"
   - ".harness-state/**"
   - "**/.harness-state/**"
   - "harness-test-work/**"
@@ -22,6 +23,12 @@ delivery_contract:
   cache_files_are_publishable: false
   runtime_state_is_publishable: false
   save_state_is_publishable: false
+  global_taste_state_is_publishable: false
+  taste_export_policy: >-
+    Global Taste state is always outside a checkout and can never enter a project
+    package. An explicit user export may be packaged only as a redacted artifact
+    carrying its canonical-record digest provenance; live stores, histories,
+    journals, and locks are never package inputs.
   verification: >-
     python skills/scripts/package_check.py --root . enumerates the selected
     files, rejects residue classes, confirms required assets, and optionally

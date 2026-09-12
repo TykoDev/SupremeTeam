@@ -1,6 +1,6 @@
 # Architecture
 
-Eight pipelines, one front door.
+Nine pipelines, one front door.
 
 Each pipeline closes at a gate boundary defined in
 [`skills/gates.yaml`](../skills/gates.yaml) and declared in
@@ -14,7 +14,7 @@ every required script is actually on disk.
 
 ![The delivery lifecycle](assets/Intro.jpg)
 
-## The eight
+## The nine
 
 | Pipeline | Owner | Closes at | What it is for |
 |---|---|---|---|
@@ -24,10 +24,12 @@ every required script is actually on disk.
 | `security` | cso | `security-review` | Threat model, vulnerability scan, adversarial probe, remediation |
 | `investigation` | investigate | `investigation-review` | Reproduction, evidence chain, mechanism, bounded fix path |
 | `qa` | qa | `qa-review` | Test matrix, executed probes, defects, scoped fixes |
+| `taste` | taste | `taste-review` | Preference confirmation, conflict analysis, persistence, effective-profile handoff |
 | `skill-creation` | skill-maker | `skill-maker-to-delivery` | Skill and team drafting, review, packaging |
 | `release` | ship | `deploy-readiness` | Readiness, deploy config, rollout, release notes |
+| `taste` | taste | `taste-review` | Preference intake, normalization, atomic persistence, effective profile, consumer handoff |
 
-The last five are not side channels. They run inside the same state machine as the
+The last six are not side channels. They run inside the same state machine as the
 first three, occupying a design-shaped or build-shaped state in their own phase
 directory, and meeting a gate at their own boundary.
 

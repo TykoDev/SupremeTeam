@@ -40,7 +40,7 @@ def _signature(tool_name: str, tool_input: dict) -> str:
             + "|" + str(tool_input.get("file_path", ""))
             + "|" + str(tool_input.get("new_string", ""))
         )
-    return hashlib.sha1(key.encode("utf-8", "ignore")).hexdigest()[:16]
+    return hashlib.sha256(key.encode("utf-8", "ignore")).hexdigest()[:16]
 
 
 def _response_text(data: dict) -> str:

@@ -37,7 +37,6 @@ from pathlib import Path
 _MAX_TRAJ = 40
 # Trajectory files older than this are pruned on the next append.
 _TRAJ_RETENTION_SECONDS = 7 * 24 * 3600
-_LEGACY_TRAJ_PREFIX = "traj-"
 
 _SESSION_ENV = ("SUPREMETEAM_SESSION_ID", "CLAUDE_SESSION_ID", "CODEX_SESSION_ID", "COPILOT_SESSION_ID", "GITHUB_RUN_ID")
 
@@ -90,7 +89,7 @@ def state_dir() -> Path:
         d.mkdir(parents=True, exist_ok=True)
         return d
     except Exception:
-        namespace = hashlib.sha1(str(base).encode("utf-8", "ignore")).hexdigest()[:16]
+        namespace = hashlib.sha256(str(base).encode("utf-8", "ignore")).hexdigest()[:16]
         d = Path(tempfile.gettempdir()) / "supremeteam-harness-state" / namespace
         try:
             d.mkdir(parents=True, exist_ok=True)
@@ -239,7 +238,7 @@ def trajectory_identity(data: dict) -> tuple:
 
 
 def _traj_path(identity: str) -> Path:
-    key = hashlib.sha1(str(identity or "anonymous").encode("utf-8", "ignore")).hexdigest()[:20]
+    key = hashlib.sha256(str(identity or "anonymous").encode("utf-8", "ignore")).hexdigest()[:20]
     return state_dir() / "trajectories" / _active_run_id() / f"{key}.json"
 
 
@@ -378,7 +377,7 @@ def record_observation(event: str, data: dict) -> None:
             current = {}
         entry = {
             "at": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z",
-            "session_hash": hashlib.sha1(session.encode("utf-8", "ignore")).hexdigest()[:12] if session else None,
+            "session_hash": hashlib.sha256(session.encode("utf-8", "ignore")).hexdigest()[:12] if session else None,
             "tool_name": str((data or {}).get("tool_name") or "") or None,
             "count": int((current.get(kind) or {}).get("count", 0)) + 1,
         }

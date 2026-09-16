@@ -52,6 +52,28 @@ mid-run and the next one resumes from the same files.
 
 More in [docs/persistent-saves.md](docs/persistent-saves.md).
 
+## How well it works
+
+Measured, not asserted. Every skill is scored against a ten-dimension rubric,
+every gate boundary is proven satisfiable by submitting a real package to the
+real validator, and routing is measured by putting all 52 descriptions in front
+of a model and asking which one wins.
+
+| | |
+|---|---|
+| Skill quality, 52 skills | mean **98.8** / 100, lowest 95 |
+| Spec, harness and doctrine | mean **97.5** / 100 |
+| Routing accuracy, requests in a user's own words | **94.8%** |
+| Automated tests | **359**, all passing |
+
+The routing figure is the one worth reading the methodology for: the same
+catalog scores 100% when queried with its own advertised phrasings, and 94.8%
+when those queries are rewritten the way someone would actually type them. Only
+the second number measures anything.
+
+Full results, per-skill scores, and what is deliberately *not* measured:
+[BENCHMARK.md](BENCHMARK.md).
+
 ## Check an installation
 
 ```bash
@@ -70,6 +92,7 @@ python -m unittest discover -s skills/validation -p "test_*.py"
 |---|---|
 | [QUICK-START.md](QUICK-START.md) | Install and first run |
 | [Install.md](Install.md) | The full installation procedure |
+| [BENCHMARK.md](BENCHMARK.md) | Scores, routing accuracy, and how each was measured |
 | [AGENTS.md](AGENTS.md) | Flat skill index for tool discovery |
 | [docs/architecture.md](docs/architecture.md) | Pipelines, tiers, execution modes |
 | [docs/skills.md](docs/skills.md) | Every skill and what it owns |

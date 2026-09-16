@@ -37,9 +37,11 @@ def _load_engine():
 
 gc = _load_engine()
 
-# The cross-stage handoff record (save-protocol.md §2: gatekeeper-admiral_handoff
-# -{N}.md) is the one artifact admiral must attach for any boundary. The package
-# narrative + delivery package are validated structurally by the shared checks.
+# The cross-stage handoff record (save-protocol.md §1:
+# delivery/reports/handoff_<boundary>.md) is the one artifact admiral must attach
+# for any boundary; pass the run's delivery/ directory as <package-dir>. The
+# package narrative + delivery package are validated structurally by the shared
+# checks.
 MANIFEST = gc.Manifest(
     boundary="cross-stage handoff (admiral)",
     sub_orchestrator="admiral",

@@ -11,7 +11,7 @@
 
 1. Run the save startup check before new state is created: inspect `skillset-saves/_latest.md`, classify the directory as active/inactive/missing/unreadable/conflict, resume active reclaimable runs, or activate persistence for a new run.
 2. If persistence activation fails, warn once, attempt read-only resume from any readable latest artifacts, and continue transiently only when no coherent resume boundary can be proven.
-3. Run `harness/hooks/check_readiness.py --host auto --require-active-run` after activation/resume so Python version, hook registration, and active save-run status are visible in one place. Record `RUNTIME_READINESS_CHECK`; warn and continue in degraded mode when hooks or Python are missing, but rerun the save startup check if no active save run is present.
+3. Run `harness/hooks/check_readiness.py --host auto` on a fresh intake, or with `--require-active-run` on a resume, so Python version, hook registration, and save state are visible in one place; a fresh intake has no run until `save_run.py create` publishes it. Record `RUNTIME_READINESS_CHECK`; warn and continue in degraded mode when hooks or Python are missing, and on a resume rerun the save startup check if no active save run is present.
 4. Normalize the user request with `intake-brief.yaml` so scope, constraints, upstream artifacts, and requested endpoint are visible in one place.
 5. Decide whether the run is full pipeline, partial pipeline, resume, create-skill, or create-team.
 6. Detect whether the host supports agent mode or only skill mode, then re-check that mode at every boundary and active-session turn.
@@ -28,41 +28,49 @@
 
 ### Save Instructions Per Boundary
 
+The path policy is `../../save-ownership.yaml`; admiral never writes a core run
+file by hand and never creates a path outside its declared classes.
+
 **On delegation** to any sub-orchestrator:
-1. Update `_state.md` to the active state for that pipeline (e.g. `DESIGN_ACTIVE`, `BUILD_ACTIVE`, `REVIEW_ACTIVE`).
-2. Append a `DELEGATION_SENT` entry to `_audit-trail.md`.
-3. Include a `### Save Context` block in the delegation prompt with the run ID, save path, persistence status, context tier, artifact mode, standalone fallback ref, and skipped upstream stages.
+1. Checkpoint through `session-memory` (`python skills/harness/hooks/save_run.py checkpoint --run-id {run-id} --expect-revision <n> --set active_owner=<lead> --set phase_state=<PHASE>_ACTIVE`). The checkpoint publishes `_state.md`, `_lock.md`, and `_latest.md` atomically and appends `DELEGATION_SENT` to `_audit-trail.md`.
+2. Include the canonical `### Save Context` block (below) in the delegation prompt.
 
 **On package return** from a sub-orchestrator:
 1. Generate a `submission_id` in the format `{run-id}_handoff-{N}_attempt-{M}_{ISO-timestamp}`.
-2. Write `gatekeeper-admiral_handoff-{N}.md` with `submission_status: PENDING` and `verdict: PENDING`.
-3. Update `_state.md` to the gate-pending state (e.g. `DESIGN_GATE_PENDING`) with `gatekeeper_verdict_pending: true`.
-4. Invoke `session-memory` to checkpoint the current state before the gate submission.
+2. Write the cross-stage handoff record at `skillset-saves/runs/{run-id}/delivery/reports/handoff_{boundary}.md` (frontmatter: `submission_id`, `revision`, `package_path`, `submission_status: PENDING`, `verdict: PENDING`). `delivery/` is admiral's own phase directory.
+3. Checkpoint through `session-memory` with `--set phase_state=<PHASE>_GATE_PENDING --evidence <that record>` before the gate submission.
 
 **On gatekeeper-admiral verdict**:
-1. Update `gatekeeper-admiral_handoff-{N}.md` with the actual verdict and `submission_status: VERDICT_RECORDED`.
+1. Update the handoff record with the actual verdict, its `verdict_id`, and `submission_status: VERDICT_RECORDED`. The gatekeeper's own durable record is `<phase>/verdict_{boundary}.cross-stage.json`, written beside the phase gatekeeper's `verdict_{boundary}.json`.
 2. Route per verdict:
-   - APPROVED: update `_state.md` to the next active state, advance to next stage.
-   - REVISE: update `_state.md` to the gate-revise state, forward findings to the same sub-orchestrator.
-   - ESCALATE: update `_state.md` to `DISPUTED_AWAITING_USER`, freeze advancement.
-3. Update `_latest.md` and append the verdict to `_audit-trail.md`.
+   - APPROVED: checkpoint into the next active state and advance to the next stage.
+   - REVISE: checkpoint into the gate-revise state and forward the findings to the same sub-orchestrator.
+   - ESCALATE: `save_run.py block --reason "<dispute>"` (`DISPUTED_AWAITING_USER`) and freeze advancement.
+3. Every checkpoint refreshes `_latest.md` and appends the verdict to `_audit-trail.md`; neither file is written by hand.
 
 ### Save Context Delegation Template
 
-Include this block in every sub-orchestrator delegation with values copied from the current run state. When persistence is inactive or read-only resume is in effect, keep the block but set `Persistence active: no` so downstream skills return inline and skip writes.
+Include this block in every sub-orchestrator delegation with values copied from the current run state. It is the canonical field set from `../../contracts/handoff-templates.md` (mirrored in `../../save-protocol.md`); neither file may drop a field the other carries. When persistence is inactive or read-only resume is in effect, keep the block but set `Persistence active: no` so downstream skills return inline and skip writes.
 
 ```markdown
 ### Save Context
-- **Run ID**: {run-id}
-- **Save path**: skillset-saves/runs/{run-id}/{pipeline}/
-- **Persistence active**: {yes|no — current run state}
-- **Persistence probe result**: {ok|failed|skipped}
-- **Context tier**: {1|2|3|4}
-- **Artifact mode**: {inline|reference|best-effort-inline}
-- **Standalone fallback ref**: {path or "none"}
-- **Skipped upstream stages**: {none or list}
-- **Session pin**: {true|false}
-- **Execution mode**: {agent|skill}
+- Run ID: {run-id}
+- Phase: {phase}
+- Save path: skillset-saves/runs/{run-id}/{phase}/
+- Persistence active: {yes|no}
+- Persistence probe result: {ok|reason}
+- Context tier: {1|2|3}
+- Artifact mode: {inline|file|reference}
+- Session pin: {true|false}
+- Execution mode: {agent|skill}
+- Submission ID: {id}
+- Revision: {revision}
+- Owner: {owner}
+- Expected artifact: {artifact}
+- Evidence paths: {relative paths}
+- Artifact hashes: {path: sha256|none yet}
+- Risks: {known risks|none declared}
+- Return boundary: {gate boundary for the returned package}
 ```
 
 ## Rewind And Idempotency Rules

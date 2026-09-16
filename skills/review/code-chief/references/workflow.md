@@ -39,29 +39,38 @@
 
 ## Save Instructions Per Lens
 
-When persistence is active (Save Context received from admiral):
+When persistence is active (Save Context received from admiral), the phase lead
+writes only the classes `../../../save-ownership.yaml` grants it under
+`skillset-saves/runs/{run-id}/review/`:
 
-1. **Before delegating** a specialist lens: create `lens-{N}_{skill}/_phase-state.md` with `state: ACTIVE`. Include a `### Save Context` block in the delegation prompt pointing to `skillset-saves/runs/{run-id}/review/lens-{N}_{skill}/`.
-2. **After specialist returns**: verify the specialist wrote `report_{name}.md` to the save path.
-3. **After gatekeeper-code verdict**: write `lens-{N}_{skill}/gatekeeper-verdict.md` with the full verdict. Update `_phase-state.md` to APPROVED, REVISING, or ESCALATED.
-4. **On package consolidation**: write `review/review-package.md` and `review/delegation-log.md` summarizing all lens outcomes.
+1. **Before delegating** a specialist: checkpoint through `session-memory` (`save_run.py checkpoint --expect-revision <n> --set active_owner=code-chief --set phase_state=REVIEW_ACTIVE`) and include the canonical `### Save Context` block naming the specialist as `Owner` and its `reports/`, `artifacts/`, or `evidence/` destination as `Expected artifact`. Do not create per-specialist directories or phase-state files.
+2. **After specialist returns**: verify the named artifact exists at its destination (for example `reports/report_bug-review.md` or `evidence/capture-1280-dark.png`), then checkpoint with `--evidence <path>` so its sha256 is registered.
+3. **After gatekeeper-code verdict**: the gatekeeper has written `review/verdict_review-to-delivery.json`; record the semantic verdict and next action in the next checkpoint (`--set phase_state=REVIEW_GATE_PENDING`, `REVIEW_GATE_REVISE`, or the next active state). Never edit the verdict record.
+4. **On package consolidation**: write `review/reports/review-package.md` and `review/manifest.json` (schema 2) summarizing all phase outcomes with hashes; admiral submits that manifest to `gatekeeper-admiral`.
 
 ### Save Context Block Template
 
-Include the following block verbatim in every specialist delegation, populating each field from the current run state:
+Include the following block verbatim in every specialist delegation, populating each field from the current run state. It is the canonical field set from `../../../contracts/handoff-templates.md`; neither file may drop a field the other carries.
 
 ```markdown
 ### Save Context
-- **Run ID**: {run-id}
-- **Save path**: skillset-saves/runs/{run-id}/review/lens-{N}_{skill}/
-- **Persistence active**: {yes|no — copied from current run state}
-- **Persistence probe result**: {ok|failed|skipped}
-- **Context tier**: {1|2|3|4}
-- **Artifact mode**: {inline|reference|best-effort-inline}
-- **Standalone fallback ref**: {path or "none"}
-- **Skipped upstream stages**: {none or list}
-- **Session pin**: {true|false}
-- **Execution mode**: {agent|skill}
+- Run ID: {run-id}
+- Phase: review
+- Save path: skillset-saves/runs/{run-id}/review/
+- Persistence active: {yes|no}
+- Persistence probe result: {ok|reason}
+- Context tier: {1|2|3}
+- Artifact mode: {inline|file|reference}
+- Session pin: {true|false}
+- Execution mode: {agent|skill}
+- Submission ID: {id}
+- Revision: {revision}
+- Owner: {specialist}
+- Expected artifact: {reports/...|artifacts/...|evidence/...}
+- Evidence paths: {relative paths}
+- Artifact hashes: {path: sha256|none yet}
+- Risks: {known risks|none declared}
+- Return boundary: review-to-delivery
 ```
 
 When Save Context is absent or `Persistence active: no`, skip all save operations and return the deliverable inline.

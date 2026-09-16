@@ -39,10 +39,9 @@ so this table cannot quietly rot.
 | `security-review` | security pipeline to GATE to COMPLETE | cso | `scope` `threat_model` `findings` `vulnerability_scan` `denial_path_evidence` `remediation_plan` `residual_risk` |
 | `investigation-review` | investigation to the owning phase | investigate | `scope` `reproduction` `mechanism` `evidence_chain` `fix_path` `residual_uncertainty` |
 | `qa-review` | testing pipeline to GATE to COMPLETE | qa | `scope` `test_matrix` `executed_probes` `defects` `fixes_applied` `residual_risk` |
-| `taste-review` | TASTE to GATE to COMPLETE or consuming pipeline | taste | `scope` `intent` `before_revision` `preference_diff` `confirmation` `conflict_analysis` `policy_check` `persistence_result` `effective_profile` `consumer_handoff` `residual_uncertainty` |
+| `taste-review` | TASTE to GATE to COMPLETE or consuming pipeline | taste | `scope` `intent` `before_revision` `preference_diff` `confirmation` `conflict_analysis` `policy_check` `persistence_result` `effective_profile` `consumer_handoff` `taste_review_record` `residual_uncertainty` |
 | `skill-maker-to-delivery` | skill-maker pipeline to GATE to COMPLETE | skill-maker | `skills` `team_manifest` `link_report` `validation_report` |
 | `deploy-readiness` | GATE to RELEASE | ship | `approved_delivery` `deploy_config` `verification_plan` `rollback_plan` `human_go_required` |
-| `taste-review` | taste pipeline to GATE to COMPLETE | taste | `scope` `intake` `preference_diff` `effective_profile` `policy_check` `confirmation` `consumer_handoff` |
 
 ## Evidence that has to be a file
 
@@ -50,13 +49,14 @@ Some keys cannot be satisfied by saying so. Their value has to point at a path i
 the package's `artifact_hashes` map, which means the evidence is a real file with
 a real digest:
 
-`decisions`, `architecture`, `plan`, `tests`, `runtime`, `executed_probes`,
-`rendered_verification`, `threat_model`, `denial_path_evidence`, `reproduction`,
-`evidence_chain`, `test_matrix`, `link_report`, `validation_report`,
-`deploy_config`, `verification_plan`, `rollback_plan`, `preference_diff`,
-`effective_profile`, `consumer_handoff`.
+`decisions`, `architecture`, `plan`, `taste_snapshot`, `tests`, `runtime`,
+`executed_probes`, `rendered_verification`, `threat_model`,
+`denial_path_evidence`, `reproduction`, `evidence_chain`, `test_matrix`,
+`link_report`, `validation_report`, `deploy_config`, `verification_plan`,
+`rollback_plan`, `preference_diff`, `confirmation`, `conflict_analysis`,
+`persistence_result`, `effective_profile`, `taste_review_record`.
 
-Eleven keys may instead carry a typed applicability record naming `reason`,
+Twelve keys may instead carry a typed applicability record naming `reason`,
 `scope`, and `decided_by`, and only for the exact reasons listed under
 `fallback_values`: `security_evidence`, `stack_lock`, `taste_snapshot`, `ui_evidence`,
 `rendered_verification`, `denial_path_evidence`, `vulnerability_scan`,

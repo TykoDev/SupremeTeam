@@ -25,19 +25,29 @@ skillset-saves/
     _history/                        # rev-<n>.state.json / rev-<n>.lock.json snapshots
     intake/report_grilling.md        # decisions artifact (writer: admiral)
     {phase}/                         # design, build, review, security, investigation,
-      manifest.json                  #   qa, skill-creation, delivery, release
+      manifest.json                  #   qa, taste, skill-creation, delivery, release
       reports/
       artifacts/
       evidence/
       packages/
-      verdict_{boundary}.json        # writer: the boundary's gatekeeper
+      verdict_{boundary}.json        # writer: the phase gatekeeper (check.py --verdict-out)
+      verdict_{boundary}.cross-stage.json  # writer: gatekeeper-admiral, beside the phase record
 ```
 
 `design/`, `build/`, and `review/` hold the three delivery phases owned by
 `commander`, `build-management`, and `code-chief`. `security/` holds the
 security pipeline (`cso`), `investigation/` the investigation pipeline
-(`investigate`), `qa/` the testing pipeline (`qa`), `skill-creation/` the
-skill-maker pipeline, and `release/` the release pipeline (`ship`). The grilling
+(`investigate`), `qa/` the testing pipeline (`qa`), `taste/` the Taste
+preference pipeline (`taste`; the durable preference store itself lives at
+`skillset-saves/preferences/` and is written only by `taste_prefs.py`),
+`skill-creation/` the skill-maker pipeline, and `release/` the release pipeline
+(`ship`). `intake/` and `delivery/` are `admiral`'s own phase directories:
+`delivery/reports/handoff_{boundary}.md` is the cross-stage handoff record for
+each boundary and `delivery/reports/delivery-package.md` the final delivery
+package. A gate produces two verdict records in the phase directory: the phase
+gatekeeper writes `verdict_{boundary}.json`, and `gatekeeper-admiral` re-validates
+with `--prior` and writes `verdict_{boundary}.cross-stage.json` beside it, so
+neither record overwrites the other. The grilling
 log lives at `intake/report_grilling.md` and is the hashed artifact behind the
 `decisions` gate key; a phase manifest references it as
 `../intake/report_grilling.md`, which the gate admits because the run directory
@@ -127,7 +137,10 @@ prompt-submit hook, and the gate checker's run-root verification.
 `admiral` orchestrates; `session-memory` owns the run lifecycle record and
 writes it only through `save_run.py` (`create`, `checkpoint`, `heartbeat`,
 `complete`, `block`, `release`, `recover`, `status`). Each phase lead owns its
-phase directory. Specialists write only the artifact named in their delegation,
+phase directory (`admiral` leads `intake/` and `delivery/`); a lead never
+creates nested per-specialist directories or phase-state files, because no
+declared path class covers them and phase state lives in the run record.
+Specialists write only the artifact named in their delegation,
 at the destination the delegation names. Gatekeepers write verdict records but
 never modify submissions.
 

@@ -36,8 +36,8 @@
 ## Contract Notes
 
 - Shared severity: Report findings with the shared four-tier model so upstream and downstream packages interpret risk consistently.
-- API endpoint contract schema: Use `../architect/references/api-endpoint-design.md` as the required shape for API, webhook, event-ingest, and internal service endpoint evidence.
-- Frontend/UI handoff schema: Use `../../design-doctrine.md` as the required shape for component-template and UI/UX handoff evidence.
+- API endpoint contract schema: Use `../../architect/references/api-endpoint-design.md` as the required shape for API, webhook, event-ingest, and internal service endpoint evidence.
+- Frontend/UI handoff schema: Use `../../../design-doctrine.md` as the required shape for component-template and UI/UX handoff evidence.
 
 ## Collaboration Notes
 

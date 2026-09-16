@@ -1,0 +1,7 @@
+# Registry overlay digests and gate artifact hashes are computed over LF
+# content; keep text files LF in every checkout regardless of core.autocrlf.
+* text=auto eol=lf
+*.jpg binary
+*.png binary
+*.zip binary
+*.skill binary

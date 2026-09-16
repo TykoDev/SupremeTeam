@@ -45,7 +45,6 @@ Declared in `skills/pipelines.yaml`, gated by `skills/gates.yaml`.
 | `taste` | `taste` | `taste-review` |
 | `skill-creation` | `skill-maker` | `skill-maker-to-delivery` |
 | `release` | `ship` | `deploy-readiness` |
-| `taste` | `taste` | `taste-review` |
 
 ## The 49 skills
 

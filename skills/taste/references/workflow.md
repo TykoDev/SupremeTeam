@@ -5,11 +5,14 @@
 Taste maintains a global record and a project record. Each is schema-versioned,
 revisioned, and contains uniquely identified entries with a value, kind
 (`preference` or `anti-preference`), source (`explicit` or `inferred`), examples,
-and counterexamples. The default global path is
-`~/.agents/preferences/taste.json`; the default project path is
-`skillset-saves/preferences/taste.md`. Despite the compatibility filename, the
-project record contains JSON. Callers may override both paths for controlled
-hosts and tests.
+and counterexamples. The global record lives outside every checkout, under `preferences/` in the
+deterministic user-data root that `taste_prefs.py` resolves (`SUPREMETEAM_HOME`,
+then `CODEX_HOME` or `AGENTS_HOME` plus `supremeteam`, then the platform data
+directory); the project record lives at `skillset-saves/preferences/`. Each
+scope holds a canonical `taste.json`, a rendered `taste.md`, `_history/`,
+`taste.journal.jsonl`, and `taste.lock`, written only by `taste_prefs.py`
+(`../../save-ownership.yaml`, class `project-taste-preferences`). Callers may
+override both roots for controlled hosts and tests.
 
 ## Mutation sequence
 
@@ -43,9 +46,12 @@ intact until separately revoked.
 
 ## Gate package and handoff
 
-The Taste owner submits `scope`, `intake`, `preference_diff`,
-`effective_profile`, `policy_check`, `confirmation`, and `consumer_handoff` to
-`taste-review`. The handoff identifies source revisions, stable IDs, intended
+The Taste owner submits the `taste-review` evidence set declared in
+`../../gates.yaml`: `scope`, `intent`, `before_revision`, `preference_diff`,
+`confirmation`, `conflict_analysis`, `policy_check`, `persistence_result`,
+`effective_profile`, `consumer_handoff`, `taste_review_record` (written by
+`taste-review`), and `residual_uncertainty`, as a schema-2 manifest at
+`skillset-saves/runs/{run-id}/taste/manifest.json`. The handoff identifies source revisions, stable IDs, intended
 consumers, precedence, unresolved ambiguity, and accessibility constraints.
 Downstream pipelines consume it as immutable input; they return requested
 semantic changes to Taste rather than editing the record.

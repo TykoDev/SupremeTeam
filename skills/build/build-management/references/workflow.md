@@ -36,12 +36,14 @@
 
 ## Save Instructions Per Phase
 
-When persistence is active (Save Context received from admiral):
+When persistence is active (Save Context received from admiral), the phase lead
+writes only the classes `../../../save-ownership.yaml` grants it under
+`skillset-saves/runs/{run-id}/build/`:
 
-1. **Before delegating** a specialist: create `phase-{N}_{skill}/_phase-state.md` with `state: ACTIVE`. Include a `### Save Context` block in the delegation prompt pointing to `skillset-saves/runs/{run-id}/build/phase-{N}_{skill}/`.
-2. **After specialist returns**: verify the specialist wrote `deliverable_{name}.md` to the save path.
-3. **After gatekeeper-build verdict**: write `phase-{N}_{skill}/gatekeeper-verdict.md` with the full verdict. Update `_phase-state.md` to APPROVED, REVISING, or ESCALATED.
-4. **On package consolidation**: write `build/build-package.md` and `build/delegation-log.md` summarizing all phase outcomes.
+1. **Before delegating** a specialist: checkpoint through `session-memory` (`save_run.py checkpoint --expect-revision <n> --set active_owner=build-management --set phase_state=BUILD_ACTIVE`) and include the canonical `### Save Context` block naming the specialist as `Owner` and its `reports/`, `artifacts/`, or `evidence/` destination as `Expected artifact`. Do not create per-specialist directories or phase-state files.
+2. **After specialist returns**: verify the named artifact exists at its destination (for example `reports/report_implementation.md` or `evidence/tests.log`), then checkpoint with `--evidence <path>` so its sha256 is registered.
+3. **After gatekeeper-build verdict**: the gatekeeper has written `build/verdict_build-to-review.json`; record the semantic verdict and next action in the next checkpoint (`--set phase_state=BUILD_GATE_PENDING`, `BUILD_GATE_REVISE`, or the next active state). Never edit the verdict record.
+4. **On package consolidation**: write `build/reports/build-package.md` and `build/manifest.json` (schema 2) summarizing all phase outcomes with hashes; admiral submits that manifest to `gatekeeper-admiral`.
 
 ## Collaboration Notes
 

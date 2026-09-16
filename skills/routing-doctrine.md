@@ -29,6 +29,14 @@ of scope, not through an opt-out.
 | Internal specialists | every skill under `design/`, `build/`, `review/` not listed above | Reached only through the owning sub-orchestrator. |
 | Standalone tools | `safety-guardrails/*`, `browser-automation/*`, `release-and-deployment/*`, `testing-and-qa/*` | Out of routing scope; invokable directly at any time. |
 
+"Standalone" means directly reachable without going through `admiral`; it does
+not mean outside the pipelines. `qa`, `qa-only`, and `ship` are directly
+invokable **and** own a gated pipeline (`qa-review`, `deploy-readiness`) when
+`admiral` delegates to them. How they were reached decides which is happening:
+an explicit standalone request runs the tool directly, while a cold lifecycle
+request for product testing or a release enters through `admiral` (front-door
+scope below) so it gets intake, persistence, and the gate.
+
 ## Tier 0 fast path
 
 Classify scope before starting a pipeline. Tier 0 covers small, local,

@@ -100,7 +100,23 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 
 ## Save Protocol
 
-Gatekeepers do not write directly to `skillset-saves/`. The delegating orchestrator captures the gatekeeper verdict and writes it to the appropriate `gatekeeper-verdict.md` file. Return verdict output inline as usual.
+A gatekeeper writes exactly one path class: the durable verdict record at
+`skillset-saves/runs/{run-id}/design/verdict_design-to-build.json`
+(`../../save-ownership.yaml`, class `gate-verdict`), produced by the boundary
+validator against `../../gates.yaml`:
+
+```bash
+python ../../harness/gatekeeper/check.py --boundary design-to-build \
+  --package skillset-saves/runs/{run-id}/design/manifest.json \
+  --verdict-out skillset-saves/runs/{run-id}/design/verdict_design-to-build.json
+```
+
+It never modifies the submission, its evidence, or the run record;
+`design/commander` records the semantic verdict in its next checkpoint.
+`gatekeeper-admiral` later re-validates the same boundary with
+`--prior design/verdict_design-to-build.json` and writes its own record beside it as
+`verdict_design-to-build.cross-stage.json`. When persistence is inactive, return the
+verdict inline and preserve the run and revision.
 
 ## References
 

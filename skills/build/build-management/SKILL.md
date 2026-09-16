@@ -87,29 +87,49 @@ Skip only when an upstream artifact is fully approved, structurally complete, an
 
 ## Save Protocol
 
-When admiral delegates with `Persistence active: yes`, build-management owns these files within `skillset-saves/runs/{run-id}/build/`. When persistence is inactive or read-only resume is in effect, build-management keeps the same phase sequencing but returns artifacts inline and propagates `Persistence active: no` to specialists.
+When admiral delegates with `Persistence active: yes`, build-management is the phase lead
+for `skillset-saves/runs/{run-id}/build/` and writes only the path classes
+`../../save-ownership.yaml` grants a phase lead: `manifest.json`, `reports/`,
+`artifacts/`, `evidence/`, and `packages/`. Resolve every destination with
+`python skills/scripts/output_paths.py --run-id {run-id} --phase build --kind <reports|artifacts|evidence|manifest> --name <file>`;
+never compose a path by hand, and never create nested per-specialist directories
+or phase-state files, because no declared class covers them and phase state lives
+in the run record. When persistence is inactive or read-only resume is in effect,
+build-management keeps the same phase sequencing but returns artifacts inline and
+propagates `Persistence active: no` to specialists.
 
 | Trigger | What Build-Management Writes |
-|---------|-----------------------------|
-| Phase start | `phase-{N}_{skill}/_phase-state.md` (state: ACTIVE) |
-| Specialist delegation | Include `### Save Context` block with phase save path |
-| Gate verdict capture | `phase-{N}_{skill}/gatekeeper-verdict.md` + `_phase-state.md` update |
-| Package consolidation | `build-package.md` + `delegation-log.md` |
+|---------|----------------------|
+| Phase start | Nothing on disk: the phase state is published through `session-memory` (`save_run.py checkpoint --expect-revision <n> --set active_owner=build-management --set phase_state=BUILD_ACTIVE`) before the first specialist delegation |
+| Specialist delegation | The canonical `### Save Context` block (below) naming the specialist as `Owner`, the exact `reports/`, `artifacts/`, or `evidence/` destination as `Expected artifact`, and `build-to-review` as `Return boundary` |
+| Specialist return | Verify the named artifact exists at its destination, then register its sha256 through a `session-memory` checkpoint (`--evidence <path>`) |
+| Gate submission | `build/manifest.json` (schema 2: `boundary: build-to-review`, `owner: build-management`), carrying `tests` and `runtime` as typed probe records whose hashed logs live under `build/evidence/`, and `security_evidence` as a findings record or its applicability record |
+| Phase-gate verdict | Nothing: `build/gatekeeper-build` writes `build/verdict_build-to-review.json` through `check.py --verdict-out`; build-management records the semantic verdict in its next checkpoint |
+| Package consolidation | `build/reports/build-package.md` plus the manifest revision admiral submits to `gatekeeper-admiral` |
 
-Save Context block for specialist delegations:
+Save Context block for specialist delegations (the canonical field set from
+`../../contracts/handoff-templates.md`; neither file may drop a field the other
+carries):
 
 ```markdown
 ### Save Context
-- **Run ID**: {run-id}
-- **Save path**: skillset-saves/runs/{run-id}/build/phase-{N}_{skill}/
-- **Persistence active**: {yes|no — copied from current run state}
-- **Persistence probe result**: {ok|failed|skipped}
-- **Context tier**: {1|2|3|4}
-- **Artifact mode**: {inline|reference|best-effort-inline}
-- **Standalone fallback ref**: {path or "none"}
-- **Skipped upstream stages**: {none or list}
-- **Session pin**: {true|false}
-- **Execution mode**: {agent|skill}
+- Run ID: {run-id}
+- Phase: build
+- Save path: skillset-saves/runs/{run-id}/build/
+- Persistence active: {yes|no}
+- Persistence probe result: {ok|reason}
+- Context tier: {1|2|3}
+- Artifact mode: {inline|file|reference}
+- Session pin: {true|false}
+- Execution mode: {agent|skill}
+- Submission ID: {id}
+- Revision: {revision}
+- Owner: {specialist}
+- Expected artifact: {reports/...|artifacts/...|evidence/...}
+- Evidence paths: {relative paths}
+- Artifact hashes: {path: sha256|none yet}
+- Risks: {known risks|none declared}
+- Return boundary: build-to-review
 ```
 
 When Save Context is absent or `Persistence active: no`, skip all save operations and return the deliverable inline.

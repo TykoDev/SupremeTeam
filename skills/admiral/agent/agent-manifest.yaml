@@ -58,6 +58,26 @@ delegates_to:
     skill_path: review/code-chief
     handoff: review-package
     verdict_source: gatekeeper-admiral (handoff-3)
+  - name: cso
+    skill_path: review/cso
+    handoff: security-review package
+    verdict_source: gatekeeper-admiral (security-review)
+    optional: true
+  - name: investigate
+    skill_path: investigate
+    handoff: investigation package with a bounded fix path for the owning phase
+    verdict_source: gatekeeper-admiral (investigation-review)
+    optional: true
+  - name: qa
+    skill_path: testing-and-qa/qa
+    handoff: qa package (a report-only run carries the fixes_applied applicability record)
+    verdict_source: gatekeeper-admiral (qa-review)
+    optional: true
+  - name: ship
+    skill_path: release-and-deployment/ship
+    handoff: deploy-readiness package; land-and-deploy only after a fresh human go decision
+    verdict_source: gatekeeper-admiral (deploy-readiness)
+    optional: true
   - name: skill-maker-agent
     skill_path: skill-maker
     handoff: skill-package or team-package

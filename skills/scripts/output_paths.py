@@ -38,7 +38,7 @@ import sys
 from pathlib import Path
 
 KINDS = {"core", "manifest", "reports", "artifacts", "evidence", "packages", "verdict", "project_preferences", "global_preferences", "trajectory", "guards", "product", "design_spec"}
-PHASES = {"intake", "design", "architecture", "design-system", "build", "frontend", "security", "investigation", "qa", "review", "delivery", "release", "preferences", "skill-creation", "explore", "improve", "documentation"}
+PHASES = {"intake", "design", "architecture", "design-system", "build", "frontend", "security", "investigation", "qa", "review", "delivery", "release", "preferences", "skill-creation", "taste", "explore", "improve", "documentation"}
 SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 

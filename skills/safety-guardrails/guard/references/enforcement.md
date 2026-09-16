@@ -8,12 +8,12 @@ enforcement or diagnosing why a guarded write was or was not blocked.
 ## Action Realization layer
 
 The guard is the advisory expression of the Action Realization layer
-(`../../harness-doctrine.md` §1). When the host supports compatible runtime hooks, the
+(`../../../harness-doctrine.md` §1). When the host supports compatible runtime hooks, the
 guarded boundary is also deterministically enforced by
-`../../harness/hooks/pre_tool_use.py`, which blocks writes into the guarded paths
+`../../../harness/hooks/pre_tool_use.py`, which blocks writes into the guarded paths
 before they execute — so the guard is no longer advice the model can ignore. When
 the state file is absent the hook is inert and the guard remains advisory only.
-See `../../harness/hooks/README.md`.
+See `../../../harness/hooks/README.md`.
 
 ## guard-state.json
 

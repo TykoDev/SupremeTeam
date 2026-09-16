@@ -29,8 +29,10 @@ skillset-saves/
       artifacts/                   #   tokens, components, snapshots
       evidence/                    #   command logs, scans, captures
       packages/                    #   exported archives
-      verdict_design-to-build.json #   the gatekeeper's durable verdict
-    build/  review/  security/  investigation/  qa/  skill-creation/  release/
+      verdict_design-to-build.json #   the phase gatekeeper's durable verdict
+      verdict_design-to-build.cross-stage.json  # gatekeeper-admiral's, beside it
+    build/  review/  security/  investigation/  qa/  taste/  skill-creation/  release/
+    delivery/reports/              # admiral's handoff_<boundary>.md and delivery-package.md
 ```
 
 Your application source keeps its own layout. Evidence that depends on it binds by

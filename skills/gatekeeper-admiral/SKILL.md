@@ -57,12 +57,14 @@ python ../harness/gatekeeper/check.py \
   --boundary <design-to-build|build-to-review|review-to-delivery|security-review|investigation-review|qa-review|taste-review|skill-maker-to-delivery|deploy-readiness> \
   --package <phase>/manifest.json \
   [--prior <phase>/verdict_<boundary>.json] \
-  --verdict-out <phase>/verdict_<boundary>.json
+  --verdict-out <phase>/verdict_<boundary>.cross-stage.json
 ```
 
 It verifies that every required key is present, that artifact-backed keys point
 at hashed files, that typed records (`scan`, `render`, `probe`, `audit`,
-`findings`, `verdict`, `stack_lock`, `revision_ref`) are shaped correctly and
+`findings`, `verdict`, `stack_lock`, `revision_ref`, and the Taste records
+`preference_diff`, `confirmation`, `conflict_analysis`, `persistence_result`,
+`effective_profile`, `consumer_handoff`) are shaped correctly and
 bound to their source by sha256, that the revision lineage holds one value, that
 the declared `owner` is the boundary's only permitted submitter, and that no
 blocked phrase or broken local link is present. A missing or malformed gate spec
@@ -77,10 +79,10 @@ spec digest.
 directory itself:
 
 ```bash
-python scripts/check.py <package-dir> [--prior <prior-verdict-file>] [--json]
+python scripts/check.py skillset-saves/runs/<run>/delivery [--prior <prior-verdict-file>] [--json]
 ```
 
-`scripts/check.py` declares this boundary's required-artifact manifest and calls the shared engine at `../harness/gatekeeper/_gatecheck.py`. It mechanizes the structural checks — package shape, single-revision lineage, one submission id, skip-record completeness, the blocked-phrase scan (this gate **owns** it), idempotency drift against `--prior`, and harness-doctrine §5 structure — and returns `PASS` / `FAIL` / `UNCHECKED` findings plus a `gate_status` (`STRUCTURE_OK` / `NEEDS_JUDGMENT` / `BLOCKERS_PRESENT`). It **never emits a verdict**: apply judgment to the `FAIL` and `UNCHECKED` findings to choose `APPROVED` / `REVISE` / `ESCALATE`. The script fails loud — a blocking failure exits non-zero, an internal error exits 2, never a silent pass. See `../harness/gatekeeper/README.md`.
+The package directory is admiral's `delivery/` phase directory, which holds the cross-stage handoff record (`reports/handoff_<boundary>.md`) for every boundary; the phase directory itself was already shape-checked by the phase gatekeeper's own `scripts/check.py`. `scripts/check.py` declares this boundary's required-artifact manifest and calls the shared engine at `../harness/gatekeeper/_gatecheck.py`. It mechanizes the structural checks — package shape, single-revision lineage, one submission id, skip-record completeness, the blocked-phrase scan (this gate **owns** it), idempotency drift against `--prior`, and harness-doctrine §5 structure — and returns `PASS` / `FAIL` / `UNCHECKED` findings plus a `gate_status` (`STRUCTURE_OK` / `NEEDS_JUDGMENT` / `BLOCKERS_PRESENT`). It **never emits a verdict**: apply judgment to the `FAIL` and `UNCHECKED` findings to choose `APPROVED` / `REVISE` / `ESCALATE`. The script fails loud — a blocking failure exits non-zero, an internal error exits 2, never a silent pass. See `../harness/gatekeeper/README.md`.
 
 ## Workflow
 
@@ -130,8 +132,10 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 ## Save Protocol
 
 A gatekeeper writes exactly one path class: the durable verdict record at
-`skillset-saves/runs/{run-id}/{phase}/verdict_{boundary}.json`, produced by
-`check.py --verdict-out` (`../save-ownership.yaml`, class `gate-verdict`). It
+`skillset-saves/runs/{run-id}/{phase}/verdict_{boundary}.cross-stage.json`, produced
+by `check.py --verdict-out` (`../save-ownership.yaml`, class `gate-verdict`) and
+written beside the phase gatekeeper's `verdict_{boundary}.json`, which it consumes
+through `--prior` and never overwrites. It
 never modifies the submission, its evidence, or the run record. The delegating
 orchestrator captures the semantic verdict in its handoff record. When
 persistence is inactive, return the verdict inline and preserve the run and

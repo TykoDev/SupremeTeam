@@ -11,6 +11,42 @@ design choices remain, but this doctrine's mandatory accessibility and gate
 requirements cannot be overridden. Surface conflicts instead of silently
 normalizing either side.
 
+## 0. Decision provenance and the Taste snapshot
+
+Every design decision a later phase builds on records where it came from: the
+grilling log (`intake/report_grilling.md`), an explicit run instruction, an
+existing project convention, an effective Taste entry, or documented architect
+judgment. A decision without provenance is not gate-eligible.
+
+When a project or global Taste store exists, `commander` asks Admiral/Taste for
+an effective-profile snapshot and treats it as immutable for the revision. The
+snapshot is a shipped, hashed artifact (`design/artifacts/taste-snapshot.json`
+or `.md`) carrying:
+
+- `digest`: the canonical effective-profile sha256;
+- `project_revision` and `global_revision`: the source store revisions it was
+  resolved from;
+- `resolved`: every effective entry with `preference_id`, `source_scope`,
+  `category`, and `normalized_rule`;
+- `shadowed` and `excluded`: the entries the merge in
+  [Taste Doctrine §7](taste-doctrine.md) set aside, each with its reason;
+- `unresolved_conflicts`: equal-precedence contradictions awaiting a user
+  decision;
+- `applicability`: the decision that the snapshot applies to this surface, its
+  scope, and who decided.
+
+Taste traceability is a table with one row per applied preference or non-Taste
+provenance kind:
+
+| Preference id or provenance kind | Snapshot digest | Design-system artifact(s) | Decision | Rendered-verification slot |
+| --- | --- | --- | --- | --- |
+
+Explicit run instructions, existing project conventions, and documented
+architect judgment use the same table with their provenance kind in the first
+column and no invented preference id. Reviewers evaluate against the digest
+approved with the design, never against a later store revision; a changed
+source revision before `design-to-build` invalidates the snapshot (§8).
+
 ## 1. Unified, quiet surface
 
 - One coherent surface per screen. The page reads as a single composition, not a

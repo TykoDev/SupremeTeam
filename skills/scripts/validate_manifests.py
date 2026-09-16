@@ -254,9 +254,8 @@ def check_pipeline_mirrors(root: Path, team: dict[str, Any], ownership: dict[str
             errors.append(f"pipelines.yaml: boundary {boundary!r} is owned by {owners}")
     phases = set(save.get("phase_directories", []) or [])
     for pipeline in pipelines:
-        phase = "preferences" if pipeline == "taste" else pipeline
-        if phase not in phases:
-            errors.append(f"save-ownership.yaml: missing phase directory {phase!r} for {pipeline}")
+        if pipeline not in phases:
+            errors.append(f"save-ownership.yaml: missing phase directory {pipeline!r} for {pipeline}")
 
     skill_count = len(list(root.glob("**/SKILL.md")))
     if team.get("skill_count") != skill_count or len(members) != skill_count:

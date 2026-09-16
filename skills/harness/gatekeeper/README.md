@@ -56,7 +56,9 @@ error.
 **Manifest schema 2.** Adds `boundary` (must match `--boundary`), `owner` (must
 match the spec `submitter`), `run_id`, typed records for keys named in
 `evidence_types` (scan, render, probe, audit, findings, verdict, stack_lock,
-revision_ref), `inputs` that bind evidence to project files by sha256 (stale
+revision_ref, and the Taste records preference_diff, confirmation,
+conflict_analysis, persistence_result, effective_profile, consumer_handoff),
+`inputs` that bind evidence to project files by sha256 (stale
 evidence fails as `input hash drift`), and applicability records instead of bare
 fallback strings. Schema 1 flat packages keep working.
 
@@ -68,22 +70,26 @@ spec digest.
 
 ## Boundaries
 
-`gates.yaml` (spec revision 1) carries nine boundaries. Each names the
+`gates.yaml` (spec revision 2) carries nine boundaries. Each names the
 transition it guards and the single skill permitted to submit it. The
 human-readable table lives in [`../../../docs/gatekeepers.md`](../../../docs/gatekeepers.md)
 and a drift test asserts it matches `gates.yaml` exactly.
 
-Nineteen evidence keys are artifact-backed, meaning the value must reference a
-path in the package's `artifact_hashes` map rather than a bare claim:
-`decisions`, `architecture`, `plan`, `tests`, `runtime`, `executed_probes`,
-`rendered_verification`, `threat_model`, `denial_path_evidence`, `reproduction`,
-`evidence_chain`, `test_matrix`, `link_report`, `validation_report`,
-`deploy_config`, `verification_plan`, `rollback_plan`, `preference_diff`, `effective_profile`, and `consumer_handoff`. Eight keys accept a
-sanctioned applicability record instead (`security_evidence`, `stack_lock`,
-`ui_evidence`, `rendered_verification`, `denial_path_evidence`,
-`vulnerability_scan`, `fixes_applied`, `team_manifest`), and only the exact
-reasons listed under `fallback_values` are accepted; any other bare string fails
-the artifact-backing check.
+Twenty-four evidence keys are artifact-backed, meaning the value must reference
+a path in the package's `artifact_hashes` map rather than a bare claim:
+`decisions`, `architecture`, `plan`, `taste_snapshot`, `tests`, `runtime`,
+`executed_probes`, `rendered_verification`, `threat_model`,
+`denial_path_evidence`, `reproduction`, `evidence_chain`, `test_matrix`,
+`link_report`, `validation_report`, `deploy_config`, `verification_plan`,
+`rollback_plan`, `preference_diff`, `confirmation`, `conflict_analysis`,
+`persistence_result`, `effective_profile`, and `taste_review_record`. Twelve keys
+accept a sanctioned applicability record instead (`security_evidence`,
+`stack_lock`, `ui_evidence`, `taste_snapshot`, `rendered_verification`,
+`denial_path_evidence`, `vulnerability_scan`, `fixes_applied`, `team_manifest`,
+and, at `taste-review` only, `before_revision`, `consumer_handoff`,
+`residual_uncertainty`), and only the exact reasons listed under
+`fallback_values` are accepted; any other bare string fails the
+artifact-backing check. `confirmation` is never waivable.
 
 ## _gatecheck.py: the package-shape validator
 

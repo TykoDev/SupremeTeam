@@ -281,8 +281,7 @@ class OwnershipAgreementTests(unittest.TestCase):
         pipelines = json.loads((ROOT / "pipelines.yaml").read_text(encoding="utf-8"))["pipelines"]
         for name in pipelines:
             with self.subTest(pipeline=name):
-                phase = "preferences" if name == "taste" else name
-                self.assertIn(phase, directories | {"design", "build", "review"})
+                self.assertIn(name, directories)
         self.assertIn("skills/scripts/scan_record.py", pipelines["security"]["scripts"])
         self.assertIn("skills/taste/taste_prefs.py", pipelines["taste"]["scripts"])
 

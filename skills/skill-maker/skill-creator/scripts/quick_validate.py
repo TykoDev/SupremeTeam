@@ -6,8 +6,30 @@ Quick validation script for skills - minimal version
 import sys
 import os
 import re
-import yaml
 from pathlib import Path
+
+try:
+    import yaml
+except ImportError:  # PyYAML is optional (runtime-manifest.yaml); use the stdlib parser.
+    yaml = None
+    _SKILLS_SCRIPTS = next(
+        (p / 'scripts' for p in Path(__file__).resolve().parents if (p / 'scripts' / 'data_formats.py').is_file()),
+        None,
+    )
+    if _SKILLS_SCRIPTS is not None and str(_SKILLS_SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(_SKILLS_SCRIPTS))
+    from data_formats import DataFormatError, parse_yaml as _parse_yaml
+
+if yaml is not None:
+    _YAML_ERRORS = (yaml.YAMLError,)
+
+    def _load_yaml(text):
+        return yaml.safe_load(text)
+else:
+    _YAML_ERRORS = (DataFormatError,)
+
+    def _load_yaml(text):
+        return _parse_yaml(text)
 
 def validate_skill(skill_path):
     """Basic validation of a skill"""
@@ -32,10 +54,10 @@ def validate_skill(skill_path):
 
     # Parse YAML frontmatter
     try:
-        frontmatter = yaml.safe_load(frontmatter_text)
+        frontmatter = _load_yaml(frontmatter_text)
         if not isinstance(frontmatter, dict):
             return False, "Frontmatter must be a YAML dictionary"
-    except yaml.YAMLError as e:
+    except _YAML_ERRORS as e:
         return False, f"Invalid YAML in frontmatter: {e}"
 
     # Official Claude Skills frontmatter properties (per the Skills spec).

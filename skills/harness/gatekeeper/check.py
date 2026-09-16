@@ -84,6 +84,18 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def overlay_digest(path: Path) -> str:
+    """Digest of a tech-stack overlay with line endings normalised to LF.
+
+    Registry digests are computed over the canonical LF content committed to the
+    repository. A checkout that converts line endings (core.autocrlf=true) must
+    not make every stack_lock fail, so overlays are hashed line-ending
+    independently. Package artifacts are hashed byte-for-byte because the same
+    machine writes and checks them.
+    """
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
 def load_mapping(path: Path, what: str) -> dict:
     try:
         data = load_data(path)
@@ -575,7 +587,7 @@ class Package:
         if str(entry.get("sha256", "")).lower() != overlay:
             self.failures.append(f"{key} overlay_sha256 does not match registry entry for {slug}")
         overlay_file = registry_path.parent.parent / str(entry.get("path", ""))
-        if overlay_file.is_file() and digest(overlay_file) != overlay:
+        if overlay_file.is_file() and overlay_digest(overlay_file) != overlay:
             self.failures.append(f"{key} overlay file digest does not match declared overlay_sha256")
         registry_versions = {str(v) for v in (entry.get("versions") or [])}
         if registry_versions and not ({str(v) for v in versions} & registry_versions):

@@ -214,7 +214,7 @@ In skill mode, Admiral provides the same boundary logic as instructions for the 
 3. The host agent applies gatekeeper-admiral's checklist inline instead of delegating programmatically.
 4. The stage sequence, handoff rules, and escalation rules stay identical.
 
-The skill-mode behavior is defined in `SKILL.md` and `references/workflow.md`.
+The skill-mode behavior is defined in `../SKILL.md` and `../references/workflow.md`.
 
 ---
 

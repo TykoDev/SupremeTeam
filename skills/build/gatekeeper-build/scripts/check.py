@@ -18,9 +18,17 @@ import sys
 from pathlib import Path
 
 
-def _find_repo_root():
-    """Return the working-tree root: the nearest ancestor that contains
-    harness/gatekeeper/_gatecheck.py, or None if it cannot be located."""
+# A project root is recognised by one of these markers, matching
+# harness/hooks/_state.py ``_ROOT_MARKERS`` so both locate the same directory.
+_ROOT_MARKERS = ("skillset-saves", ".harness-state", ".git")
+
+
+def _find_catalog_root():
+    """Nearest ancestor holding harness/gatekeeper/_gatecheck.py, else None.
+
+    This is where the shared engine lives, which is not necessarily where
+    packages live: the catalog can be vendored inside a larger project.
+    """
     here = Path(__file__).resolve()
     for parent in here.parents:
         if (parent / "harness" / "gatekeeper" / "_gatecheck.py").exists():
@@ -28,12 +36,35 @@ def _find_repo_root():
     return None
 
 
+def _find_repo_root():
+    """Return the root a package may live under.
+
+    Packages are written to ``<project>/skillset-saves/runs/<id>/<phase>``,
+    which is a *sibling* of the catalog when the catalog is vendored as
+    ``<project>/skills``. Confining to the catalog root therefore refused every
+    path the save protocol actually produces, so containment is checked against
+    the nearest project marker at or above the catalog, and falls back to the
+    catalog itself for a standalone checkout.
+    """
+    catalog = _find_catalog_root()
+    if catalog is None:
+        return None
+    for candidate in (catalog, *catalog.parents):
+        try:
+            if any((candidate / marker).exists() for marker in _ROOT_MARKERS):
+                return candidate
+        except OSError:
+            continue
+    return catalog
+
+
+_CATALOG_ROOT = _find_catalog_root()
 _REPO_ROOT = _find_repo_root()
 
 
 def _load_engine():
-    if _REPO_ROOT is not None:
-        sys.path.insert(0, str(_REPO_ROOT / "harness" / "gatekeeper"))
+    if _CATALOG_ROOT is not None:
+        sys.path.insert(0, str(_CATALOG_ROOT / "harness" / "gatekeeper"))
         import _gatecheck  # type: ignore
         return _gatecheck
     sys.stderr.write(
@@ -53,7 +84,12 @@ def _validate_package_dir(raw):
         sys.stderr.write(
             f"ERROR: <package-dir> does not exist or is not a directory: {raw!r}\n")
         sys.exit(2)
-    if _REPO_ROOT is not None and _REPO_ROOT not in (resolved, *resolved.parents):
+    if _REPO_ROOT is None:
+        sys.stderr.write(
+            "ERROR: cannot locate the working-tree root, so <package-dir> containment "
+            "cannot be verified; refusing to read it.\n")
+        sys.exit(2)
+    if _REPO_ROOT not in (resolved, *resolved.parents):
         sys.stderr.write(
             f"ERROR: <package-dir> {resolved} is outside the working tree "
             f"{_REPO_ROOT}; refusing to read it.\n")

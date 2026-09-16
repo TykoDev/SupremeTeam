@@ -1,0 +1,27 @@
+skill_name: taste
+pipeline: taste
+boundary: taste-review
+purpose: Manage or inspect canonical user preferences without inferring scope or destructive intent.
+scopes: [global, project, both]
+inputs:
+  - requested operation: inspect, specialize, promote, revoke, reset, import, export, or upsert
+  - explicit target scope and intended downstream consumers
+  - examples, counterexamples, and anti-preferences
+  - current global and project record revisions
+confirmation_required:
+  - inferred preference
+  - scope-widening change
+  - promotion to global scope
+  - global reset
+  - bulk import
+  - bulk revocation
+outputs:
+  - preference diff
+  - effective merged profile
+  - consumer handoff
+  - taste-review gate package
+acceptance:
+  rubric_score: 100/100
+  blocked_phrase_scan: zero hits
+  cross_cutting_contracts_embedded: true
+  package_ready: true

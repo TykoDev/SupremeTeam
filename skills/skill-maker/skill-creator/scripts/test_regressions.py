@@ -8,6 +8,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import zipfile
+
+# `scripts` is a package rooted at skill-creator/, so unittest discovery from any
+# working directory must see that root first.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.quick_validate import validate_skill
 from scripts.package_skill import package_skill
 from scripts.run_eval import run_single_query

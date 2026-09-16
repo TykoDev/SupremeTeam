@@ -1,0 +1,59 @@
+skill_name: investigate
+target_path: investigate/
+purpose: |
+  Explains a failure; it does not fix one. ownership.yaml records implementation
+  among the artifacts investigate never writes, so the deliverable is a bounded
+  fix path handed back to the phase that owns the code, never the change itself.
+  The conclusion stays proportional to the evidence: inferred links are labelled
+  and excluded from the chain, and an unreproducible failure escalates with the
+  gap stated rather than shipping a package missing its reproduction.
+triggers:
+  - investigate this issue
+  - find the root cause
+  - explain why this broke
+  - trace the failure
+  - narrow this incident down to one credible explanation
+inputs:
+  - symptom boundary, expected healthy behavior, and the phase that owns the affected code
+  - logs, traces, captures, configuration snapshots, and the access needed to execute a reproduction
+  - constraints such as protected environments, missing access, or evidence-retention limits
+  - persistence context when delegated or resumed
+outputs:
+  - executed reproduction log with environment and inputs
+  - evidence chain from symptom to mechanism, each link observed
+  - surviving mechanism with the hypotheses it displaced and a confidence level
+  - bounded fix path with its owning phase and acceptance signal
+  - investigation package with scope and residual uncertainty
+gate:
+  boundary: investigation-review
+  submitter: investigate
+  evidence_keys:
+    - scope
+    - reproduction
+    - mechanism
+    - evidence_chain
+    - fix_path
+    - residual_uncertainty
+  artifact_backed:
+    - reproduction
+    - evidence_chain
+  fallback_values: none sanctioned at this boundary; no key here is waivable
+severity_model: shared 4-tier (Critical | Major | Minor | Info)
+required_contracts:
+  - Execution-contract clauses stated verbatim in SKILL.md
+  - Observed over inferred
+  - Before/After Evidence
+  - Bounded conclusion
+  - Save-Protocol Adherence
+authoring_rules:
+  - First-principles wording only
+  - No provenance or comparison language
+  - No references to planning-note filenames inside generated artifacts
+  - Supporting files must be one level deep and directly referenced
+  - Destinations resolved through scripts/output_paths.py, never composed by hand
+acceptance:
+  rubric_score: 100/100
+  blocked_phrase_scan: zero hits
+  cross_cutting_contracts_embedded: true
+  gate_self_check_documented: true
+  package_ready: true

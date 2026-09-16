@@ -13,6 +13,20 @@ SKILLS = Path(__file__).resolve().parents[2]
 CHECK = SKILLS / "harness" / "gatekeeper" / "check.py"
 GATE_SPEC = SKILLS / "gates.yaml"
 GATE_DOC = SKILLS.parent / "docs" / "gatekeepers.md"
+WORKFLOW_DOC = SKILLS / "contracts" / "workflow-protocol.md"
+
+# The gatekeeper skills carry the same boundary table. gates.yaml's `purpose`
+# claims this test guards them, but it only ever parsed the two documents above,
+# so all four drifted: one omitted five of six required keys, another added two
+# keys the spec does not define, a third missed an entire boundary. These tables
+# are hand-maintained mirrors, and a mirror nothing compares is a mirror that
+# rots.
+GATEKEEPER_DOCS = (
+    SKILLS / "gatekeeper-admiral" / "SKILL.md",
+    SKILLS / "design" / "gatekeeper-design" / "SKILL.md",
+    SKILLS / "build" / "gatekeeper-build" / "SKILL.md",
+    SKILLS / "review" / "gatekeeper-code" / "SKILL.md",
+)
 
 ARTIFACT = "evidence.md"
 
@@ -74,8 +88,11 @@ class BoundaryManifestTests(unittest.TestCase):
         spec = load_spec()
         for boundary, contract in spec["boundaries"].items():
             required = set(contract["required_evidence"])
-            for key, values in spec["fallback_values"].items():
-                if key not in required:
+            fallbacks = dict(spec["fallback_values"])
+            fallbacks.update(contract.get("fallback_values", {}))
+            blocked = set(contract.get("no_fallback", []))
+            for key, values in fallbacks.items():
+                if key not in required or key in blocked:
                     continue
                 for value in values:
                     with self.subTest(boundary=boundary, key=key):
@@ -86,13 +103,17 @@ class BoundaryManifestTests(unittest.TestCase):
         for boundary, key in (
             ("design-to-build", "ui_evidence"),
             ("design-to-build", "stack_lock"),
+            ("design-to-build", "taste_snapshot"),
             ("build-to-review", "security_evidence"),
             ("review-to-delivery", "rendered_verification"),
             ("security-review", "threat_model"),
             ("investigation-review", "evidence_chain"),
             ("qa-review", "test_matrix"),
+            ("taste-review", "confirmation"),
             ("skill-maker-to-delivery", "link_report"),
             ("deploy-readiness", "rollback_plan"),
+            ("redesign-review", "variant_set"),
+            ("redesign-review", "parity_evidence"),
         ):
             with self.subTest(boundary=boundary, key=key):
                 self.assert_missing(boundary, key)
@@ -198,6 +219,40 @@ class BoundaryManifestTests(unittest.TestCase):
         self.assertIn("engine_error", json.loads(r.stderr))
 
 
+    def test_taste_typed_records_and_confirmation_policy(self):
+        digest = "a" * 64
+        records = {
+            "preference_diff": {"artifacts": [ARTIFACT], "added": [], "updated": [],
+                                "deprecated": [], "revoked": [], "unchanged": ["p1"],
+                                "before_digest": digest, "after_digest": digest},
+            "confirmation": {"artifacts": [ARTIFACT], "actor": "user",
+                             "timestamp": "2026-09-11T00:00:00Z",
+                             "confirmed_scope": "repository", "candidate_ids": ["p1"],
+                             "source_run": "run-1"},
+            "conflict_analysis": {"artifacts": [ARTIFACT], "conflicting_ids": [],
+                                  "precedence_decision": "repository wins",
+                                  "unresolved_conflicts": [],
+                                  "accessibility_policy_collisions": []},
+            "persistence_result": {"artifacts": [ARTIFACT],
+                                   "requested_destinations": ["preferences/taste.md"],
+                                   "committed_revisions": [1], "hashes": {"taste.md": digest},
+                                   "atomicity_status": "committed", "rollback_result": "not-required"},
+            "effective_profile": {"artifacts": [ARTIFACT],
+                                  "entries": [{"id": "p1", "source_scope": "repository",
+                                               "source_id": "run-1"}], "digest": digest},
+            "consumer_handoff": {"consuming_pipeline": "design",
+                                 "effective_profile_digest": digest,
+                                 "applicability_summary": "UI choices"},
+        }
+        package = self.package("taste-review", records)
+        package.update({"schema_version": 2, "boundary": "taste-review", "owner": "taste"})
+        self.assert_passes("taste-review", package)
+        package["evidence"]["confirmation"] = {
+            "applicable": False, "reason": "inferred", "scope": "global", "decided_by": "taste"}
+        result = self.run_check("taste-review", package)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("evidence not waivable: confirmation", json.loads(result.stdout)["failures"])
+
 class GateSpecContractTests(unittest.TestCase):
     def test_gate_spec_shape(self):
         spec = load_spec()
@@ -219,25 +274,70 @@ class GateSpecContractTests(unittest.TestCase):
         declared = {key for b in spec["boundaries"].values() for key in b["required_evidence"]}
         self.assertLessEqual(set(spec["evidence_types"]), declared)
         self.assertLessEqual(set(spec["fallback_values"]), declared)
+        for boundary in spec["boundaries"].values():
+            self.assertLessEqual(set(boundary.get("fallback_values", {})),
+                                 set(boundary["required_evidence"]))
 
     def test_documented_boundary_table_matches_gate_spec(self):
-        """The human-readable table in docs/gatekeepers.md must not drift from gates.yaml."""
+        """Every documented boundary table must exactly mirror gates.yaml."""
         spec = load_spec()["boundaries"]
-        text = GATE_DOC.read_text(encoding="utf-8")
+        text = GATE_DOC.read_text(encoding="utf-8").split("| Boundary | Guards | Submitter | Required evidence |", 1)[1]
+        text = text.split("\n\n", 1)[0]
         table = {}
         for line in text.splitlines():
             match = re.match(r"^\|\s*`?([a-z][a-z-]+)`?\s*\|(.+)\|\s*$", line)
             if not match:
                 continue
             name = match.group(1)
-            if name not in spec:
-                continue
             table[name] = set(re.findall(r"`([a-z_]+)`", match.group(2)))
         self.assertEqual(set(table), set(spec), "docs/gatekeepers.md boundaries differ from gates.yaml")
         for name, boundary in spec.items():
             with self.subTest(boundary=name):
                 self.assertEqual(table[name], set(boundary["required_evidence"]),
                                  f"docs/gatekeepers.md evidence keys for {name} differ from gates.yaml")
+
+        workflow_text = WORKFLOW_DOC.read_text(encoding="utf-8").split(
+            "| Boundary | Guards | Submitter | Validator |", 1)[1].split("\n\n", 1)[0]
+        workflow = set()
+        for line in workflow_text.splitlines():
+            match = re.match(r"^\|\s*`([a-z][a-z-]+)`\s*\|", line)
+            if match:
+                workflow.add(match.group(1))
+        self.assertEqual(workflow, set(spec),
+                         "workflow-protocol.md boundaries differ from gates.yaml")
+
+    def test_gatekeeper_skill_boundary_tables_match_gate_spec(self):
+        """Each gatekeeper's own boundary table must mirror gates.yaml.
+
+        Same parser as the documented table above, pointed at the four skills
+        gates.yaml names. A gatekeeper that documents a key the spec does not
+        define will accept evidence the gate never asked for; one that omits a
+        required key will approve a package that is missing it.
+        """
+        spec = load_spec()["boundaries"]
+        seen = 0
+        for doc in GATEKEEPER_DOCS:
+            text = doc.read_text(encoding="utf-8")
+            header = "| Boundary | Guards | Submitter | Required evidence |"
+            self.assertIn(header, text,
+                          f"{doc.name} has no boundary table; gates.yaml says it mirrors the spec")
+            block = text.split(header, 1)[1].split("\n\n", 1)[0]
+            for line in block.splitlines():
+                match = re.match(r"^\|\s*`([a-z][a-z-]+)`\s*\|(.+)\|\s*$", line)
+                if not match:
+                    continue
+                name, rest = match.group(1), match.group(2)
+                with self.subTest(skill=doc.parent.name, boundary=name):
+                    self.assertIn(name, spec,
+                                  f"{doc.parent.name} documents boundary '{name}' "
+                                  "which gates.yaml does not define")
+                    keys = set(re.findall(r"`([a-z_]+)`", rest))
+                    self.assertEqual(
+                        keys, set(spec[name]["required_evidence"]),
+                        f"{doc.parent.name} evidence keys for {name} differ from gates.yaml")
+                    seen += 1
+        self.assertGreaterEqual(seen, len(spec),
+                                "the four gatekeepers must between them document every boundary")
 
 
 if __name__ == "__main__": unittest.main()

@@ -1,0 +1,59 @@
+# Redesign Agent Manifest
+
+name: redesign-agent
+type: sub-orchestrator
+version: 1.0.0
+parent: admiral-agent
+
+purpose: |
+  Autonomous redesign pipeline orchestrator. Maps the current design, runs the
+  project taste grilling through Admiral/Taste, commissions four design
+  directions, fans out four prototype builds, verifies parity, rendering, and
+  accessibility per variant, and assembles the comparison and decision package
+  gated at redesign-review by gatekeeper-design.
+
+capabilities:
+  - phase-management
+  - delegation
+  - fan-out            # one prototyper delegation per direction, run concurrently
+  - state-persistence
+  - gate-validation
+
+tools_required:
+  - category: file-system
+    operations: [read, write, list, search]
+  - category: terminal
+    operations: [execute]         # scripts/check_parity.py, gatekeeper-design/scripts/check_redesign.py, harness/gatekeeper/check.py
+  - category: search
+    operations: [semantic, grep]
+  - category: sub-agent
+    operations: [invoke, receive-result]
+
+tools_optional:
+  - category: browser
+    operations: [navigate, snapshot, interact]
+    purpose: Baseline captures and rendered verification of prototypes
+
+delegates_to:
+  - name: design-mapper
+    skill_path: design/design-mapper
+  - name: taste
+    skill_path: taste
+    via: admiral                  # preference mutation stays behind Admiral
+  - name: architect
+    skill_path: design/architect
+  - name: prototyper
+    skill_path: design/prototyper
+    fan_out: 4
+  - name: design-qa
+    skill_path: review/design-qa
+  - name: frontier
+    skill_path: review/frontier
+  - name: gatekeeper-design
+    skill_path: design/gatekeeper-design
+
+detection_rules:
+  agent_mode_conditions:
+    - sub-agent invocation available
+    - file system tools available
+  fallback: skill-mode           # prototypes are built sequentially in skill mode

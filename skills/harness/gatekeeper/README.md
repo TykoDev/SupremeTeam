@@ -1,16 +1,30 @@
 # Gate Validation
 
-Two validators run at a boundary. They check different things and neither issues
-a verdict; the gatekeeper skill maps their facts to
-`APPROVED | REVISE | ESCALATE`.
+Two validators exist. They check different things and neither issues a verdict;
+the gatekeeper skill maps their facts to `APPROVED | REVISE | ESCALATE`. How
+many run at a given boundary depends on which gatekeepers that boundary has.
 
 | Validator | Input | Answers |
 | --- | --- | --- |
 | `check.py` | a gate manifest (`manifest.json`) | Does this submission carry the evidence [`../../gates.yaml`](../../gates.yaml) requires for this boundary, correctly hashed and bound? |
 | `_gatecheck.py` (via each `gatekeeper-*/scripts/check.py`) | a phase package directory | Are the phase's markdown deliverables present, lineage-consistent, and free of blocked phrases? |
 
-A phase submits both: the directory check confirms the package is shaped, the
-boundary check confirms the evidence contract is met.
+`check.py` runs at all ten boundaries. The package-shape validator runs only
+through a gatekeeper wrapper, and four wrappers exist:
+`design/gatekeeper-design`, `build/gatekeeper-build`, `review/gatekeeper-code`,
+and `gatekeeper-admiral`.
+
+Four boundaries have a phase gatekeeper: `design-to-build` and
+`redesign-review` under `gatekeeper-design`, `build-to-review` under
+`gatekeeper-build`, and `review-to-delivery` under `gatekeeper-code`. There a
+phase submits both checks: the directory check confirms the package is shaped,
+the boundary check confirms the evidence contract is met.
+
+The other six boundaries have no phase gatekeeper: `security-review`,
+`investigation-review`, `qa-review`, `taste-review`, `skill-maker-to-delivery`,
+and `deploy-readiness`. `gatekeeper-admiral` is their only gatekeeper, so its own
+pass is the whole mechanical check and no phase-local directory check stands
+behind it.
 
 **Tier 0 is outside the pipeline.** Eligible minor tasks follow the
 [Tier 0 fast path](../../routing-doctrine.md#tier-0-fast-path): focused
@@ -18,6 +32,14 @@ verification and a brief completion note, without a gate manifest, verdict, or
 full security audit. There is no Tier 0 boundary and no automatic APPROVED
 verdict. Once work enters a pipeline, all required evidence applies; a tier label
 cannot waive a gate, security evidence, or active-run ownership.
+
+## Contents
+
+1. check.py: the boundary validator
+2. Boundaries
+3. Batched REVISE
+4. _gatecheck.py: the package-shape validator
+5. Regression tests
 
 ## check.py: the boundary validator
 
@@ -56,7 +78,10 @@ error.
 **Manifest schema 2.** Adds `boundary` (must match `--boundary`), `owner` (must
 match the spec `submitter`), `run_id`, typed records for keys named in
 `evidence_types` (scan, render, probe, audit, findings, verdict, stack_lock,
-revision_ref), `inputs` that bind evidence to project files by sha256 (stale
+revision_ref, and the Taste records preference_diff, confirmation,
+conflict_analysis, persistence_result, effective_profile, consumer_handoff, and
+variant_set for the four redesign variants),
+`inputs` that bind evidence to project files by sha256 (stale
 evidence fails as `input hash drift`), and applicability records instead of bare
 fallback strings. Schema 1 flat packages keep working.
 
@@ -68,22 +93,51 @@ spec digest.
 
 ## Boundaries
 
-`gates.yaml` (spec revision 1) carries eight boundaries. Each names the
+`gates.yaml` (spec revision 3) carries ten boundaries. Each names the
 transition it guards and the single skill permitted to submit it. The
 human-readable table lives in [`../../../docs/gatekeepers.md`](../../../docs/gatekeepers.md)
 and a drift test asserts it matches `gates.yaml` exactly.
 
-Sixteen evidence keys are artifact-backed, meaning the value must reference a
-path in the package's `artifact_hashes` map rather than a bare claim:
-`decisions`, `architecture`, `plan`, `tests`, `runtime`, `executed_probes`,
-`rendered_verification`, `threat_model`, `denial_path_evidence`, `reproduction`,
-`evidence_chain`, `test_matrix`, `link_report`, `validation_report`,
-`deploy_config`, `verification_plan`, and `rollback_plan`. Eight keys accept a
-sanctioned applicability record instead (`security_evidence`, `stack_lock`,
-`ui_evidence`, `rendered_verification`, `denial_path_evidence`,
-`vulnerability_scan`, `fixes_applied`, `team_manifest`), and only the exact
-reasons listed under `fallback_values` are accepted; any other bare string fails
-the artifact-backing check.
+`gatekeeper-admiral` is the cross-stage validator at every one of the ten, per
+[`../../contracts/workflow-protocol.md`](../../contracts/workflow-protocol.md):
+at the four with a phase gatekeeper it revalidates after that gatekeeper, and
+at the other six it is the only gatekeeper. Its scope is not limited to the
+phase-to-phase handoffs.
+
+Twenty-nine evidence keys are artifact-backed, meaning the value must reference
+a path in the package's `artifact_hashes` map rather than a bare claim:
+`decisions`, `architecture`, `plan`, `taste_snapshot`, `design_inventory`,
+`taste_grilling`, `design_directions`, `variant_set`, `parity_evidence`, `tests`,
+`runtime`, `executed_probes`, `rendered_verification`, `threat_model`,
+`denial_path_evidence`, `reproduction`, `evidence_chain`, `test_matrix`,
+`link_report`, `validation_report`, `deploy_config`, `verification_plan`,
+`rollback_plan`, `preference_diff`, `confirmation`, `conflict_analysis`,
+`persistence_result`, `effective_profile`, and `taste_review_record`. Twelve keys
+accept a sanctioned applicability record instead (`security_evidence`,
+`stack_lock`, `ui_evidence`, `taste_snapshot`, `rendered_verification`,
+`denial_path_evidence`, `vulnerability_scan`, `fixes_applied`, `team_manifest`,
+and, at `taste-review` only, `before_revision`, `consumer_handoff`,
+`residual_uncertainty`), and only the exact reasons listed under
+`fallback_values` are accepted; any other bare string fails the
+artifact-backing check. `confirmation` is never waivable, and a boundary's
+`no_fallback` list removes a key's fallback there (`rendered_verification` at
+`redesign-review`).
+
+## Batched REVISE
+
+`check.py` reports every failure it finds, never the first one, and groups them
+twice: `revise_packet.by_key` (the evidence key each failure names) and
+`revise_packet.by_owner` (that key's owner from `gates.yaml` `evidence_owners`;
+lineage, hash, and blocked-phrase failures go to the submitter). A phase lead
+delegates every owner group in parallel and resubmits once.
+
+Every result and verdict record also carries `evidence_digests`, one sha256 per
+evidence key covering the value and every artifact hash it references. With
+`--prior`, the result adds `changed_evidence` and `unchanged_evidence`, so the
+gatekeeper re-judges only what changed while the mechanical pass still covers
+the whole package (`gates.yaml` `revise_policy`). Submitters run `check.py`
+without `--verdict-out` before submitting; a mechanically failing package is
+not a submission.
 
 ## _gatecheck.py: the package-shape validator
 
@@ -109,9 +163,22 @@ python -m unittest discover -s skills/harness/gatekeeper -p "test_*.py"
 
 `test_gate_manifests.py` covers the flat-package contract, every boundary's
 complete package, every sanctioned fallback, missing evidence, artifact backing,
-lineage, hashing, scanning, and engine errors, plus the drift test against
-`docs/gatekeepers.md`. `test_gate_run_layout.py` covers the canonical save
+lineage, hashing, scanning, and engine errors, plus two drift tests over the
+hand-maintained boundary tables. `test_documented_boundary_table_matches_gate_spec`
+compares `docs/gatekeepers.md` against `gates.yaml` on both the boundary-name set
+and every required evidence key, and compares
+[`../../contracts/workflow-protocol.md`](../../contracts/workflow-protocol.md)
+on the boundary-name set only — that table's Guards, Submitter, and Validator
+columns are prose the test does not read.
+`test_gatekeeper_skill_boundary_tables_match_gate_spec` holds the four gatekeeper
+`SKILL.md` boundary tables (`gatekeeper-admiral`, `gatekeeper-design`,
+`gatekeeper-build`, `gatekeeper-code`) to the full key-set standard, and requires
+the four between them to document every boundary.
+
+`test_gate_run_layout.py` covers the canonical save
 layout: same-run sibling evidence, cross-run and link escapes, revision, owner,
 and boundary identity, typed result records, the finding policy, waivers,
 YAML-comment specs, quoted diagnostic markers, and verdict reuse.
-`test_gatecheck.py` covers the package-shape engine.
+`test_gatecheck.py` covers the package-shape engine, and `test_gate_revise.py`
+the batched REVISE packet — per-key grouping, per-owner routing, and the
+changed/unchanged evidence split on a resubmission.

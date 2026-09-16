@@ -22,7 +22,15 @@ sys.path.insert(0, str(ENGINE_DIR))
 
 import _gatecheck as gc  # noqa: E402
 
-_TMP_ROOT = Path.cwd() / "gatekeeper-test-work"
+
+def _project_root() -> Path:
+    """Nearest marked ancestor of the working directory (save-ownership.yaml generated_roots)."""
+    start = Path.cwd().resolve()
+    return next((c for c in (start, *start.parents)
+                 if any((c / m).exists() for m in ("skillset-saves", ".harness-state", ".git"))), start)
+
+
+_TMP_ROOT = _project_root() / ".harness-state" / "test-work" / "gatekeeper"
 
 
 @contextmanager
@@ -50,6 +58,22 @@ def _manifest(*specs) -> gc.Manifest:
 
 def _codes(report) -> set:
     return {f.code for f in report.findings}
+
+
+class ArtifactPresenceTests(unittest.TestCase):
+    def test_json_and_html_artifacts_satisfy_a_spec(self):
+        """Evidence records are JSON and prototypes are HTML; presence must see them."""
+        spec = _manifest(
+            gc.ArtifactSpec(key="parity", label="parity record", patterns=("*parity*.json",)),
+            gc.ArtifactSpec(key="app", label="prototype", patterns=("*app*.html",), content_marker=r"data-route"),
+        )
+        with _package() as pkg:
+            (pkg / "evidence").mkdir()
+            _write(pkg, "evidence/parity-v1.json", '{"result": {"status": "pass"}}')
+            _write(pkg, "app.html", "<main data-route='route.home'></main>")
+            report = gc.run_gate(pkg, spec)
+            self.assertNotIn("ARTIFACT_MISSING", _codes(report))
+            self.assertEqual(sum(1 for f in report.findings if f.code == "ARTIFACT_PRESENT"), 2)
 
 
 class FrontmatterTests(unittest.TestCase):

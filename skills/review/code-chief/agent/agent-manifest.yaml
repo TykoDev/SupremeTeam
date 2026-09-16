@@ -6,10 +6,12 @@ version: 1.0.0
 parent: admiral-agent
 
 purpose: |
-  Autonomous review pipeline orchestrator. Manages up to nine review phases
+  Autonomous review pipeline orchestrator. Manages up to eight review phases
   (bug-review → code-review → quality-review → security-review → mr-robot →
-  cso → frontier → design-qa → devex-review) with gatekeeper-code validating the
-  consolidated package. Produces a consolidated review package.
+  frontier → design-qa → devex-review) with gatekeeper-code validating the
+  consolidated package. Produces a consolidated review package. Security
+  governance scope is escalated, not delegated: the security pipeline is owned
+  by cso and opened by admiral.
 
 capabilities:
   - phase-management
@@ -46,9 +48,6 @@ delegates_to:
     skill_path: review/security-review
   - name: mr-robot
     skill_path: review/mr-robot
-  - name: cso
-    skill_path: review/cso
-    optional: true
   - name: frontier
     skill_path: review/frontier
     optional: true
@@ -60,6 +59,14 @@ delegates_to:
     optional: true
   - name: gatekeeper-code
     skill_path: review/gatekeeper-code
+
+escalates_to:
+  - name: admiral
+    skill_path: admiral
+    trigger: security governance, accepted-risk, or release security posture scope
+    reason: >-
+      pipelines.yaml declares no cso stage in the review pipeline; admiral opens
+      the security pipeline owned by cso and gated at security-review.
 
 detection_rules:
   agent_mode_conditions:

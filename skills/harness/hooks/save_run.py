@@ -56,6 +56,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _saves import ACTIVE_STATUSES, SCHEMA_VERSION, STALE_AFTER_SECONDS, TERMINAL_STATUSES, inspect_saves  # noqa: E402
+import _state  # noqa: E402
 
 EXIT_OK, EXIT_REFUSED, EXIT_DEGRADED, EXIT_ENGINE = 0, 1, 2, 3
 CORE_FILES = ("_state.md", "_lock.md", "_audit-trail.md")
@@ -501,7 +502,7 @@ def parse_extra(values: list[str]) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Supreme Team save lifecycle writer.")
     parser.add_argument("operation", choices=["create", "checkpoint", "heartbeat", "complete", "block", "release", "recover", "status"])
-    parser.add_argument("--project-root", default=".")
+    parser.add_argument("--project-root", default=None, help="project root (default: nearest marked ancestor of the working directory)")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--owner", default="admiral")
     parser.add_argument("--evidence", action="append", default=[], help="project-relative evidence path (repeatable)")
@@ -515,7 +516,7 @@ def main() -> int:
     parser.add_argument("--reopen", action="store_true", help="checkpoint: deliberately reopen a complete/blocked run as a new revision (REVISE)")
     args = parser.parse_args()
     try:
-        store = RunStore(Path(args.project_root), args.run_id)
+        store = RunStore(Path(args.project_root) if args.project_root else _state.project_root(), args.run_id)
         extra = parse_extra(args.set)
         if args.operation == "create":
             result = store.create(args.owner, args.evidence, args.execution_mode, args.next_action or "select earliest incomplete boundary", extra)

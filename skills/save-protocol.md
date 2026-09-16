@@ -11,8 +11,23 @@ the run record and writes it only through `harness/hooks/save_run.py`.
 - §3 Ownership
 - §4 State and audit
 - §5 Resume and rewind
+- Save Context block
+- Enforcement
+- Failure paths
 
 ## §1 Layout
+
+Everything Supreme Team creates inside a project lives under `skillset-saves/`
+or `.harness-state/` ([save-ownership.yaml](save-ownership.yaml)
+`generated_roots`). `skillset-saves/` holds run state, run artifacts, and
+project preferences; `.harness-state/` holds guard records, trajectories,
+observations, test scratch (`test-work/`), skill-creator reports and
+workspaces, and packages built outside a run (`packages/`). The only exception
+is application source, which stays in the application's layout. A script run
+from a subdirectory still writes at the project root, because the hook state
+helper and every `--project-root` default walk up to the nearest
+`skillset-saves/`, `.harness-state/`, or `.git`; `scripts/output_paths.py`
+resolves every kind under these roots and rejects escapes.
 
 ```text
 skillset-saves/
@@ -25,19 +40,29 @@ skillset-saves/
     _history/                        # rev-<n>.state.json / rev-<n>.lock.json snapshots
     intake/report_grilling.md        # decisions artifact (writer: admiral)
     {phase}/                         # design, build, review, security, investigation,
-      manifest.json                  #   qa, skill-creation, delivery, release
+      manifest.json                  #   qa, taste, redesign, skill-creation, delivery, release
       reports/
       artifacts/
       evidence/
       packages/
-      verdict_{boundary}.json        # writer: the boundary's gatekeeper
+      verdict_{boundary}.json        # writer: the phase gatekeeper (check.py --verdict-out)
+      verdict_{boundary}.cross-stage.json  # writer: gatekeeper-admiral, beside the phase record
 ```
 
 `design/`, `build/`, and `review/` hold the three delivery phases owned by
 `commander`, `build-management`, and `code-chief`. `security/` holds the
 security pipeline (`cso`), `investigation/` the investigation pipeline
-(`investigate`), `qa/` the testing pipeline (`qa`), `skill-creation/` the
-skill-maker pipeline, and `release/` the release pipeline (`ship`). The grilling
+(`investigate`), `qa/` the testing pipeline (`qa`), `taste/` the Taste
+preference pipeline (`taste`; the durable preference store itself lives at
+`skillset-saves/preferences/` and is written only by `taste_prefs.py`),
+`redesign/` the redesign pipeline (`redesign`), `skill-creation/` the skill-maker
+pipeline, and `release/` the release pipeline (`ship`). `intake/` and `delivery/` are `admiral`'s own phase directories:
+`delivery/reports/handoff_{boundary}.md` is the cross-stage handoff record for
+each boundary and `delivery/reports/delivery-package.md` the final delivery
+package. A gate produces two verdict records in the phase directory: the phase
+gatekeeper writes `verdict_{boundary}.json`, and `gatekeeper-admiral` re-validates
+with `--prior` and writes `verdict_{boundary}.cross-stage.json` beside it, so
+neither record overwrites the other. The grilling
 log lives at `intake/report_grilling.md` and is the hashed artifact behind the
 `decisions` gate key; a phase manifest references it as
 `../intake/report_grilling.md`, which the gate admits because the run directory
@@ -127,14 +152,19 @@ prompt-submit hook, and the gate checker's run-root verification.
 `admiral` orchestrates; `session-memory` owns the run lifecycle record and
 writes it only through `save_run.py` (`create`, `checkpoint`, `heartbeat`,
 `complete`, `block`, `release`, `recover`, `status`). Each phase lead owns its
-phase directory. Specialists write only the artifact named in their delegation,
+phase directory (`admiral` leads `intake/` and `delivery/`); a lead never
+creates nested per-specialist directories or phase-state files, because no
+declared path class covers them and phase state lives in the run record.
+Specialists write only the artifact named in their delegation,
 at the destination the delegation names. Gatekeepers write verdict records but
 never modify submissions.
 
 The authoritative, machine-readable path policy is
-[save-ownership.yaml](save-ownership.yaml): one writer per path class (core run
-record, grilling log, phase manifest, reports, artifacts, evidence, packages,
-gate verdict, harness guards, harness trajectories, harness observations).
+[save-ownership.yaml](save-ownership.yaml): one writer per path class. Sixteen
+are declared; the run-facing ones are the core run record, grilling log, phase
+manifest, reports, artifacts, evidence, packages, gate verdict, harness guards,
+harness trajectories, and harness observations, with the preference store, test
+scratch, the two skill-eval classes, and standalone packages alongside them.
 [ownership.yaml](ownership.yaml) keeps the artifact-level owner map, and
 `validation/test_save_contracts.py` checks that the two agree. Writing outside
 your class, or writing a core run file by any means other than `save_run.py`,
@@ -142,7 +172,7 @@ is a write-ownership violation; the pre-tool hook denies edit-tool writes to
 core run files and the reader classifies an incoherent result as corrupt.
 
 Checkpoint discipline: checkpoint before every delegation and at every return or
-boundary (`save_run.py checkpoint --expect-revision <n> --evidence <path>`).
+boundary (`save_run.py checkpoint --run-id <run-id> --owner <owner> --expect-revision <n> --evidence <path>`).
 Each checkpoint snapshots the previous revision into `_history/`, registers
 evidence hashes, refreshes the heartbeat, and publishes state, lock, and pointer
 atomically behind a `_journal.json`; an interrupted publish is visible as
@@ -187,6 +217,7 @@ neither file may drop a field the other carries.
 - Persistence active: {yes|no}
 - Persistence probe result: {ok|reason}
 - Context tier: {1|2|3}
+- Preamble tier: {0|1|2|3} + rationale
 - Artifact mode: {inline|file|reference}
 - Session pin: {true|false}
 - Execution mode: {agent|skill}
@@ -203,3 +234,89 @@ neither file may drop a field the other carries.
 A delegate that receives `Persistence active: no` treats every save call as a
 no-op and returns its deliverable inline. A delegate that receives
 `Session pin: true` honors admiral routing and does not spawn a parallel run.
+
+## Enforcement
+
+This is one of the more mechanical contracts in the layer: the destination
+resolver refuses an unsafe path, the lifecycle writer refuses an incoherent
+operation, and the pre-tool hook refuses a direct write to a core run file. What
+none of them checks is whether the *right owner* wrote a file that is otherwise
+legal, so the ownership rules in §3 stay judgement even where the paths they
+govern are declared machine-readably.
+
+Every clause of §1–§5 is labelled below; a clause not named here is judgement.
+This file is itself read by a comparator:
+`validation/test_save_contracts.py`
+`OwnershipAgreementTests.test_save_protocol_points_at_the_machine_contracts`
+asserts that it names `save-ownership.yaml`, `save_run.py`, and `_journal.json`,
+so deleting any of those three pointers fails the suite.
+
+| Clause of §1–§5 | Backing | What fails |
+|-----------------|---------|------------|
+| §1 Everything generated lands under `skillset-saves/` or `.harness-state/` | Machine-checked by `validation/test_save_contracts.py` `GeneratedRootPolicyTests` and by [`scripts/validate_manifests.py`](scripts/validate_manifests.py) | `save-ownership.yaml: generated_roots must be exactly skillset-saves and .harness-state`; a resolver kind landing outside a declared root fails `test_every_project_kind_resolves_under_a_generated_root` |
+| §1 `scripts/output_paths.py` resolves every kind and rejects escapes | Machine-checked by `resolve()`; the *refusal* is pinned by `OutputPathTests`, the *kind set* by `GeneratedRootPolicyTests` | `resolve()` raises `ValueError` with `unknown output kind`, `name must be a relative path without traversal`, `run_id must be a single safe path segment`, `core name must be _state.md, _lock.md, or _audit-trail.md`, `phase must be one of [...]`, or `resolved path escapes project root`. Read the boundary of the test carefully: `OutputPathTests.test_every_kind_resolves_inside_project` asserts only that `ValueError` is raised, for three of those six cases, and never inspects the message — so the wording above is the script's, verified by running it, not a string any test asserts. `GeneratedRootPolicyTests.test_every_project_kind_resolves_under_a_generated_root` does pin `KINDS`, and the CLI declares `--kind ... choices=sorted(KINDS)`, so the two cannot drift apart. |
+| §1 A script run from a subdirectory still writes at the project root | Machine-checked by `GeneratedRootPolicyTests.test_hook_state_root_walks_up_to_the_project_marker` | `_state.find_project_root` returning a subdirectory instead of the nearest marker |
+| §1 Every pipeline has a phase directory under a run | Machine-checked by `validate_manifests.py` and `OwnershipAgreementTests.test_every_pipeline_phase_has_a_save_directory` | `save-ownership.yaml: missing phase directory 'qa' for qa` — the pipeline name appears twice in the real message. The test asserts membership directly rather than matching that string. |
+| §1 The four governed subdirectories (`reports/`, `artifacts/`, `evidence/`, `packages/`) | Partly machine-checked | `scripts/test_runtime_utilities.py` pins the exact `reports/` destination for every declared pipeline phase, and `output_paths.resolve` composes the other three the same way. That a file was filed under the right one of the four is judgement. |
+| §1 Evidence paths are project-relative and must exist | Machine-checked by `save_run.py` and `harness/hooks/_saves.py` | `evidence path must be project-relative without traversal`, `evidence path escapes project root`, `evidence path missing`, `missing evidence path <p>` |
+| §1 The run directory is the authorised evidence root, so a phase manifest may reference `../intake/report_grilling.md` | Machine-checked by [`harness/gatekeeper/check.py`](harness/gatekeeper/check.py) against [gates.yaml](gates.yaml) `evidence_rules.evidence_root`, pinned by `harness/gatekeeper/test_gate_run_layout.py` `EvidenceRootTests` | The root widens to the run directory only when the manifest `run_id` matches the directory and `_state.md`; otherwise it is the manifest directory. `test_other_run_evidence_is_rejected`, `test_traversal_absolute_and_unc_paths_are_rejected`, `test_symlink_escape_is_rejected`, and `test_run_id_mismatch_shrinks_root_to_package` each fail a package that reaches outside it. |
+| §1 The preference store under `skillset-saves/preferences/` is written only by `taste_prefs.py` | Machine-checked where hooks are registered | `pre_tool_use.py` denies an edit-tool write to `taste.json`, `taste.md`, `taste.journal.jsonl`, `taste.lock`, and `_history/*` under that directory, naming `skills/taste/taste_prefs.py` as the sanctioned writer; `SaveLifecycleTests.test_direct_edit_of_project_taste_state_is_denied_but_reads_pass` executes the hook on all five and confirms a `Read` of the same file is not denied |
+| §1 Pointer and run records carry schema version 1 | Machine-checked by `_saves.py` | a record whose `schema_version` is not 1 is classified `corrupt` and never reinforces the pin |
+| §1 `_latest.md` is only a pointer; scan `runs/` when it is absent, stale, or conflicting | Judgement | Nothing. `_saves.py` classifies the pointer and `heartbeat` rewrites it from the run, but whether a caller falls back to scanning `runs/` instead of trusting a stale pointer is the caller's discipline. |
+| §1 A gate writes two verdict records: `verdict_{boundary}.json` and `verdict_{boundary}.cross-stage.json` beside it | Judgement | Nothing compares those two filenames. `--verdict-out` writes wherever it is pointed, so the `.cross-stage.` suffix that keeps `gatekeeper-admiral` from overwriting the phase record is a naming convention this file carries, not a check. Passing the same `--verdict-out` path twice would silently overwrite. |
+| §1 Active state requires a pinned, held lock; terminal state an unpinned, released lock | Machine-checked by `save_run.py` and `_saves.py` | asserted end to end by `SaveLifecycleTests.test_create_checkpoint_heartbeat_complete_lifecycle` |
+| §2.1–2.2 State classification, lock verification, and the heartbeat contract | Machine-checked | `save_run.py status` returns the classification; `_state.refresh_run_heartbeat` applies its preconditions and the five-minute throttle; a checkpoint or heartbeat on a stale lock is refused, and `recover --reason` records the stale lock in the audit trail first (`test_stale_lock_recovery_records_evidence`) |
+| §2.3 Resume a single coherent active run automatically | Judgement | Nothing. The classification the rule reads is mechanical; acting on it is the orchestrator's discipline. |
+| §2.4 `create` probes, refuses a competing pin, and publishes revision 1 | Machine-checked by `save_run.py` | `another run holds the session pin`, plus the write/read/delete probe result (`test_competing_owner_and_wrong_owner_are_refused`) |
+| §2.5 Persistence is marked active only after `result: ok` | Judgement | Nothing. The exit codes (0 `ok`, 1 `refused`, 2 `degraded`) are mechanical; whether the caller honours them is not. |
+| §3 The core run record has one writer and one tool | Machine-checked by `OwnershipAgreementTests` | the `core-run-record` writer is pinned to `session-memory` and its `save_run.py` tool must exist on disk |
+| §3 A direct edit-tool write to a core run file is denied | Machine-checked where hooks are registered | [`harness/hooks/pre_tool_use.py`](harness/hooks/pre_tool_use.py) Rule C denies `Edit`, `Write`, and `NotebookEdit` on `_state.md`, `_lock.md`, `_audit-trail.md`, `_latest.md`, `_journal.json`, and `_history/*`, and denies a *mutating* shell command naming one of them unless it invokes `save_run.py`; pinned by `SaveLifecycleTests.test_direct_edit_of_core_files_is_denied_by_hook` |
+| §3 `save-ownership.yaml` and `ownership.yaml` agree | Machine-checked by `OwnershipAgreementTests` | a class whose writer, tool, or pattern contradicts the artifact-level owner map |
+| §3 A gatekeeper holds no edit tool | Machine-checked by `validation/test_catalog_contracts.py` `ToolSurfaceTests` | `<name> is a gatekeeper or declared single-writer but grants Edit`. That a gatekeeper never modifies a submission by some other route is judgement. |
+| §3 A phase lead owns its phase directory; a specialist writes only its delegated artifact | Judgement | Nothing. No comparator matches a written file against the patterns of its class, so a report written to the wrong phase subdirectory by the right owner fails nothing here — [save-ownership.yaml](save-ownership.yaml) `enforcement.judgement` records the same gap. |
+| §3 Checkpoint discipline: expected revision, `_history/` snapshot, journal, `--reopen`, stale-lock refusal | Machine-checked by `save_run.py` | `revision conflict`, `run is <status>; pass --reopen ...`, an `interrupted` classification while `_journal.json` is present, and refusal of `checkpoint`, `heartbeat`, `complete`, `block`, `release`, and non-rollback `recover` until the journal is resolved |
+| §4 Reserved state fields cannot be overwritten | Machine-checked by `save_run.py` | `--set may not override reserved field <key>` |
+| §4 The audit trail is append-only and superseded revisions are preserved | Machine-checked | the event sequence and `_history/rev-<n>.state.json` are asserted in `SaveLifecycleTests` |
+| §4 That the recorded values are true — skills engaged, blockers, next action, verdicts | Judgement | Nothing. No comparator reads a recorded value for accuracy. |
+| §5 A verdict is reusable only when `check.py --prior` reports `prior_reusable: true` | Machine-checked by [`harness/gatekeeper/check.py`](harness/gatekeeper/check.py) | a `verdict_id`, `gate_spec_digest`, or `package_fingerprint` mismatch; pinned by `harness/gatekeeper/test_gate_run_layout.py` |
+| §5 Re-probe on resume, rewind to the earliest affected boundary, never merge conflicting histories | Judgement | Nothing. The lock and revision mechanics are checked; the choice of rewind point is not. |
+| The Save Context field set | Partly machine-checked by `test_catalog_contracts.py` `SaveContextParityTests` | the comparator is discovery-based and anchored on a `Run ID` line, so it compares this copy against the canonical one and skips any file that mentions `Save Context` without carrying that anchor |
+
+## Failure paths
+
+- `create` returns `degraded` (exit 2). The write failed and nothing coherent
+  was published. Warn once, keep readable inline evidence, and use transient mode
+  only while resume cannot be proven. Do not hand-write the records the probe
+  could not write.
+- `create`, `checkpoint`, `heartbeat`, `complete`, `block`, `release`, or
+  `recover` returns `refused` (exit 1). That is a contract violation with a named
+  reason — a revision conflict, a competing pin, a wrong owner, a stale lock, or
+  an unresolved journal. Resolve the reason. Editing the record by hand to make
+  the next call succeed is the exact bypass Rule C exists to prevent.
+- `_journal.json` is present. The run is `interrupted`, and every operation
+  except `recover --rollback` is refused so a half-published revision is never
+  built on. Roll back, then re-checkpoint.
+- The lock is stale (heartbeat older than 30 minutes). Reclaim only with
+  `recover --reason`, which records the stale lock's path, heartbeat, owner, and
+  sha256 in the audit trail before issuing a new one. A reclaim with no recorded
+  reason is refused.
+- Two runs are active, or one is active beside a stale one. The state is
+  `conflicting` and neither is pinnable. Reclaim the old run and close it with
+  `complete`, `block`, or `release` before creating a new one.
+- The pointer is stale, missing, or contradicts `runs/`. It is only a pointer:
+  scan `runs/`, prove the target run, and let `heartbeat` rewrite the pointer
+  from the run. Never rebuild the pointer by hand to name a run you have not
+  verified.
+- An evidence path named in a checkpoint no longer exists or has moved outside
+  the project root. The operation is refused before publication. Restore the path
+  or register the evidence at its real destination, resolved with
+  `scripts/output_paths.py`.
+- A write is attempted at a path no class in
+  [save-ownership.yaml](save-ownership.yaml) covers. That is a policy gap, not
+  implicit permission: resolve the destination with `output_paths.py` first, and
+  if the path is sanctioned but unclassified, record the gap and add the class as
+  a contract change rather than writing under an undeclared path.
+- This file and [save-ownership.yaml](save-ownership.yaml) disagree about a
+  path. The YAML is the machine-readable policy and wins; this file is the prose
+  protocol and is the defect. Where this file and [gates.yaml](gates.yaml)
+  disagree about what a boundary admits as evidence, `gates.yaml` wins.

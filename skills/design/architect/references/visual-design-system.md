@@ -5,10 +5,10 @@ reference is the full pipeline: from "we need a UI" to a production-ready token
 set, shadcn/ui component template, UI/UX specification, and an adversarial design
 review that proves the result before the design gate.
 
-This work is bound by `design-doctrine.md` (the quiet-surface rules, the shadcn
+This work is bound by `../../../design-doctrine.md` (the quiet-surface rules, the shadcn
 foundation, the six responsive tiers, and the accessibility floor). Read it first
 — a deliverable that violates the doctrine is not gate-eligible. Run the intake
-interview per `grill-me-doctrine.md` before generating anything.
+interview per `../../../grill-me-doctrine.md` before generating anything.
 
 Skip the entire pipeline only for genuinely backend-only systems, and record the
 skip with a one-line justification in the architecture package.
@@ -74,7 +74,7 @@ global stylesheet, and the Tailwind entry (`tailwind.config` for v3, or
 
 ## Phase 2A — Design Interview (New mode)
 
-Run as a structured conversation per `grill-me-doctrine.md`: one design/configuration
+Run as a structured conversation per `../../../grill-me-doctrine.md`: one design/configuration
 decision at a time, using the host-native planning prompt when available. Each
 question carries a recommended answer and a one-line rationale. Confirm each
 decision before moving on. Do not bundle multiple decisions into a topic group and
@@ -203,7 +203,7 @@ Install every component in the approved inventory in one command where possible:
 `npx shadcn@latest add @<registry>/<name>` and verify import paths match the
 project's UI alias afterward.
 
-Produce the mandatory **Component Template** section (per `design-doctrine.md`
+Produce the mandatory **Component Template** section (per `../../../design-doctrine.md`
 §5), filled concretely:
 
 ```markdown
@@ -247,7 +247,21 @@ the final spec until the user approves with an explicit phrase ("looks good",
 
 ## Phase 6 — UI/UX Specification (`design-system.md`)
 
-Write `design-system.md` in the project root covering:
+Write `design-system.md` to the destination the resolver returns, not to the
+project root:
+
+```bash
+python skills/scripts/output_paths.py --run-id {run-id} --phase design --kind reports --name design-system.md
+```
+
+That resolves to the run's `design/reports/design-system.md`. The
+`generated_roots_rule` in `../../../save-ownership.yaml` keeps every generated
+file under `skillset-saves/` or `.harness-state/`, so a project-root
+`design-system.md` is an unowned path no class declares and no gate can read as
+evidence. Never compose the path by hand. When persistence is off, write no file
+and return the specification inline.
+
+The specification covers:
 
 - **Design principles** — the personality keywords and how each translates to a
   visual decision.

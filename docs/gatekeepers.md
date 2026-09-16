@@ -33,12 +33,14 @@ so this table cannot quietly rot.
 
 | Boundary | Guards | Submitter | Required evidence |
 | --- | --- | --- | --- |
-| `design-to-build` | DESIGN to BUILD | commander | `decisions` `architecture` `interfaces` `plan` `acceptance` `security_seed` `stack_lock` `ui_evidence` |
+| `design-to-build` | DESIGN to BUILD | commander | `decisions` `architecture` `interfaces` `plan` `acceptance` `security_seed` `stack_lock` `taste_snapshot` `ui_evidence` |
+| `redesign-review` | REDESIGN (design-shaped) to GATE to DESIGN or COMPLETE | redesign | `design_inventory` `taste_grilling` `taste_snapshot` `design_directions` `variant_set` `parity_evidence` `rendered_verification` `accessibility_evidence` `recommendation` `residual_risk` |
 | `build-to-review` | BUILD to REVIEW | build-management | `approved_design_revision` `implementation` `tests` `runtime` `traceability` `security_evidence` |
 | `review-to-delivery` | REVIEW to GATE to COMPLETE | code-chief | `review_verdict` `findings` `executed_probes` `rendered_verification` `residual_risk` `revision_lineage` |
 | `security-review` | security pipeline to GATE to COMPLETE | cso | `scope` `threat_model` `findings` `vulnerability_scan` `denial_path_evidence` `remediation_plan` `residual_risk` |
 | `investigation-review` | investigation to the owning phase | investigate | `scope` `reproduction` `mechanism` `evidence_chain` `fix_path` `residual_uncertainty` |
 | `qa-review` | testing pipeline to GATE to COMPLETE | qa | `scope` `test_matrix` `executed_probes` `defects` `fixes_applied` `residual_risk` |
+| `taste-review` | TASTE to GATE to COMPLETE or consuming pipeline | taste | `scope` `intent` `before_revision` `preference_diff` `confirmation` `conflict_analysis` `policy_check` `persistence_result` `effective_profile` `consumer_handoff` `taste_review_record` `residual_uncertainty` |
 | `skill-maker-to-delivery` | skill-maker pipeline to GATE to COMPLETE | skill-maker | `skills` `team_manifest` `link_report` `validation_report` |
 | `deploy-readiness` | GATE to RELEASE | ship | `approved_delivery` `deploy_config` `verification_plan` `rollback_plan` `human_go_required` |
 
@@ -48,16 +50,25 @@ Some keys cannot be satisfied by saying so. Their value has to point at a path i
 the package's `artifact_hashes` map, which means the evidence is a real file with
 a real digest:
 
-`decisions`, `architecture`, `plan`, `tests`, `runtime`, `executed_probes`,
-`rendered_verification`, `threat_model`, `denial_path_evidence`, `reproduction`,
-`evidence_chain`, `test_matrix`, `link_report`, `validation_report`,
-`deploy_config`, `verification_plan`, `rollback_plan`.
+`decisions`, `architecture`, `plan`, `taste_snapshot`, `design_inventory`,
+`taste_grilling`, `design_directions`, `variant_set`, `parity_evidence`, `tests`,
+`runtime`, `executed_probes`, `rendered_verification`, `threat_model`,
+`denial_path_evidence`, `reproduction`, `evidence_chain`, `test_matrix`,
+`link_report`, `validation_report`, `deploy_config`, `verification_plan`,
+`rollback_plan`, `preference_diff`, `confirmation`, `conflict_analysis`,
+`persistence_result`, `effective_profile`, `taste_review_record`.
 
-Eight keys may instead carry a typed applicability record naming `reason`,
+Twelve keys may instead carry a typed applicability record naming `reason`,
 `scope`, and `decided_by`, and only for the exact reasons listed under
-`fallback_values`: `security_evidence`, `stack_lock`, `ui_evidence`,
+`fallback_values`: `security_evidence`, `stack_lock`, `taste_snapshot`, `ui_evidence`,
 `rendered_verification`, `denial_path_evidence`, `vulnerability_scan`,
-`fixes_applied`, `team_manifest`. Any other bare string is rejected.
+`fixes_applied`, `team_manifest`, `before_revision`, `consumer_handoff`,
+`residual_uncertainty`. Any other bare string is rejected. `confirmation` has no
+fallback: inferred preferences and global writes, promotions, resets, or
+revocations always require an explicit confirmation record. A boundary can also
+refuse a fallback for a key it requires (`no_fallback`): at `redesign-review`,
+`rendered_verification` accepts neither the fallback string nor an
+applicability record, because a redesign always has a visible surface.
 
 ## Typed evidence records
 
@@ -66,13 +77,20 @@ records rather than prose.
 
 | Type | Keys | Must carry |
 |---|---|---|
-| `probe` | `tests`, `runtime`, `executed_probes`, `reproduction`, `evidence_chain`, `test_matrix`, `denial_path_evidence` | Hashed artifacts and `result.status: pass`. The executed log is the artifact. A bare count is not evidence. |
+| `probe` | `tests`, `runtime`, `executed_probes`, `reproduction`, `evidence_chain`, `test_matrix`, `denial_path_evidence`, `parity_evidence` | Hashed artifacts and `result.status: pass`. The executed log is the artifact. A bare count is not evidence. |
 | `scan` | `vulnerability_scan` | Hashed artifacts, tool, command, exit code, `observed_at`, `inputs` bound by sha256, and a passing status. `unavailable` or `error` is a data gap, never a clean scan. |
 | `render` | `rendered_verification` | Hashed captures, the breakpoints and themes covered, `inputs` bound to the rendered source, and pass or `inferred` with a stated limitation. |
-| `findings` | `findings`, `security_evidence`, `defects` | Items with id, severity, status. Critical must be verified or not-applicable with a reason. Major must be verified, not-applicable with a reason, or deferred with a named owner and reopen trigger. |
+| `findings` | `findings`, `security_evidence`, `defects`, `accessibility_evidence` | Items with id, severity, status. Critical must be verified or not-applicable with a reason. Major must be verified, not-applicable with a reason, or deferred with a named owner and reopen trigger. |
 | `verdict` | `review_verdict` | APPROVED, or REVISE/ESCALATE with a challenge record naming `by` and `reason`. |
 | `stack_lock` | `stack_lock` | Registry slug, versions, and overlay sha256, checked against `skills/tech-stacks/registry.yaml`. |
 | `revision_ref` | `approved_design_revision`, `approved_delivery` | A non-empty approved upstream revision identifier. |
+| `preference_diff` | `preference_diff` | Added, updated, deprecated, revoked, and unchanged ids, plus before/after SHA-256 digests. |
+| `confirmation` | `confirmation` | Actor, timestamp, confirmed scope, exact candidate ids, and source run. |
+| `conflict_analysis` | `conflict_analysis` | Conflicting ids, precedence decision, unresolved conflicts, and accessibility/policy collisions. |
+| `persistence_result` | `persistence_result` | Requested destinations, committed revisions, SHA-256 hashes, atomicity status, and rollback result. |
+| `effective_profile` | `effective_profile` | Every effective entry's id, source scope, and source id, plus the profile digest. |
+| `consumer_handoff` | `consumer_handoff` | Consuming pipeline, immutable effective-profile digest, and applicability summary. |
+| `variant_set` | `variant_set` | Exactly four variants with unique ids; each variant's `spec`, `tokens`, `components`, and `app` is a hashed artifact in the package. The count comes from `evidence_type_params`. |
 
 `inputs` is the part that stops evidence going stale. It binds a record to the
 project source it describes, so when that source changes the evidence fails as
@@ -116,6 +134,24 @@ Every verdict record carries `verdict_id`, `package_fingerprint`, and
 `gate_spec_digest`. It is reusable only when `check.py --prior` reports
 `prior_reusable: true`, which needs the same boundary, submission, revision,
 fingerprint, and gate spec.
+
+## Faster REVISE cycles
+
+A REVISE round trip is the most expensive thing a gate does, so
+[`skills/gates.yaml`](../skills/gates.yaml) `revise_policy` makes each one count:
+
+| Rule | What it means in practice |
+|---|---|
+| `self_check` | The submitter runs `check.py` on its own manifest before submitting. A package that fails the machine is never submitted, so a gatekeeper only spends judgment on packages that already pass mechanically. |
+| `one_packet` | A REVISE carries every mechanical failure and every judgment finding from the pass. `check.py` groups failures by evidence key and by that key's owner (`evidence_owners`) into `revise_packet.by_owner`; the gatekeeper appends its judgment findings to the same groups. Nobody returns the first defect alone. |
+| `parallel_fix` | The phase lead delegates each owner group at once and resubmits once. `test-builder` fixing the test log never waits on `security-builder` fixing the findings record. |
+| `delta_review` | Every verdict record stores `evidence_digests` per key. A resubmission run with `--prior` reports `changed_evidence` and `unchanged_evidence`; the gatekeeper re-judges only the changed keys and carries its prior judgment on the rest. The mechanical pass always covers the whole package. |
+| `cycle_cap` | Two cycles per boundary, then the dispute is escalated with both positions written down. |
+
+The phase gatekeeper's record and `gatekeeper-admiral`'s cross-stage record
+sit side by side (`verdict_<boundary>.json` and
+`verdict_<boundary>.cross-stage.json`), so the second gate reuses the first
+through `--prior` whenever the fingerprint is unchanged and never overwrites it.
 
 ## The posture
 

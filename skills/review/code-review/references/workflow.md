@@ -1,11 +1,16 @@
 # Workflow Reference
 
+Read this when judging a diff for merge and deciding what blocks. `../SKILL.md`
+holds the normative packet shape, severities, and save rules; this file holds the
+sequence and the judgment calls inside it.
+
 ## Contents
 
 1. Review sequence
 2. Decision rules
 3. Acceptance checklist
-4. Collaboration notes
+4. Contract notes
+5. Collaboration notes
 
 ## Review Sequence
 
@@ -20,6 +25,7 @@
 - Prefer review comments that affect merge safety, future comprehension, or contract stability over cosmetic preferences.
 - Mark missing caller context or migration evidence as a readiness gap when interface changes are visible.
 - Keep generated or mechanical churn from distorting the signal in the report.
+- Write a cleanup as a fix direction, never as an edit: the diff under judgment ends the pass byte-identical to the one submitted.
 
 ## Acceptance Checklist
 
@@ -27,13 +33,21 @@
 - Cleanup suggestions are clearly separated from merge blockers.
 - Any missing baseline or caller context is named explicitly.
 - Reviewer burden and code clarity impacts are visible in the packet.
+- Every item carries one of the four shared severities, and a diff with nothing to report returns the clean-pass packet rather than nothing.
+- The reviewed files are unmodified, and the packet is saved under the filename the gate slot matches.
 
 ## Contract Notes
 
-- Before/After Evidence: Capture observable state before and after each intervention so improvements can be verified instead of asserted.
-- Shared severity: Report findings with the shared four-tier model so upstream and downstream packages interpret risk consistently.
+`../SKILL.md` states the contracts; this section records only where each one
+lands in the sequence above, so the two documents do not restate each other.
+
+- Read-only over the reviewed surface — binds from step 1 through packaging; the fix directions written at step 3 are the deliverable, and no step of this sequence touches the diff it judges.
+- Before/After Evidence — the "before" is the submitted diff and the test output read at step 2, recorded so a later claim that the revision improved something can be checked instead of believed.
+- Shared severity — assigned at step 3, when merge impact is known, and preserved unchanged through step 4.
+- Save-Protocol Adherence — the step 4 packet is what the save path receives, under the filename `../SKILL.md` mandates for the gate slot.
 
 ## Collaboration Notes
 
-- `review/code-chief` merges the code-review packet with the sibling lens outputs.
+- `review/code-chief` merges the code-review packet with the sibling lens outputs and owns the consolidated recommendation the gate reads.
 - `review/gatekeeper-code` verifies that the final package preserves the merge blockers and readiness rationale accurately.
+- `review/bug-review` takes exhaustive correctness work this lens surfaces but does not chase, and `review/quality-review` takes drift that outlives this diff.

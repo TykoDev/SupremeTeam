@@ -1,8 +1,8 @@
 # SKILL.md Score-card — Reference for a Perfectly-Created Skill
 
 This document is the grading rubric for a Claude skill. It pairs with
-`../../references/skill-guide.md`: that document tells you how to *build* a skill;
-this one tells you how to *evaluate* one. A "production-ready" skill scores **100/100**
+`../../references/skill-guide.md`: that document covers how to *build* a skill;
+this one covers how to *evaluate* one. A "production-ready" skill scores **100/100**
 here and also passes real behavioral evals (task runs against realistic user
 prompts).
 
@@ -33,6 +33,7 @@ specifies:
 - [Severity prioritization](#severity-prioritization--which-deductions-to-fix-first)
 - [Stopping rules for the review loop](#stopping-rules-for-the-review-loop)
 - [Blank scorecard template](#blank-scorecard-template)
+- [Worked example — filled finding and score line](#worked-example--filled-finding-and-score-line)
 - [Example: a 100/100 scorecard](#example-a-100100-scorecard-for-a-perfect-skill)
 - [Using this alongside real behavioral evals](#using-this-alongside-real-behavioral-evals)
 - [Cross-references](#cross-references)
@@ -55,12 +56,24 @@ For each dimension:
 
 ### Calibration errors to avoid
 
-- **Grade inflation** — giving 9/10 when there's a visible issue. If you'd
-  change something, it's not a 10.
+- **Grade inflation** — giving 9/10 when there's a visible issue. If something
+  would still be changed, it's not a 10.
 - **Grade deflation** — holding skills to a standard no real skill meets.
-  If you can't articulate what would make the dimension *better*, it's a 10.
+  If no articulable change would make the dimension *better*, it's a 10.
 - **Single-issue anchoring** — letting one big problem drag unrelated
   dimensions down. Scope deductions to the dimension they belong to.
+- **Upward anchoring** — letting a strong early dimension lift the ones scored
+  after it. Dimensions are scored in a fixed order for convenience, not because
+  the first is evidence about the rest.
+- **Halo effect** — reading a polished description or a confident opening as
+  proof about content the score has not yet examined. A good description earns
+  Dimension 1 and nothing else.
+- **Severity inflation** — scoring a polish issue as though it were structural.
+  Size a deduction by what it costs the reader, not by how easily it was spotted.
+- **Context bleed** — scoring what the author evidently meant rather than what
+  the file says. An intention that never reached the page earns nothing.
+- **Perfectionism** — deducting for the absence of something this rubric does
+  not require. If no criterion names it, it is not a gap.
 
 ---
 
@@ -78,7 +91,11 @@ before deciding whether to load the skill.
 - Lists concrete triggering contexts: user phrasings, file types, domains
 - Includes a slightly pushy cue ("even if the user doesn't explicitly say X")
 - Correctly excludes adjacent-but-distinct domains (no scope creep)
-- No XML tags, no reserved words (`anthropic`, `claude`)
+- No XML tags. Reserved words (`anthropic`, `claude`) are barred from the `name`
+  field, per `../../references/skill-guide.md`. The `description` is not scoped by
+  that rule: it may use them where the domain genuinely requires it ("Claude
+  skills", "the Anthropic API"), and should not use them decoratively where a
+  plainer noun says the same thing. Deduct only for the decorative case
 
 ### Deduction ladder
 
@@ -479,7 +496,7 @@ Stop iterating when:
 - User accepts a sub-100 score and says they're done, **or**
 - Score plateaus for 2 consecutive iterations with identical deductions
 
-If you plateau, stop and present the current state honestly. Don't add filler
+On a plateau, stop and present the current state honestly. Don't add filler
 to hit a number — explain what's resisting improvement and ask the user
 whether to continue or ship.
 
@@ -549,7 +566,7 @@ The example below shows one F-[NN] finding and a single dimension score line, so
 
 Below is what a filled scorecard looks like for a well-built hypothetical
 `processing-invoices` skill. Each dimension notes *why* it scored 10 — useful
-for calibration when you're unsure if a dimension is actually at 10 or just
+for calibration when a dimension sits ambiguously between a true 10 and merely
 close.
 
 ```
@@ -615,7 +632,7 @@ DECISION: SHIP. Rubric at 100/100, 3 real-eval runs passed with
 ## Using this alongside real behavioral evals
 
 The rubric catches **structural** problems. Real evals catch **behavioral**
-problems. You need both signals:
+problems. Both signals are needed:
 
 - A skill can score 100/100 on the rubric and still produce ugly charts,
   miss a key column, or take the wrong analytical approach. Only real eval

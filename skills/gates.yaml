@@ -15,7 +15,9 @@
     "path_references": "Every path-shaped string in an artifact-backed evidence value (every evidence value at manifest schema 2) must be a correctly hashed artifact; free-text annotations are ignored.",
     "manifest_schema_2": "schema_version 2 manifests must declare boundary and owner (the spec submitter), run_id when inside a run, revision equal to the single revisions value, typed records for keys listed in evidence_types, and applicability records {applicable: false, reason, scope, decided_by} instead of bare fallback strings.",
     "applicability_records": "Only keys listed in fallback_values are waivable. A waiver is a typed applicability record naming reason, scope, and decided_by; any other bare string fails.",
-    "verdict_records": "check.py emits gate_spec_digest, package_fingerprint, and verdict_id; --verdict-out writes the durable record and --prior compares against it. A verdict is reusable only for the same boundary, submission, revision, fingerprint, and gate spec digest."
+    "no_fallback": "A boundary may list keys under no_fallback; those keys accept neither a sanctioned fallback string nor an applicability record at that boundary, even when a global fallback exists for the key.",
+    "revise_packet": "check.py groups every failure by the evidence key it names and by that key's owner from evidence_owners (unassignable failures go to the submitter), and with --prior reports changed_evidence and unchanged_evidence from per-key digests, so one REVISE packet routes to every owner at once and a resubmission is re-judged only where it changed.",
+    "verdict_records": "check.py emits gate_spec_digest, package_fingerprint, verdict_id, and evidence_digests; --verdict-out writes the durable record and --prior compares against it. A verdict is reusable only for the same boundary, submission, revision, fingerprint, and gate spec digest."
   },
   "boundaries": {
     "design-to-build": {
@@ -29,12 +31,42 @@
         "acceptance",
         "security_seed",
         "stack_lock",
+        "taste_snapshot",
         "ui_evidence"
       ],
       "artifact_evidence": [
         "decisions",
         "architecture",
-        "plan"
+        "plan",
+        "taste_snapshot"
+      ]
+    },
+    "redesign-review": {
+      "guards": "REDESIGN (design-shaped) -> GATE -> DESIGN with the chosen variant, or COMPLETE",
+      "submitter": "redesign",
+      "required_evidence": [
+        "design_inventory",
+        "taste_grilling",
+        "taste_snapshot",
+        "design_directions",
+        "variant_set",
+        "parity_evidence",
+        "rendered_verification",
+        "accessibility_evidence",
+        "recommendation",
+        "residual_risk"
+      ],
+      "artifact_evidence": [
+        "design_inventory",
+        "taste_grilling",
+        "taste_snapshot",
+        "design_directions",
+        "variant_set",
+        "parity_evidence",
+        "rendered_verification"
+      ],
+      "no_fallback": [
+        "rendered_verification"
       ]
     },
     "build-to-review": {
@@ -118,6 +150,37 @@
         "executed_probes"
       ]
     },
+    "taste-review": {
+      "guards": "TASTE -> GATE -> COMPLETE or consuming pipeline",
+      "submitter": "taste",
+      "required_evidence": [
+        "scope",
+        "intent",
+        "before_revision",
+        "preference_diff",
+        "confirmation",
+        "conflict_analysis",
+        "policy_check",
+        "persistence_result",
+        "effective_profile",
+        "consumer_handoff",
+        "taste_review_record",
+        "residual_uncertainty"
+      ],
+      "artifact_evidence": [
+        "preference_diff",
+        "confirmation",
+        "conflict_analysis",
+        "persistence_result",
+        "effective_profile",
+        "taste_review_record"
+      ],
+      "fallback_values": {
+        "before_revision": ["new store - no prior revision"],
+        "consumer_handoff": ["preference management only - no downstream consumer"],
+        "residual_uncertainty": ["none observed"]
+      }
+    },
     "skill-maker-to-delivery": {
       "guards": "skill-maker pipeline -> GATE -> COMPLETE",
       "submitter": "skill-maker",
@@ -159,6 +222,9 @@
     "ui_evidence": [
       "no user-facing surface - design system not engaged"
     ],
+    "taste_snapshot": [
+      "no saved Taste profile available"
+    ],
     "rendered_verification": [
       "no visible surface changed - rendered verification not applicable"
     ],
@@ -175,7 +241,8 @@
       "single skill - no team manifest produced"
     ]
   },
-  "spec_revision": 1,
+  "spec_revision": 3,
+  "unchecked_fields": "Fields of this spec that a comparator does not read, so a wrong value here fails nothing. `guards` is no longer one of them. `scripts/validate_manifests.py` check_gates and `harness/gatekeeper/test_gate_manifests.py` GateSpecContractTests.test_gate_spec_shape still check only that the string is non-empty, but validation/test_orchestration.py GuardedTransitionTests reads what it says: it parses the `## States and transitions` table in contracts/workflow-protocol.md and requires every ALL-CAPS token in a `guards` string to be a state that table declares - or the name of the pipeline that closes this boundary, standing at the origin of the chain, which is how REDESIGN and TASTE are admitted - and every adjacent pair in a chain to be an allowed transition out of the state it leaves. Lowercase prose origins (security pipeline, investigation) and trailing commentary (with the chosen variant, or consuming pipeline) are not read, and neither is the Guards column of that document, which stays a deliberate paraphrase the drift test skips. `evidence_type_params.variant_set.required_count` gained a second reader for the same reason: validation/test_orchestration.py StageConditionTests requires the `fan_out` of the pipelines.yaml stage whose owner owns that evidence key at this boundary to equal it, so the fan-out and the count the gate enforces can no longer drift apart. Still unread: `purpose`, this note, `evidence_rules`, `evidence_type_rules`, `spec_revision`, and `finding_policy.statement` - all prose that describes behaviour check.py implements in code rather than reads from here. What IS read per boundary: `guards` (against the state machine, as above), `submitter`, `required_evidence`, `artifact_evidence`, `fallback_values`, `no_fallback`, `evidence_types`, `evidence_type_params`, `evidence_owners`, `verdicts`, and `revise_policy.cycle_cap`.",
   "evidence_types": {
     "tests": "probe",
     "runtime": "probe",
@@ -192,7 +259,16 @@
     "review_verdict": "verdict",
     "stack_lock": "stack_lock",
     "approved_design_revision": "revision_ref",
-    "approved_delivery": "revision_ref"
+    "approved_delivery": "revision_ref",
+    "preference_diff": "preference_diff",
+    "confirmation": "confirmation",
+    "conflict_analysis": "conflict_analysis",
+    "persistence_result": "persistence_result",
+    "effective_profile": "effective_profile",
+    "consumer_handoff": "consumer_handoff",
+    "variant_set": "variant_set",
+    "parity_evidence": "probe",
+    "accessibility_evidence": "findings"
   },
   "evidence_type_rules": {
     "scan": "Record with artifacts (hashed), tool, command, exit_code, observed_at, inputs [{path, sha256}] bound to the inspected source, and result.status in pass|fail|error|not-run|unavailable. Only pass satisfies the gate; unavailable or error is a data gap, never a clean scan.",
@@ -202,7 +278,38 @@
     "findings": "Record {items: [{id, severity, status, owner?, reopen_trigger?, reason?}]}. Critical must be verified or not-applicable with reason. Major must be verified, not-applicable with reason, or deferred with owner and reopen_trigger (finding_policy.major_deferral). Minor and Info are recorded.",
     "verdict": "APPROVED, or REVISE/ESCALATE accompanied by a challenge record {by, reason} that the gate preserves as a disputed recommendation.",
     "stack_lock": "Record {slug, versions, overlay_sha256} validated against tech-stacks/registry.yaml (slug exists, overlay digest matches registry and file, versions intersect), or an applicability record.",
-    "revision_ref": "A non-empty approved upstream revision identifier."
+    "revision_ref": "A non-empty approved upstream revision identifier.",
+    "preference_diff": "Record {added, updated, deprecated, revoked, unchanged: [preference ids], before_digest, after_digest}. Every id collection is explicit and both digests are sha256 values.",
+    "confirmation": "Record {actor, timestamp, confirmed_scope, candidate_ids, source_run}. candidate_ids is the exact candidate-id set. Confirmation is never waivable: inferred preferences and any global write, promotion, reset, or revocation require this explicit record.",
+    "conflict_analysis": "Record {conflicting_ids, precedence_decision, unresolved_conflicts, accessibility_policy_collisions}.",
+    "persistence_result": "Record {requested_destinations, committed_revisions, hashes, atomicity_status, rollback_result}.",
+    "effective_profile": "Record {entries: [{id, source_scope, source_id}], digest}. Every effective entry carries its source scope and source id.",
+    "consumer_handoff": "Record {consuming_pipeline, effective_profile_digest, applicability_summary}. The digest is the immutable effective-profile sha256.",
+    "variant_set": "Record {artifacts, variants: [{id, name, direction, spec, tokens, components, app}], count}. Exactly evidence_type_params.variant_set.required_count variants with unique ids; spec, tokens, components, and app of every variant are correctly hashed artifacts in the package; count, when present, equals the list length. At redesign-review, parity_evidence is a single check_parity.py probe record whose artifacts list names the hashed parity file for every variant: check.py requires one mapping, so a list of per-variant records fails as 'parity_evidence must be a typed probe record at schema 2'. Binding inputs to the inventory and prototype files is required by the gate but not machine-checked - check_result_record demands non-empty inputs only for scan and render records, so a probe with no inputs passes the validator and the binding is a gatekeeper judgement."
+  },
+  "evidence_type_params": {
+    "variant_set": {
+      "required_count": 4
+    }
+  },
+  "evidence_owners": {
+    "design-to-build": {"decisions": "admiral", "architecture": "architect", "interfaces": "architect", "plan": "planner", "acceptance": "planner", "security_seed": "security-builder", "stack_lock": "commander", "taste_snapshot": "taste", "ui_evidence": "architect"},
+    "redesign-review": {"design_inventory": "design-mapper", "taste_grilling": "taste", "taste_snapshot": "taste", "design_directions": "architect", "variant_set": "prototyper", "parity_evidence": "design-mapper", "rendered_verification": "design-qa", "accessibility_evidence": "frontier", "recommendation": "redesign", "residual_risk": "redesign"},
+    "build-to-review": {"approved_design_revision": "build-management", "implementation": "bob-the-builder", "tests": "test-builder", "runtime": "health-check", "traceability": "build-management", "security_evidence": "security-builder"},
+    "review-to-delivery": {"review_verdict": "code-chief", "findings": "code-chief", "executed_probes": "code-chief", "rendered_verification": "design-qa", "residual_risk": "code-chief", "revision_lineage": "code-chief"},
+    "security-review": {"scope": "cso", "threat_model": "cso", "findings": "cso", "vulnerability_scan": "security-review", "denial_path_evidence": "mr-robot", "remediation_plan": "cso", "residual_risk": "cso"},
+    "investigation-review": {"scope": "investigate", "reproduction": "investigate", "mechanism": "investigate", "evidence_chain": "investigate", "fix_path": "investigate", "residual_uncertainty": "investigate"},
+    "qa-review": {"scope": "qa", "test_matrix": "qa", "executed_probes": "qa", "defects": "qa", "fixes_applied": "qa", "residual_risk": "qa"},
+    "taste-review": {"scope": "taste", "intent": "taste", "before_revision": "taste", "preference_diff": "taste", "confirmation": "taste", "conflict_analysis": "taste", "policy_check": "taste", "persistence_result": "taste", "effective_profile": "taste", "consumer_handoff": "taste", "taste_review_record": "taste-review", "residual_uncertainty": "taste"},
+    "skill-maker-to-delivery": {"skills": "skill-maker", "team_manifest": "skill-maker", "link_report": "skill-reviewer", "validation_report": "skill-creator"},
+    "deploy-readiness": {"approved_delivery": "ship", "deploy_config": "setup-deploy", "verification_plan": "ship", "rollback_plan": "setup-deploy", "human_go_required": "ship"}
+  },
+  "revise_policy": {
+    "self_check": "The submitter runs check.py on its manifest (without --verdict-out) before submitting; a package that fails mechanically is never submitted, so a gatekeeper only spends judgment on packages that already pass the machine.",
+    "one_packet": "A REVISE carries every mechanical failure and every judgment finding found in the pass, grouped by owner in revise_packet.by_owner; a gatekeeper never returns the first defect alone.",
+    "parallel_fix": "The phase lead delegates each owner group of the packet in parallel and resubmits once; independent owners never wait on each other.",
+    "delta_review": "On a resubmission with --prior, changed_evidence names the keys whose value or artifacts changed; the gatekeeper re-judges those keys and carries its prior judgment on unchanged_evidence, re-running only the mechanical pass over the whole package.",
+    "cycle_cap": 2
   },
   "finding_policy": {
     "critical": "verified-before-gate",

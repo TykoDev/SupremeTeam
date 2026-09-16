@@ -23,8 +23,8 @@ SupremeTeam/
 │   ├── directory-structure.md            # This file
 │   └── assets/                           # Diagrams used across the docs
 └── skills/
-    ├── gates.yaml                        # Gate spec: 8 boundaries
-    ├── pipelines.yaml                    # Pipeline map: 8 pipelines
+    ├── gates.yaml                        # Gate spec: 10 boundaries
+    ├── pipelines.yaml                    # Pipeline map: 10 pipelines
     ├── ownership.yaml                    # One writer per artifact
     ├── save-ownership.yaml               # One writer per save path class
     ├── team-manifest.yaml                # Roster
@@ -56,7 +56,8 @@ SupremeTeam/
     │   └── agent/                        # agent-manifest.yaml, agent-protocol.md, adapters/
     ├── gatekeeper-admiral/               # Cross-stage validator
     ├── design/                           # commander, researcher, planner, architect,
-    │                                     # engineer, gatekeeper-design
+    │                                     # engineer, gatekeeper-design, redesign,
+    │                                     # design-mapper, prototyper
     ├── build/                            # build-management, bob-the-builder, test-builder,
     │                                     # security-builder, cross-check-build-confirm,
     │                                     # debugger, health-check, gatekeeper-build
@@ -66,6 +67,7 @@ SupremeTeam/
     ├── investigate/                      # Investigation pipeline owner
     ├── skill-maker/                      # skill-creator, skill-reviewer
     ├── session-memory/                   # Run record and durable learnings
+    ├── taste/                            # Preference lifecycle owner and atomic writer
     ├── browser-automation/               # browse, open-browser, setup-browser-cookies, pair-agent
     ├── release-and-deployment/           # ship, land-and-deploy, setup-deploy, document-release
     ├── safety-guardrails/                # guard, careful, freeze, unfreeze
@@ -78,7 +80,7 @@ SupremeTeam/
 |---|---|---|
 | `skillset-saves/` | Run state, locks, audit trails, evidence, gate packages | Ignored. Never commit |
 | `.harness-state/` | Guard records and trajectory observations | Ignored. Never commit |
-| `harness-test-work/` | Temporary harness regression workspace | Ignored. Never commit |
+| `.harness-state/test-work/`, `eval-reports/`, `eval-workspaces/`, `packages/` | Test scratch, skill-creator reports and workspaces, packages built outside a run | Ignored. Never commit |
 | `**/__pycache__/`, `*.pyc` | Interpreter caches | Ignored. Never publish |
 
 Ignore rules are not the delivery control, though.
@@ -96,7 +98,7 @@ dependencies and things break in ways that are annoying to diagnose.
 Why things sit where they do:
 
 - `admiral`, `gatekeeper-admiral`, `investigate`, `skill-maker`, and
-  `session-memory` are directly under `skills/` because they are cross-cutting.
+  `session-memory`, and `taste` are directly under `skills/` because they are cross-cutting.
 - Pipeline-stage skills nest under their category (`design/`, `build/`,
   `review/`).
 - Standalone tools nest under their group.

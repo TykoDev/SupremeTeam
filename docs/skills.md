@@ -1,6 +1,6 @@
 # The Skills
 
-47 of them. Three delivery pipelines, a few cross-cutting components, and four
+52 of them. Three delivery pipelines, a few cross-cutting components, and four
 groups of standalone tools you can call whenever you like.
 
 The roster is declared in
@@ -11,7 +11,7 @@ that suite would fail.
 
 For the flat machine-readable index with paths, see [AGENTS.md](../AGENTS.md).
 
-![Phases, sub-pipelines, and the 47-skill breakdown](assets/1_Overview.jpg)
+![Phases, sub-pipelines, and the 49-skill breakdown](assets/1_Overview.jpg)
 
 ## Admiral layer (2)
 
@@ -20,7 +20,7 @@ For the flat machine-readable index with paths, see [AGENTS.md](../AGENTS.md).
 | **admiral** | The front door. Intake, routing, delegation, gate routing, delivery assembly |
 | **gatekeeper-admiral** | Argues with every package crossing between phases |
 
-## Design (6)
+## Design (9)
 
 Turns a vague idea into something you could hand to a builder without answering
 forty questions.
@@ -32,7 +32,10 @@ forty questions.
 | **planner** | Milestones, rollout, decision gates, risk handling |
 | **architect** | System architecture, API contracts, and the frontend design system |
 | **engineer** | The implementation spec: delivery slices, dependency order, operational constraints |
-| **gatekeeper-design** | Design phase-exit validator |
+| **gatekeeper-design** | Design phase-exit validator; also gates `redesign-review` |
+| **redesign** | Runs the redesign pipeline: inventory, taste grilling, four living design-system variants, comparison, decision |
+| **design-mapper** | Records the current design as a stable-id inventory with baseline captures, then verifies variant parity |
+| **prototyper** | Builds one variant: tokens, a framework-free shadcn-shaped component library, and a living single-page prototype |
 
 The UI design system belongs to **architect** per
 [`design-doctrine.md`](../skills/design-doctrine.md). There is no separate
@@ -73,7 +76,7 @@ The biggest group, because this is where most of the value is.
 | **devex-review** | Developer experience: onboarding, tooling, docs clarity, integration friction |
 | **gatekeeper-code** | Reviews the reviewers. Validates the consolidated review package |
 
-## Cross-cutting (5)
+## Cross-cutting (6)
 
 | Skill | What it does |
 |---|---|
@@ -82,6 +85,14 @@ The biggest group, because this is where most of the value is.
 | **skill-creator** | Drafts and improves skills: authoring, supporting files, evals, trigger tuning, packaging |
 | **skill-reviewer** | Adversarial quality gate. Scores 0 to 100 across ten dimensions and returns a prioritized fix list |
 | **session-memory** | Cross-session state and durable learnings. Checkpoints and resume |
+| **taste** | Preference lifecycle owner and sole semantic writer; resolves global and project profiles and submits the Taste gate |
+
+## Taste (2)
+
+| Skill | What it does |
+|---|---|
+| **taste** | Owns preference intake, canonical writes, effective-profile resolution, and the Taste gate submission |
+| **taste-review** | Read-only review of provenance, conflicts, redaction, confirmation, and persistence safety |
 
 ## Standalone tools (15)
 
@@ -132,8 +143,8 @@ Not skills, but load-bearing. See [architecture.md](architecture.md),
 
 | File | Purpose |
 |---|---|
-| `gates.yaml` | Eight boundaries: required and artifact-backed evidence, fallbacks, typed records, finding policy, submitters |
-| `pipelines.yaml` | Eight pipelines: ordered stages, owners, closing boundary, required scripts |
+| `gates.yaml` | Ten boundaries: required and artifact-backed evidence, fallbacks, typed records, finding policy, submitters |
+| `pipelines.yaml` | Ten pipelines: ordered stages, owners, closing boundary, required scripts |
 | `ownership.yaml` | One writer per design and handoff artifact |
 | `save-ownership.yaml` | One writer per path class under `skillset-saves/` and `.harness-state/` |
 | `team-manifest.yaml` | The roster everything else is checked against |

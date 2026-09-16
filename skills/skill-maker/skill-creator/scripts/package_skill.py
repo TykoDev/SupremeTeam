@@ -1,13 +1,29 @@
 #!/usr/bin/env python3
-"""
-Skill Packager - Creates a distributable .skill file of a skill folder
+"""Skill packager - build a distributable .skill archive from a skill folder.
 
-Usage:
-    python utils/package_skill.py <path/to/skill-folder> [output-directory]
+Run as a module from the skill-creator directory, so the `scripts` package
+resolves:
+
+    cd skills/skill-maker/skill-creator
+    python -m scripts.package_skill <path/to/skill-folder> [output-directory]
 
 Example:
-    python utils/package_skill.py skills/public/my-skill
-    python utils/package_skill.py skills/public/my-skill ./dist
+    python -m scripts.package_skill ../../review/security-review
+    python -m scripts.package_skill ../../review/security-review \\
+        skillset-saves/runs/<run-id>/skill-creation/packages
+
+Inputs:
+    path/to/skill-folder  directory containing SKILL.md
+    output-directory      optional; defaults to <project>/.harness-state/packages/
+
+Output:
+    <output-directory>/<folder-name>.skill - a ZIP archive rooted at the skill
+    folder name, excluding evals/ at the root, __pycache__, *.pyc and .DS_Store.
+
+Exit codes:
+    0  the archive was written; its path is printed
+    1  the skill folder is missing, is not a directory, has no SKILL.md,
+       fails quick_validate, or the archive could not be created
 """
 
 import fnmatch
@@ -15,6 +31,20 @@ import sys
 import zipfile
 from pathlib import Path
 from scripts.quick_validate import validate_skill
+
+
+def _default_output_dir() -> Path:
+    """Packages built outside a run go under the project's .harness-state/packages/.
+
+    The project root is the nearest ancestor of the working directory holding
+    skillset-saves/, .harness-state/, or .git (save-ownership.yaml generated_roots).
+    """
+    start = Path.cwd().resolve()
+    root = next((c for c in (start, *start.parents)
+                 if any((c / m).exists() for m in ("skillset-saves", ".harness-state", ".git"))), start)
+    target = root / ".harness-state" / "packages"
+    target.mkdir(parents=True, exist_ok=True)
+    return target
 
 # Patterns to exclude when packaging skills.
 EXCLUDE_DIRS = {"__pycache__", "node_modules"}
@@ -45,7 +75,7 @@ def package_skill(skill_path, output_dir=None):
 
     Args:
         skill_path: Path to the skill folder
-        output_dir: Optional output directory for the .skill file (defaults to current directory)
+        output_dir: Optional output directory for the .skill file (defaults to <project>/.harness-state/packages/)
 
     Returns:
         Path to the created .skill file, or None if error
@@ -82,7 +112,7 @@ def package_skill(skill_path, output_dir=None):
         output_path = Path(output_dir).resolve()
         output_path.mkdir(parents=True, exist_ok=True)
     else:
-        output_path = Path.cwd()
+        output_path = _default_output_dir()
 
     skill_filename = output_path / f"{skill_name}.skill"
 
@@ -108,13 +138,22 @@ def package_skill(skill_path, output_dir=None):
         return None
 
 
+USAGE = """Usage: python -m scripts.package_skill <path/to/skill-folder> [output-directory]
+
+Run from skills/skill-maker/skill-creator so the `scripts` package resolves.
+
+Example:
+  python -m scripts.package_skill ../../review/security-review
+  python -m scripts.package_skill ../../review/security-review ./dist
+
+Output directory defaults to <project>/.harness-state/packages/.
+Exit codes: 0 = archive written, 1 = invalid skill folder or write failure."""
+
+
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python utils/package_skill.py <path/to/skill-folder> [output-directory]")
-        print("\nExample:")
-        print("  python utils/package_skill.py skills/public/my-skill")
-        print("  python utils/package_skill.py skills/public/my-skill ./dist")
-        sys.exit(1)
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+        print(USAGE)
+        sys.exit(0 if len(sys.argv) > 1 else 1)
 
     skill_path = sys.argv[1]
     output_dir = sys.argv[2] if len(sys.argv) > 2 else None

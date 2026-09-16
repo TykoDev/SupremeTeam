@@ -6,9 +6,11 @@ version: 1.0.0
 parent: admiral-agent
 
 purpose: |
-  Autonomous design pipeline orchestrator. Manages four design phases
-  (researcher → planner → architect → engineer) with gatekeeper-design
-  validating each phase. Produces a consolidated design package.
+  Autonomous design pipeline orchestrator. Manages the design phases in the
+  order pipelines.yaml declares (researcher → architect → security-builder when
+  a trust boundary exists → planner → engineer), locks the stack, and submits at
+  design-to-build with gatekeeper-design validating each phase. Produces a
+  consolidated design package.
 
 capabilities:
   - phase-management
@@ -26,13 +28,16 @@ tools_required:
   - category: sub-agent
     operations: [invoke, receive-result]
 
-delegates_to:
+delegates_to:                   # listed in pipelines.yaml stage order
   - name: researcher
     skill_path: design/researcher
-  - name: planner
-    skill_path: design/planner
   - name: architect
     skill_path: design/architect
+  - name: security-builder
+    skill_path: build/security-builder
+    when: trust boundary         # security-seed stage; sits between architecture and the plan
+  - name: planner
+    skill_path: design/planner
   - name: engineer
     skill_path: design/engineer
   - name: gatekeeper-design

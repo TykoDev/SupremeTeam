@@ -24,7 +24,10 @@ command, exit code, observed_at, duration, inputs bound by sha256 to the
 inspected manifests/lockfiles, target revision (git HEAD when available),
 stdout/stderr paths (raw output retained beside the record), and limitations.
 Exit code of this wrapper: 0 when the record was written (whatever the scan
-status), 2 on wrapper error. Consumers read ``result.status``.
+status), 2 on wrapper error. A destination that cannot hold the record or the
+raw output beside it is a wrapper error, not a scan result: the sidecars are the
+``artifacts`` the record names, so nothing is written rather than a record that
+points at output that does not exist. Consumers read ``result.status``.
 """
 from __future__ import annotations
 
@@ -42,6 +45,14 @@ from pathlib import Path
 
 def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def discard(path: Path) -> None:
+    """Drop a temp file a failed write or replace left behind, masking nothing."""
+    try:
+        path.unlink()
+    except OSError:
+        pass
 
 
 def git_head(project_root: Path) -> str | None:
@@ -73,8 +84,12 @@ def main() -> int:
         print(json.dumps({"engine_error": "scanner command is required after --"}), file=sys.stderr)
         return 2
     project_root = Path(args.project_root).resolve()
-    out = Path(args.out).resolve()
-    out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        out = Path(args.out).resolve()
+        out.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(json.dumps({"engine_error": f"record destination unusable: {exc}"}), file=sys.stderr)
+        return 2
     tool = args.tool or Path(command[0]).name
     fail_codes = {int(c) for c in args.fail_exit_codes.split(",") if c.strip()}
 
@@ -103,21 +118,20 @@ def main() -> int:
     stdout_path = out.with_name(out.stem + ".stdout.txt")
     stderr_path = out.with_name(out.stem + ".stderr.txt")
     status, exit_code, duration, limitations = "not-run", None, 0.0, list(args.limitation)
+    raw_stdout, raw_stderr = "", "not run\n"
     if not args.no_run:
         executable = shutil.which(command[0]) or (command[0] if Path(command[0]).is_file() else None)
         if executable is None:
             status = "unavailable"
             limitations.append(f"executable not found on PATH: {command[0]}")
-            stdout_path.write_text("", encoding="utf-8")
-            stderr_path.write_text(f"executable not found: {command[0]}\n", encoding="utf-8")
+            raw_stdout, raw_stderr = "", f"executable not found: {command[0]}\n"
         else:
             started = time.monotonic()
             try:
                 proc = subprocess.run([executable, *command[1:]], cwd=str(project_root), text=True, capture_output=True, check=False, timeout=args.timeout)
                 duration = round(time.monotonic() - started, 3)
                 exit_code = proc.returncode
-                stdout_path.write_text(proc.stdout or "", encoding="utf-8")
-                stderr_path.write_text(proc.stderr or "", encoding="utf-8")
+                raw_stdout, raw_stderr = proc.stdout or "", proc.stderr or ""
                 if exit_code == 0:
                     status = "pass"
                 elif exit_code in fail_codes:
@@ -129,16 +143,19 @@ def main() -> int:
                 duration = round(time.monotonic() - started, 3)
                 status = "error"
                 limitations.append(f"scanner timed out after {args.timeout}s")
-                stdout_path.write_text(exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or ""), encoding="utf-8")
-                stderr_path.write_text(exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or ""), encoding="utf-8")
+                raw_stdout = exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+                raw_stderr = exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or "")
             except OSError as exc:
                 status = "error"
                 limitations.append(f"scanner could not start: {exc}")
-                stdout_path.write_text("", encoding="utf-8")
-                stderr_path.write_text(str(exc), encoding="utf-8")
-    else:
-        stdout_path.write_text("", encoding="utf-8")
-        stderr_path.write_text("not run\n", encoding="utf-8")
+                raw_stdout, raw_stderr = "", str(exc)
+
+    try:
+        stdout_path.write_text(raw_stdout, encoding="utf-8")
+        stderr_path.write_text(raw_stderr, encoding="utf-8")
+    except OSError as exc:
+        print(json.dumps({"engine_error": f"raw output destination unusable: {exc}"}), file=sys.stderr)
+        return 2
 
     record = {
         "type": "scan",
@@ -156,8 +173,18 @@ def main() -> int:
         "note": "status pass means the scanner exited 0; unavailable, error, and not-run are data gaps and never a clean scan",
     }
     tmp = out.with_suffix(out.suffix + ".tmp")
-    tmp.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(tmp, out)
+    try:
+        tmp.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError as exc:
+        discard(tmp)
+        print(json.dumps({"engine_error": f"record could not be written: {exc}"}), file=sys.stderr)
+        return 2
+    try:
+        os.replace(tmp, out)
+    except OSError as exc:
+        discard(tmp)
+        print(json.dumps({"engine_error": f"record could not be moved into place: {exc}"}), file=sys.stderr)
+        return 2
     print(json.dumps({"record": str(out), "status": status, "exit_code": exit_code}, indent=2))
     return 0
 

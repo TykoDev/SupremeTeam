@@ -1,0 +1,74 @@
+skill_name: redesign
+target_path: design/redesign/
+purpose: |
+  Orchestrates the redesign pipeline for an existing user-facing surface: maps
+  the current design, runs a project taste grilling, commissions four distinct
+  design systems with living single-page prototypes and component libraries at
+  functional parity, verifies them, and hands the chosen variant to the design
+  pipeline.
+triggers:
+  - redesign the UI
+  - refresh the look and feel
+  - explore design directions
+  - give me alternative design systems
+  - compare four redesigns
+inputs:
+  - surface in scope, parity-defining flows, constraints, and non-goals
+  - application source, running instance, or captures of the current surface
+  - effective Taste snapshot before grilling and the grilled profile after
+  - persistence context when delegated or resumed
+gate:
+  boundary: redesign-review
+  submitter: redesign
+  evidence_keys:
+    - design_inventory
+    - taste_grilling
+    - taste_snapshot
+    - design_directions
+    - variant_set
+    - parity_evidence
+    - rendered_verification
+    - accessibility_evidence
+    - recommendation
+    - residual_risk
+  authored_here:
+    - recommendation
+    - residual_risk
+  artifact_backed:
+    - design_inventory
+    - taste_grilling
+    - taste_snapshot
+    - design_directions
+    - variant_set
+    - parity_evidence
+    - rendered_verification
+  waivable:
+    - taste_snapshot
+  no_fallback:
+    - rendered_verification
+outputs:
+  - design inventory and baseline captures
+  - taste grilling log and effective-profile snapshot
+  - four design directions
+  - four design-system variants with living prototypes and component libraries
+  - parity, rendered, and accessibility evidence per variant
+  - redesign package with comparison matrix, recommendation, and recorded decision
+severity_model: shared 4-tier (Critical | Major | Minor | Info)
+required_contracts:
+  - Execution-contract clauses stated verbatim in SKILL.md
+  - Grill-Me Intake
+  - Four distinct variants
+  - Functional parity
+  - Framework-free prototypes
+  - Taste read boundary
+  - Save-Protocol Adherence
+authoring_rules:
+  - First-principles wording only
+  - No provenance or comparison language
+  - No references to planning-note filenames inside generated artifacts
+  - Supporting files must be one level deep and directly referenced
+acceptance:
+  rubric_score: 100/100
+  blocked_phrase_scan: zero hits
+  cross_cutting_contracts_embedded: true
+  package_ready: true

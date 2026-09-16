@@ -11,6 +11,17 @@ import json
 import random
 import sys
 import tempfile
+
+
+def _eval_reports_dir():
+    """Live reports go under the project's .harness-state/eval-reports/, never the OS temp dir."""
+    import pathlib
+    start = pathlib.Path.cwd().resolve()
+    root = next((c for c in (start, *start.parents)
+                 if any((c / m).exists() for m in ("skillset-saves", ".harness-state", ".git"))), start)
+    target = root / ".harness-state" / "eval-reports"
+    target.mkdir(parents=True, exist_ok=True)
+    return target
 import time
 import webbrowser
 from pathlib import Path
@@ -271,7 +282,7 @@ def main():
     if args.report != "none":
         if args.report == "auto":
             timestamp = time.strftime("%Y%m%d_%H%M%S")
-            live_report_path = Path(tempfile.gettempdir()) / f"skill_description_report_{skill_path.name}_{timestamp}.html"
+            live_report_path = _eval_reports_dir() / f"skill_description_report_{skill_path.name}_{timestamp}.html"
         else:
             live_report_path = Path(args.report)
         # Open the report immediately so the user can watch

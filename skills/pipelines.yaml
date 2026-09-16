@@ -1,7 +1,34 @@
 {
   "schema_version": 1,
   "kind": "supremeteam-pipeline-spec",
-  "purpose": "Machine-readable definition of every Supreme Team pipeline: ordered stages, stage owners, the gate boundary that closes the pipeline, and the deterministic scripts each pipeline must run. Owners must exist in team-manifest.yaml, boundaries in gates.yaml, and script paths on disk; validation/test_pipeline_contracts.py enforces all three. The prose workflows in the owning SKILL.md files elaborate these stages and must not contradict them.",
+  "purpose": "Machine-readable definition of every Supreme Team pipeline, including Taste: ordered stages, stage owners, the gate boundary that closes the pipeline, and the pipeline-level deterministic scripts it must run itself. Owners must exist in team-manifest.yaml, boundaries in gates.yaml, and every declared script path on disk; validation/test_pipeline_contracts.py and scripts/validate_manifests.py enforce all three. An empty scripts list is a declaration, not an omission: see scripts_rule. The gate is modelled two ways across these ten pipelines: see gate_model. The prose workflows in the owning SKILL.md files elaborate these stages and must not contradict them.",
+  "scripts_rule": "scripts lists only the deterministic scripts a pipeline must run itself, as project-relative paths that test_pipeline_contracts.py resolves on disk. Five pipelines declare an empty list - build, review, investigation, qa, and release - and that is a positive statement: those pipelines mandate no pipeline-level script of their own. Their determinism comes from the boundary instead, judged by skills/harness/gatekeeper/check.py, which the gatekeeper invokes and the pipeline does not. An empty list never means no tooling runs; the stage owners' own SKILL.md files name the commands they run, and those commands are not declared here.",
+  "gate_model": "All ten pipelines declare a boundary and every boundary is closed by a gatekeeper, but only four model the gate as a stage. design, redesign, build, and review carry an explicit phase-gate stage owned by a phase gatekeeper that validates inside the pipeline before gatekeeper-admiral validates the same boundary as the cross-stage handoff. security, investigation, qa, taste, skill-creation, and release carry no phase-gate stage because they have no phase gatekeeper: their boundary is judged once, by gatekeeper-admiral. The missing stage is a statement about validation depth, not a gap in the stage list. Mirrored in prose by contracts/responsibility-matrix.md.",
+  "stage_fields": {
+    "step": "Required. Stage id, unique within the pipeline.",
+    "owner": "Required. Must be a team-manifest.yaml member. When the stage declares an artifact, the owner must equal that artifact's writer in ownership.yaml; test_pipeline_contracts.py StageArtifactOwnershipTests enforces it.",
+    "artifact": "Optional. Must be an ownership.yaml artifact id. The stage owner keeps the write even when the work is delegated.",
+    "when": "Optional. A prose condition selecting the stage. No comparator evaluates the condition against a live run - that stays judgement, and failure_paths.when_condition_ambiguous governs it. What is checked is that the condition is stated somewhere on the handoff: validation/test_orchestration.py StageConditionTests requires the condition, minus any parenthetical gloss, to appear verbatim in the SKILL.md of the stage owner or of the pipeline owner, within a sentence of a word that frames it as a condition. Seventeen stages carry a `when`; twelve are documented by the stage owner itself and five only by the orchestrator that invokes the stage, so either end satisfies the rule and a floor keeps the specialist-side share from eroding.",
+    "delegate": "Optional. The skill the stage owner hands the work to while keeping the write. Declared by qa/evidence-capture (browse), qa/defect-record (qa-only, on a report-only run, which routing-doctrine.md and qa-only/SKILL.md both describe; qa remains the only qa-review submitter), and skill-creation/package (skill-creator, whose Package mode skill-maker Stage 5 calls). validation/test_orchestration.py PipelineOwnerRoleTests resolves the name: a delegate must be a skill on the team-manifest.yaml roster. Whether it is reachable from that stage is still judgement.",
+    "then": "Optional. The pipeline or sub-pipeline the stage output continues into. Judgement.",
+    "fan_out": "Optional. Parallel instances of the stage. redesign/variant-build declares 4, matching variant_set.required_count in gates.yaml, which check.py does enforce on the submitted record. The numbers are compared: validation/test_orchestration.py StageConditionTests requires a stage's `fan_out` to equal the required_count of the one evidence key that gates.yaml evidence_owners assigns to that stage's owner at the pipeline's boundary, and it holds design/redesign/agent/agent-manifest.yaml to the same number for the same delegate. A fan-out that stops producing the number the gate counts is a pipeline that cannot close."
+  },
+  "enforcement": {
+    "scripts/validate_manifests.py": "check_pipeline_mirrors: every pipeline owner and stage owner is a team member; an artifact-bearing stage matches ownership.yaml's writer; every declared script exists under skills/; the boundary set equals gates.yaml's; exactly one pipeline owns each boundary; every pipeline name is a declared phase directory in save-ownership.yaml.",
+    "validation/test_pipeline_contracts.py": "The same owner, boundary, artifact, and script facts as independent assertions, plus StageArtifactOwnershipTests and a taste-specific completeness test.",
+    "validation/test_save_contracts.py": "Every pipeline name has a save phase directory, and the security and taste script declarations are present.",
+    "validation/test_catalog_contracts.py": "StageDelegationTests: a pipeline owner's own documents must name every stage owner it delegates to.",
+    "validation/test_orchestration.py": "PipelineOwnerRoleTests: every pipeline owner holds an orchestrator role and every delegate resolves to a roster skill. StageConditionTests: every `fan_out` equals the count its boundary requires, agent manifests restate it correctly, and every `when` condition is stated in the stage owner's or the pipeline owner's SKILL.md. DelegationGraphTests and SpecialistEntryRoutingTests traverse the delegation graph these stages define.",
+    "judgement_only": "purpose, scripts_rule, gate_model, stage_fields, this enforcement map, failure_paths, and every then value. A when value is judgement as a run-time selector but its wording is compared against the owning prose, a fan_out value is compared against the gate spec, and a delegate name is resolved against the roster - see stage_fields for each. Stage order is judgement: no comparator checks that stages run in the declared sequence."
+  },
+  "failure_paths": {
+    "declared_script_missing": "validate_manifests.py and test_pipeline_contracts.py both fail with the path. The pipeline does not run with the script silently skipped; either restore the script or remove the declaration as a recorded decision.",
+    "stage_owner_unavailable": "The stage cannot start. Record the missing owner and enter BLOCKED under contracts/workflow-protocol.md rather than reassigning the stage to the pipeline owner.",
+    "artifact_writer_mismatch": "ownership.yaml decides. A stage may not write an artifact whose declared writer it is not, and the mismatch fails validation before the gate would.",
+    "when_condition_ambiguous": "Treat the stage as required and run it, or record an explicit applicability decision at the boundary. A skipped conditional stage with no record is an evidence gap, not a waiver.",
+    "gatekeeper_unavailable": "The boundary cannot close. For the six pipelines with no phase gatekeeper there is no second validator to fall back to, so the run enters ESCALATE; a submitter self-check is never a verdict.",
+    "spec_contradicts_skill_prose": "This file decides stages, owners, boundary, and scripts. The owning SKILL.md elaborates them and is the defect when the two disagree."
+  },
   "pipelines": {
     "design": {
       "owner": "commander",
@@ -51,6 +78,68 @@
       "scripts": [
         "skills/scripts/check_runtime.py",
         "skills/scripts/validate_manifests.py"
+      ]
+    },
+    "redesign": {
+      "owner": "redesign",
+      "boundary": "redesign-review",
+      "stages": [
+        {
+          "step": "intake-grilling",
+          "owner": "admiral",
+          "artifact": "grilling-log"
+        },
+        {
+          "step": "design-inventory",
+          "owner": "design-mapper",
+          "artifact": "design-inventory"
+        },
+        {
+          "step": "taste-grilling",
+          "owner": "taste",
+          "artifact": "taste-grilling-log",
+          "then": "the taste pipeline (confirmation, persistence, effective profile) gated at taste-review"
+        },
+        {
+          "step": "design-directions",
+          "owner": "architect",
+          "artifact": "design-directions"
+        },
+        {
+          "step": "variant-build",
+          "owner": "prototyper",
+          "artifact": "design-system-variant",
+          "fan_out": 4
+        },
+        {
+          "step": "parity-verification",
+          "owner": "design-mapper",
+          "artifact": "parity-evidence"
+        },
+        {
+          "step": "visual-qa",
+          "owner": "design-qa",
+          "artifact": "rendered-verification"
+        },
+        {
+          "step": "frontend-review",
+          "owner": "frontier",
+          "artifact": "frontend-review-report"
+        },
+        {
+          "step": "recommendation",
+          "owner": "redesign",
+          "artifact": "redesign-package"
+        },
+        {
+          "step": "phase-gate",
+          "owner": "gatekeeper-design"
+        }
+      ],
+      "scripts": [
+        "skills/scripts/check_parity.py",
+        "skills/scripts/validate_manifests.py",
+        "skills/harness/gatekeeper/check.py"
       ]
     },
     "build": {
@@ -245,7 +334,9 @@
         {
           "step": "defect-record",
           "owner": "qa",
-          "artifact": "defects"
+          "artifact": "defects",
+          "delegate": "qa-only",
+          "when": "report-only run (fixes not authorized)"
         },
         {
           "step": "scoped-fixes",
@@ -258,6 +349,26 @@
         }
       ],
       "scripts": []
+    },
+    "taste": {
+      "owner": "taste",
+      "boundary": "taste-review",
+      "stages": [
+        {"step": "intake", "owner": "taste", "artifact": "taste-intake"},
+        {"step": "diff", "owner": "taste", "artifact": "preference-diff"},
+        {"step": "confirmation", "owner": "taste", "artifact": "taste-confirmation"},
+        {"step": "conflict-analysis", "owner": "taste", "artifact": "taste-conflict-analysis"},
+        {"step": "persistence", "owner": "taste", "artifact": "taste-persistence-result"},
+        {"step": "effective-profile", "owner": "taste", "artifact": "effective-taste-profile"},
+        {"step": "consumer-handoff", "owner": "taste", "artifact": "taste-consumer-handoff"},
+        {"step": "package", "owner": "taste", "artifact": "taste-package"},
+        {"step": "review", "owner": "taste-review", "artifact": "taste-review-record"}
+      ],
+      "scripts": [
+        "skills/taste/taste_prefs.py",
+        "skills/scripts/validate_manifests.py",
+        "skills/harness/gatekeeper/check.py"
+      ]
     },
     "skill-creation": {
       "owner": "skill-maker",
@@ -277,7 +388,8 @@
         },
         {
           "step": "package",
-          "owner": "skill-maker"
+          "owner": "skill-maker",
+          "delegate": "skill-creator"
         }
       ],
       "scripts": [

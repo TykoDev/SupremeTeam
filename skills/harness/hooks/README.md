@@ -6,15 +6,27 @@ the save lifecycle writer and the registration diagnostics.
 
 | File | Event | Layer | Behavior |
 |------|-------|-------|----------|
-| `pre_tool_use.py` | `PreToolUse` | 3 | Blocks dangerous shell commands, writes into a frozen or guarded boundary, and direct edit-tool writes to core run files. |
-| `post_tool_use.py` | `PostToolUse` | 4 | Records trajectory observations (repeated failures, empty-output streaks, oscillation) and refreshes the pinned run's heartbeat from real host activity. |
+| `pre_tool_use.py` | `PreToolUse` | 3 | Blocks dangerous shell commands (Rule A), writes into a frozen or guarded boundary (B), writes outside a read-only run (D), and direct writes to the single-writer records — core run files, Taste state, and the guard boundary record itself (C). Rule A is the one family an owner can lift: an `allow_dangerous` grant in `guard-state.json` suspends it globally while the grant is live. A legacy bare `true` lifts it with no bound; the owned grant `guard_state.py` writes lifts it only until `expires_at`. An expired, unparseable, or absent `expires_at` leaves the block in force, so a malformed grant never opens the guard. Rules B, C, and D are not liftable this way. |
+| `post_tool_use.py` | `PostToolUse` | 4 | Records trajectory observations (repeated failures, empty-output streaks, oscillation). All three hooks refresh the pinned run's heartbeat and record observations; see Heartbeat refresh below. |
 | `user_prompt_submit.py` | `UserPromptSubmit` | entry routing | Advises routing lifecycle work through `admiral`; reinforces the session pin when a run is active. |
 | `save_run.py` | CLI | persistence | The only writer of `_state.md`, `_lock.md`, `_audit-trail.md`, `_journal.json`, and `_history/`. |
+| `guard_state.py` | CLI | 3 | The only writer of `.harness-state/guard-state.json`: records owned freeze/block boundaries, releases them by `released_at`, grants and revokes `allow_dangerous`, and opens or closes a read-only run. |
 | `_saves.py` | helper | persistence | Shared reader that classifies saved state; used by readiness, the prompt hook, and the gate checker. |
 | `_state.py` | helper | 3 and 4 | Fail-open state helper: project-root resolution, guard state, trajectory records, heartbeat refresh. |
 | `verify_registration.py` | diagnostic | - | Inspects host-native hook config without mutating it; rejects stale same-name scripts. |
 | `repair_registration.py` | diagnostic | - | Previews a scoped registration repair; applies only with `--apply`. |
 | `check_readiness.py` | diagnostic | - | Reports Python, hooks, and save state as an independent capability map. |
+
+## Contents
+
+1. Design guarantees
+2. Save lifecycle
+3. Registration
+4. Matcher scope
+5. Guard and freeze integration
+6. Heartbeat refresh
+7. Manual smoke test
+8. Regression tests
 
 ## Design guarantees
 
@@ -117,22 +129,63 @@ event.
 `pre_tool_use.py` enforces boundaries recorded by `guard` and `freeze` at
 `.harness-state/guard-state.json`. The state helper resolves that under
 `SUPREMETEAM_PROJECT_DIR` first, then known host workspace variables, then the
-current working directory, then an isolated OS temp fallback.
+nearest ancestor of the working directory that holds `skillset-saves/`,
+`.harness-state/`, or `.git`, then the working directory itself, then an
+isolated OS temp fallback. `save_run.py`, `check_readiness.py`, and
+`verify_registration.py` default their project root the same way, so a script
+run from `skills/` never scatters state into a subdirectory.
 
 ```json
 {
-  "frozen_globs": ["src/payments/**", "infra/*.tf"],
-  "blocked_globs": ["**/secrets/**"],
-  "allow_dangerous": false
+  "frozen_globs": [
+    {"glob": "src/payments/**", "owner": "ops", "scope": "release freeze",
+     "created_at": "2026-09-16T10:00:00Z", "run_id": null,
+     "approvers": ["sre"], "released_at": null}
+  ],
+  "blocked_globs": [{"glob": "**/secrets/**", "owner": "ops", "released_at": null}],
+  "read_only": [
+    {"run_id": "investigation-1", "owner": "ops", "scope": "read-only investigation",
+     "allow": ["skillset-saves/runs/investigation-1/**"],
+     "created_at": "2026-09-16T10:00:00Z", "released_at": null}
+  ],
+  "allow_dangerous": {
+    "owner": "ops", "reason": "wipe the scratch volume", "scope": "rm -rf ./scratch",
+    "created_at": "2026-09-16T10:00:00Z", "expires_at": "2026-09-16T10:30:00Z"
+  }
 }
 ```
+
+Write this record only with `guard_state.py`; `pre_tool_use.py` denies edit-tool
+and mutating-shell writes to it. Before that writer existed the boundary was
+self-liftable — one write clearing `frozen_globs`, or setting `allow_dangerous`,
+disabled the rules before they ran.
+
+Field notes:
+
+- **`frozen_globs` / `blocked_globs`** merge into one write boundary. A bare glob
+  string is still honored for backward compatibility, but carries no owner, so
+  `guard_state.py release` refuses it rather than trusting the requester —
+  re-record it through the writer to make it releasable.
+- **`read_only`** confines a run to its own save path plus `.harness-state/`.
+  Recorded by the `guard` skill for an investigation or audit that must not
+  change the product surface, and released by its owner. The guard record itself
+  stays protected even though `.harness-state/**` is otherwise writable during
+  such a run.
+- **`allow_dangerous`** lifts destructive-pattern blocking **globally**, not for
+  one command. It is an owned grant with an expiry (default 30 minutes); an
+  expired or malformed grant leaves the block in force, because a guard that
+  cannot read its own grant must stay closed. A legacy bare `true` is still
+  honored and behaves as a permanent kill-switch.
+- A record stays effective until its owner records `released_at`. Age alone
+  never expires a protection.
 
 When the file is absent or empty, boundary rules are inert and only the built-in
 destructive-pattern guard applies.
 
 ## Heartbeat refresh
 
-With the hooks registered, `post_tool_use.py` refreshes the pinned run's
+With the hooks registered, all three hooks (`pre_tool_use.py`,
+`post_tool_use.py`, and `user_prompt_submit.py`) refresh the pinned run's
 heartbeat from real host activity: only for a payload carrying a host session id,
 only on a held, pinned, coherent, non-interrupted, still-fresh lock, throttled to
 once per five minutes, and always written through `save_run.py heartbeat` as the
@@ -155,5 +208,9 @@ python -m unittest discover -s skills/harness/hooks -p "test_*.py"
 
 `test_hooks.py` covers the three lifecycle hooks, registration verification, and
 readiness. `test_hooks_hardening.py` covers path and payload hardening,
-`test_hooks_lifecycle.py` the save lifecycle writer, and
-`test_hooks_observed.py` the observed-versus-configured distinction.
+`test_hooks_lifecycle.py` the save lifecycle writer and the read-only run
+boundary, `test_hooks_observed.py` the observed-versus-configured distinction,
+`test_registration_contract.py` the host registration contract, and
+`test_guard_state.py` the guard boundary writer — owner-bearing records,
+authority-checked release, the bounded `allow_dangerous` grant, and the hook
+rule that keeps the record itself single-writer.

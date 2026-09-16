@@ -1,10 +1,12 @@
 skill_name: code-chief
 target_path: review/code-chief/
 purpose: |
-  Orchestrates the review pipeline across correctness, merge readiness,
-  maintainability, security, adversarial pressure testing, security leadership
-  oversight, and optional frontend or developer-experience audits. Delivers a consolidated review
-  package with prioritized remediation and readiness guidance.
+  Schedules review lenses and merges what they find; the specialists review.
+  Three lenses are unconditional - correctness, merge readiness, maintainability
+  - and five are conditioned on a surface being present: security, adversarial,
+  frontend, visual, and developer-experience. Delivers one consolidated package
+  whose disagreements survive triage. Security governance and accepted-risk
+  decisions are escalated to admiral for the cso pipeline, never signed here.
 triggers:
   - review this codebase comprehensively
   - start the review pipeline
@@ -21,10 +23,34 @@ outputs:
   - prioritized remediation summary
 severity_model: shared 4-tier (Critical | Major | Minor | Info)
 required_contracts:
+  - Execution-contract clauses stated verbatim in SKILL.md
   - Cross-model synthesis
-  - Shared severity
-  - Proactive triggers
+  - Save-Protocol Adherence
   - Pipeline-owned consolidated gate routing
+gate:
+  boundary: review-to-delivery
+  submitter: code-chief
+  evidence_keys:
+    - review_verdict
+    - findings
+    - executed_probes
+    - rendered_verification
+    - residual_risk
+    - revision_lineage
+  authored_here:
+    - review_verdict
+    - findings
+    - executed_probes
+    - residual_risk
+    - revision_lineage
+  carried_unchanged:
+    - rendered_verification
+  artifact_backed:
+    - executed_probes
+    - rendered_verification
+  waivable:
+    - rendered_verification
+  not_waivable: review_verdict, findings, executed_probes, residual_risk, revision_lineage
 authoring_rules:
   - First-principles wording only
   - No provenance or comparison language

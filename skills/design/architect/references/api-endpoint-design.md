@@ -2,7 +2,7 @@
 
 Architect owns API endpoint design whenever the system exposes HTTP, RPC, webhook, event-ingest, or internal service endpoints. The endpoint contract is part of the architecture package and must be concrete enough for build and review phases to implement tests without reinterpreting intent.
 
-Run the `../../grill-me-doctrine.md` planning-mode decision prompt contract before locking endpoint behavior. Auto-resolve framework, router, schema, auth, and serialization conventions from the codebase when discoverable; ask the user only for policy and product decisions the code cannot answer.
+Run the `../../../grill-me-doctrine.md` planning-mode decision prompt contract before locking endpoint behavior. Auto-resolve framework, router, schema, auth, and serialization conventions from the codebase when discoverable; ask the user only for policy and product decisions the code cannot answer.
 
 ## Contents
 

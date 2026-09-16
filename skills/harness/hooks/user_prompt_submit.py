@@ -36,13 +36,12 @@ _ROUTE_REMINDER = (
     "assess the Tier 0 fast path in routing-doctrine.md: minor, understood, "
     "reversible tasks run directly with focused verification, without a pipeline "
     "or full security audit. Security-sensitive work is excluded. Route other "
-    "delivery-lifecycle requests -- design, architecture, explore, build, improve, "
-    "review, security, design-system and frontend/UI delivery, documentation and "
-    "pitch decks, ship, investigate, checkpoint/resume, skill/team creation, "
-    "graphics, and simulation -- through "
+    "delivery-lifecycle requests -- design, redesign of an existing UI, build, "
+    "review, security audit, investigation, product QA, explicit Taste preference "
+    "management, release, checkpoint/resume, and skill/team creation -- through "
     "`admiral` first so one intake, save-protocol run, and gatekeeper govern the "
-    "pipeline. Rendering and simulation route to `graphics-specialist`. Standalone "
-    "safety guardrails may run directly. See routing-doctrine.md."
+    "pipeline. Standalone tools (safety guardrails, browser automation, and an "
+    "explicitly requested qa or ship tool) may run directly. See routing-doctrine.md."
 )
 
 _ACTIVE_REMINDER = (
@@ -65,14 +64,7 @@ def _emit(context: str) -> None:
 
 
 def _saves_root() -> Path:
-    base = (
-        os.environ.get("SUPREMETEAM_PROJECT_DIR")
-        or os.environ.get("CLAUDE_PROJECT_DIR")
-        or os.environ.get("CODEX_WORKSPACE_DIR")
-        or os.environ.get("GITHUB_WORKSPACE")
-        or os.getcwd()
-    )
-    return Path(base) / "skillset-saves"
+    return _state.project_root() / "skillset-saves"
 
 
 def _active_run() -> bool:

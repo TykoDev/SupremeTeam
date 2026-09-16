@@ -7,6 +7,52 @@ source_of_truth: >-
   two files must agree (validation/test_save_contracts.py). Stage artifacts named
   in pipelines.yaml must appear here as an artifact id
   (validation/test_pipeline_contracts.py).
+enforcement:
+  machine_checked: >-
+    scripts/validate_manifests.py check_ownership is the comparator for the
+    structure of this file: every owner name resolves to a team-manifest.yaml
+    member or to one of the three role names (gatekeeper, safety-guardrails,
+    phase-lead), every owner declares a non-empty role, every artifact id is
+    unique, every artifact names a non-empty before boundary and a non-empty
+    evidence list, every writes entry names a declared artifact, and an artifact
+    has exactly one declared writer - a role artifact needs at least one.
+    check_gates rejects a gates.yaml boundary submitter or evidence_owners entry
+    that is not an owner here, and check_pipeline_mirrors rejects a pipelines.yaml
+    stage whose owner is not the declared writer of the artifact it produces.
+    validation/test_pipeline_contracts.py repeats the artifact-id and stage-owner
+    checks independently (StageArtifactOwnershipTests),
+    validation/test_save_contracts.py OwnershipAgreementTests pins this file
+    against save-ownership.yaml for core-run-record, gate-verdict, and
+    grilling-log, and validation/test_catalog_contracts.py OwnershipProseTests
+    rejects a SKILL.md sentence claiming to write an artifact listed under that
+    skill's does_not_write.
+  handoff_rules: >-
+    No comparator reads the handoff_rules list at the tail of this file as rules.
+    Each is recorded here with whatever mechanical support exists for it
+    elsewhere. Rule 2 (exactly one writer per artifact) is machine-checked as a
+    declaration by check_ownership; the "path and revision" half of it is not.
+    Rule 5 (gate-verdict has one writer per boundary) is machine-checked only as
+    far as the role - check_ownership requires the gatekeeper role artifact to
+    have a declared writer, and save-ownership.yaml's gate-verdict class names
+    the same role - while which of the four gatekeepers writes at which boundary
+    is judgement. Rule 6 (gatekeepers never repair a submission) is
+    machine-checked at the tool surface by test_catalog_contracts.py
+    ToolSurfaceTests, which denies the Edit tool to every gatekeeper; that no
+    repair happens by another route is judgement. Rule 8 (a guard or freeze owner
+    never widens a path boundary while applying a check) is machine-checked only
+    in that the guard record has one sanctioned writer,
+    harness/hooks/guard_state.py, pinned by GuardWriterTests with the pre-tool
+    hook denying direct writes; the widening itself is judgement. Rules 1, 3, 4,
+    and 7 have no mechanical support at all: nothing observes a silent rewrite, a
+    REVISE return instead of an edit, an ownership transfer, or a change to an
+    approved package.
+  judgement: >-
+    purpose, source_of_truth, this enforcement block, every role string, every
+    consumes list (read by nothing), and the content of every evidence list and
+    every before value beyond non-emptiness. does_not_write is only partly
+    checked: OwnershipProseTests skips single-stem ids - plan, tests, findings,
+    and architecture - because they are ordinary English, so a prose
+    contradiction on one of those four passes.
 
 owners:
   admiral:
@@ -33,6 +79,41 @@ owners:
     does_not_write:
       - build-package
       - gate-verdict
+  redesign:
+    role: redesign phase lead; owns the comparison, recommendation, and recorded decision
+    writes:
+      - redesign-package
+    consumes:
+      - grilling-log
+      - design-inventory
+      - taste-grilling-log
+      - design-directions
+      - design-system-variant
+      - parity-evidence
+    does_not_write:
+      - design-inventory
+      - design-system-variant
+      - gate-verdict
+  design-mapper:
+    role: records the current design as a stable-id inventory with baseline captures and verifies variant parity
+    writes:
+      - design-inventory
+      - parity-evidence
+    does_not_write:
+      - design-directions
+      - design-system-variant
+      - implementation
+  prototyper:
+    role: builds one design-system variant with a living prototype and component library per direction
+    writes:
+      - design-system-variant
+    consumes:
+      - design-inventory
+      - design-directions
+    does_not_write:
+      - design-inventory
+      - parity-evidence
+      - implementation
   build-management:
     role: build phase lead; owns the changed artifact set and its implementation evidence
     writes:
@@ -69,6 +150,7 @@ owners:
       - architecture
       - interface-contract
       - design-system
+      - design-directions
     consumes:
       - requirements-brief
     does_not_write:
@@ -224,6 +306,27 @@ owners:
     does_not_write:
       - review-verdict
       - gate-verdict
+  taste:
+    role: preference intake, confirmation, conflict resolution, persistence, and effective-profile handoff
+    writes:
+      - taste-intake
+      - preference-diff
+      - taste-confirmation
+      - taste-conflict-analysis
+      - taste-persistence-result
+      - effective-taste-profile
+      - taste-consumer-handoff
+      - taste-package
+      - preference-profile
+      - taste-grilling-log
+    does_not_write:
+      - gate-verdict
+  taste-review:
+    role: read-only preference provenance, conflict, redaction, and confirmation reviewer
+    writes:
+      - taste-review-record
+    does_not_write:
+      - preference-profile
   session-memory:
     role: run lifecycle record, checkpoints, and durable learnings
     writes:
@@ -407,6 +510,44 @@ artifacts:
       - UI/UX handoff template per design-doctrine.md section 5
       - responsive behavior across the six tiers
       - accessibility expectations
+  - id: design-inventory
+    owner: design-mapper
+    before: taste grilling and design directions
+    evidence:
+      - stable-id routes, states, components, interactions, and flows with sources
+      - tokens in use and off-scale values with locations
+      - baseline captures across the six tiers and both themes, or an INFERRED record with its limitation
+  - id: taste-grilling-log
+    owner: taste
+    before: design directions
+    evidence:
+      - one decision per Taste category anchored to the inventory, with recommendation and answer
+      - candidate entries with strength, anti-preferences, and confirmation status
+  - id: design-directions
+    owner: architect
+    before: variant build
+    evidence:
+      - four directions differentiated across at least three Taste categories
+      - per-direction token strategy, component approach, and Taste traceability rows
+  - id: design-system-variant
+    owner: prototyper
+    before: parity verification
+    evidence:
+      - variant.md, tokens.css, components.css, components.js, components.html, app.html with hashes
+      - every inventory id carried as a parity marker; opens offline with no framework
+  - id: parity-evidence
+    owner: design-mapper
+    before: redesign-review
+    evidence:
+      - check_parity.py probe record per variant bound to the inventory and prototype hashes
+      - coverage per list and the exact missing ids
+  - id: redesign-package
+    owner: redesign
+    before: redesign-review
+    evidence:
+      - comparison matrix across the four variants
+      - recommendation with rationale and the recorded user decision or deferral
+      - handoff brief naming the chosen variant's design-system inputs
   - id: plan
     owner: planner
     before: design-to-build
@@ -456,7 +597,7 @@ artifacts:
     before: design-to-build
     evidence:
       - trust boundaries the design introduces or moves
-      - controls the build must implement, or the sanctioned fallback value
+      - controls the build must implement
   - id: security-evidence
     owner: security-builder
     before: build-to-review
@@ -669,6 +810,42 @@ artifacts:
     evidence:
       - environment settings and target
       - secrets handling policy
+  - id: taste-intake
+    owner: taste
+    before: taste-review
+    evidence: [scope, intent, before revision]
+  - id: preference-diff
+    owner: taste
+    before: taste-review
+    evidence: [changed id sets, before and after digests]
+  - id: taste-confirmation
+    owner: taste
+    before: taste-review
+    evidence: [actor and timestamp, confirmed scope, exact candidate ids, source run]
+  - id: taste-conflict-analysis
+    owner: taste
+    before: taste-review
+    evidence: [conflicting ids, precedence decision, unresolved conflicts, accessibility and policy collisions]
+  - id: taste-persistence-result
+    owner: taste
+    before: taste-review
+    evidence: [requested destinations, committed revisions and hashes, atomicity and rollback results]
+  - id: effective-taste-profile
+    owner: taste
+    before: taste-review
+    evidence: [effective entries with source scope and source id, immutable digest]
+  - id: taste-consumer-handoff
+    owner: taste
+    before: taste-review
+    evidence: [consuming pipeline, effective-profile digest, applicability summary]
+  - id: taste-package
+    owner: taste
+    before: taste-review
+    evidence: [complete taste-review manifest and artifact hashes]
+  - id: taste-review-record
+    owner: taste-review
+    before: taste-review
+    evidence: [provenance, conflicts, redaction, confirmation, and persistence safety findings]
   - id: verification-plan
     owner: ship
     before: deploy-readiness
@@ -697,6 +874,12 @@ artifacts:
     before: run completion after a release
     evidence:
       - changes, operational follow-up, and known issues
+  - id: preference-profile
+    owner: taste
+    before: taste-review
+    evidence:
+      - revisioned global and project records plus the effective merged profile
+      - atomic writer result
   - id: gate-verdict
     owner: gatekeeper
     before: any state advance past a boundary

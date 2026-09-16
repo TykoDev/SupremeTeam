@@ -123,7 +123,8 @@ def python_status(min_major: int, min_minor: int) -> tuple[str, str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check Supreme Team runtime readiness.")
     parser.add_argument("--host", choices=["auto", "all", "codex", "claude", "copilot"], default="auto")
-    parser.add_argument("--project-root", default=".", help="Workspace root containing skillset-saves.")
+    parser.add_argument("--project-root", default=None,
+                        help="Workspace root containing skillset-saves (default: the nearest project root above the working directory).")
     parser.add_argument("--min-python", default=None,
                         help="Minimum Python major.minor version (default: runtime-manifest.yaml).")
     parser.add_argument("--require-active-run", action="store_true", help="Fail when skillset-saves has no active pinned run.")
@@ -136,7 +137,7 @@ def main() -> int:
     except Exception as exc:
         raise SystemExit(f"Invalid --min-python value {minimum!r}; expected major.minor") from exc
 
-    project_root = Path(args.project_root).expanduser().resolve()
+    project_root = (Path(args.project_root).expanduser() if args.project_root else _state.project_root()).resolve()
     py_status, py_detail = python_status(min_major, min_minor)
     hook_status, hook_code, hook_output, hook_report = run_hook_verifier(args.host)
     saves_status, saves_detail = classify_saves(project_root)

@@ -22,6 +22,7 @@ action proceed.
 import fnmatch
 import re
 import sys
+from datetime import datetime, timezone
 
 import _state
 
@@ -91,6 +92,55 @@ _CORE_SAVE_REASON = (
     "skills/harness/hooks/save_run.py (create/checkpoint/heartbeat/complete/release/recover) "
     "so revision lineage, history snapshots, and the audit trail stay coherent."
 )
+
+# Durable project Taste state has one sanctioned writer. This rule is limited
+# to path-addressed edit tools: reads remain available and shell behavior is not
+# guessed from ambiguous command text.
+_TASTE_SAVE_PATH = re.compile(r"(?:^|/)skillset-saves/preferences/(?:taste\.(?:json|md)|taste\.journal\.jsonl|taste\.lock|_history(?:/.*)?)$")
+_TASTE_SAVE_REASON = (
+    "Blocked by harness Action Realization layer: durable project Taste records, views, "
+    "history, journals, and locks are written only by skills/taste/taste_prefs.py. "
+    "Use that command's mutation subcommands instead of an edit tool."
+)
+
+# The guard/freeze boundary record itself. Without this rule the boundary is
+# self-liftable: a single write clearing frozen_globs, or setting
+# allow_dangerous, disables the rules below before they ever run. One sanctioned
+# writer (guard_state.py) keeps a release attributable and reversible.
+_GUARD_STATE_PATH = re.compile(r"(?:^|/)\.harness-state/guard-state\.json$")
+_GUARD_STATE_TOKEN = re.compile(r"\.harness-state/guard-state\.json")
+_GUARD_STATE_REASON = (
+    "Blocked by harness Action Realization layer: the guard/freeze boundary record is "
+    "written only by skills/harness/hooks/guard_state.py "
+    "(freeze/block/release/allow-dangerous/revoke-dangerous/read-only). Editing it directly "
+    "would lift an owned boundary with no owner check and no released_at trail."
+)
+
+
+def _dangerous_lifted(guard: dict) -> bool:
+    """True while destructive-pattern blocking is deliberately lifted.
+
+    Accepts the legacy bare ``true`` (a permanent global kill-switch) and the
+    owned grant guard_state.py writes, which carries an expiry so the lift is
+    bounded. An expired or malformed grant leaves the block in force: a guard
+    that cannot read its own grant must stay closed, not open.
+    """
+    grant = guard.get("allow_dangerous")
+    if grant is True:
+        return True
+    if not isinstance(grant, dict):
+        return False
+    expires = grant.get("expires_at")
+    if not expires:
+        # guard_state.py always records an expiry, so a grant without one is
+        # malformed. Fail closed: an unbounded lift is the state this rule exists
+        # to prevent.
+        return False
+    try:
+        deadline = datetime.strptime(str(expires), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return False
+    return datetime.now(timezone.utc) < deadline
 
 
 def _deny(reason: str) -> None:
@@ -210,20 +260,22 @@ def main() -> None:
     guard = _state.load_guard_state()
 
     # --- Rule A: dangerous shell patterns (action would deterministically harm)
-    if tool_name in ("Bash", "PowerShell") and not guard.get("allow_dangerous"):
+    if tool_name in ("Bash", "PowerShell") and not _dangerous_lifted(guard):
         cmd = _command_text(tool_input)
         for pattern, label in _DANGEROUS:
             if re.search(pattern, cmd, re.IGNORECASE):
                 _deny(
                     f"Blocked by harness Action Realization layer: {label}. "
-                    f"If this is genuinely intended, the owner must lift the guard "
-                    f"(set allow_dangerous in .harness-state/guard-state.json) or use a narrower command."
+                    f"If this is genuinely intended, the owner must lift the guard with "
+                    f"'python skills/harness/hooks/guard_state.py allow-dangerous --owner <owner> "
+                    f"--reason <why> --scope <operation>' (bounded by an expiry), or use a narrower command."
                 )
         if _rm_wipes_root(cmd):
             _deny(
                 "Blocked by harness Action Realization layer: recursive delete of a root/home/glob target. "
-                "If this is genuinely intended, the owner must lift the guard "
-                "(set allow_dangerous in .harness-state/guard-state.json) or use a narrower command."
+                "If this is genuinely intended, the owner must lift the guard with "
+                "'python skills/harness/hooks/guard_state.py allow-dangerous --owner <owner> "
+                "--reason <why> --scope <operation>' (bounded by an expiry), or use a narrower command."
             )
 
     # --- Rule B: write into a frozen/blocked boundary (guard & freeze boundary)
@@ -257,11 +309,13 @@ def main() -> None:
                         )
 
     # --- Rule D: read-only run. While an unreleased read_only record exists
-    # (recorded by explore-lead for the explore pipeline), the only writable
-    # locations are the record's allow globs (the run's own save path) and the
-    # harness state directory; save_run.py keeps writing the run records. An
-    # edit-tool write elsewhere, or a mutating shell command that names no
-    # allowed path, is denied. Read-only commands pass untouched.
+    # (recorded by the `guard` skill through guard_state.py read-only, for an
+    # investigation or audit that must not change the product surface), the only
+    # writable locations are the record's allow globs (the run's own save path)
+    # and the harness state directory; save_run.py keeps writing the run records
+    # and Rule C still protects guard-state.json itself. An edit-tool write
+    # elsewhere, or a mutating shell command that names no allowed path, is
+    # denied. Read-only commands pass untouched.
     read_only = guard.get("read_only") or []
     if read_only:
         allow = [".harness-state/**"]
@@ -269,9 +323,10 @@ def main() -> None:
             allow += [str(g) for g in (record.get("allow") or []) if g]
         run_ids = ", ".join(str(r.get("run_id", "?")) for r in read_only)
         reason = (
-            f"Blocked by harness Action Realization layer: run {run_ids} is read-only (explore pipeline). "
-            "Only the run's own save path may change; record a branch decision and release the read_only "
-            "record in .harness-state/guard-state.json before changing anything else."
+            f"Blocked by harness Action Realization layer: run {run_ids} is recorded read-only. "
+            "Only the run's own save path may change; record the decision, then release the boundary with "
+            "'python skills/harness/hooks/guard_state.py release-read-only --run-id <run> --requester <owner>' "
+            "before changing anything else."
         )
         if tool_name in ("Edit", "Write", "NotebookEdit"):
             for target in _written_paths(tool_input):
@@ -297,10 +352,17 @@ def main() -> None:
         for target in _written_paths(tool_input):
             if _CORE_SAVE_FILE.search(target):
                 _deny(_CORE_SAVE_REASON)
+            if _TASTE_SAVE_PATH.search(target):
+                _deny(_TASTE_SAVE_REASON)
+            if _GUARD_STATE_PATH.search(target):
+                _deny(_GUARD_STATE_REASON)
     elif tool_name in ("Bash", "PowerShell"):
         cmd = _command_text(tool_input)
-        if cmd and "save_run.py" not in cmd and _command_mutates(cmd) and _CORE_SAVE_TOKEN.search(cmd.replace("\\", "/")):
+        cmd_norm = cmd.replace("\\", "/") if cmd else ""
+        if cmd and "save_run.py" not in cmd and _command_mutates(cmd) and _CORE_SAVE_TOKEN.search(cmd_norm):
             _deny(_CORE_SAVE_REASON)
+        if cmd and "guard_state.py" not in cmd and _command_mutates(cmd) and _GUARD_STATE_TOKEN.search(cmd_norm):
+            _deny(_GUARD_STATE_REASON)
 
     # No rule fired — stay silent and let the action proceed.
 

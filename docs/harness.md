@@ -30,7 +30,7 @@ earliest one where it can actually be enforced.
 |---|---|---|---|---|
 | 1 | Environment Contract | before interaction | Makes tool, policy, and format constraints explicit | `design-doctrine.md`, `grill-me-doctrine.md`, `mcp-tools.md`, `tech-stacks/registry.yaml`, intake briefs |
 | 2 | Procedural Skill | task conditioning | Surfaces a compact reusable procedure before work starts | the skill library, `session-memory` learnings, `pipelines.yaml` |
-| 3 | Action Realization | before execution | Validates, canonicalizes, or blocks a generated action | `safety-guardrails/*`, the save write probe, `pre_tool_use.py` |
+| 3 | Action Realization | before execution | Validates, canonicalizes, or blocks a generated action | `careful`, `freeze`, `guard`, `unfreeze`, the save write probe, `pre_tool_use.py` |
 | 4 | Trajectory Regulation | after execution | Catches loops, stagnation, and empty-output streaks; injects recovery | gatekeepers, checkpoints, rewind rules, `post_tool_use.py` |
 
 Skills are instructions running inside the host's loop. They do not own that loop.
@@ -110,8 +110,11 @@ repair cannot disagree about what should be registered.
 `allow_dangerous`.
 
 The state helper resolves that path under `SUPREMETEAM_PROJECT_DIR` first, then a
-known host workspace variable, then the working directory, then an isolated temp
-fallback. With the file absent or empty, only the built-in destructive-pattern
+known host workspace variable, then the nearest ancestor of the working
+directory that holds `skillset-saves/`, `.harness-state/`, or `.git`, then the
+working directory, then an isolated temp fallback. Every generated file lands
+under `skillset-saves/` or `.harness-state/` (`save-ownership.yaml`
+`generated_roots`). With the file absent or empty, only the built-in destructive-pattern
 guard applies. `unfreeze` clears `frozen_globs`.
 
 ## Gate validation

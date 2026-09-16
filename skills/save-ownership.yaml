@@ -7,10 +7,101 @@ purpose: >-
   save-protocol.md section 3 points here; ownership.yaml keeps the artifact-level
   owner map and validation/test_save_contracts.py checks that the two agree.
   Patterns are fnmatch globs relative to the project root.
+generated_roots:
+  - skillset-saves
+  - .harness-state
+generated_roots_rule: >-
+  Everything Supreme Team creates inside a project lives under one of these two
+  roots: skillset-saves/ holds run state, run artifacts, and project
+  preferences; .harness-state/ holds guard records, trajectories, observations,
+  test scratch (test-work/), eval reports and workspaces, and packages built
+  outside a run (packages/). The only exception is application source written
+  by build specialists, which belongs to the application's own layout.
+  scripts/output_paths.py resolves every kind under these roots and the hook
+  state helper locates the project root by walking up to the nearest
+  skillset-saves/, .harness-state/, or .git so nothing lands in a subdirectory.
+  Every kind the resolver offers has a declared class below, including the four
+  that live outside a run - test_work, eval_reports, eval_workspace, and
+  standalone_packages.
+writer_vocabulary:
+  purpose: >-
+    Every `writer` below is one of three kinds. A skill name is a single skill in
+    team-manifest.yaml. A role name is a position filled by exactly one skill per
+    boundary or action; ownership.yaml uses the same three role names and
+    scripts/validate_manifests.py whitelists them as `role_owners`. A process
+    name is catalog code with no skill behind it.
+  skills: >-
+    taste, session-memory, admiral, skill-creator, and skill-maker. Each is a
+    team-manifest.yaml member and an ownership.yaml owner.
+  roles: >-
+    gatekeeper, safety-guardrails, and phase-lead, the three names
+    validate_manifests.py accepts as role owners. `safety-guardrails` is that
+    role and not the directory that shares its name - it is filled by guard,
+    freeze, or unfreeze, and ownership.yaml assigns the `guard-record` artifact
+    to the same role name. `gatekeeper` is filled by gatekeeper-admiral,
+    gatekeeper-design, gatekeeper-build, or gatekeeper-code.
+  compound_roles: >-
+    phase-lead-or-delegated-specialist is the phase-lead role plus the one
+    specialist named in the active delegation. The lead owns the class, the
+    delegate writes only the file its handoff names, and the lead remains the
+    single writer of record.
+  processes: >-
+    harness-hooks is the pre-tool and post-tool hook code under harness/hooks/.
+    harness-tests is the catalog's own unittest suites. Neither is a skill and
+    neither appears in team-manifest.yaml.
+unowned_path_rule: >-
+  A write under a generated root that matches no class below is a policy gap,
+  not an implicit permission. Resolve the destination with
+  scripts/output_paths.py first - an unknown kind is refused there. If the path
+  is sanctioned but no class covers it, record the gap and add the class as a
+  contract change rather than writing under an undeclared path. Two classes
+  never claim the same pattern; if a new pattern would overlap an existing one,
+  the narrower class wins and the overlap is the defect.
+enforcement:
+  machine_checked: >-
+    validation/test_save_contracts.py OwnershipAgreementTests pins the writer of
+    core-run-record, gate-verdict, and grilling-log, requires the tool of every
+    tool-bearing class to exist on disk, and rejects any pattern that is
+    absolute or contains a parent reference. GeneratedRootPolicyTests requires
+    generated_roots to be exactly these two roots, requires every project kind
+    scripts/output_paths.py offers to resolve under one of them, and requires
+    redesign to be a declared phase directory. scripts/validate_manifests.py
+    requires generated_roots to be exactly these two roots and requires every
+    pipeline name in pipelines.yaml to be a declared phase directory.
+    validation/test_catalog_contracts.py GuardWriterTests requires the
+    harness-guards class to name guard_state.py and requires pre_tool_use.py to
+    route writes there, and ToolSurfaceTests denies the Edit tool to every
+    tool-bearing class writer that is a skill.
+  enforced_at_write_time: >-
+    Only two classes are enforced when a write is attempted. harness/hooks/
+    pre_tool_use.py denies direct edit-tool writes to the core-run-record paths
+    and to project-taste-preferences, and denies direct edit-tool or
+    mutating-shell writes to the harness-guards record. Every other class is a
+    declaration that a reviewer applies.
+  judgement: >-
+    purpose, generated_roots_rule, notes, writer_vocabulary, unowned_path_rule,
+    this enforcement block, and the `rule` text of every class. No comparator
+    matches a written file against the patterns of its class, so a report
+    written to the wrong phase subdirectory by the right owner fails nothing
+    here and is caught, if at all, by the gate reading the wrong evidence root.
+
 notes:
   - "Product source stays in the application's own layout. It is never written under skillset-saves; evidence that depends on it is snapshotted into <phase>/evidence/ with source path, revision, and sha256 provenance (typed-record inputs in gates.yaml)."
   - "Nothing under a run is deleted by automation. Superseded revisions move to _history/."
+  - "Four classes live outside any run: harness-test-scratch, skill-eval-reports, skill-eval-workspaces, and standalone-packages. They are run-independent scratch and delivery outputs, they are excluded from the package by package-manifest.yaml, and nothing under them is gate evidence."
+  - "Those four class ids are the same four paths generated_roots_rule names by resolver kind, in the other vocabulary: harness-test-scratch is test_work, skill-eval-reports is eval_reports, skill-eval-workspaces is eval_workspace, and standalone-packages is standalone_packages. The kind is what scripts/output_paths.py --kind takes; the class id is what this file declares a writer for."
+  - "Global Taste state is governed by the same taste writer, skills/taste/taste_prefs.py, but lives in a deterministic user-data directory outside every checkout and therefore lies outside this project-relative glob policy."
 classes:
+  - id: project-taste-preferences
+    writer: taste
+    tool: skills/taste/taste_prefs.py
+    patterns:
+      - skillset-saves/preferences/taste.json
+      - skillset-saves/preferences/taste.md
+      - skillset-saves/preferences/_history/*
+      - skillset-saves/preferences/taste.journal.jsonl
+      - skillset-saves/preferences/taste.lock
+    rule: Canonical JSON, rendered view, revision history, journal, and lock are written only through taste_prefs.py; corrupt canonical bytes are never overwritten.
   - id: core-run-record
     writer: session-memory
     tool: skills/harness/hooks/save_run.py
@@ -59,6 +150,7 @@ classes:
     rule: Exported archives (skill packages, release bundles); package_skill.py and package_check.py accept this as --out.
   - id: gate-verdict
     writer: gatekeeper
+    filled_by: [gatekeeper-admiral, gatekeeper-design, gatekeeper-build, gatekeeper-code]
     tool: skills/harness/gatekeeper/check.py --verdict-out
     patterns:
       - skillset-saves/runs/*/*/verdict_*.json
@@ -66,9 +158,23 @@ classes:
     rule: The boundary's gatekeeper writes verdicts and never modifies the submission.
   - id: harness-guards
     writer: safety-guardrails
+    filled_by: [guard, freeze, unfreeze]
+    tool: skills/harness/hooks/guard_state.py
     patterns:
       - .harness-state/guard-state.json
-    rule: Owner-controlled protections with owner, scope, created_at, and released_at metadata; never expired by age. The pre-tool hook denies writes inside an unreleased boundary.
+    rule: >-
+      Owner-controlled protections written only through guard_state.py
+      (freeze/block/release/allow-dangerous/revoke-dangerous/read-only/release-read-only).
+      Every frozen_globs, blocked_globs, and read_only entry carries owner, scope, created_at,
+      and released_at; a release sets released_at and never deletes the record, and age never
+      expires a protection. allow_dangerous is an owned grant (owner, reason, scope, expires_at)
+      that lifts destructive-pattern blocking globally until it expires; an expired or malformed
+      grant leaves the block in force. The pre-tool hook denies writes inside an unreleased
+      boundary and denies direct edit-tool or mutating-shell writes to this record itself, so a
+      boundary cannot be lifted without an owner check and a released_at trail.
+      The writer is the `safety-guardrails` role from ownership.yaml, which owns the
+      guard-record artifact, and not the directory of the same name. guard and freeze
+      record a boundary and unfreeze releases one, each through guard_state.py.
   - id: harness-trajectories
     writer: harness-hooks
     patterns:
@@ -79,6 +185,43 @@ classes:
     patterns:
       - .harness-state/observations/*
     rule: Post-tool trajectory observations; advisory only, never gate evidence.
+  - id: harness-test-scratch
+    writer: harness-tests
+    patterns:
+      - .harness-state/test-work/*
+    rule: >-
+      Temporary fixture trees the catalog's own unittest suites create, resolved as
+      scripts/output_paths.py --kind test_work. Written by test code rather than by any
+      skill, disposable between runs, never gate evidence, and excluded from the package
+      by the test-scratch residue class in scripts/package_check.py.
+  - id: skill-eval-reports
+    writer: skill-creator
+    patterns:
+      - .harness-state/eval-reports/*
+    rule: >-
+      Eval reports produced outside a run by skill-maker/skill-creator/scripts/run_loop.py,
+      resolved as scripts/output_paths.py --kind eval_reports. Inside a run the same output
+      belongs to the phase-evidence class instead. No hook enforces this class, so the path
+      is a declaration the writer honours.
+  - id: skill-eval-workspaces
+    writer: skill-creator
+    patterns:
+      - .harness-state/eval-workspaces/*
+    rule: >-
+      Scratch workspaces for skill evals outside a run, resolved as
+      scripts/output_paths.py --kind eval_workspace. Disposable, never gate evidence, and
+      excluded from the package by the eval-workspace residue class in
+      scripts/package_check.py.
+  - id: standalone-packages
+    writer: skill-maker
+    patterns:
+      - .harness-state/packages/*
+    rule: >-
+      Archives built outside a run, resolved as scripts/output_paths.py --kind
+      standalone_packages. skill-maker owns the skill-package artifact in ownership.yaml
+      and delegates the build to skill-creator Package mode, which keeps the write with
+      the owner. Inside a run the archive belongs to the phase-packages class instead, and
+      scripts/package_check.py --out writes the catalog archive here.
 phase_directories:
   - intake
   - design
@@ -87,6 +230,8 @@ phase_directories:
   - security
   - investigation
   - qa
+  - taste
+  - redesign
   - delivery
   - release
   - skill-creation

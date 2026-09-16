@@ -7,7 +7,9 @@ exclude:
   - "**/__pycache__/**"
   - "**/*.pyc"
   - "skillset-saves/**"
+  - "skillset-saves/preferences/**"
   - ".harness-state/**"
+  - ".supremeteam/**"
   - "**/.harness-state/**"
   - "harness-test-work/**"
   - "**/*-workspace/**"
@@ -22,6 +24,12 @@ delivery_contract:
   cache_files_are_publishable: false
   runtime_state_is_publishable: false
   save_state_is_publishable: false
+  global_taste_state_is_publishable: false
+  taste_export_policy: >-
+    Global Taste state is always outside a checkout and can never enter a project
+    package. An explicit user export may be packaged only as a redacted artifact
+    carrying its canonical-record digest provenance; live stores, histories,
+    journals, and locks are never package inputs.
   verification: >-
     python skills/scripts/package_check.py --root . enumerates the selected
     files, rejects residue classes, confirms required assets, and optionally
@@ -29,3 +37,59 @@ delivery_contract:
   applies_to:
     - directory-delivery
     - archive-delivery
+authority:
+  selection: >-
+    This manifest selects the delivery set. Ignore rules in a version-control or
+    packaging tool are not the control: scripts/package_check.py enumerates what
+    this file selects and rejects residue before an archive is written.
+  who_reads_this_file: >-
+    No test opens this file. scripts/package_check.py does, as the default value
+    of its --manifest argument, and two suites run that script without passing
+    --manifest - so they enumerate against this manifest even when their --root is
+    a temporary fixture. That indirection is what makes the include and exclude
+    globs test-enforced; nothing else here is. scripts/validate_manifests.py
+    check_package reads the delivery_contract booleans and the required exclude
+    patterns, and no test runs validate_manifests.py check_package, so those
+    checks run only when a person or CI invokes the script.
+enforcement:
+  machine_checked: >-
+    scripts/package_check.py enumerates every file the include and exclude globs
+    select from the chosen root, matches the result against eight residue classes
+    (interpreter-cache, runtime-state, save-state, test-scratch, render-scratch,
+    eval-workspace, archives, secrets), confirms nine required assets are present,
+    and exits 1 on any violation or 2 on a manifest error. Two suites run it and
+    therefore exercise this manifest's globs through it:
+    validation/test_save_contracts.py PackageCheckTests asserts that
+    .harness-state/** and **/__pycache__/** drop those trees before the residue
+    scan and that the real repository root enumerates clean, and
+    scripts/test_runtime_utilities.py asserts that **/.env and **/.env.* keep both
+    files out of a written archive while the root documents stay in. Removing one
+    of those four patterns fails a suite.
+    scripts/validate_manifests.py check_package requires the five top-level keys,
+    requires cache_files_are_publishable, runtime_state_is_publishable, and
+    save_state_is_publishable to be false, and requires five specific exclude
+    patterns to be present - but no test runs it, so that half is enforced only
+    when the script is invoked.
+  judgement: >-
+    global_taste_state_is_publishable, taste_export_policy,
+    generated_interpreter_caches, verification, applies_to, authority, and this
+    enforcement block are read by no comparator. The global Taste store is kept out
+    of a package by living outside every checkout, not by this declaration, and no
+    test asserts that a redacted export carries its canonical-record digest
+    provenance.
+failure_paths:
+  residue_found: >-
+    package_check.py exits 1 and names the violating path and its residue class.
+    Remove the file rather than widening the exclude list, because a broader
+    exclude hides the next one too.
+  required_asset_missing: >-
+    package_check.py exits 1. A package missing gates.yaml, pipelines.yaml,
+    ownership.yaml, save-ownership.yaml, team-manifest.yaml, runtime-manifest.yaml,
+    the tech-stack registry, the gate checker, or the save writer is not a delivery
+    of this catalog.
+  manifest_unreadable: >-
+    package_check.py exits 2 with an engine error and writes no archive. An engine
+    error is never read as a clean enumeration.
+  check_unavailable: >-
+    The package is unverified rather than verified. Do not ship on the strength of
+    ignore rules alone; record the gap under contracts/evidence-standards.md.

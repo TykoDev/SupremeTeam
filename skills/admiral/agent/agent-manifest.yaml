@@ -58,10 +58,40 @@ delegates_to:
     skill_path: review/code-chief
     handoff: review-package
     verdict_source: gatekeeper-admiral (handoff-3)
+  - name: redesign-agent
+    skill_path: design/redesign
+    handoff: redesign-package (inventory, taste grilling, four variants, evidence, decision)
+    verdict_source: gatekeeper-admiral (redesign-review)
+    optional: true
+  - name: cso
+    skill_path: review/cso
+    handoff: security-review package
+    verdict_source: gatekeeper-admiral (security-review)
+    optional: true
+  - name: investigate
+    skill_path: investigate
+    handoff: investigation package with a bounded fix path for the owning phase
+    verdict_source: gatekeeper-admiral (investigation-review)
+    optional: true
+  - name: qa
+    skill_path: qa
+    handoff: qa package (a report-only run carries the fixes_applied applicability record)
+    verdict_source: gatekeeper-admiral (qa-review)
+    optional: true
+  - name: ship
+    skill_path: ship
+    handoff: deploy-readiness package; land-and-deploy only after a fresh human go decision
+    verdict_source: gatekeeper-admiral (deploy-readiness)
+    optional: true
   - name: skill-maker-agent
     skill_path: skill-maker
     handoff: skill-package or team-package
     verdict_source: gatekeeper-admiral (handoff-4)
+    optional: true
+  - name: taste
+    skill_path: taste
+    handoff: taste-review package and consumer handoff
+    verdict_source: gatekeeper-admiral (taste-review)
     optional: true
   - name: session-memory
     skill_path: session-memory

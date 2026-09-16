@@ -93,6 +93,7 @@ class EvidenceRootTests(unittest.TestCase):
                 "plan": "reports/plan.md", "acceptance": "smoke + contract tests",
                 "security_seed": "no external trust boundary",
                 "stack_lock": {"applicable": False, "reason": "no new runtime", "scope": "whole run", "decided_by": "commander"},
+                "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
                 "ui_evidence": {"applicable": False, "reason": "no user-facing surface", "scope": "whole run", "decided_by": "architect"},
             },
             "artifact_hashes": {"../intake/report_grilling.md": sha256(self.fx.grilling),
@@ -113,6 +114,7 @@ class EvidenceRootTests(unittest.TestCase):
         for key in ("schema_version", "boundary", "owner"):
             data.pop(key)
         data["evidence"]["stack_lock"] = "no new runtime or framework - existing stack unchanged"
+        data["evidence"]["taste_snapshot"] = "no saved Taste profile available"
         data["evidence"]["ui_evidence"] = "no user-facing surface - design system not engaged"
         proc = run_cli("design-to-build", self.fx.write_manifest("design", data))
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -357,6 +359,7 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
                 "interfaces": "REST", "plan": "reports/plan.md", "acceptance": "smoke + contract tests",
                 "security_seed": "no external trust boundary",
                 "stack_lock": {"slug": entry["slug"], "versions": entry["versions"], "overlay_sha256": entry["sha256"]},
+                "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
                 "ui_evidence": {"applicable": False, "reason": "no user-facing surface", "scope": "whole run", "decided_by": "architect"},
             },
             "artifact_hashes": {"../intake/report_grilling.md": sha256(self.fx.grilling),
@@ -449,6 +452,51 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
         proc, out = self.check(data)
         self.assertEqual(proc.returncode, 2)
         self.assertIn("engine_error", json.loads(proc.stderr))
+
+
+class OverlayDigestPortabilityTests(unittest.TestCase):
+    """Registry digests are computed over LF content; a CRLF checkout must still validate."""
+
+    def test_crlf_overlay_matches_lf_registry_digest(self):
+        entry = registry_entry()
+        source = (SKILLS / entry["path"]).read_bytes().replace(b"\r\n", b"\n")
+        lf_digest = hashlib.sha256(source).hexdigest()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            catalog = root / "catalog" / "tech-stacks"
+            catalog.mkdir(parents=True)
+            (catalog / f"{entry['slug']}.md").write_bytes(source.replace(b"\n", b"\r\n"))
+            registry = catalog / "registry.yaml"
+            registry.write_text(json.dumps({
+                "schema_version": 1, "kind": "supremeteam-tech-stack-registry",
+                "overlays": [{**entry, "sha256": lf_digest}]}), encoding="utf-8")
+            fx = RunLayoutFixture(root)
+            architecture = fx.proof("design", "reports/architecture.md", "# Architecture\n\nHexagonal service.\n")
+            plan = fx.proof("design", "reports/plan.md", "# Plan\n\nThree increments.\n")
+            data = {
+                "schema_version": 2, "run_id": fx.run_id, "boundary": "design-to-build", "owner": "commander",
+                "submission_id": "design-crlf", "revision": "r1", "revisions": ["r1"],
+                "evidence": {
+                    "decisions": "../intake/report_grilling.md", "architecture": "reports/architecture.md",
+                    "interfaces": "REST", "plan": "reports/plan.md", "acceptance": "smoke + contract tests",
+                    "security_seed": "no external trust boundary",
+                    "stack_lock": {"slug": entry["slug"], "versions": entry["versions"], "overlay_sha256": lf_digest},
+                    "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
+                    "ui_evidence": {"applicable": False, "reason": "no user-facing surface", "scope": "whole run", "decided_by": "architect"},
+                },
+                "artifact_hashes": {"../intake/report_grilling.md": sha256(fx.grilling),
+                                    "reports/architecture.md": sha256(architecture), "reports/plan.md": sha256(plan)},
+            }
+            proc = run_cli("design-to-build", fx.write_manifest("design", data), "--registry", str(registry))
+            out = result(proc)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertTrue(out["pass"], out)
+            data["evidence"]["stack_lock"]["overlay_sha256"] = hashlib.sha256(source.replace(b"\n", b"\r\n")).hexdigest()
+            registry.write_text(json.dumps({
+                "schema_version": 1, "kind": "supremeteam-tech-stack-registry",
+                "overlays": [{**entry, "sha256": data["evidence"]["stack_lock"]["overlay_sha256"]}]}), encoding="utf-8")
+            out = result(run_cli("design-to-build", fx.write_manifest("design", data), "--registry", str(registry)))
+            self.assertTrue(any("overlay file digest does not match" in f for f in out["failures"]), out)
 
 
 if __name__ == "__main__":

@@ -5,15 +5,17 @@ session_memory: session-memory
 cross_stage_gatekeeper: gatekeeper-admiral
 intake_doctrine: grill-me-doctrine
 design_system_doctrine: design-doctrine
-skill_count: 47
+skill_count: 52
 phase_leads: [commander, build-management, code-chief]
 phase_gatekeepers: [gatekeeper-design, gatekeeper-build, gatekeeper-code]
-pipeline_owners: [cso, investigate, qa, skill-maker, ship]
+pipeline_owners: [cso, investigate, qa, redesign, skill-maker, ship, taste]
 specialists:
   - researcher
   - planner
   - architect
   - engineer
+  - design-mapper
+  - prototyper
   - bob-the-builder
   - test-builder
   - security-builder
@@ -28,6 +30,7 @@ specialists:
   - frontier
   - design-qa
   - devex-review
+  - taste-review
 creation: [skill-maker, skill-creator, skill-reviewer]
 release: [ship, setup-deploy, land-and-deploy, document-release]
 safety: [careful, freeze, guard, unfreeze]
@@ -36,3 +39,64 @@ testing: [qa, qa-only, benchmark]
 hosts: [codex, claude-code, copilot, cursor, opencode]
 state_root: skillset-saves
 verdicts: [APPROVED, REVISE, ESCALATE]
+authority:
+  roster: >-
+    This file is the roster of record. Every owner named in ownership.yaml,
+    pipelines.yaml, and gates.yaml must resolve to a name declared here, and
+    scripts/validate_manifests.py rejects one that does not.
+  skill_count: >-
+    skill_count is the number of SKILL.md files under skills/, and it must equal
+    both that count and the number of distinct names declared across the role and
+    list keys. A name repeated in two groups shrinks the distinct count and fails
+    the same check, so the groups partition the roster rather than overlapping.
+  grouping: >-
+    Only the union of the groups is checked. Nothing verifies that a skill sits in
+    the right group, so a release skill listed under browser would pass every test.
+    The grouping is documentation for readers and routing, not a contract a
+    comparator holds.
+  unchecked_keys: >-
+    hosts, intake_doctrine, and design_system_doctrine are read by no validator.
+    intake_doctrine names grill-me-doctrine.md and design_system_doctrine names
+    design-doctrine.md, both present under skills/, and nothing resolves either
+    name to a file.
+enforcement:
+  machine_checked: >-
+    scripts/validate_manifests.py check_team requires front_door, session_memory,
+    and cross_stage_gatekeeper to be non-empty, requires the nine list keys to be
+    non-empty lists, requires state_root to be skillset-saves, requires verdicts to
+    be exactly APPROVED, REVISE, and ESCALATE. check_pipeline_mirrors requires
+    skill_count to equal both the SKILL.md count on disk and the distinct member
+    count, and rejects a pipeline owner or stage owner that is not a member.
+    check_ownership rejects an ownership.yaml owner that is neither a member nor a
+    declared role. validation/test_pipeline_contracts.py repeats the owner and gate
+    submitter checks independently through the same helper.
+  judgement: >-
+    authority, this enforcement block, the group a name is placed in, the hosts
+    list, and the two doctrine pointers.
+failure_paths:
+  owner_is_not_a_member: >-
+    validate_manifests.py rejects it at the file that names the owner -
+    check_ownership for an ownership.yaml owner, check_gates for a gates.yaml
+    boundary submitter or evidence_owners entry, check_pipeline_mirrors for a
+    pipelines.yaml pipeline or stage owner - and test_pipeline_contracts.py
+    repeats the same checks. Add the skill to this roster as a deliberate
+    contract change; never widen the other file to accept an unknown name.
+  skill_count_drift: >-
+    check_pipeline_mirrors fails with the SKILL.md count it found on disk.
+    skill_count must equal both that count and the distinct member count, so a
+    name repeated across two groups fails the same check. Fix the roster, not
+    the number: editing skill_count to match a miscount hides the missing or
+    duplicated skill it exists to surface.
+  documentation_mirror_stale: >-
+    check_pipeline_mirrors also reads AGENTS.md, README.md, and four files under
+    docs/ for needles derived from skill_count, the pipeline count, and the
+    boundary count, and fails naming the missing string. The mirror is the
+    defect; this manifest decides.
+  grouping_is_wrong: >-
+    Nothing fails. Only the union of the groups is checked, so a release skill
+    listed under browser passes every test (authority.grouping). Correct it by
+    review.
+  manifest_unreadable: >-
+    validate_manifests.py reports the file as unreadable and exits non-zero. No
+    default roster is assumed in its place, and every cross-file check that
+    depends on the roster is reported unverified rather than passed.

@@ -72,7 +72,7 @@ Claude Code's plan mode disables Edit, Write, NotebookEdit, and Bash-write opera
 
 Implication: admiral MUST re-probe execution mode at the start of every turn while a run is active, not only at intake. The cached `execution_mode: skill` from the plan-mode RUN_INIT will be stale immediately after ExitPlanMode. Without the re-probe, the first agent-mode delegation (e.g. an Agent tool call to a sub-orchestrator) will be emitted as instruction text instead of a programmatic call, and the user will see the run "stall" until they retry.
 
-The mode re-probe rule in `agent-protocol.md` ("Per-Boundary Re-Probe") covers this case: detect the upgrade, write `MODE_RECHECK` with `action: upgrade`, and continue under agent mode in place.
+The mode re-probe rule in `../agent-protocol.md` ("Per-Boundary Re-Probe") covers this case: detect the upgrade, write `MODE_RECHECK` with `action: upgrade`, and continue under agent mode in place.
 
 ## Write-Capability Probe
 

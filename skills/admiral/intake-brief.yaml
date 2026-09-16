@@ -1,15 +1,24 @@
 skill_name: admiral
 target_path: admiral/
 purpose: |
-  Orchestrates the end-to-end delivery lifecycle across design, build, and
-  review work. Selects the earliest incomplete stage,
-  manages cross-stage handoffs, and delivers a unified package with traceability.
+  Owns the space between stages, not the stages themselves: intake, run state,
+  delegation, cross-stage gate routing, rewind, and delivery assembly. Selects
+  the earliest incomplete approved boundary rather than the newest artifact on
+  disk, and treats a lost _latest.md pointer as a recoverable orphan rather than
+  as an absent run.
 triggers:
   - run the full pipeline
   - design build review
   - continue from an approved design package
   - ship this end to end
   - resume the pipeline
+  - design or build this project
+  - redesign the UI
+  - review or audit this codebase
+  - run a security audit
+  - QA this product
+  - find the root cause
+  - set or change my design preferences
   - create a skill
   - build me a skill for
   - create a team of skills
@@ -27,14 +36,21 @@ outputs:
   - coordinated team package when running team-creation mode
 severity_model: shared 4-tier (Critical | Major | Minor | Info)
 required_contracts:
-  - Preamble Tier System
-  - Proactive triggers
+  - Execution-contract clauses stated verbatim in SKILL.md
+  - Grill-Me Intake
   - Shared severity
-  - Idempotent handoff submissions
-  - Persistence-aware rewind rules
   - Save-Protocol Adherence (write-probe before first save)
   - Mode Re-Check (per-boundary three-capability probe)
+  - Entry Routing (admiral is the canonical first turn)
   - Session Routing (admiral pin while *_ACTIVE)
+  - Harness Hook Registration
+  - Runtime Readiness Diagnostic
+  - Gate Spec Authority (gates.yaml and pipelines.yaml are authoritative)
+  - Stack Lock
+  - Design System Evidence
+  - Taste
+  - One Writer
+  - Canonical Contracts
   - MCP Registry Freshness (480-hour TTL on mcp-tools.md)
 discovery:
   mcp_registry_path: mcp-tools.md

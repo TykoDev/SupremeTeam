@@ -1,35 +1,42 @@
 ---
 name: admiral
 description: >-
-  SupremeTeam primary entry orchestrator for design, build, review, ship,
-  investigate, checkpoint/resume, and skill or team creation. Routes every
-  delivery-lifecycle request under one intake, one save-protocol run, and one
-  gatekeeper. Use when the user says: run the full pipeline, ship end to end,
-  resume from a checkpoint, design/build this project, review or audit this
-  codebase, find the root cause, create a skill, build a team, or run Admiral.
-  All lifecycle work enters here first; standalone utility tools run directly.
+  SupremeTeam front door for the delivery lifecycle. Use to run the full
+  pipeline, ship end to end, resume from a checkpoint or an approved package,
+  design or build this project, redesign the UI, review or audit this codebase,
+  run a security audit, QA a product or test it like a user, find the root
+  cause, manage Taste preferences, set or change design preferences, create a
+  skill, build a team, or run Admiral — even when the request never says
+  Admiral. Standalone guardrail, browser, release, and testing tools run
+  directly.
 version: 2.1.0
+allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
 # Admiral
 
 ## Purpose
 
-Coordinate the complete delivery lifecycle across design, build, review, and optional cloud provision work so one request can move from intake to a unified package.
+Admiral routes and records; it authors no phase deliverable. Its boundary is the space *between* stages — intake, run state, delegation, gate routing, rewind, and delivery assembly — because a lifecycle request that enters through a sub-orchestrator loses the one thing no single stage can supply: a run whose approvals, revisions, and persistence stay consistent across stage handoffs.
+
+Two things are most often got wrong. Resume starts from the newest artifact found on disk instead of the earliest incomplete *approved* boundary, which silently launders unapproved work into the package. And a missing `_latest.md` is read as "no run", which forks a second run over a recoverable orphan; the pointer is not the run, `runs/` is.
 
 ## Entry Primacy
 
 Admiral is the **primary entry orchestrator** for SupremeTeam — the single front door for all
 delivery-lifecycle work, as defined in `routing-doctrine.md` (skill set root). Every
-in-scope request (design, build, review, ship, investigate, checkpoint/resume, gate
-validation, skill/team creation) initiates here so that one intake, one persisted run, and
+in-scope request (design, redesign, build, review, security audit, product QA, ship,
+investigate, explicit Taste management, checkpoint/resume, gate validation, skill/team
+creation) initiates here so that one intake, one persisted run, and
 one cross-stage gatekeeper govern the whole pipeline. The in-scope sub-orchestrators and
-utilities (`design/commander`, `build/build-management`, `review/code-chief`, `skill-maker`,
-`investigate`, `session-memory`, `gatekeeper-admiral`) defer to Admiral when reached without
+utilities (`design/commander`, `design/redesign`, `build/build-management`, `review/code-chief`, `skill-maker`,
+`investigate`, `taste`, `session-memory`, `gatekeeper-admiral`) defer to Admiral when reached without
 an active Admiral handoff; Admiral reaches them by name through its delegation surface, so
-its own delegations always carry the handoff signal and never bounce back. Only Tier-4
-standalone tools (`safety-guardrails/*`, `browser-automation/*`, `release-and-deployment/*`,
-`testing-and-qa/*`) run outside this routing. The
+its own delegations always carry the handoff signal and never bounce back. Only standalone
+tools (`careful`, `freeze`, `guard`, `unfreeze`, `browse`, `open-browser`, `setup-browser-cookies`, `pair-agent`, `benchmark`, and
+`setup-deploy`, `land-and-deploy`, `document-release`) run outside this routing; `qa`, `qa-only`,
+and `ship` are dual-mode — invoked by name they run directly, but a cold
+lifecycle request for QA or release enters here. The
 `harness/hooks/user_prompt_submit.py` hook reinforces this on every fresh user turn.
 
 ## Use This Skill When
@@ -38,13 +45,23 @@ standalone tools (`safety-guardrails/*`, `browser-automation/*`, `release-and-de
 - ship this end to end
 - resume the pipeline
 - continue from the approved package
+- design or build this project
+- redesign the UI / refresh the look and feel
 - review or audit this codebase
+- run a security audit / threat-model this system
+- QA this product / test it like a user
 - find the root cause / investigate this bug
+- set or change my design preferences
 - create a skill
 - build me a skill for
 - create a team of skills
 - build me a pipeline for
 - run admiral
+
+Each phrasing above maps to one route in `references/routing.md`; a request that
+matches none of them is free conversation, and standalone tools
+(`careful`, `freeze`, `guard`, `unfreeze`, `browse`, `open-browser`, `setup-browser-cookies`, `pair-agent`,
+`ship`, `setup-deploy`, `land-and-deploy`, `document-release`, `qa`, `qa-only`, `benchmark` — invoked by name) run without entering a run at all.
 
 ## Inputs
 
@@ -70,10 +87,23 @@ property of the run, not of a skill.
 
 | Tier | Blast radius | Ceremony |
 | --- | --- | --- |
-| 0 | Local, understood, reversible, clear acceptance | Direct change, focused verification, brief completion note |
-| 1 | Bounded and read-only | Intake and evidence, no state change |
-| 2 | Multi-step edits, delegation, external coordination | Full route, saved run, gate package |
+| 0 | Local, understood, reversible; acceptance is obvious | Direct change, focused verification, brief completion note |
+| 1 | Bounded and read-only | Intake, evidence, no state change |
+| 2 | Multi-step edits, delegation, external coordination | Full pipeline route, saved run, gate package |
 | 3 | Destructive, security-sensitive, production, irreversible | Tier 2 plus explicit owner intent and a fresh human go decision |
+
+## Execution Contract
+
+Canonical source: `../execution-contract.md`. Stated locally because that file
+requires every orchestrator and gatekeeper to carry the clauses verbatim; a paraphrase
+is drift, and `skills/validation/test_catalog_contracts.py` compares them exactly.
+
+1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under the Tier 0 fast path in routing-doctrine.md; Tier 1 for bounded read-only work beyond Tier 0; Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for destructive, security-sensitive, production, or irreversible work. Record the tier and rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline ceremony and full security audits, but retains focused verification and applicable guardrails; escalate when its eligibility no longer holds.
+2. Trigger proactively when the task matches the skill's declared scope, even when the request uses different words; decline adjacent work and route end-to-end or specialist ownership explicitly. Offer a next safe action only after the current step, scope, and approval lineage are resolved; suppress that offer while any is unresolved.
+3. Use Critical | Major | Minor | Info for findings. Block on Critical, resolve Major before a gate, record Minor, and preserve Info as context. Use APPROVED | REVISE | ESCALATE for gate verdicts.
+4. Validate paths, inputs, revisions, and handoff fields before acting. Keep file operations inside the workspace, use read-only or dry-run probes first, and require explicit owner intent for destructive or externally visible actions.
+5. Handle missing or malformed input, conflicting evidence, unsupported hosts or tools, empty results, and unavailable checks explicitly: preserve evidence, do not fabricate, return REVISE or ESCALATE, and state the next safe action.
+6. Return Outcome, Evidence, Open risks, Next action, Revision, and Verdict when the skill owns a gate. A concise result without evidence is incomplete.
 
 ## Tier 0 Fast Path
 
@@ -96,38 +126,58 @@ The workflow below applies after Tier 0 has been ruled out.
 
 ## Workflow
 
-1. Before creating new state, run the save startup check in `save-protocol.md` §2 Startup: inspect `skillset-saves/_latest.md`, classify the save directory as active/inactive/orphaned/missing/unreadable/conflict, automatically resume an active reclaimable run, recover an orphaned run by scanning `runs/` and rebuilding the `_latest.md` pointer when it is missing or stale, or activate persistence for a new run by creating `skillset-saves/` and running the write probe. Treat `_latest.md` as a pointer only — never conclude "no run to resume" from its absence without first scanning `runs/`. If activation fails, warn once, attempt read-only resume from any readable saved artifacts, then continue in transient mode only if no coherent resume boundary can be proven.
-2. Classify the request as full, partial, resume, create-skill, or create-team work; detect whether the host can run in agent mode; verify SupremeTeam harness hook registration (run `harness/hooks/verify_registration.py`; if it exits non-zero — MISSING or UNKNOWN — surface its `REGISTER_PROMPT` to the user and offer to register the hooks by rerunning the installer with `-RegisterHooks` / `--register-hooks` for the active host before delegating); run the runtime readiness diagnostic (`harness/hooks/check_readiness.py --host auto --require-active-run`) after persistence activation so Python version, hook registration, and active save-run status are reported together; read the global MCP registry at `mcp-tools.md` (skill set root) and prompt the user to refresh it if missing or older than its `discovery_ttl_hours` (canonical value in `mcp-tools.md`; default 480h); record the startup/probe result in `_state.md`; run the `grill-me-doctrine.md` (skill set root) intake interview to reach a shared understanding before any delegation, and write its result to `skillset-saves/runs/{run-id}/intake/report_grilling.md` (this file is the hashed artifact behind the `decisions` gate key, so a design package whose decisions are not backed by it fails `design-to-build` mechanically); and reject any stage skip that lacks explicit approval lineage.
-3. Create the run through `session-memory` before the first delegation (`python skills/harness/hooks/save_run.py create --run-id <run> --evidence skillset-saves/runs/<run>/intake/report_grilling.md`), and checkpoint (`checkpoint --expect-revision <n>`) before every later delegation and at every returned boundary. A `refused` result is a contract violation to resolve, never something to work around by hand-editing save files. Resolve every generated destination with `python skills/scripts/output_paths.py`. Then select the earliest incomplete boundary, re-probe execution mode before delegating per `save-protocol.md` (upgrade or downgrade in place if host capabilities changed since intake), prepare the handoff using `intake-brief.yaml` and `stub-contract.md`, and delegate only to the owning sub-orchestrator for that boundary. For user-facing surfaces, expect the design package to include the frontend/UI design output (shadcn/ui component template, generated tokens/components, and `design-system.md`) per `design-doctrine.md` before the `gatekeeper-admiral` boundary.
-4. Route every returned package through `gatekeeper-admiral`, which validates it against the canonical gate spec `../gates.yaml` with `python skills/harness/gatekeeper/check.py --boundary <boundary> --package <phase>/manifest.json --verdict-out <phase>/verdict_<boundary>.json` (add `--prior` when a previous verdict exists). Exit 0 is a mechanical fact, not approval. Reuse a verdict only when the result reports `prior_reusable: true`. Rewind to the earliest affected boundary when upstream evidence changes.
-5. Assemble only approved packages into a unified delivery package with traceability, open disputes, next actions, and any skill-maker outputs requested by the user.
+1. **Classify the save directory before creating state.** Inspect `skillset-saves/_latest.md` and classify the directory as active, inactive, orphaned, missing, unreadable, or conflict per `save-protocol.md` §2 Startup, then resume an active reclaimable run before starting a new one. `_latest.md` is a pointer, not the run: never conclude "no run to resume" from its absence without scanning `runs/` first and rebuilding the pointer over a recoverable orphan. If activation fails, warn once, attempt read-only resume from any readable saved artifacts, and continue transiently only when no coherent resume boundary can be proven.
+2. **Establish readiness and shared understanding.** Classify the request as full, partial, resume, create-skill, or create-team, and probe whether the host supports agent mode. Then run the four intake contracts in `references/contracts.md` — Harness Hook Registration, Runtime Readiness Diagnostic, MCP Registry Freshness, and Grill-Me Intake — recording each result in `_state.md` and the audit trail. The grilling result is written to `skillset-saves/runs/{run-id}/intake/report_grilling.md`, which is the hashed artifact behind the `decisions` gate key, so a design package whose decisions are not backed by it fails `design-to-build` mechanically. Reject any stage skip that lacks explicit approval lineage.
+3. **Create the run, then delegate the earliest incomplete boundary.** Create through `session-memory` (`python skills/harness/hooks/save_run.py create --run-id <run> --evidence skillset-saves/runs/<run>/intake/report_grilling.md`) before the first delegation, and checkpoint (`checkpoint --expect-revision <n>`) before every later one. A `refused` result is a contract violation to resolve, never something to work around by hand-editing save files. Resolve every generated destination with `python skills/scripts/output_paths.py`. Re-probe execution mode at the boundary, prepare the handoff from `intake-brief.yaml` and `stub-contract.md`, and delegate only to the sub-orchestrator that owns that boundary.
+4. **Gate every returned package.** Route it through `gatekeeper-admiral`, which validates against the canonical spec `../gates.yaml` with `python skills/harness/gatekeeper/check.py --boundary <boundary> --package <phase>/manifest.json --prior <phase>/verdict_<boundary>.json --verdict-out <phase>/verdict_<boundary>.cross-stage.json` — the `--prior` is the phase gatekeeper's record when one exists, and the cross-stage record is written beside it, never over it. Exit 0 is a mechanical fact, not approval. Reuse a verdict only when the result reports `prior_reusable: true`, and rewind to the earliest affected boundary when upstream evidence changes.
+5. **Assemble only approved packages** into one delivery package with traceability, open disputes, next actions, and any skill-maker outputs the user requested.
 
 ## Required Contracts
 
-- **Grill-Me Intake**: Before producing or delegating any deliverable, run the intake interview in `grill-me-doctrine.md` (skill set root) — resolve every load-bearing branch one question at a time, always recommend an answer, explore the codebase instead of asking when the answer is discoverable, and apply YAGNI so speculative branches are deferred with a reopen trigger instead of becoming premature commitments. Record resolved decisions and deferred branches in the intake artifact so downstream phases inherit the shared understanding.
-- **Preamble Tier System**: Use short progress preambles that scale from terse status to fuller context only when complexity or risk rises.
-- **Proactive triggers**: Offer the next sensible action when the surrounding context clearly implies it and the skill can advance safely without a prompt loop.
-- **Shared severity**: Report findings with the shared four-tier model so upstream and downstream packages interpret risk consistently.
-- **Save-Protocol Adherence**: Persist every state transition, handoff record, and deliverable to `skillset-saves/` per `save-protocol.md`. At startup, classify whether `skillset-saves/` is actively used and resume an active reclaimable run before starting a new one. When no active run exists, attempt persistence activation and run the write-capability probe before the first save. If activation or probing fails, set `Persistence active: no`, warn the user once, attempt read-only resume from any readable saved artifacts, and continue transiently only after resume cannot be proven. Include a `### Save Context` block in every sub-orchestrator delegation that reflects the actual probe result — never emit `Persistence active: yes` without a successful probe.
-- **Mode Re-Check**: Before every boundary delegation and on every resume, re-run the three-capability probe (sub-agent, file I/O, command execution) and reconcile against the cached `execution_mode` in `_state.md`. Update the record and continue under the new mode in place; never force a retry on the user.
-- **Entry Routing**: Admiral is the canonical entry point per `routing-doctrine.md` (skill set root). On the **first** turn of any delivery-lifecycle request — before any run exists — the request initiates through Admiral rather than a sub-orchestrator or utility. In-scope skills reached directly without an active Admiral handoff hand off to Admiral first (their loop guard is the active-handoff check). Standalone Tier-4 tools are out of routing scope and run directly.
-- **Session Routing**: Once a run is in any `*_ACTIVE`, `*_GATE_PENDING`, or `*_GATE_REVISE` state with `_lock.md` held, set `session_pin: true`. Every subsequent user input in the same session is treated as input to admiral even when the user does not say "admiral", and is routed to the active sub-orchestrator. Routing precedence: explicit slash command or standalone Tier-4 tool > admiral session pin > eligible Tier 0 fast path > entry-routing default to admiral > free conversation. The pin clears only on `RUN_COMPLETE` (`DELIVERED`), the user command `release admiral` or `/exit-admiral`, or lock staleness; each release appends `SESSION_PIN_RELEASE` to the audit trail.
-- **Harness Hook Registration**: At intake (and on resume), run `harness/hooks/verify_registration.py` to confirm the three SupremeTeam hooks (`pre_tool_use.py`, `post_tool_use.py`, `user_prompt_submit.py`) are registered for the active host using that host's native hook config. Exit 0 = registered (proceed). Exit 1 (MISSING) or 2 (UNKNOWN) = surface the script's `REGISTER_PROMPT` to the user and offer to register the hooks by rerunning the installer with `-RegisterHooks` / `--register-hooks` before the first delegation. Without the prompt-submit hook the entry-routing enforcement is advisory-only (descriptions/doctrine), so flag this clearly. Record the check result in `_state.md` (`hook_registration_status`) and append `HOOK_REGISTRATION_CHECK` to the audit trail. Never block the run on a failed check — warn and continue if the user declines to register.
-- **Runtime Readiness Diagnostic**: After the save startup check has activated or resumed a run, run `harness/hooks/check_readiness.py --host auto --require-active-run` (or the selected host instead of `auto`) to report Python version, hook registration, and `skillset-saves` active-run status in one place. Treat a failed readiness check as a user-visible warning and audit event, not as a hard stop: Python too old blocks hook verification/registration, missing hooks make deterministic routing advisory-only, and missing active saves require rerunning the save startup check before delegation.
-- **Gate Spec Authority**: `../gates.yaml` is the single source of truth for every boundary: required evidence, artifact-backed keys, sanctioned fallback values, typed record shapes, submitters, and the finding policy. `../pipelines.yaml` is the matching stage map. Never accept or require an evidence key these files do not declare.
-- **Stack Lock**: `stack_lock` is required gate evidence at `design-to-build`. It names the registry slug, locked versions, and overlay sha256 from `../tech-stacks/registry.yaml`, or carries the sanctioned fallback `no new runtime or framework - existing stack unchanged`. Detect the slug deterministically with `python skills/scripts/check_runtime.py --detect-project`; never introduce a runtime, framework, or dependency without recording the decision and its owner.
-- **Design System Evidence**: For a user-facing surface, expect the design package to carry the component template and UI/UX handoff required by `../design-doctrine.md` §5, submitted as `ui_evidence` at `design-to-build`, and rendered verification from `design-qa` as `rendered_verification` at `review-to-delivery`. A run with no user-facing surface carries the sanctioned applicability record instead.
-- **One Writer**: `../ownership.yaml` and `../save-ownership.yaml` are the write contracts. Admiral writes intake, routing, the grilling log, cross-stage handoffs, and the delivery package; `session-memory` writes the run record through `save_run.py` only; each phase lead writes its own phase directory; gatekeepers write verdicts and never repair a submission.
-- **Canonical Contracts**: Apply `../contracts/evidence-standards.md` at every evidence claim, `../contracts/handoff-templates.md` at every delegation and gate submission, `../contracts/workflow-protocol.md` at every state transition, `../contracts/responsibility-matrix.md` when ownership is unclear, and `../contracts/delivery-template.md` at `RUN_COMPLETE`.
-- **MCP Registry Freshness**: Read `mcp-tools.md` at intake. If the file is missing, empty, or `last_discovery_at` is older than `discovery_ttl_hours` (canonical in `mcp-tools.md`; default 480h), pause and prompt the user to confirm or refresh the inventory before proceeding; on refresh, rewrite the file with a new `last_discovery_at` and append `MCP_REGISTRY_CHECK` with `action=refreshed` to the audit trail.
+Fifteen contracts bind this run. The decision each one forces is stated here;
+`references/contracts.md` carries their full normative text, and neither document
+paraphrases the other.
+
+**At intake, before any run exists**
+
+- **Grill-Me Intake**: reach a shared understanding before delegating anything, and write the result to the intake artifact that backs the `decisions` gate key.
+- **Harness Hook Registration**: run `verify_registration.py`; without the prompt-submit hook, entry routing is advisory-only, and that is said out loud rather than assumed away.
+- **Runtime Readiness Diagnostic**: run `check_readiness.py`; a failed dimension degrades the run with a named warning, never blocks it silently.
+- **MCP Registry Freshness**: a registry older than its TTL is confirmed or refreshed before it is trusted.
+
+**Persistence and mode, at every boundary**
+
+- **Save-Protocol Adherence**: probe before claiming persistence; `Persistence active: yes` without a successful probe is a contract violation.
+- **Mode Re-Check**: reconcile the capability probe against the cached mode in place; a changed host updates the record rather than failing the delegation.
+- **One Writer**: admiral writes intake, routing, the grilling log, cross-stage handoffs, and the delivery package — and nothing a phase lead, gatekeeper, or `session-memory` owns.
+
+**Routing, on every user turn**
+
+- **Entry Routing**: the first turn of a lifecycle request initiates here, not at a sub-orchestrator.
+- **Session Routing**: while a run is active and the lock is held, the session is pinned and every input routes through the active sub-orchestrator.
+
+**Gate and evidence, at every submission**
+
+- **Gate Spec Authority**: `../gates.yaml` and `../pipelines.yaml` decide required evidence, fallbacks, submitters, and stage maps. An evidence key they do not declare is never accepted or required.
+- **Stack Lock**: `stack_lock` is required at `design-to-build`, detected with `check_runtime.py --detect-project`, never invented.
+- **Design System Evidence**: a user-facing surface owes `ui_evidence` at `design-to-build` and `rendered_verification` at `review-to-delivery`; a run with no such surface carries the sanctioned applicability record.
+- **Taste**: resolve applicable user Taste for presentation and interaction choices, keep the current explicit instruction highest, and surface conflicts with mandatory requirements rather than normalizing them.
+- **Shared severity**: Critical | Major | Minor | Info, per execution-contract clause 3 above.
+- **Canonical Contracts**: apply `../contracts/` at the point each one governs — evidence claims, delegations, state transitions, ownership questions, and `RUN_COMPLETE`.
 
 ## Delegation Surface
 
 - `design/commander`
 - `build/build-management`
 - `review/code-chief`
+- `design/redesign` for the redesign pipeline, gated at `redesign-review`; its chosen variant then enters `design/commander` as the design-system input
+- `review/cso` for the security pipeline, gated at `security-review`
+- `investigate` for the investigation pipeline, gated at `investigation-review`
+- `qa` for the qa pipeline, gated at `qa-review`; a report-only run stays under `qa`, which may run the sweep through `qa-only` but remains the only `qa-review` submitter
+- `ship` for the release pipeline, gated at `deploy-readiness`, after delivery approval and with a fresh human go decision
 - `gatekeeper-admiral`
 - `skill-maker` for on-demand skill and team creation
+- `taste` for explicit preference inspection and lifecycle mutation
 - `session-memory` for cross-session checkpoints and durable learnings
 
 ## Mandatory Intake Engagement
@@ -141,6 +191,7 @@ Immediately after the user confirms scope at intake — and before the first sub
 - Push remediation back to the owning sub-orchestrator instead of editing its package locally.
 - Map skill-maker verdicts as `SHIP` -> `APPROVED`, `ITERATE` -> `REVISE`, `BLOCKED` -> `ESCALATE`.
 - Cap cross-stage revision cycles at two before escalating the dispute to the user.
+- Treat every `REVISE` as one packet (`../gates.yaml` `revise_policy`): forward all of `revise_packet.by_owner` plus the gatekeeper's judgment findings to the owning sub-orchestrator in one delegation, expect it to fan owner groups out in parallel and resubmit once, and pass `--prior` on the resubmission so the gate re-judges only `changed_evidence`.
 
 ## Skip Rule
 
@@ -158,21 +209,12 @@ Skip only when an upstream artifact is fully approved, structurally complete, an
 
 ## Pipeline Routes
 
-| Request | Route | Closes at |
-| --- | --- | --- |
-| Design, build, and review end to end | `design/commander`, then `build/build-management`, then `review/code-chief` | `design-to-build`, `build-to-review`, `review-to-delivery` |
-| Design only, or continue from an approved design | the earliest incomplete boundary | as above |
-| Security audit, threat model, hardening, or remediation | `review/cso` driving `security-review` and `mr-robot` | `security-review` |
-| Unknown failure mechanism | `investigate`; its bounded fix path returns to the owning phase | `investigation-review` |
-| Product testing with recorded evidence | `testing-and-qa/qa`, or `qa-only` for a report-only run | `qa-review` |
-| Skill or coordinated team creation | `skill-maker` | `skill-maker-to-delivery` |
-| Release preparation and rollout | `release-and-deployment/ship`, then `land-and-deploy` after a fresh human go decision | `deploy-readiness` |
-| Checkpoint or resume | `session-memory` plus the earliest incomplete owner | the pending boundary |
+`references/routing.md` carries the full request-to-route map with each route's
+closing boundary. Three rules decide the rest:
 
-Frontend and UI work stays inside the design and review pipelines: `architect`
-owns the design system, `design-qa` and `frontier` own its review evidence. There
-is no separate frontend pipeline. `../pipelines.yaml` is the authoritative stage
-map; the prose here elaborates it and must not contradict it.
+- The delivery chain is `design/commander` then `build/build-management` then `review/code-chief`, closing at `design-to-build`, `build-to-review`, and `review-to-delivery`. A partial request enters it at the earliest incomplete boundary rather than at the stage the user named.
+- Every other pipeline — redesign, security, investigation, qa, taste, skill-maker, release — is a single-owner route closing at its own boundary, listed with that owner and boundary in the Delegation Surface above. Its output returns here; it never chains into the next stage on its own.
+- `../pipelines.yaml` is the authoritative stage map. When prose and file disagree, the file wins.
 
 ## Agent Mode
 
@@ -186,23 +228,17 @@ At intake, detect whether the host exposes sub-agent delegation, file operations
 
 ## Failure Modes
 
+These five change what Admiral does next. The lineage, persistence, mode, and
+readiness failures whose handling is procedural rather than routing are in
+`references/failure-modes.md`, which repeats none of these rows.
+
 | Scenario | Response |
 | --- | --- |
-| A resume package claims approval but the revision lineage or gate record does not match the submitted artifact set | Rewind to the earliest affected boundary and explain exactly which approval chain broke. |
-| An upstream package changes after downstream work has already started | Invalidate the dependent handoffs, preserve the superseded evidence, and replay only the boundaries affected by the drift. |
-| A create-skill or create-team request arrives without usable trigger language, success criteria, or packaging target | Stop at intake, collect the missing intent, and do not hand skill-maker an underspecified brief. |
-| The host loses a required tool capability mid-run, such as sub-agent delegation or file writes | Fall back to skill mode only for the affected boundary, record the degraded execution path, and keep the remaining approvals consistent. |
-| `skillset-saves/` contains an active latest run when the user sends a fresh-looking request | Treat the session pin and saved state as authoritative: run the resume protocol, present the active boundary, and do not fork a new run unless the user explicitly asks for one. |
-| Persistence activation fails after a missing or inactive `skillset-saves/` directory is detected | Warn once, record `persistence_activation_result: failed` when writable, try read-only resume from any readable latest artifacts, then continue in transient mode only if no coherent boundary can be proven. |
-| A saved latest run is unreadable or partially corrupt | Preserve any readable artifacts, classify the directory as `unreadable`, attempt read-only resume from the earliest provable boundary, and otherwise continue transiently with a clear warning instead of overwriting the evidence. |
+| The request names no deliverable, or the intake brief comes back malformed, empty, or self-contradicting (a resume hint with no run id, a stage skip with no approval lineage) | Do not classify a mode from a guess. Name the missing or conflicting field, ask the one question that resolves it under `grill-me-doctrine.md`, and create no run until scope is answerable. An unparseable brief is an intake failure, never a Tier 0 shortcut. |
 | `_latest.md` is missing or stale but `runs/` still holds a non-terminal run | Classify the directory `orphaned`, not `missing`. Rebuild `_latest.md` to point at the most recent non-terminal run, append `LATEST_POINTER_REBUILT`, and run the resume protocol. Never fork a fresh run over a recoverable orphan — a lost pointer is not a lost run. |
-| Two handoff submissions refer to the same boundary but carry conflicting verdict histories | Preserve both records, treat the boundary as disputed, and escalate rather than silently normalizing the conflict. |
-| Persistence write-probe fails at intake but admiral still emits `Persistence active: yes` | Treat as a contract violation. Downgrade the run to `Persistence active: no`, warn the user once, and rewrite every Save Context block accordingly before any sub-orchestrator delegation. |
-| Mode probe at a boundary disagrees with the cached `execution_mode` | Reconcile in place: update `_state.md`, append `MODE_RECHECK` with `cached`, `detected`, and `action`, continue under the new mode. Do not abort the delegation, do not force the user to retry. |
+| A boundary returns `REVISE` twice, exhausting `../gates.yaml` `revise_policy.cycle_cap` of 2 | Stop resubmitting. Run `save_run.py checkpoint --run-id {run-id} --owner admiral --expect-revision <n> --set phase_state=DISPUTED_AWAITING_USER --next-action "<dispute>"` — a checkpoint rather than `block`, so the run keeps the session pin while the user decides — preserve both revise packets and both verdicts as evidence, and return a user-decision packet naming the unclosed evidence keys, their owners, and the options. A third cycle is escalation, not another attempt. |
+| A required tool or host capability is unavailable: sub-agent delegation, file writes, or the Python the harness scripts need | Fall back to skill mode for the affected boundary only, record the degraded execution path in `_state.md`, and keep the remaining approvals consistent. When Python is what is missing, the gate cannot be validated mechanically: mark the boundary unverified rather than approved, and name the check that did not run. |
 | User input arrives mid-run without the keyword "admiral" while a run is `*_ACTIVE` | Honor the session pin. Route the input through the active sub-orchestrator, append the routing decision to the audit trail, and never fork a parallel skill that bypasses the run. |
-| `mcp-tools.md` is missing or `last_discovery_at` exceeds `discovery_ttl_hours` (default 480h) at intake | Pause at intake, prompt the user with the auto-detected MCP list, and only proceed once the registry is confirmed or rewritten with a fresh `last_discovery_at`. |
-| `verify_registration.py` reports MISSING or UNKNOWN at intake — one or more harness hooks are not registered for the active host | Surface the `REGISTER_PROMPT`, explain that entry routing is advisory-only until the prompt-submit hook is registered, and offer to register all three hooks by rerunning the installer with `-RegisterHooks` / `--register-hooks`. If the user declines, warn once and continue (the description/doctrine layer still applies). A new or changed hook config may need `/hooks` or a restart to load. |
-| `check_readiness.py` reports Python too old, hooks missing, or no active pinned save run after startup | Record `RUNTIME_READINESS_CHECK`, surface the specific failed dimension, retry only the save startup check when saves are missing, and otherwise continue with an explicit degraded-mode note unless the user approves hook registration or Python installation. |
 
 ## Save Protocol
 
@@ -210,18 +246,22 @@ Persistence is mandatory when file-system tools are available. For the full save
 
 ## References
 
-- `gates.yaml` (skill set root) for the canonical gate spec: eight boundaries with their required evidence, artifact-backed keys, sanctioned fallbacks, typed records, and submitters.
-- `pipelines.yaml` (skill set root) for the eight pipelines, their ordered stages, stage owners, closing boundary, and required scripts.
+- `gates.yaml` (skill set root) for the canonical gate spec: ten boundaries with their required evidence, artifact-backed keys, sanctioned fallbacks, typed records, and submitters.
+- `pipelines.yaml` (skill set root) for the ten pipelines, their ordered stages, stage owners, closing boundary, and required scripts.
 - `ownership.yaml` and `save-ownership.yaml` (skill set root) for the one-writer contracts at artifact and path level.
 - `execution-contract.md` (skill set root) for the canonical preamble clauses and the tier table.
 - `contracts/` (skill set root) for evidence standards, handoff templates, the workflow state machine, the responsibility matrix, universal frameworks, and the delivery template.
 - `tech-stacks/registry.yaml` (skill set root) for the stack overlays behind `stack_lock`.
 - `harness/gatekeeper/check.py` for the boundary validator that loads `gates.yaml`.
 - `harness/hooks/save_run.py` for the run lifecycle operations `session-memory` uses.
-- `routing-doctrine.md` (skill set root) for the entry-routing contract that makes Admiral the canonical front door, the in-scope vs standalone tiers, the active-handoff loop guard, and the `UserPromptSubmit` reinforcement hook.
+- `routing-doctrine.md` (skill set root) for the entry-routing contract that makes Admiral the canonical front door, the in-scope vs standalone routing classes, the active-handoff loop guard, and the `UserPromptSubmit` reinforcement hook.
 - `grill-me-doctrine.md` (skill set root) for the binding intake interview protocol run at intake before any delegation.
+- `taste-doctrine.md` (skill set root) for the canonical scope, provenance, lifecycle, and deterministic resolution of user-authored or explicitly confirmed presentation and interaction preferences.
+- `references/routing.md` for the full request-to-route map and the frontend/UI routing note.
+- `references/contracts.md` for the full normative text of the fifteen contracts the Required Contracts section names.
 - `references/workflow.md` for the detailed intake, sequencing, rewind, and delivery rules.
-- `references/examples.md` for concrete full-pipeline, resume, and skill-maker request patterns.
+- `references/failure-modes.md` for the lineage, persistence, mode, and readiness failures the SKILL.md table does not carry.
+- `references/examples.md` for concrete Tier 0, full-pipeline, resume, redesign, security, QA, and skill-maker request patterns.
 - `intake-brief.yaml` for the normalized intake surface Admiral passes into a new run.
 - `stub-contract.md` for the stage ownership and handoff contract summary.
 - `save-protocol.md` (skill set root) for the persistent save system: directory structure, file formats, write probe, mode re-check, session pin, save triggers, and resume protocol.
@@ -235,4 +275,4 @@ Persistence is mandatory when file-system tools are available. For the full save
 
 ## Packaging Notes
 
-Package `SKILL.md`, `references/workflow.md`, `references/examples.md`, `intake-brief.yaml`, `stub-contract.md`, and `agent/` together. Keep generated reports and archives outside the skill directory.
+Package `SKILL.md`, `references/workflow.md`, `references/routing.md`, `references/contracts.md`, `references/failure-modes.md`, `references/examples.md`, `intake-brief.yaml`, `stub-contract.md`, and `agent/` together. Keep generated reports and archives outside the skill directory.

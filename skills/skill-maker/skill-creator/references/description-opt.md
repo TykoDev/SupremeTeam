@@ -50,7 +50,7 @@ column D i think"`
 
 ### Should-trigger queries (8–10)
 
-Think coverage. You want:
+Think coverage. The set needs:
 
 - Different phrasings of the same intent — some formal, some casual
 - Cases where the user doesn't explicitly name the skill or file type but clearly
@@ -76,14 +76,30 @@ genuinely tricky.
 
 Present the eval set for review using the HTML template:
 
-1. Read the template from `assets/eval_review.html`
+1. Read the template from `../assets/eval_review.html`
 2. Replace the placeholders:
    - `__EVAL_DATA_PLACEHOLDER__` → the JSON array of eval items (no quotes around it
      — it's a JS variable assignment)
    - `__SKILL_NAME_PLACEHOLDER__` → the skill's name
    - `__SKILL_DESCRIPTION_PLACEHOLDER__` → the skill's current description
-3. Write to a temp file (e.g., `/tmp/eval_review_<skill-name>.html`) and open it:
-   `open /tmp/eval_review_<skill-name>.html`
+3. Resolve the destination with the governed resolver and write the rendered file
+   there — never `/tmp/` and never the project root (`../SKILL.md`, Packaging):
+
+   ```bash
+   python skills/scripts/output_paths.py --kind eval_reports \
+     --name eval_review_<skill-name>.html
+   ```
+
+   That resolves to `.harness-state/eval-reports/eval_review_<skill-name>.html`,
+   the same root `../scripts/run_loop.py` writes live reports to. Open it with
+   Python's `webbrowser`, which is what `../eval-viewer/generate_review.py` uses
+   and what works on every host — `open` is macOS-only and is not a command on
+   Windows or Linux:
+
+   ```bash
+   python -c "import pathlib,sys,webbrowser; webbrowser.open(pathlib.Path(sys.argv[1]).resolve().as_uri())" \
+     .harness-state/eval-reports/eval_review_<skill-name>.html
+   ```
 4. The user can edit queries, toggle should-trigger, add/remove entries, then click
    "Export Eval Set"
 5. The file downloads to `~/Downloads/eval_set.json` — check the Downloads folder for
@@ -109,7 +125,7 @@ python -m scripts.run_loop \
   --verbose
 ```
 
-Use the model ID from your system prompt (the one powering the current session) so
+Use the model ID from the running session's system prompt so
 the triggering test matches what the user actually experiences.
 
 While it runs, periodically tail the output to give the user updates on which
@@ -144,7 +160,7 @@ description matches perfectly, because Claude can handle them directly with basi
 tools. Complex, multi-step, or specialized queries reliably trigger skills when the
 description matches.
 
-This means your eval queries should be **substantive enough that Claude would
+This means eval queries must be **substantive enough that Claude would
 actually benefit from consulting a skill**. Simple queries like "read file X" are
 poor test cases — they won't trigger skills regardless of description quality.
 
@@ -163,5 +179,5 @@ After: <new description>
   Train score: 96%  Test score: 94%
 ```
 
-Report honestly — if test score went down while train went up, you overfitted.
+Report honestly — a test score that fell while train rose is overfitting.
 Revert. If neither changed, the description was already optimal (that's a win).

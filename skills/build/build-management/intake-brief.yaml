@@ -1,9 +1,12 @@
 skill_name: build-management
 target_path: build/build-management/
 purpose: |
-  Orchestrates implementation from an approved design package to a production-
-  ready build package. Owns coding, testing, security hardening, completeness
-  confirmation, and gate routing across the build pipeline.
+  Sequences and assembles; the specialists write the code. Owns the build
+  package as one revision with coherent evidence - implementation, tests,
+  runtime health, hardening, and completeness certification that all describe
+  the same commit - and the gate routing that carries it to build-to-review.
+  Runtime health is unconditional and its smoke log is never substituted by a
+  passing test suite.
 triggers:
   - implement this design
   - start the build pipeline
@@ -20,16 +23,36 @@ outputs:
   - remediation routing summary when revisions occur
 severity_model: shared 4-tier (Critical | Major | Minor | Info)
 required_contracts:
-  - Proactive triggers
-  - Shared severity
-  - Delegated vendoring detection
+  - Execution-contract clauses stated verbatim in SKILL.md
+  - Vendoring detection (mechanical non-first-party rule)
+  - Save-Protocol Adherence
   - Fail-closed mandatory phases
+gate:
+  boundary: build-to-review
+  submitter: build-management
+  evidence_keys:
+    - approved_design_revision
+    - implementation
+    - tests
+    - runtime
+    - traceability
+    - security_evidence
+  authored_here:
+    - approved_design_revision
+    - traceability
+  artifact_backed:
+    - tests
+    - runtime
+  waivable:
+    - security_evidence
+  not_waivable: approved_design_revision, implementation, tests, runtime, traceability
 authoring_rules:
   - First-principles wording only
   - No provenance or comparison language
   - No references to planning-note filenames inside generated artifacts
   - Supporting files must be one level deep and directly referenced
 acceptance:
+  rubric_score: 100/100
   blocked_phrase_scan: zero hits
   cross_cutting_contracts_embedded: true
   package_ready: true

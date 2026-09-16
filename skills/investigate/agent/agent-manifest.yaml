@@ -1,0 +1,53 @@
+# Investigate Agent Manifest
+
+name: investigate-agent
+type: sub-orchestrator
+version: 1.0.0
+parent: admiral-agent
+
+purpose: |
+  Autonomous investigation pipeline orchestrator. Scopes the symptom, executes a
+  reproduction, builds an observed evidence chain from symptom to mechanism,
+  settles on the surviving mechanism, bounds the smallest fix path and names the
+  phase that owns it, and assembles the package gated at investigation-review
+  before admiral returns the fix path to that phase.
+
+capabilities:
+  - phase-management
+  - state-persistence
+  - evidence-capture
+  - gate-validation
+
+tools_required:
+  - category: file-system
+    operations: [read, write, list, search]
+  - category: terminal
+    operations: [execute]         # reproduction commands, scripts/output_paths.py, harness/gatekeeper/check.py
+  - category: search
+    operations: [semantic, grep]
+
+tools_optional:
+  - category: browser
+    operations: [navigate, snapshot, interact]
+    purpose: Reproducing and capturing a failure that only appears in a rendered surface
+  - category: sub-agent
+    operations: [invoke, receive-result]
+    purpose: Parallel evidence gathering across independent sources when hypotheses do not interact
+
+delegates_to:
+  - name: admiral
+    skill_path: admiral
+    stage: return-to-owning-phase  # routes the approved fix path back to the owning phase
+  - name: session-memory
+    skill_path: session-memory     # run record, checkpoints, evidence hashes
+
+gate:
+  boundary: investigation-review
+  submitter: investigate
+  self_check: python skills/harness/gatekeeper/check.py --boundary investigation-review --package <manifest.json>
+
+detection_rules:
+  agent_mode_conditions:
+    - file system tools available
+    - terminal execution available for the reproduction
+  fallback: skill-mode           # hypotheses are tested sequentially in skill mode

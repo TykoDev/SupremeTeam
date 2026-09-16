@@ -73,6 +73,64 @@ class RuntimeUtilitiesTests(unittest.TestCase):
             self.assertEqual(json.loads(record.read_text(encoding="utf-8"))["result"]["status"], "pass")
             self.assertEqual(json.loads((root / "scan.stdout.txt").read_text(encoding="utf-8")), ["--", "--target"])
 
+    def assert_wrapper_error(self, root: Path, out: Path) -> subprocess.CompletedProcess:
+        """Run the wrapper at an unusable `out` and assert the documented failure shape.
+
+        scan_record.py documents exit 0 when a record was written and 2 on wrapper
+        error, so every unwritable destination must take the wrapper-error branch
+        with a structured engine_error rather than raising out of main() as a
+        traceback and exiting 1.
+        """
+        process = subprocess.run(
+            [sys.executable, str(SCRIPTS / "scan_record.py"), "--project-root", str(root),
+             "--out", str(out), "--no-run", "--", "pip-audit"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(process.returncode, 2, process.stdout + process.stderr)
+        self.assertNotIn("Traceback", process.stderr)
+        self.assertIn("engine_error", json.loads(process.stderr.strip()))
+        return process
+
+    def test_unusable_record_destination_exits_two_with_a_structured_error(self):
+        """An --out whose parent cannot be created is a wrapper error, not a crash."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            blocker = root / "blocker"
+            blocker.write_text("not a directory", encoding="utf-8")
+            self.assert_wrapper_error(root, blocker / "nested" / "scan.json")
+
+    def test_unwritable_raw_output_destination_exits_two_and_writes_no_record(self):
+        """The sidecars are the artifacts the record names, so losing one aborts the run.
+
+        gates.yaml requires a scan record to carry hashed artifacts, so a record that
+        outlived a failed sidecar write would name raw output that does not exist.
+        Aborting keeps the documented contract exact: no record written, exit 2.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            record = root / "scan.json"
+            (root / "scan.stdout.txt").mkdir()
+            self.assert_wrapper_error(root, record)
+            self.assertFalse(record.exists())
+
+    def test_unwritable_record_file_exits_two_with_a_structured_error(self):
+        """A record whose own JSON cannot be written is not a usable record at all."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            record = root / "scan.json"
+            (root / "scan.json.tmp").mkdir()
+            self.assert_wrapper_error(root, record)
+            self.assertFalse(record.exists())
+
+    def test_failed_record_replace_exits_two_and_leaves_no_temp_file(self):
+        """os.replace can fail after a clean write; the temp file must not survive it."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            record = root / "scan.json"
+            record.mkdir()
+            self.assert_wrapper_error(root, record)
+            self.assertFalse((root / "scan.json.tmp").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

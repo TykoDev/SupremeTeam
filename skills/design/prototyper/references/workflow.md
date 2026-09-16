@@ -1,13 +1,19 @@
 # Workflow Reference
 
+Read this when building a variant: it carries the build order, the prototype
+architecture, the inventory fields the build reads, the marker placement rules,
+the self-check command, and the acceptance checklist.
+
 ## Contents
 
 1. Build order
-2. Prototype architecture
-3. Marker placement
-4. Decision rules
-5. Acceptance checklist
-6. Collaboration notes
+2. Inventory fields this build reads
+3. Prototype architecture
+4. Marker placement
+5. Self-check command
+6. Decision rules
+7. Acceptance checklist
+8. Collaboration notes
 
 ## Build Order
 
@@ -17,6 +23,30 @@
 4. Prototype (`app.html`): shell, router, views, state switcher, mocked data, interactions, flows.
 5. Specification (`variant.md`): the doctrine §5 templates, token table, differentiation statement, Taste traceability, state coverage matrix, and any recorded deviations.
 6. Self-check with `check_parity.py`, then return.
+
+## Inventory Fields This Build Reads
+
+`design-inventory.json` is `design/design-mapper`'s artifact and its authoritative
+schema lives with that skill. These are the fields a variant build consumes; they
+are restated here so the packaged skill stands alone.
+
+| Path in the inventory | What the build does with it |
+| --- | --- |
+| `routes[].id` | One view in `app.html`, marked `data-route` |
+| `routes[].path` | The hash route that renders the view (`/orders` → `#/orders`) |
+| `routes[].purpose`, `routes[].primary_action` | The view's heading and its primary control |
+| `routes[].states[]` | One reachable rendering per state, marked `data-state` or `data-route-state` |
+| `routes[].components[]` | The catalog primitives the view composes |
+| `components[].id`, `.name`, `.shadcn` | The catalog entry, its name, and the shadcn primitive it maps to (`null` means the variant names it itself) |
+| `components[].variants[]`, `.sizes[]`, `.states[]` | The axes `components.html` must show in full |
+| `interactions[].id`, `.keyboard`, `.confirmation` | A working control, its keyboard path, and its confirmation step |
+| `flows[].steps[]` | An end-to-end traversal, each step referencing an existing route, state, and interaction |
+| `tokens.*` | The current values a direction departs from — read for contrast, never copied |
+| `accessibility_baseline[]` | Findings the variant must not reproduce |
+| `limitations[]` | Rows marked `inferred`; a state marked unreachable is still rendered |
+
+Ids are lowercase and dot-separated, unique within their list, and never renamed.
+A variant never invents an id and never drops one.
 
 ## Prototype Architecture
 
@@ -49,6 +79,33 @@
 Markers are attributes on rendered elements. A marker inside a comment, a
 template string that never renders, or a script constant does not count; the
 checker scans markup, and the mapper's rendered check would catch the gap.
+
+## Self-Check Command
+
+Two commands, in this order. The first resolves a governed scratch destination;
+the second runs the check against it.
+
+```bash
+python skills/scripts/output_paths.py --kind test_work --name parity-selfcheck-v2.json
+# -> {"ok": true, "kind": "test_work", "path": "...", "relative": ".harness-state/test-work/parity-selfcheck-v2.json"}
+
+python skills/scripts/check_parity.py \
+  --inventory redesign/artifacts/inventory/design-inventory.json \
+  --app redesign/artifacts/variants/v2/app.html \
+  --components redesign/artifacts/variants/v2/components.html \
+  --out .harness-state/test-work/parity-selfcheck-v2.json \
+  --project-root .
+```
+
+- Pass the resolver's `relative` value to `--out`. The resolver rejects an
+  absolute or traversing name with a non-zero exit, which is why the scratch path
+  is never composed by hand.
+- Exit 0 is full coverage, 1 is missing ids with the exact ids in the record, 2 is
+  an input or engine error with no record written. Only 0 permits returning.
+- `--min-coverage` stays at its default `1.0`. Lowering it converts a defect into
+  a pass and the mapper's authoritative run would catch it anyway.
+- The scratch record is not gate evidence and never ships beside the variant;
+  `design/design-mapper` runs the authoritative check and owns its record.
 
 ## Decision Rules
 

@@ -74,12 +74,12 @@ delegates_to:
     verdict_source: gatekeeper-admiral (investigation-review)
     optional: true
   - name: qa
-    skill_path: testing-and-qa/qa
+    skill_path: qa
     handoff: qa package (a report-only run carries the fixes_applied applicability record)
     verdict_source: gatekeeper-admiral (qa-review)
     optional: true
   - name: ship
-    skill_path: release-and-deployment/ship
+    skill_path: ship
     handoff: deploy-readiness package; land-and-deploy only after a fresh human go decision
     verdict_source: gatekeeper-admiral (deploy-readiness)
     optional: true

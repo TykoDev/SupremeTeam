@@ -7,6 +7,52 @@ source_of_truth: >-
   two files must agree (validation/test_save_contracts.py). Stage artifacts named
   in pipelines.yaml must appear here as an artifact id
   (validation/test_pipeline_contracts.py).
+enforcement:
+  machine_checked: >-
+    scripts/validate_manifests.py check_ownership is the comparator for the
+    structure of this file: every owner name resolves to a team-manifest.yaml
+    member or to one of the three role names (gatekeeper, safety-guardrails,
+    phase-lead), every owner declares a non-empty role, every artifact id is
+    unique, every artifact names a non-empty before boundary and a non-empty
+    evidence list, every writes entry names a declared artifact, and an artifact
+    has exactly one declared writer - a role artifact needs at least one.
+    check_gates rejects a gates.yaml boundary submitter or evidence_owners entry
+    that is not an owner here, and check_pipeline_mirrors rejects a pipelines.yaml
+    stage whose owner is not the declared writer of the artifact it produces.
+    validation/test_pipeline_contracts.py repeats the artifact-id and stage-owner
+    checks independently (StageArtifactOwnershipTests),
+    validation/test_save_contracts.py OwnershipAgreementTests pins this file
+    against save-ownership.yaml for core-run-record, gate-verdict, and
+    grilling-log, and validation/test_catalog_contracts.py OwnershipProseTests
+    rejects a SKILL.md sentence claiming to write an artifact listed under that
+    skill's does_not_write.
+  handoff_rules: >-
+    No comparator reads the handoff_rules list at the tail of this file as rules.
+    Each is recorded here with whatever mechanical support exists for it
+    elsewhere. Rule 2 (exactly one writer per artifact) is machine-checked as a
+    declaration by check_ownership; the "path and revision" half of it is not.
+    Rule 5 (gate-verdict has one writer per boundary) is machine-checked only as
+    far as the role - check_ownership requires the gatekeeper role artifact to
+    have a declared writer, and save-ownership.yaml's gate-verdict class names
+    the same role - while which of the four gatekeepers writes at which boundary
+    is judgement. Rule 6 (gatekeepers never repair a submission) is
+    machine-checked at the tool surface by test_catalog_contracts.py
+    ToolSurfaceTests, which denies the Edit tool to every gatekeeper; that no
+    repair happens by another route is judgement. Rule 8 (a guard or freeze owner
+    never widens a path boundary while applying a check) is machine-checked only
+    in that the guard record has one sanctioned writer,
+    harness/hooks/guard_state.py, pinned by GuardWriterTests with the pre-tool
+    hook denying direct writes; the widening itself is judgement. Rules 1, 3, 4,
+    and 7 have no mechanical support at all: nothing observes a silent rewrite, a
+    REVISE return instead of an edit, an ownership transfer, or a change to an
+    approved package.
+  judgement: >-
+    purpose, source_of_truth, this enforcement block, every role string, every
+    consumes list (read by nothing), and the content of every evidence list and
+    every before value beyond non-emptiness. does_not_write is only partly
+    checked: OwnershipProseTests skips single-stem ids - plan, tests, findings,
+    and architecture - because they are ordinary English, so a prose
+    contradiction on one of those four passes.
 
 owners:
   admiral:
@@ -551,7 +597,7 @@ artifacts:
     before: design-to-build
     evidence:
       - trust boundaries the design introduces or moves
-      - controls the build must implement, or the sanctioned fallback value
+      - controls the build must implement
   - id: security-evidence
     owner: security-builder
     before: build-to-review

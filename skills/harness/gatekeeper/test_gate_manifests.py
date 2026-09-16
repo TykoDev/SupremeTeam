@@ -15,6 +15,19 @@ GATE_SPEC = SKILLS / "gates.yaml"
 GATE_DOC = SKILLS.parent / "docs" / "gatekeepers.md"
 WORKFLOW_DOC = SKILLS / "contracts" / "workflow-protocol.md"
 
+# The gatekeeper skills carry the same boundary table. gates.yaml's `purpose`
+# claims this test guards them, but it only ever parsed the two documents above,
+# so all four drifted: one omitted five of six required keys, another added two
+# keys the spec does not define, a third missed an entire boundary. These tables
+# are hand-maintained mirrors, and a mirror nothing compares is a mirror that
+# rots.
+GATEKEEPER_DOCS = (
+    SKILLS / "gatekeeper-admiral" / "SKILL.md",
+    SKILLS / "design" / "gatekeeper-design" / "SKILL.md",
+    SKILLS / "build" / "gatekeeper-build" / "SKILL.md",
+    SKILLS / "review" / "gatekeeper-code" / "SKILL.md",
+)
+
 ARTIFACT = "evidence.md"
 
 
@@ -293,7 +306,38 @@ class GateSpecContractTests(unittest.TestCase):
         self.assertEqual(workflow, set(spec),
                          "workflow-protocol.md boundaries differ from gates.yaml")
 
+    def test_gatekeeper_skill_boundary_tables_match_gate_spec(self):
+        """Each gatekeeper's own boundary table must mirror gates.yaml.
 
+        Same parser as the documented table above, pointed at the four skills
+        gates.yaml names. A gatekeeper that documents a key the spec does not
+        define will accept evidence the gate never asked for; one that omits a
+        required key will approve a package that is missing it.
+        """
+        spec = load_spec()["boundaries"]
+        seen = 0
+        for doc in GATEKEEPER_DOCS:
+            text = doc.read_text(encoding="utf-8")
+            header = "| Boundary | Guards | Submitter | Required evidence |"
+            self.assertIn(header, text,
+                          f"{doc.name} has no boundary table; gates.yaml says it mirrors the spec")
+            block = text.split(header, 1)[1].split("\n\n", 1)[0]
+            for line in block.splitlines():
+                match = re.match(r"^\|\s*`([a-z][a-z-]+)`\s*\|(.+)\|\s*$", line)
+                if not match:
+                    continue
+                name, rest = match.group(1), match.group(2)
+                with self.subTest(skill=doc.parent.name, boundary=name):
+                    self.assertIn(name, spec,
+                                  f"{doc.parent.name} documents boundary '{name}' "
+                                  "which gates.yaml does not define")
+                    keys = set(re.findall(r"`([a-z_]+)`", rest))
+                    self.assertEqual(
+                        keys, set(spec[name]["required_evidence"]),
+                        f"{doc.parent.name} evidence keys for {name} differ from gates.yaml")
+                    seen += 1
+        self.assertGreaterEqual(seen, len(spec),
+                                "the four gatekeepers must between them document every boundary")
 
 
 if __name__ == "__main__": unittest.main()

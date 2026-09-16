@@ -1,13 +1,20 @@
 # Workflow Reference
 
+Read this when producing a `design-inventory` or a `parity-evidence` record: it
+carries the mapping sequence, the inventory JSON schema, the parity-marker
+contract, the checker's exit contract, the report structure, and the acceptance
+checklist.
+
 ## Contents
 
 1. Mapping sequence
 2. Inventory schema
 3. Parity-marker contract
-4. Decision rules
-5. Acceptance checklist
-6. Collaboration notes
+4. Checker contract
+5. Report structure (`design-inventory.md`)
+6. Decision rules
+7. Acceptance checklist
+8. Collaboration notes
 
 ## Mapping Sequence
 
@@ -92,6 +99,82 @@ coverage (`--min-coverage 1.0` is the default). The record is a typed probe:
 `artifacts` (the record itself), `inputs` (inventory, `app.html`,
 `components.html` with sha256), `coverage` per list, `missing` per list, and
 `result.status`.
+
+## Checker Contract
+
+`skills/scripts/check_parity.py` is the only source of a `parity-evidence`
+record. Its behaviour is part of the contract, not an implementation detail.
+
+```bash
+python skills/scripts/check_parity.py \
+  --inventory <design-inventory.json> \
+  --app <variant>/app.html \
+  --components <variant>/components.html \
+  --out redesign/evidence/parity-<variant>.json \
+  --project-root .
+```
+
+| Exit | Meaning | Record written |
+| --- | --- | --- |
+| 0 | Coverage meets `--min-coverage` (default `1.0`) | Yes, `result.status: pass` |
+| 1 | Inventory ids are missing from the prototype | Yes, `result.status: fail`, with the exact ids per list |
+| 2 | Input or engine error: unreadable file, wrong `schema_version`, a parity list that is not a list, an invalid or duplicate id | No — `engine_error` on stderr only |
+
+- `--project-root .` makes every `inputs[].path` in the record project-relative.
+  Without it the record can carry absolute paths, which the gate cannot bind to
+  the package's hashed artifacts. Pass it on every run.
+- `--min-coverage` is not a dial. The default of `1.0` is the parity definition in
+  `../../../design-doctrine.md` §9; lowering it converts a defect into a pass.
+- An inventory whose parity lists are all empty scores coverage `1.0`, because an
+  empty expectation set is trivially met. A surface with no router therefore gets
+  one implicit `route.root` row rather than an empty `routes` list, or the check
+  certifies a prototype that renders nothing.
+- Markers are read from rendered markup only. The scanner skips `script`, `style`,
+  and `template` contents, so a marker in a template literal or a comment does not
+  count.
+- Exit 2 is never reported as a parity result. Fix the input and re-run; a
+  hand-written record is not evidence.
+
+## Report Structure (`design-inventory.md`)
+
+The JSON is the contract; the report is what a person reads before deciding the
+redesign's scope. Both are returned, and both are hashed.
+
+```markdown
+# Design Inventory — {surface}
+
+**Source**: {paths} at {revision}   **Captured**: {timestamp}
+
+## Scope
+{routes and flows in scope, and what was deliberately excluded}
+
+## Routes and states
+{table: id, path, purpose, primary action, states, source}
+
+## Components
+{table: id, name, shadcn mapping or null, variants, sizes, states, source, usage count}
+
+## Tokens in use
+{declared tokens by group, then the off-scale table: value, location}
+
+## Interactions and flows
+{table per flow: ordered steps as route -> state -> interaction}
+
+## Inconsistencies
+{table: id, finding, location — duplicates, one-off equivalents, bypassed tokens}
+
+## Accessibility baseline
+{table: id, severity, finding, location — shared four-tier severities}
+
+## Baseline captures
+{route x tier x theme coverage, or the INFERRED record with its limitation}
+
+## Limitations
+{every row marked `inferred`, and why source or capture could not settle it}
+```
+
+Every section is filled from evidence. A section with nothing to report says so
+explicitly; an omitted section reads at the gate as an unmapped area.
 
 ## Decision Rules
 

@@ -1,6 +1,6 @@
 # Creating a SKILL.md — Authoritative Guide
 
-This guide tells you how to build a Claude skill that will (a) pass Anthropic's
+This guide covers how to build a Claude skill that will (a) pass Anthropic's
 validation, (b) actually trigger when it should, and (c) score 100/100 on the
 companion `../skill-reviewer/references/scoring-rubric.md` rubric.
 
@@ -204,7 +204,7 @@ Combat under-triggering by leaning pushy:
 - **80–300 chars** — sweet spot for most skills
 - **300–600 chars** — justified for skills that legitimately cover several
   contexts (use YAML `>` folded-scalar style for readability)
-- **Over 600 chars** — re-read; you're probably repeating yourself or pulling
+- **Over 600 chars** — re-read; the description is probably repeating itself or pulling
   body content into the description
 - **1024 chars** — hard ceiling enforced by validation
 
@@ -212,7 +212,7 @@ Combat under-triggering by leaning pushy:
 
 Some surfaces accept extra fields. Use them only when genuinely needed:
 
-- `version:` — semantic version if you're tracking revisions externally
+- `version:` — semantic version when revisions are tracked externally
 - `license:` — if the skill is open-sourced
 - `allowed-tools:` — on surfaces that honor it, e.g.
   `Read, Write, Edit, Bash, Glob, Grep, TodoWrite`
@@ -259,10 +259,10 @@ description: Processes Excel files and generates reports.
 ### 5.1 Voice
 
 - **Imperative.** "Run the script." "Validate the input." "Return JSON."
-- **Explain *why*** more than you command *what*. Today's models respond better
+- **Explain *why*** more than command *what*. Today's models respond better
   to reasoning than to stacked MUST/NEVER/ALWAYS.
-- **Reserve all-caps commands for genuinely load-bearing rules.** If you're
-  writing "MUST" for the third time in a section, reframe and explain the
+- **Reserve all-caps commands for genuinely load-bearing rules.** At the third
+  "MUST" in one section, reframe and explain the
   underlying constraint.
 
 ### 5.2 Be concise — default assumption: Claude already knows
@@ -327,7 +327,7 @@ checklist Claude can track progress against:
 ```markdown
 ## Form-filling workflow
 
-Copy this checklist and check items off as you complete them:
+Copy this checklist and check items off as each one lands:
 
 - [ ] Step 1: Analyze the form (`python scripts/analyze_form.py input.pdf`)
 - [ ] Step 2: Create field mapping (edit `fields.json`)
@@ -355,7 +355,7 @@ Whenever quality matters more than speed, bake in a validator:
 
 ### 5.7 Template pattern — fixed vs. flexible output
 
-Match the strictness of the template to your needs:
+Match the strictness of the template to the task:
 
 **Strict** (for API responses, data formats, compliance reports):
 
@@ -385,7 +385,7 @@ Here is a sensible default — adapt sections to the analysis:
 
 ### 5.8 Examples pattern — input/output pairs
 
-When output quality depends on seeing examples, include them like you'd include
+When output quality depends on seeing examples, include them the way a prompt includes
 few-shot examples in a prompt:
 
 ```markdown
@@ -467,7 +467,7 @@ Script quality rules:
   bubble up. Catch, log, provide a fallback.
 - **No voodoo constants** — every numeric parameter needs a justifying comment
   ("30s covers slow connections", "3 retries balances reliability vs speed").
-  If you can't justify it, Claude can't either.
+  A number nobody can justify is a number Claude cannot justify either.
 - **Verbose error messages** — "Field 'signature_date' not found. Available
   fields: customer_name, order_total" beats "KeyError".
 - **Top-of-file docstring** stating purpose, inputs, outputs, exit codes.
@@ -491,7 +491,7 @@ subdirectories if there are more than a handful.
 
 Bad:
 ```
-If you're doing this before August 2025, use the old API.
+Before August 2025, use the old API.
 After August 2025, use the new API.
 ```
 
@@ -579,7 +579,7 @@ reader = PdfReader("file.pdf")
 - [ ] At least 3 realistic eval queries written
 - [ ] Skill triggers reliably on the expected phrasings
 - [ ] Skill does **not** trigger on adjacent-but-distinct domains
-- [ ] Tested with every model size you intend to use (Haiku, Sonnet, Opus)
+- [ ] Tested with every model size the skill is intended for (Haiku, Sonnet, Opus)
 - [ ] Real task produces the expected quality of output
 
 ### Adversarial scoring
@@ -592,12 +592,12 @@ reader = PdfReader("file.pdf")
 
 ### 9.1 Descriptions that don't trigger
 
-Symptom: the skill exists, but Claude never picks it up for the cases you
-designed it for.
+Symptom: the skill exists, but Claude never picks it up for the cases it was
+designed for.
 
 Fix: check the description against the list of phrasings a real user would use.
 Add explicit trigger phrases. Lean pushy. Test with the description
-optimization loop if you have the tooling.
+optimization loop where the tooling is available.
 
 ### 9.2 SKILL.md is a dumping ground
 
@@ -605,7 +605,7 @@ Symptom: body over 500 lines, most of it is reference tables or deep API
 specs.
 
 Fix: move detail to `references/`. Leave SKILL.md as the table of contents.
-If you end up with 5 reference files, prefer that to one bloated SKILL.md.
+Five reference files are better than one bloated SKILL.md.
 
 ### 9.3 Second-person drift
 
@@ -655,7 +655,7 @@ The most effective skill development has two Claudes in the loop:
 1. **Claude A** helps design and refine the skill
 2. **Claude B** (a fresh instance with the skill loaded) actually uses it on
    real tasks
-3. **You** observe where B struggles and bring those observations to A
+3. The author observes where B struggles and brings those observations to A
 4. A revises the skill; B tests again
 
 The observe-refine-test cycle is how skills graduate from "looks right" to
@@ -663,7 +663,7 @@ The observe-refine-test cycle is how skills graduate from "looks right" to
 B misses context or takes the wrong path, and update SKILL.md or its
 references to address those gaps specifically.
 
-When you're ready to score the skill against the 10-dimension rubric, use the
+To score the finished skill against the 10-dimension rubric, use the
 companion document: **`../skill-reviewer/references/scoring-rubric.md`**.
 
 ---

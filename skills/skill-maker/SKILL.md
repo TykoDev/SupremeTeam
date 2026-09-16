@@ -2,25 +2,43 @@
 name: skill-maker
 description: >
   End-to-end orchestrator for creating, reviewing, improving, optimizing, and packaging Claude
-  skills and coordinated skill teams. Use when the user says "create a skill", "make a skill",
-  "write a skill", "run the skill pipeline", "review this skill", "harden
-  this skill", "take this skill to 100", "ship this skill", "make it production-ready", or
-  describes a desired skill behavior without naming it. Also use when `admiral` delegates
-  skill or team creation. Routes drafting, evals, fixes, scoring, and packaging to specialists;
-  not for general code review, architecture, or non-skill authoring.
+  skills and coordinated skill teams. Use when the user says "create a skill", "run the skill
+  pipeline", "review this skill", "harden this skill", "take this skill to 100", "optimize the
+  description", "fix triggering", or describes a desired skill behavior without naming one —
+  and when `admiral` delegates skill or team creation. Routes drafting, evals, fixes, scoring,
+  and packaging to specialists; not for general code review, architecture, or non-skill
+  authoring.
 version: 1.0.0
+allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
 # Skill Maker
 
-Single entry point for the full skill creation, adversarial review, and iterative
-improvement lifecycle. Delegates all substantive work to two specialists — never
-modifies skill output directly. Cold lifecycle requests first enter admiral;
-skill-maker then runs as its delegated sub-orchestrator under the routing contract.
+## Purpose
+
+Keep authorship and judgment in different hands. One specialist writes the skill,
+another scores it, and this orchestrator owns only the loop between them — which
+is why it never edits a file it is about to have reviewed, and never softens a
+verdict it does not like. The stage model exists so that a skill reaching 100 has
+been through an adversary rather than an author's own second reading.
+
+Cold lifecycle requests first enter admiral; skill-maker then runs as its
+delegated sub-orchestrator under the routing contract.
 
 > "Orchestrate, delegate, gate. The orchestrator routes work and enforces the quality
 > loop. It never writes skill content or scores rubric dimensions — that is the
 > specialists' job."
+
+## Use This Skill When
+
+Use this orchestrator to **run the authoring loop** — draft, score, fix, re-score, package — rather than to write or judge a skill directly:
+
+- "run the skill pipeline" — take an intent through drafting, review, and packaging in one governed run
+- "review this skill" — schedule the adversarial score and route its findings back to the drafter
+- "harden this skill" / "take this skill to 100" — iterate the loop until the rubric stops moving
+- "optimize the description" / "fix triggering" — tune the trigger surface through the eval-and-fix cycle
+
+Route elsewhere for the score itself (`skill-maker/skill-reviewer`) or the file edits (`skill-maker/skill-creator`); both are reached through this orchestrator and neither is entered directly. A cold lifecycle request enters `admiral` first, which owns the bare "create a skill" phrasing and delegates here.
 
 ## Entry Routing
 
@@ -38,6 +56,19 @@ below).
   and persistence, then accept the delegation back. This is the loop guard: Admiral delegates
   with the handoff signal, so a routed call proceeds immediately and never re-bootstraps
   Admiral.
+
+## Execution Contract
+
+Canonical source: `../execution-contract.md`. Stated locally because that file
+requires every orchestrator and gatekeeper to carry the clauses verbatim; a paraphrase
+is drift, and `skills/validation/test_catalog_contracts.py` compares them exactly.
+
+1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under the Tier 0 fast path in routing-doctrine.md; Tier 1 for bounded read-only work beyond Tier 0; Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for destructive, security-sensitive, production, or irreversible work. Record the tier and rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline ceremony and full security audits, but retains focused verification and applicable guardrails; escalate when its eligibility no longer holds.
+2. Trigger proactively when the task matches the skill's declared scope, even when the request uses different words; decline adjacent work and route end-to-end or specialist ownership explicitly. Offer a next safe action only after the current step, scope, and approval lineage are resolved; suppress that offer while any is unresolved.
+3. Use Critical | Major | Minor | Info for findings. Block on Critical, resolve Major before a gate, record Minor, and preserve Info as context. Use APPROVED | REVISE | ESCALATE for gate verdicts.
+4. Validate paths, inputs, revisions, and handoff fields before acting. Keep file operations inside the workspace, use read-only or dry-run probes first, and require explicit owner intent for destructive or externally visible actions.
+5. Handle missing or malformed input, conflicting evidence, unsupported hosts or tools, empty results, and unavailable checks explicitly: preserve evidence, do not fabricate, return REVISE or ESCALATE, and state the next safe action.
+6. Return Outcome, Evidence, Open risks, Next action, Revision, and Verdict when the skill owns a gate. A concise result without evidence is incomplete.
 
 ## Pipeline overview
 
@@ -114,8 +145,21 @@ For **full pipeline** and **improve-only**, confirm the user's intent and constr
 before proceeding. For **review-only**, just need the skill path. For
 **optimize-only**, need the skill path and optionally existing eval queries.
 
-If the user provides an existing skill path, verify the directory exists and contains
-a SKILL.md before proceeding.
+If the user provides an existing skill path, validate it before proceeding, the
+same way skill-reviewer does at its own Phase 1.1: resolve the path, confirm it
+lands on a real directory **inside the working area** — no traversal through
+`..`, a symlink, or an absolute path outside the project root — and confirm a
+readable `SKILL.md` exists inside it. If the path escapes the working area, does
+not exist, or has no SKILL.md, stop and ask the user to confirm the location
+rather than delegating a guessed path; every downstream stage writes to whatever
+path this one accepts.
+
+**Track A ownership.** Behavioral evals belong to skill-creator and run inside
+Stage 1 and Stage 3, not as a stage of their own. The orchestrator asks for them
+in the Create and Improve handoffs, accepts "none run" as a valid answer for a
+skill with subjective outputs, and forwards whatever came back to Stage 2 so the
+reviewer scores against both tracks. Eval results accumulate: a later review sees
+every prior iteration's runs.
 
 ---
 
@@ -222,9 +266,53 @@ Delegate to **skill-creator** in Package mode.
 - Package contents summary
 
 **Final delivery to user:**
-Compile the delivery report using `references/delivery-template.md` and present it
-with the packaged skill. Include the full iteration history, final scorecard, and
-changes summary.
+Compile the delivery report using `references/delivery-template.md` — the blank
+form — and present it with the packaged skill. Include the full iteration history,
+final scorecard, and changes summary. `references/examples.md` shows the same
+template filled in for a complete run, alongside the gate manifest it produced.
+
+### Gate submission — `skill-maker-to-delivery`
+
+This skill is the submitter at the `skill-maker-to-delivery` boundary (`../gates.yaml`).
+Its four required evidence keys come from three owners, so the package is assembled from
+what the specialists return rather than restated by the orchestrator:
+
+| Key | Owner | Content | Backing |
+|-----|-------|---------|---------|
+| `skills` | skill-maker | The delivered skill directories, each with its final rubric score. | Narrative |
+| `team_manifest` | skill-maker | For a team, the manifest describing component relationships and the delegation surface between them. For a single skill, the wording exactly as `../gates.yaml` `fallback_values.team_manifest` spells it — `single skill - no team manifest produced` — carried as the `reason` of an applicability record `{applicable: false, reason, scope, decided_by}`, since schema 2 refuses a bare string. | Narrative |
+| `link_report` | skill-reviewer | Every bundled pointer resolved, with broken and orphaned files listed. | Artifact-backed — a hashed file |
+| `validation_report` | skill-creator | The `quick_validate.py` result for each delivered skill. | Artifact-backed — a hashed file |
+
+Run the self-check before submitting, so the boundary is judged deterministically:
+
+```bash
+python skills/harness/gatekeeper/check.py --boundary skill-maker-to-delivery --package <manifest.json>
+```
+
+`link_report` and `validation_report` must reference hashed files in the package's
+`artifact_hashes` map. A bare claim that validation passed is not evidence. A
+single-skill run carries the sanctioned `team_manifest` wording byte-for-byte as
+the `reason` of an applicability record
+`{applicable: false, reason, scope, decided_by}`, never as the key's own value:
+the manifest is `schema_version: 2`, where `check.py` refuses a bare fallback
+string outright. A paraphrase such as "no team was created" is not the sanctioned
+wording and fails the mechanical check before any judgment is applied, and so
+does the sanctioned wording written as a bare string.
+
+**When the self-check fails**, do not submit. The checker groups every failure by
+the evidence key it names and by that key's owner, so read the failure list as a
+routing table:
+
+| Failure | Response |
+| --- | --- |
+| A key is missing or falsy | Re-delegate to that key's owner: `link_report` to skill-reviewer, `validation_report` to skill-creator, `skills` and `team_manifest` to this orchestrator's own packaging step. Never fill another owner's key to make the check pass. |
+| `link_report` or `validation_report` names a path absent from `artifact_hashes` | The file was described rather than shipped. Get the file written and hashed, then rebuild the manifest; hand-adding the hash of a file nobody produced is a fabricated artifact. |
+| `team_manifest` carries a paraphrase, or a bare string — even the sanctioned one | Put the exact wording `single skill - no team manifest produced` in the `reason` field of an applicability record `{applicable: false, reason, scope, decided_by}`, or produce the real manifest for a team run. At schema 2 a bare string is rejected with `bare fallback string not accepted at schema 2: team_manifest (use an applicability record)`, so re-spelling the value is not the fix; re-shaping it is. `references/examples.md` shows the record. |
+| The checker itself errors, or the boundary spec cannot be loaded | Treat gate-engine failure as `ESCALATE`, never as approval. Report the error and the unjudged package rather than submitting on a machine that did not run. |
+
+Fix every mechanical failure and re-run the self-check before submitting, so the
+gatekeeper spends judgment only on a package that already passes the machine.
 
 ---
 
@@ -262,16 +350,15 @@ Present to the user at every stage boundary:
 
 ### Partial pipeline support
 
-Users can enter at any stage and exit early:
+Users can enter at any stage and exit early. The intent-to-stages mapping is
+tabulated once, in `references/workflow-protocol.md` § Partial pipeline handling;
+read it there rather than from a second copy that can drift out of agreement.
 
-- "Just create, don't review" → Run Stage 0-1, skip 2-5
-- "Just review" → Run Stage 0 + 2, skip 1/3/4/5
-- "Review and improve but don't package" → Run Stage 0 + 2-3 loop, skip 4-5
-- "Skip description optimization" → Run Stage 0-3 loop + 5, skip 4
-
-Honor explicit user requests to skip stages. If the user says "ship it" during the
-review loop, present the current score and confirm before skipping remaining
-iterations.
+Honor explicit user requests to skip stages, and record which stages were skipped
+so the delivery report reflects what actually ran. If the user says "ship it"
+during the review loop, present the current score and confirm before skipping
+remaining iterations — a skipped review is a delivery at an unknown score, not a
+faster 100.
 
 ### Handling user feedback mid-loop
 
@@ -333,8 +420,10 @@ When a `### Save Context` block is included in the delegation prompt with
    specified in the Save Context block.
 2. Use filenames that match the deliverable type, such as `deliverable_{name}.md`,
    `report_{name}.md`, or `review-packet.md`.
-3. Do not create or manage `_phase-state.md` — that is the delegating orchestrator's
-   responsibility.
+3. Never write `_phase-state.md`. No class in the save-ownership policy declares that
+   path, so it is not an orchestrator-owned file either — phase state is published only
+   through `save_run.py checkpoint`, which keeps revision lineage and the audit trail
+   coherent.
 
 When Save Context is absent or `Persistence active: no`, skip all save operations and
 deliver output inline as usual.
@@ -348,7 +437,8 @@ deliver output inline as usual.
 | `../grill-me-doctrine.md` | Binding intake interview protocol | At Stage 0, before classifying the request |
 | `references/workflow-protocol.md` | State machine, transitions, resume protocol | Before starting any pipeline run |
 | `references/handoff-templates.md` | Delegation templates for all 5 handoff types | Before each delegation |
-| `references/delivery-template.md` | Final delivery report format | At Stage 5 |
+| `references/delivery-template.md` | Blank delivery report format to fill in | At Stage 5 |
+| `references/examples.md` | Worked runs: a filled delivery report, a gate manifest, a plateau escalation, a REVISE round | At Stage 5, and whenever an output shape is unclear |
 | `references/skill-guide.md` | Canonical skill authoring guide (shared) | When user asks about skill structure |
 | `intake-brief.yaml` | Trigger set, inputs, outputs, and acceptance contract | Confirming the pipeline's intake surface |
 | `stub-contract.md` | Stage model, handoff rules, quality and delivery contract | Confirming stage boundaries and verdict vocabulary |

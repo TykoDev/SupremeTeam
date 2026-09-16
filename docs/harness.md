@@ -30,7 +30,7 @@ earliest one where it can actually be enforced.
 |---|---|---|---|---|
 | 1 | Environment Contract | before interaction | Makes tool, policy, and format constraints explicit | `design-doctrine.md`, `grill-me-doctrine.md`, `mcp-tools.md`, `tech-stacks/registry.yaml`, intake briefs |
 | 2 | Procedural Skill | task conditioning | Surfaces a compact reusable procedure before work starts | the skill library, `session-memory` learnings, `pipelines.yaml` |
-| 3 | Action Realization | before execution | Validates, canonicalizes, or blocks a generated action | `safety-guardrails/*`, the save write probe, `pre_tool_use.py` |
+| 3 | Action Realization | before execution | Validates, canonicalizes, or blocks a generated action | `careful`, `freeze`, `guard`, `unfreeze`, the save write probe, `pre_tool_use.py` |
 | 4 | Trajectory Regulation | after execution | Catches loops, stagnation, and empty-output streaks; injects recovery | gatekeepers, checkpoints, rewind rules, `post_tool_use.py` |
 
 Skills are instructions running inside the host's loop. They do not own that loop.

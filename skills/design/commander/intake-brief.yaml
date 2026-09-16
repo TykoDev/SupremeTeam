@@ -3,7 +3,8 @@ target_path: design/commander/
 purpose: |
   Orchestrates the design pipeline from scoped request to consolidated design
   package. Owns phase ordering, gate routing, and stack-lock continuity across
-  research, planning, architecture, frontend design, and implementation guidance.
+  research, architecture, frontend design, the security seed, planning, and
+  implementation guidance, in the order pipelines.yaml declares.
 triggers:
   - design this system
   - create the design package
@@ -18,12 +19,37 @@ inputs:
 outputs:
   - consolidated design package
   - taste_snapshot artifact, or the sanctioned no-profile applicability record
+  - stack_lock record, or the sanctioned no-new-runtime applicability record
   - phase approval records
   - stack-lock registry for downstream consumers
+gate:
+  boundary: design-to-build
+  submitter: commander
+  evidence_keys:
+    - decisions
+    - architecture
+    - interfaces
+    - plan
+    - acceptance
+    - security_seed
+    - stack_lock
+    - taste_snapshot
+    - ui_evidence
+  authored_here:
+    - stack_lock
+  artifact_backed:
+    - decisions
+    - architecture
+    - plan
+    - taste_snapshot
+  waivable:
+    - stack_lock
+    - taste_snapshot
+    - ui_evidence
+  not_waivable: decisions, architecture, interfaces, plan, acceptance, security_seed
 severity_model: shared 4-tier (Critical | Major | Minor | Info)
 required_contracts:
-  - Proactive triggers
-  - Shared severity
+  - Execution-contract clauses stated verbatim in SKILL.md
   - Stack-lock continuity
   - Pipeline-owned gate routing
   - Read-only Taste consumption and candidate feedback routing

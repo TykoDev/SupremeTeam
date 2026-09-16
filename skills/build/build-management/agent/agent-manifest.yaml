@@ -6,9 +6,10 @@ version: 1.0.0
 parent: admiral-agent
 
 purpose: |
-  Autonomous build pipeline orchestrator. Manages four build phases
-  (bob-the-builder → test-builder → security-builder → cross-check-build-confirm)
-  with gatekeeper-build validating each phase. Produces a consolidated build package.
+  Autonomous build pipeline orchestrator. Manages the build pipeline stages
+  declared in pipelines.yaml (bob-the-builder → test-builder → security-builder
+  → health-check → debugger → investigate → cross-check-build-confirm) with
+  gatekeeper-build validating the boundary. Produces a consolidated build package.
 
 capabilities:
   - phase-management
@@ -35,6 +36,18 @@ delegates_to:
     skill_path: build/test-builder
   - name: security-builder
     skill_path: build/security-builder
+    optional: true
+    condition: trust boundary
+  - name: health-check
+    skill_path: build/health-check
+  - name: debugger
+    skill_path: build/debugger
+    optional: true
+    condition: reproduced build-phase failure
+  - name: investigate
+    skill_path: investigate
+    optional: true
+    condition: unknown failure mechanism
   - name: cross-check-build-confirm
     skill_path: build/cross-check-build-confirm
   - name: gatekeeper-build

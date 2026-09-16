@@ -26,9 +26,9 @@ ordinary conversation.
 | Tier | Skills |
 |---|---|
 | Entry orchestrator | `admiral` |
-| In-scope, defers to admiral when reached cold | `design/commander`, `design/redesign`, `build/build-management`, `review/code-chief`, `skill-maker`, `investigate`, `taste`, `session-memory`, `gatekeeper-admiral` |
-| Internal specialists | every skill under `design/`, `build/`, `review/` not listed above |
-| Standalone tools | `safety-guardrails/*`, `browser-automation/*`, `release-and-deployment/*`, `testing-and-qa/*` |
+| In-scope, defers to admiral when reached cold | `design/commander`, `design/redesign`, `build/build-management`, `review/code-chief`, `skill-maker`, `investigate`, `taste`, `session-memory`, `gatekeeper-admiral`, `review/cso` |
+| Internal specialists | every skill under `design/`, `build/`, `review/` not listed above; `review/cso` owns a pipeline and belongs to the row above |
+| Standalone tools | `careful`, `freeze`, `guard`, `unfreeze`, `browse`, `open-browser`, `setup-browser-cookies`, `pair-agent`, `ship`, `setup-deploy`, `land-and-deploy`, `document-release`, `qa`, `qa-only`, `benchmark` |
 
 ## Pipelines and gate boundaries
 
@@ -119,28 +119,28 @@ of 14 overlays behind `stack_lock`, not a skill.
 
 | Skill | Path | Role |
 |---|---|---|
-| **browse** | `skills/browser-automation/browse/SKILL.md` | Drives an existing browser session, evidence first |
-| **open-browser** | `skills/browser-automation/open-browser/SKILL.md` | Launches a visible browser workspace, reusing one if available |
-| **setup-browser-cookies** | `skills/browser-automation/setup-browser-cookies/SKILL.md` | Prepares authenticated session state for protected surfaces |
-| **pair-agent** | `skills/browser-automation/pair-agent/SKILL.md` | Pairs a remote collaborator to a browser session with scoped access |
+| **browse** | `skills/browse/SKILL.md` | Drives an existing browser session, evidence first |
+| **open-browser** | `skills/open-browser/SKILL.md` | Launches a visible browser workspace, reusing one if available |
+| **setup-browser-cookies** | `skills/setup-browser-cookies/SKILL.md` | Prepares authenticated session state for protected surfaces |
+| **pair-agent** | `skills/pair-agent/SKILL.md` | Pairs a remote collaborator to a browser session with scoped access |
 
 ### Release and deployment (4, standalone)
 
 | Skill | Path | Role |
 |---|---|---|
-| **ship** | `skills/release-and-deployment/ship/SKILL.md` | Release orchestration; owns the `deploy-readiness` submission |
-| **land-and-deploy** | `skills/release-and-deployment/land-and-deploy/SKILL.md` | Merge, rollout, verification, post-release checks, rollback awareness |
-| **setup-deploy** | `skills/release-and-deployment/setup-deploy/SKILL.md` | Durable deployment settings, environment conventions, rollback plan |
-| **document-release** | `skills/release-and-deployment/document-release/SKILL.md` | Release notes, operational follow-up, documentation trail |
+| **ship** | `skills/ship/SKILL.md` | Release orchestration; owns the `deploy-readiness` submission |
+| **land-and-deploy** | `skills/land-and-deploy/SKILL.md` | Merge, rollout, verification, post-release checks, rollback awareness |
+| **setup-deploy** | `skills/setup-deploy/SKILL.md` | Durable deployment settings, environment conventions, rollback plan |
+| **document-release** | `skills/document-release/SKILL.md` | Release notes, operational follow-up, documentation trail |
 
 ### Safety guardrails (4, standalone)
 
 | Skill | Path | Role |
 |---|---|---|
-| **guard** | `skills/safety-guardrails/guard/SKILL.md` | Combined intent check and write boundary |
-| **careful** | `skills/safety-guardrails/careful/SKILL.md` | Intent confirmation before a destructive or irreversible action |
-| **freeze** | `skills/safety-guardrails/freeze/SKILL.md` | Locks a declared path boundary until explicitly lifted |
-| **unfreeze** | `skills/safety-guardrails/unfreeze/SKILL.md` | Clears an active protection boundary |
+| **guard** | `skills/guard/SKILL.md` | Combined intent check and write boundary |
+| **careful** | `skills/careful/SKILL.md` | Intent confirmation before a destructive or irreversible action |
+| **freeze** | `skills/freeze/SKILL.md` | Locks a declared path boundary until explicitly lifted |
+| **unfreeze** | `skills/unfreeze/SKILL.md` | Clears an active protection boundary |
 
 The guard and freeze boundary is enforced by `harness/hooks/pre_tool_use.py` via
 `.harness-state/guard-state.json`.
@@ -149,9 +149,9 @@ The guard and freeze boundary is enforced by `harness/hooks/pre_tool_use.py` via
 
 | Skill | Path | Role |
 |---|---|---|
-| **qa** | `skills/testing-and-qa/qa/SKILL.md` | Product testing that records evidence, applies scoped fixes, reruns until stable |
-| **qa-only** | `skills/testing-and-qa/qa-only/SKILL.md` | Read-only product testing; evidence-backed defect report, no fixes |
-| **benchmark** | `skills/testing-and-qa/benchmark/SKILL.md` | Comparative performance measurement with repeatable evidence |
+| **qa** | `skills/qa/SKILL.md` | Product testing that records evidence, applies scoped fixes, reruns until stable |
+| **qa-only** | `skills/qa-only/SKILL.md` | Read-only product testing; evidence-backed defect report, no fixes |
+| **benchmark** | `skills/benchmark/SKILL.md` | Comparative performance measurement with repeatable evidence |
 
 ## Orchestration contracts
 

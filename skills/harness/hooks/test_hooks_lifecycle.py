@@ -250,20 +250,20 @@ class ActionGuardTests(unittest.TestCase):
 
 
 class ReadOnlyRunTests(unittest.TestCase):
-    """Rule D: an unreleased read_only record (explore pipeline) confines every write
+    """Rule D: an unreleased read_only record (recorded by `guard`) confines every write
     to the run's own save path and the harness state; save_run.py keeps working."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.project = Path(tmp.name).resolve()
-        self.run = "explore-1"
-        self.allow = f"skillset-saves/runs/{self.run}/explore/**"
+        self.run = "investigation-1"
+        self.allow = f"skillset-saves/runs/{self.run}/investigation/**"
 
     def guard(self, released: bool = False) -> None:
         state = self.project / ".harness-state"
         state.mkdir(parents=True, exist_ok=True)
-        record = {"run_id": self.run, "owner": "explore-lead", "scope": "explore read-only",
+        record = {"run_id": self.run, "owner": "ops", "scope": "read-only investigation",
                   "created_at": "2026-09-05T10:00:00Z", "released_at": "2026-09-05T11:00:00Z" if released else None,
                   "allow": [self.allow]}
         (state / "guard-state.json").write_text(json.dumps({"read_only": [record], "frozen_globs": ["src/legacy/**"]}), encoding="utf-8")
@@ -279,21 +279,28 @@ class ReadOnlyRunTests(unittest.TestCase):
         for path in ("src/app/main.py", str(self.project / "src" / "app" / "main.py"), "README.md", "docs/index.md",
                      f"skillset-saves/runs/{self.run}/design/reports/plan.md"):
             with self.subTest(path=path):
-                self.assertIn("read-only (explore pipeline)", self.write(path))
-        for path in (f"skillset-saves/runs/{self.run}/explore/reports/exploration-map.md",
-                     str(self.project / "skillset-saves" / "runs" / self.run / "explore" / "reports" / "tickets" / "t1.md"),
-                     ".harness-state/guard-state.json"):
+                self.assertIn("is recorded read-only", self.write(path))
+        for path in (f"skillset-saves/runs/{self.run}/investigation/reports/exploration-map.md",
+                     str(self.project / "skillset-saves" / "runs" / self.run / "investigation" / "reports" / "tickets" / "t1.md"),
+                     ".harness-state/trajectory.json"):
             with self.subTest(path=path):
                 self.assertEqual(self.write(path), "")
+
+    def test_guard_record_is_not_writable_even_inside_its_own_allow_list(self):
+        """Rule D allow-lists .harness-state/**, but the boundary record itself
+        stays single-writer: otherwise a read-only run could lift its own
+        confinement with one edit."""
+        self.guard()
+        self.assertIn("guard_state.py", self.write(".harness-state/guard-state.json"))
 
     def test_mutating_shell_commands_need_an_allowed_path_but_reads_and_save_run_pass(self):
         self.guard()
         for cmd in ("echo x > src/app/main.py", "git add -A", "sed -i 's/a/b/' README.md", "touch notes.md",
                     "rm -rf build/"):
             with self.subTest(cmd=cmd):
-                self.assertIn("read-only (explore pipeline)", self.bash(cmd))
-        for cmd in (f"mkdir -p skillset-saves/runs/{self.run}/explore/reports/tickets",
-                    f"git status --porcelain > skillset-saves/runs/{self.run}/explore/evidence/read-only-attestation.log",
+                self.assertIn("is recorded read-only", self.bash(cmd))
+        for cmd in (f"mkdir -p skillset-saves/runs/{self.run}/investigation/reports/tickets",
+                    f"git status --porcelain > skillset-saves/runs/{self.run}/investigation/evidence/read-only-attestation.log",
                     f"python skills/harness/hooks/save_run.py checkpoint --run-id {self.run} --expect-revision 2",
                     "cat src/app/main.py", "grep -rn TODO src/", "git log --oneline -50",
                     "python skills/scripts/check_runtime.py --project-root . --detect-project"):

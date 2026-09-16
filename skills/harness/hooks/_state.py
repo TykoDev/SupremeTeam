@@ -158,10 +158,15 @@ def load_guard_state() -> dict:
     Schema (``.harness-state/guard-state.json``), all keys optional::
 
         {
-          "frozen_globs":   ["src/payments/**", {"glob": "infra/*.tf", "owner": "ops", "scope": "release freeze", "created_at": "...", "released_at": null}],
-          "blocked_globs":  ["**/secrets/**"],
-          "allow_dangerous": false
+          "frozen_globs":   [{"glob": "infra/*.tf", "owner": "ops", "scope": "release freeze", "created_at": "...", "approvers": [], "released_at": null}],
+          "blocked_globs":  [{"glob": "**/secrets/**", "owner": "ops", "released_at": null}],
+          "read_only":      [{"run_id": "r1", "owner": "ops", "allow": ["skillset-saves/runs/r1/**"], "released_at": null}],
+          "allow_dangerous": {"owner": "ops", "reason": "...", "scope": "...", "expires_at": "..."}
         }
+
+    Written only by ``guard_state.py``; ``pre_tool_use.py`` denies direct writes.
+    A bare glob string is still honored for backward compatibility but carries no
+    owner, so a release cannot be authority-checked against it.
 
     Returns an empty dict when no boundary is set (the common case), so the hook
     is inert until a guard/freeze skill explicitly records a boundary. The
@@ -176,7 +181,7 @@ def load_guard_state() -> dict:
         [e for e in (state.get("blocked_globs") or []) if isinstance(e, dict)]
     normalized["frozen_globs"] = _effective_globs(state.get("frozen_globs"))
     normalized["blocked_globs"] = _effective_globs(state.get("blocked_globs"))
-    # A read-only run (explore pipeline): records with run_id, owner, scope,
+    # A read-only run (recorded by `guard` via guard_state.py): records with run_id, owner, scope,
     # created_at, released_at, and the allow globs of the run's own save path.
     # Effective until released; never expired by age.
     normalized["read_only"] = [

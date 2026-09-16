@@ -32,17 +32,49 @@ intact until separately revoked.
 
 ## Operations
 
-- **inspect:** show one or both source records; read-only.
-- **resolve:** show the effective merged profile; read-only.
-- **specialize/upsert:** add or replace one scoped entry after preview. Inferred
-  content requires confirmation.
-- **promote:** copy project to global; always requires confirmation.
-- **revoke:** remove a named entry. Confirm whenever destructive intent or scope
-  is unclear; bulk revocation always requires explicit batch confirmation.
-- **reset:** replace a scope with an empty revision. Global reset always requires
-  confirmation.
-- **import:** validate and replace a scoped record; always a confirmed bulk action.
-- **export:** serialize a source or effective record without mutation.
+Each semantic operation maps to a concrete `taste_prefs.py` subcommand. Every
+mutating subcommand requires `--scope` (`global`, `project`, or `both`); run
+`--help` on a subcommand before composing a call rather than assuming a flag. The
+read subcommands (`status`, `list`, `diff`, `effective`, `export`) do not mutate
+and need no confirmation.
+
+- **inspect:** `status` (record path, revision, digest, existence) and `list`
+  (entries per scope); read-only.
+- **resolve:** `effective` — the merged profile, project entries overriding global
+  by matching stable id; read-only.
+- **diff:** `diff` — entries that differ between scopes; read-only.
+- **propose:** `propose` — create a `proposed` candidate awaiting a decision;
+  inference records its confidence and never activates without `confirm`.
+- **confirm:** `confirm` — move a `proposed` entry to `active`; only a `proposed`
+  entry can be confirmed.
+- **set / upsert:** `set` — create or supersede one user-authored entry as
+  `active` after preview. Inferred content is proposed and confirmed, not set
+  directly.
+- **specialize:** `specialize` (writes project, or `both`) — copy a global entry
+  into a project override; the source global entry is untouched.
+- **promote:** `promote` (writes global, or `both`) — copy a confirmed project
+  entry to global; always requires confirmation and leaves the project record
+  intact until separately revoked.
+- **deprecate:** `deprecate` — retain an entry for history while excluding it from
+  resolution.
+- **revoke:** `revoke` — tombstone a named entry. Confirm whenever destructive
+  intent or scope is unclear; bulk revocation always requires explicit batch
+  confirmation and is decomposed into a preview plus a confirmed operation.
+- **reset:** `reset` — tombstone every entry in a scope, replacing it with an empty
+  revision. Global reset always requires confirmation.
+- **import:** `import` (`--input <file>`) — validate and merge external entries;
+  always a confirmed bulk action, and an unknown `schema_version` or an invalid id
+  is rejected rather than coerced.
+- **export:** `export` (`--output <file>`, optional `--redact`) — serialize a
+  source or effective record without mutation.
+
+A mutating subcommand against an existing store requires `--expect-revision` to
+guard against a concurrent write, and refuses with `revision_required` without it.
+Pass one shared value (`--expect-revision 2`) for a single scope, or one flag per
+scope for `--scope both` (`--expect-revision project=2 --expect-revision
+global=0` — repeated flags, not a single slash-joined value). A mismatch exits
+`stale_revision` and changes nothing, so reload with `status` and re-preview
+before retrying.
 
 ## Gate package and handoff
 

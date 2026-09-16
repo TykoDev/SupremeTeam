@@ -1,13 +1,29 @@
 #!/usr/bin/env python3
-"""
-Skill Packager - Creates a distributable .skill file of a skill folder
+"""Skill packager - build a distributable .skill archive from a skill folder.
 
-Usage:
-    python utils/package_skill.py <path/to/skill-folder> [output-directory]
+Run as a module from the skill-creator directory, so the `scripts` package
+resolves:
+
+    cd skills/skill-maker/skill-creator
+    python -m scripts.package_skill <path/to/skill-folder> [output-directory]
 
 Example:
-    python utils/package_skill.py skills/public/my-skill
-    python utils/package_skill.py skills/public/my-skill ./dist
+    python -m scripts.package_skill ../../review/security-review
+    python -m scripts.package_skill ../../review/security-review \\
+        skillset-saves/runs/<run-id>/skill-creation/packages
+
+Inputs:
+    path/to/skill-folder  directory containing SKILL.md
+    output-directory      optional; defaults to <project>/.harness-state/packages/
+
+Output:
+    <output-directory>/<folder-name>.skill - a ZIP archive rooted at the skill
+    folder name, excluding evals/ at the root, __pycache__, *.pyc and .DS_Store.
+
+Exit codes:
+    0  the archive was written; its path is printed
+    1  the skill folder is missing, is not a directory, has no SKILL.md,
+       fails quick_validate, or the archive could not be created
 """
 
 import fnmatch
@@ -122,13 +138,22 @@ def package_skill(skill_path, output_dir=None):
         return None
 
 
+USAGE = """Usage: python -m scripts.package_skill <path/to/skill-folder> [output-directory]
+
+Run from skills/skill-maker/skill-creator so the `scripts` package resolves.
+
+Example:
+  python -m scripts.package_skill ../../review/security-review
+  python -m scripts.package_skill ../../review/security-review ./dist
+
+Output directory defaults to <project>/.harness-state/packages/.
+Exit codes: 0 = archive written, 1 = invalid skill folder or write failure."""
+
+
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python utils/package_skill.py <path/to/skill-folder> [output-directory]")
-        print("\nExample:")
-        print("  python utils/package_skill.py skills/public/my-skill")
-        print("  python utils/package_skill.py skills/public/my-skill ./dist")
-        sys.exit(1)
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+        print(USAGE)
+        sys.exit(0 if len(sys.argv) > 1 else 1)
 
     skill_path = sys.argv[1]
     output_dir = sys.argv[2] if len(sys.argv) > 2 else None

@@ -17,6 +17,35 @@ inputs:
   - application source, running instance, or captures of the current surface
   - effective Taste snapshot before grilling and the grilled profile after
   - persistence context when delegated or resumed
+gate:
+  boundary: redesign-review
+  submitter: redesign
+  evidence_keys:
+    - design_inventory
+    - taste_grilling
+    - taste_snapshot
+    - design_directions
+    - variant_set
+    - parity_evidence
+    - rendered_verification
+    - accessibility_evidence
+    - recommendation
+    - residual_risk
+  authored_here:
+    - recommendation
+    - residual_risk
+  artifact_backed:
+    - design_inventory
+    - taste_grilling
+    - taste_snapshot
+    - design_directions
+    - variant_set
+    - parity_evidence
+    - rendered_verification
+  waivable:
+    - taste_snapshot
+  no_fallback:
+    - rendered_verification
 outputs:
   - design inventory and baseline captures
   - taste grilling log and effective-profile snapshot
@@ -26,13 +55,12 @@ outputs:
   - redesign package with comparison matrix, recommendation, and recorded decision
 severity_model: shared 4-tier (Critical | Major | Minor | Info)
 required_contracts:
+  - Execution-contract clauses stated verbatim in SKILL.md
   - Grill-Me Intake
   - Four distinct variants
   - Functional parity
   - Framework-free prototypes
   - Taste read boundary
-  - Shared severity
-  - Proactive triggers
   - Save-Protocol Adherence
 authoring_rules:
   - First-principles wording only

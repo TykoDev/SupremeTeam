@@ -1,6 +1,33 @@
 #!/usr/bin/env python3
-"""
-Quick validation script for skills - minimal version
+"""Pre-package structural validation of a skill folder.
+
+Checks only what makes a skill loadable, so a skill that cannot load is never
+packaged: SKILL.md exists, the YAML frontmatter parses, no unexpected
+frontmatter key is present, and `name` and `description` satisfy the Skills
+spec (kebab-case name <= 64 chars; description non-empty, <= 1024 chars, no
+angle brackets). It does not score rubric dimensions - that is skill-reviewer's
+job - and it does not inspect the body.
+
+Run as a module from the skill-creator directory, so the `scripts` package
+resolves:
+
+    cd skills/skill-maker/skill-creator
+    python -m scripts.quick_validate <path/to/skill-folder>
+
+Inputs:
+    path/to/skill-folder  directory expected to contain SKILL.md
+
+Output:
+    One line on stdout: "Skill is valid!" or the first failure found.
+    Capture it as the `validation_report` evidence at skill-maker-to-delivery;
+    that key is artifact-backed, so write the line to a file and hash it.
+
+Exit codes:
+    0  the skill is structurally valid
+    1  a validation failure, or no skill folder argument was given
+
+Importable API:
+    validate_skill(path) -> (bool ok, str message)
 """
 
 import sys
@@ -131,11 +158,22 @@ def validate_skill(skill_path):
 
     return True, "Skill is valid!"
 
+USAGE = """Usage: python -m scripts.quick_validate <path/to/skill-folder>
+
+Run from skills/skill-maker/skill-creator so the `scripts` package resolves.
+
+Checks SKILL.md exists, the frontmatter parses, no unexpected key is present,
+and name/description satisfy the Skills spec. Prints one line.
+Exit codes: 0 = valid, 1 = a validation failure or a missing argument."""
+
 if __name__ == "__main__":
+    if len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help"):
+        print(USAGE)
+        sys.exit(0)
     if len(sys.argv) != 2:
-        print("Usage: python quick_validate.py <skill_directory>")
+        print(USAGE)
         sys.exit(1)
-    
+
     valid, message = validate_skill(sys.argv[1])
     print(message)
     sys.exit(0 if valid else 1)

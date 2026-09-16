@@ -8,12 +8,17 @@ design pipeline.
 
 ## Stage Order
 
-1. Design mapper (inventory, baseline captures)
-2. Taste (project taste grilling, confirmation, persistence, effective profile)
-3. Architect (four design directions)
-4. Prototyper, four times (one design-system variant per direction)
-5. Design mapper (parity evidence per variant), design-qa (rendered verification per variant), frontier (accessibility findings per variant)
-6. Redesign (comparison matrix, recommendation, recorded decision)
+The order `../../pipelines.yaml` declares for the `redesign` pipeline. Every
+stage is unconditional; only the taste grilling has a documented skip, and only
+when the user declines preference capture.
+
+1. `design-mapper` (inventory, baseline captures)
+2. `taste` (project taste grilling, confirmation, persistence, effective profile)
+3. `architect` (four design directions)
+4. `prototyper`, four times (one design-system variant per direction)
+5. `design-mapper` (parity evidence per variant), `design-qa` (rendered verification per variant), `frontier` (accessibility findings per variant)
+6. `redesign` (comparison matrix, recommendation, recorded decision)
+7. `gatekeeper-design` (phase gate at `redesign-review`)
 
 ## Required Inputs
 
@@ -25,9 +30,12 @@ design pipeline.
 ## Gate Contract
 
 - Redesign is the only owner that submits `redesign-review`.
-- Maximum revisions per stage: 3; every revision delegation batches all findings for one owner.
+- Maximum revisions per stage: 2 (`gates.yaml` `revise_policy.cycle_cap`); every revision delegation batches all findings for one owner.
 - Exactly four variants; `variant_set` is validated mechanically for count, unique ids, and hashed files.
-- `rendered_verification` accepts no fallback at this boundary; `taste_snapshot` accepts only the sanctioned no-profile record.
+- Required evidence: `design_inventory`, `taste_grilling`, `taste_snapshot`, `design_directions`, `variant_set`, `parity_evidence`, `rendered_verification`, `accessibility_evidence`, `recommendation`, `residual_risk`. All but the last three are artifact-backed.
+- `rendered_verification` is listed under `no_fallback` at this boundary, so it accepts neither a fallback string nor an applicability record; a browserless host returns an `inferred` render record labelled `INFERRED - no browser available`. `taste_snapshot` accepts only the sanctioned no-profile record.
+- `recommendation` and `residual_risk` are redesign's own: the first names the variant and records the user's decision verbatim, the second names each open item, who carries it, and what closes it. An empty `residual_risk` is a claim that nothing is open.
+- Self-check before submitting: `python skills/harness/gatekeeper/check.py --boundary redesign-review --package redesign/manifest.json`, without `--verdict-out`; resubmit once with `--prior` so the gate re-judges only `changed_evidence`.
 - A variant below full parity coverage or with an open Critical accessibility finding never enters the comparison.
 
 ## Package Shape

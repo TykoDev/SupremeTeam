@@ -23,7 +23,7 @@ tools_required:
   - category: file-system
     operations: [read, write, list, search]
   - category: terminal
-    operations: [execute]         # check_parity.py, check_redesign.py, check.py
+    operations: [execute]         # scripts/check_parity.py, gatekeeper-design/scripts/check_redesign.py, harness/gatekeeper/check.py
   - category: search
     operations: [semantic, grep]
   - category: sub-agent

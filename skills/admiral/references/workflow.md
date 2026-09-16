@@ -1,15 +1,19 @@
 # Workflow Reference
 
+The turn-by-turn procedure for running a cross-pipeline delivery: how intake picks a mode, which boundary follows which, what to save at each one, and how a rewind stays idempotent. Read this before opening a run, and again at any boundary whose save instructions are not already in hand.
+
 ## Contents
 
 1. Intake and mode selection
-2. Boundary sequencing
+2. Boundary sequencing, with the save instructions per boundary and the Save Context template
 3. Rewind and idempotency rules
 4. Delivery closure
+5. Contract notes
+6. Collaboration notes
 
 ## Intake And Mode Selection
 
-1. Run the save startup check before new state is created: inspect `skillset-saves/_latest.md`, classify the directory as active/inactive/missing/unreadable/conflict, resume active reclaimable runs, or activate persistence for a new run.
+1. Run the save startup check before new state is created: inspect `skillset-saves/_latest.md`, classify the directory as active/inactive/orphaned/missing/unreadable/conflict, resume active reclaimable runs, or activate persistence for a new run.
 2. If persistence activation fails, warn once, attempt read-only resume from any readable latest artifacts, and continue transiently only when no coherent resume boundary can be proven.
 3. Run `harness/hooks/check_readiness.py --host auto` on a fresh intake, or with `--require-active-run` on a resume, so Python version, hook registration, and save state are visible in one place; a fresh intake has no run until `save_run.py create` publishes it. Record `RUNTIME_READINESS_CHECK`; warn and continue in degraded mode when hooks or Python are missing, and on a resume rerun the save startup check if no active save run is present.
 4. Normalize the user request with `intake-brief.yaml` so scope, constraints, upstream artifacts, and requested endpoint are visible in one place.
@@ -32,7 +36,7 @@ The path policy is `../../save-ownership.yaml`; admiral never writes a core run
 file by hand and never creates a path outside its declared classes.
 
 **On delegation** to any sub-orchestrator:
-1. Checkpoint through `session-memory` (`python skills/harness/hooks/save_run.py checkpoint --run-id {run-id} --expect-revision <n> --set active_owner=<lead> --set phase_state=<PHASE>_ACTIVE`). The checkpoint publishes `_state.md`, `_lock.md`, and `_latest.md` atomically and appends `DELEGATION_SENT` to `_audit-trail.md`.
+1. Checkpoint through `session-memory` (`python skills/harness/hooks/save_run.py checkpoint --run-id {run-id} --owner <lead> --expect-revision <n> --set phase_state=<PHASE>_ACTIVE`). The active owner follows `--owner`; it is a reserved field, so `--set active_owner=` is refused. The checkpoint publishes `_state.md`, `_lock.md`, and `_latest.md` atomically and appends a `checkpoint` event to `_audit-trail.md`.
 2. Include the canonical `### Save Context` block (below) in the delegation prompt.
 
 **On package return** from a sub-orchestrator:
@@ -45,7 +49,7 @@ file by hand and never creates a path outside its declared classes.
 2. Route per verdict:
    - APPROVED: checkpoint into the next active state and advance to the next stage.
    - REVISE: checkpoint into the gate-revise state and forward the findings to the same sub-orchestrator.
-   - ESCALATE: `save_run.py block --reason "<dispute>"` (`DISPUTED_AWAITING_USER`) and freeze advancement.
+   - ESCALATE: `save_run.py checkpoint --run-id {run-id} --owner admiral --expect-revision <n> --set phase_state=DISPUTED_AWAITING_USER --next-action "<dispute>"` and freeze advancement. Checkpoint, not `block`: the dispute is awaiting a user decision, so the run keeps the session pin, where `block` would release the lock and end the run. `block` also takes no `--reason` — that flag belongs to `recover`.
 3. Every checkpoint refreshes `_latest.md` and appends the verdict to `_audit-trail.md`; neither file is written by hand.
 
 ### Save Context Delegation Template
@@ -60,6 +64,7 @@ Include this block in every sub-orchestrator delegation with values copied from 
 - Persistence active: {yes|no}
 - Persistence probe result: {ok|reason}
 - Context tier: {1|2|3}
+- Preamble tier: {0|1|2|3} + rationale
 - Artifact mode: {inline|file|reference}
 - Session pin: {true|false}
 - Execution mode: {agent|skill}
@@ -89,16 +94,17 @@ Include this block in every sub-orchestrator delegation with values copied from 
 
 ## Contract Notes
 
-- Preamble Tier System: Use short progress preambles that scale from terse status to fuller context only when complexity or risk rises.
-- Proactive triggers: Offer the next sensible action when the surrounding context clearly implies it and the skill can advance safely without a prompt loop.
-- Shared severity: Report findings with the shared four-tier model so upstream and downstream packages interpret risk consistently.
+Execution-contract clauses 1-3 are stated verbatim in `../SKILL.md`; a second phrasing here would be drift. What this workflow adds:
+
+- Preamble tier: carry the selected tier and its rationale into the `Preamble tier` field of the Save Context block above, so every delegation inherits it.
 - YAGNI intake: ask only load-bearing decisions; record reversible defaults and reopen triggers for speculative branches that do not affect the next deliverable.
 
 ## Collaboration Notes
+
+The stage owners this workflow delegates to are listed in `../SKILL.md` § Delegation Surface. What this workflow adds:
 
 - `design/commander` owns design package assembly and design-stage revisions.
 - `build/build-management` owns build package assembly and implementation-stage revisions.
 - `review/code-chief` owns review package assembly and specialist review routing.
 - `gatekeeper-admiral` owns cross-boundary acceptance decisions.
-- `skill-maker` owns custom skill and coordinated-team generation when that mode is selected.
-- `session-memory` provides cross-session checkpoints and durable learnings; engaged by admiral as the mandatory first action at intake (after scope confirmation, before the first delegation), and again at context tier 3+, before gate submissions, at session end, and on error recovery. The intake engagement is unconditional and is recorded once in `skills_engaged` (re-engagements do not duplicate the entry).
+- `session-memory` is re-engaged after the mandatory intake checkpoint at context tier 3+, before gate submissions, at session end, and on error recovery.

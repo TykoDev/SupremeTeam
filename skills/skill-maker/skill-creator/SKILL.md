@@ -1,26 +1,67 @@
 ---
 name: skill-creator
-description: >
-  Drafts and improves Claude skills for the skill-maker pipeline. Use when skill-maker
-  delegates create, improve, eval, optimize, or package work, or when the user asks to
-  write a skill, fix reviewer findings, run behavioral evals, optimize the description,
-  or package a skill directory — even if they only say "make this a skill" or "fix these
-  findings". Handles SKILL.md authoring, supporting files, real evals, trigger tuning,
-  and `.skill` packaging; leaves rubric scoring to skill-reviewer.
+description: >-
+  Drafts and revises skill content for `skill-maker`, which owns the pipeline and
+  delegates each mode: Create writes the SKILL.md and supporting files, Improve
+  applies a reviewer's scorecard to fix reviewer findings, Eval runs behavioral evals
+  against real queries, and Package produces the `.skill` bundle. Use when skill-maker
+  delegates drafting, findings to apply, an eval run, or packaging. An internal
+  specialist, never the front door: a cold "write me a skill" belongs to
+  `skill-maker`.
 version: 1.0.0
+allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
 # Skill Creator
 
-Draft new Claude skills, apply improvement fixes, run behavioral evals, optimize
-descriptions, and package the result. Operates in five modes — the skill-maker
-orchestrator selects the appropriate mode. For a cold lifecycle request, follow
-`../../routing-doctrine.md`: enter admiral, then accept the skill-maker handoff.
-An active skill-maker delegation proceeds directly without restarting intake.
+## Purpose
+
+Hold the only hands that touch skill files in this pipeline. Everything else in
+the loop reads and judges; drafting, fixing, tuning, and packaging happen here,
+under a mode the orchestrator selects, so a change always has one author and one
+reason. The counterweight is that this skill never scores its own work — a
+drafter grading its own draft is how a skill reaches 100 on paper and fails on a
+real task.
+
+For a cold lifecycle request, follow `../../routing-doctrine.md`: enter admiral,
+then accept the skill-maker handoff. An active skill-maker delegation proceeds
+directly without restarting intake.
 
 > "Capture the user's intent, turn it into a production-quality skill, and keep
 > iterating until it works on real tasks. Leave structural scoring to the reviewer —
 > focus on making the skill *do the right thing*."
+
+## Use This Skill When
+
+`skill-maker` selects the mode; this is the only skill in the loop where a file actually changes:
+
+- "skill-maker delegates drafting" — write the SKILL.md and its supporting files in Create mode
+- "fix reviewer findings" / "fix these findings" — apply a scorecard's findings in Improve mode
+- "run behavioral evals" — exercise the draft against real queries in Eval mode
+- "skill-maker delegates packaging" — produce the `.skill` bundle in Package mode
+
+Route elsewhere for the rubric score (`skill-maker/skill-reviewer`) and for the loop that decides which mode runs (`skill-maker`), which also owns description optimization as a stage rather than an edit.
+
+## Entry Routing
+
+Skill-creator is an internal specialist, not an entry point.
+`../../routing-doctrine.md` names it in the internal-specialist row, reached
+only through `skill-maker`, which owns every stage of the `skill-creation`
+pipeline and calls this skill in Create, Improve, Optimize, and Package mode.
+The mode is the load-bearing part: the same skill writes a first draft, applies
+a reviewer's findings, or packages a finished directory, and only the handoff
+says which.
+
+A handoff is present when the delegation prompt carries a `### Save Context`
+block, an active run lock with `session_pin: true` exists under
+`skillset-saves/`, or the invocation explicitly names `skill-maker` as the
+delegating owner and states the mode.
+
+Reached cold — "write me a skill" with no handoff — draft nothing. Without the
+mode there is no way to tell a create from an improve, and without the intake
+there is no trigger set, no acceptance contract, and no findings list to apply.
+Route the user to `fabled`, which runs intake and hands the request to
+`skill-maker`.
 
 ## Modes
 
@@ -48,38 +89,35 @@ Ask, roughly in this order:
 5. Is this a new skill or are we hardening an existing one? If existing, get the path.
 
 Probe edge cases, input/output formats, example files, success criteria, and
-dependencies proactively. Research in parallel via subagents when available — check
-for similar skills, consult docs, look up best practices — so the interview starts
-with context rather than cold.
+dependencies proactively. Research in parallel via subagents when available, so
+the interview starts with context rather than cold. Three searches pay for
+themselves: the skill catalog for a skill that already covers this scope (a
+duplicate trigger set makes both skills unreliable), the target codebase for the
+file types and command names the skill will have to name exactly, and
+`../references/skill-guide.md` §1 for the constraints a draft must satisfy before
+it is worth reviewing.
 
 ---
 
 ## Phase 2 — Draft (Create mode)
 
-Write the skill following the authoring guide in `../references/skill-guide.md`.
-Key constraints:
+Write the skill against `../references/skill-guide.md`, which owns these constraints
+canonically: the frontmatter limits and their exact character caps (§1.1–§1.2), the
+body budget and file-structure rules (§1.3–§1.4), the three loading levels of progressive
+disclosure (§3), and description craft including the pushy pattern (§4.2). Read §1 before
+drafting — a draft that violates it is rejected by validation rather than reviewed.
 
-**Frontmatter:**
+Three of those shape the draft before its first line, and are the expensive ones to
+discover late:
 
-| Field | Constraint |
-|-------|-----------|
-| `name` | ≤ 64 chars, `[a-z0-9-]` only, matches directory name, no reserved words |
-| `description` | ≤ 1024 chars, third-person declarative, states what AND when, lean pushy |
-
-**Body:** Under 500 lines, imperative voice, forward slashes only.
-
-**Progressive disclosure:** SKILL.md is the table of contents — workflow and decisions.
-Move deep reference material (>100 words of tables, API specs, pattern catalogues) to
-`references/`. Reusable scripts to `scripts/`. Examples over 20 lines to `examples/`.
-Reference files over 100 lines need a TOC. All references one level deep — no nesting.
-
-**Description craft — the pushy pattern:**
-
-> Weak: "Build dashboards from internal data."
->
-> Strong: "Build dashboards from internal data. Use this skill whenever the user
-> mentions dashboards, data visualization, internal metrics, or wants to display any
-> kind of company data — even if they don't explicitly say 'dashboard'."
+- **`name` matches the directory name**, lowercase and hyphenated. A mismatch means the
+  skill never loads, and nothing downstream says why.
+- **The description states what *and* when**, third-person declarative, leaning pushy. It
+  is the only text seen before the decision to load the skill, and skills under-trigger far
+  more often than they over-trigger.
+- **SKILL.md is the table of contents, not the manual.** Deep material goes to
+  `references/`, exactly one level deep and never nested — the layout cannot be rearranged
+  later without rewriting every pointer into it.
 
 **Safety:** No malware, exploit code, or content that compromises security. Skill
 behavior must not surprise the user given its description.
@@ -194,6 +232,20 @@ be substantive enough that Claude would actually benefit from consulting a skill
 
 ## Phase 6 — Package (Package mode)
 
+Validate before packaging, so a skill that cannot load is never shipped. `quick_validate.py`
+is the `skill-creation` pipeline's declared script (`../../pipelines.yaml`), and its output is
+the `validation_report` evidence this skill owns at the `skill-maker-to-delivery` boundary
+(`../../gates.yaml`). That key is artifact-backed: write the result to a file and hash it, because
+a claim that validation passed is not evidence.
+
+```bash
+cd skills/skill-maker/skill-creator
+python -m scripts.quick_validate <path/to/skill-folder>
+```
+
+On a failure, return the report to the orchestrator as a blocker rather than packaging; a
+`.skill` built from an invalid source fails at the gate instead of at the desk.
+
 ```bash
 python -m scripts.package_skill <path/to/skill-folder>
 ```
@@ -205,6 +257,24 @@ When updating an existing skill:
 - Preserve the original name — use the same directory name and `name` frontmatter
 - Copy to a writeable location before editing if the installed path is read-only
 - Stage under the project's `.harness-state/packages/` if packaging manually (never `/tmp/` or the project root), then copy into the active run's `skill-creation/packages/` directory
+
+## Failure Modes
+
+| Scenario | Response |
+| --- | --- |
+| `evals/evals.json` is missing, unparseable, or does not match the shape in `references/schemas.md` (no `evals` array, an entry without `prompt`, duplicate `id` values) | Do not repair it silently and do not grade a partial parse. Report the exact parse error or the first non-conforming entry, and either rewrite the file from the captured intent and show the user the result before running, or run with the subset that does parse while stating which entries were dropped and why. A grade computed over a silently shrunken eval set reads as a passing score. |
+| The user supplies zero test cases, or declines to write any | Do not invent test cases and present their results as evidence. Skills with subjective outputs legitimately have none: record "no behavioral evals for this iteration", hand the reviewer the structural work alone, and say plainly that only Track B signal exists. Offer one concrete starter prompt drawn from the intake so the decision is informed rather than a default. |
+| `run_loop.py` exits non-zero, times out, or returns no `best_description` | Keep the current description unchanged — a failed optimizer is not a signal to edit the trigger by hand, because the whole point of the loop is the held-out test score. Report the iteration it reached, the last scores, and the failure, then either re-run with a smaller `--max-iterations` or return Optimize as not-run so the orchestrator can skip Stage 4 deliberately. |
+| The optimizer's `best_description` scores better on train than on test | Take the test-selected description and say so. A train-better candidate is the overfitting the split exists to catch; adopting it because the number is larger discards the only defence in the loop. |
+| `quick_validate.py` returns a failure at Phase 6 | Return the report to the orchestrator as a blocker instead of packaging. A `.skill` built from an invalid source fails at the gate rather than at the desk, and the validation line is the `validation_report` evidence either way. |
+| A user override says a reviewer finding is not real | Record the override with its reason, exclude the finding from this and later improve passes, and pass the override back to the orchestrator so the reviewer is told not to re-flag it. Do not apply a fix the user declined, and do not drop the finding from the delivery report's override table. |
+| The skill directory is read-only, or a supplied path escapes the working boundary | Stop before writing. Copy to a writeable location and edit there, or ask for the correct path; never resolve a `..`, symlink, or absolute path that leaves the skill directory, eval workspace, or explicit output directory. |
+
+**Clean pass.** When a mode completes without incident, return the files changed,
+the mode that produced them, and the evidence a reviewer can check — eval
+pass/fail per test case, the validation line, or the before/after trigger scores.
+"Applied the findings" without the file list is not a hand-off the next stage can
+verify.
 
 ## Script and Path Safety
 
@@ -265,7 +335,12 @@ The core workflow is identical everywhere. What differs is tool availability.
 - **`references/description-opt.md`** — description optimization loop mechanics: query
   generation, train/test split, overfitting prevention. Read before Phase 5.
 - **`references/schemas.md`** — JSON schemas for `evals.json`, `eval_metadata.json`,
-  `grading.json`, `benchmark.json`, `feedback.json`.
+  `grading.json`, `benchmark.json`, `feedback.json`. Read before writing or
+  validating any of those files.
+- **`references/examples.md`** — worked deliverables from each mode: a drafted
+  SKILL.md, an `evals.json`, an improve-mode change summary, an optimize-mode
+  before/after, and a package result. Read for output shape before a first run
+  in an unfamiliar mode.
 - **`agents/grader.md`** — how to evaluate assertions against outputs.
 - **`agents/comparator.md`** — blind A/B comparison between two outputs.
 - **`agents/analyzer.md`** — analyze why one version beat another.
@@ -274,6 +349,31 @@ The core workflow is identical everywhere. What differs is tool availability.
 - **`eval-viewer/generate_review.py`** and **`eval-viewer/viewer.html`** — render
   human-reviewable eval outputs. Use during Eval mode when browser/static review is
   available.
-- **`scripts/`** — bundled automation for validation, eval execution, aggregation,
-  description optimization, report generation, and packaging. Read the target script's
-  top-level docstring before running it.
+### `scripts/`
+
+Bundled automation, run as modules from the skill-creator directory so the
+`scripts` package resolves. Read the target script's top-level docstring before
+running it; each states its inputs, outputs, and exit codes. No file here is
+orphaned — the ones not invoked directly are imported by the ones that are.
+
+| Script | Phase | Purpose |
+|--------|-------|---------|
+| `quick_validate.py` | 6 | Structural pre-package validation; its output line is the `validation_report` evidence |
+| `package_skill.py` | 6 | Builds the `.skill` archive; validates first and refuses an invalid source |
+| `run_eval.py` | 5 | Runs trigger evaluation for one description against a query set |
+| `improve_description.py` | 5 | Proposes an improved description from eval results (imported by `run_loop.py`) |
+| `run_loop.py` | 5 | The optimization loop: eval → improve → re-eval with a train/test split |
+| `generate_report.py` | 5 | Renders `run_loop.py` output as an HTML report (imported by `run_loop.py`) |
+| `aggregate_benchmark.py` | 3 | Aggregates run results into benchmark statistics with the with-skill/baseline delta |
+| `utils.py` | — | Shared helpers, including SKILL.md frontmatter parsing. Imported, never invoked |
+| `__init__.py` | — | Marks `scripts` as a package so `python -m scripts.<name>` works |
+| `test_regressions.py` | — | Regression tests, below |
+
+**Regression tests.** `scripts/test_regressions.py` covers frontmatter
+validation, packaging exclusions, and the eval subprocess and pipe handling those
+scripts depend on. Run it after changing anything under `scripts/`, from the
+skill-creator directory:
+
+```bash
+python -m unittest discover -s scripts -p "test_*.py"
+```

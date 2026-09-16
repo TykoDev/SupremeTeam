@@ -1,6 +1,32 @@
 {
   "schema_version": 1,
   "kind": "supremeteam-runtime-manifest",
+  "authority": {
+    "python_floor": "runtime.python.minimum is the single authoritative Python floor for this catalog. scripts/check_runtime.py reads it and compares the live interpreter against it, reporting status too_old and refusing to report ready when the interpreter is below it. Two other numbers exist in the tree and neither is a floor. scripts/validate_manifests.py rejects a declared minimum below 3.9; that is a sanity bound on this manifest, not a second opinion about what the catalog supports. harness/gatekeeper/_gatecheck.py carries a docstring claiming the engine runs on any host Python 3.8+; that is a portability note about one stdlib-only module, it is checked by nothing, and it is stale with respect to this floor. Where the three disagree, this manifest decides and the other two are the defect.",
+    "node_floor": "node.required is false. Node is used only by browser-automation helper commands, no script reads node.minimum, and a host without Node is still reported ready.",
+    "commands": "The commands map is the canonical invocation for each catalog entry point. validate_manifests.py requires ten of them to be present and non-empty and does not execute any of them, so a command string that names a script that has moved is not detected here.",
+    "who_reads_this_file": "No test in any suite reads a field of this manifest. Two scripts do - scripts/check_runtime.py and scripts/validate_manifests.py check_runtime - and neither is executed by a test, so their checks run only when a person or CI invokes them. The one comparator that touches this file at all requires it to exist and nothing more: skills/runtime-manifest.yaml is a REQUIRED_ASSET_GLOB in scripts/package_check.py, which validation/test_save_contracts.py PackageCheckTests and scripts/test_runtime_utilities.py both run. The filename also appears in those suites as a temp-fixture file they create. Deleting this manifest fails a suite; changing any value in it does not."
+  },
+  "stdlib_only_scope": {
+    "claim": "runtime.python.stdlib_only_for_hooks_and_gates declares that the hook and gate code runs on a clean interpreter with no third-party import.",
+    "covers": [
+      "skills/harness/hooks/",
+      "skills/harness/gatekeeper/",
+      "skills/scripts/"
+    ],
+    "backing": "Asserted, not proven. validate_manifests.py checks only that this flag is the boolean true; nothing scans the imports of the directories above. The one deliberate third-party dependency in the catalog is PyYAML, declared under optional_dependencies with the stdlib fallback scripts/data_formats.py, whose existence on disk validate_manifests.py does check. A new third-party import added to a hook or a gate would leave this flag true and fail only on a host without that package."
+  },
+  "enforcement": {
+    "machine_checked": "Two scripts read this manifest, and neither is run by a test (see authority.who_reads_this_file); both run on demand or in CI. scripts/check_runtime.py compares the live interpreter against runtime.python.minimum, reports optional-dependency availability, and reports launchers - a missing optional dependency with a declared fallback is a warning, and an interpreter below the minimum is never reported ready. scripts/validate_manifests.py check_runtime asserts minimum is major.minor and not below 3.9, asserts stdlib_only_for_hooks_and_gates is the boolean true, resolves each optional-dependency fallback path on disk, requires all five launchers and ten named commands to be present and non-empty, and requires the CI matrix to name exactly windows, macos, and linux. Separately, scripts/package_check.py requires this file to be present in the delivery set, which validation/test_save_contracts.py and scripts/test_runtime_utilities.py both exercise.",
+    "judgement": "authority, stdlib_only_scope, this enforcement block, failure_paths, the policy statement, the supported version list, every launcher string, every command string, node.minimum, and node.used_by. Nothing executes a command from this file, nothing scans the imports of the stdlib-only directories, and no comparator compares a launcher string against a host."
+  },
+  "failure_paths": {
+    "interpreter_below_minimum": "check_runtime.py reports status too_old and the host is not ready. Do not lower the minimum to make a host pass; that changes the contract for every host.",
+    "optional_dependency_missing": "A warning while the declared stdlib fallback exists on disk. If the fallback is also missing, validate_manifests.py fails and the dependency is no longer optional.",
+    "check_runtime_unavailable": "The runtime is unverified, not verified. Record the failed probe and treat any runtime-dependent claim as unproven under contracts/evidence-standards.md.",
+    "manifest_unreadable": "validate_manifests.py reports the file as unreadable and exits non-zero. No default floor is assumed in its place.",
+    "floor_disagreement": "This manifest decides. Correct the disagreeing docstring or bound rather than editing this file to match it."
+  },
   "runtime": {
     "python": {
       "minimum": "3.13",

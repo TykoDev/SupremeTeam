@@ -64,7 +64,7 @@ dependency changes, and anything crossing systems take the ordinary route.
 | Entry orchestrator | `admiral` | The front door. Lifecycle work starts here |
 | In-scope, defers when cold | `design/commander`, `design/redesign`, `build/build-management`, `review/code-chief`, `skill-maker`, `investigate`, `taste`, `session-memory`, `gatekeeper-admiral` | Components of the Admiral pipeline. Reached without an active handoff, they hand off to `admiral` first, then take the delegation back |
 | Internal specialists | every skill under `design/`, `build/`, `review/` not listed above | Through their owning sub-orchestrator. Not a user entry point |
-| Standalone tools | `safety-guardrails/*`, `browser-automation/*`, `release-and-deployment/*`, `testing-and-qa/*` | Out of routing scope. Call them directly whenever |
+| Standalone tools | `careful`, `freeze`, `guard`, `unfreeze`, `browse`, `open-browser`, `setup-browser-cookies`, `pair-agent`, `ship`, `setup-deploy`, `land-and-deploy`, `document-release`, `qa`, `qa-only`, `benchmark` | Out of routing scope. Call them directly whenever |
 
 "Standalone" means directly reachable without going through admiral. It does not
 mean unused by the pipelines. `qa` and `ship` are both directly invokable **and**

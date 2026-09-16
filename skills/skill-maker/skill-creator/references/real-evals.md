@@ -5,7 +5,7 @@ looks ugly", "it missed the deadline column", "the generated code doesn't compil
 the test data". It runs real test cases with subagents, lets the user review, and
 feeds feedback back into the improvement loop.
 
-Read this before your first pass. The summary in SKILL.md Phase 3 is intentionally
+Read this before the first pass. The summary in SKILL.md Phase 3 is intentionally
 brief; the full mechanics live here.
 
 ## Contents
@@ -19,6 +19,7 @@ brief; the full mechanics live here.
 7. Launching the viewer
 8. Reading feedback
 9. Iteration mechanics
+10. Advanced: blind comparison
 
 ---
 
@@ -29,7 +30,7 @@ a real user would actually say. Share them with the user: "Here are a few test c
 I'd like to try. Do these look right, or do you want to add more?" Then run them.
 
 Save to `evals/evals.json` at the repo root (sibling to the skill directory). Don't
-write assertions yet — just the prompts. You'll draft assertions while runs are
+write assertions yet — just the prompts. Assertions get drafted while runs are
 in progress.
 
 ```json
@@ -84,7 +85,7 @@ the workspace, organize results by iteration and then by test case:
     └── ...
 ```
 
-Don't create all of this upfront — create directories as you go.
+Don't create all of this upfront — create directories as they are needed.
 
 ### Naming eval directories
 
@@ -161,7 +162,7 @@ quantitative benchmark.
 
 ## 5. Capturing timing
 
-When each subagent task completes, you receive a notification with `total_tokens` and
+Each completed subagent task returns a notification with `total_tokens` and
 `duration_ms`. Save to `timing.json` in the run directory immediately:
 
 ```json
@@ -174,7 +175,7 @@ When each subagent task completes, you receive a notification with `total_tokens
 
 **This is the only opportunity** to capture this data — it comes through the task
 notification and isn't persisted elsewhere. Process each notification as it arrives
-rather than batching them at the end (you'll lose the data).
+rather than batching them at the end, or the data is gone.
 
 ---
 
@@ -184,7 +185,7 @@ Once all runs are done:
 
 ### Grade each run
 
-Spawn a grader subagent (or grade inline) that reads `agents/grader.md` and evaluates
+Spawn a grader subagent (or grade inline) that reads `../agents/grader.md` and evaluates
 each assertion against the outputs. Save to `grading.json` in each run directory.
 
 **Critical field names**: the `grading.json` expectations array must use the fields
@@ -201,7 +202,7 @@ python -m scripts.aggregate_benchmark <workspace>/iteration-N --skill-name <n>
 ```
 
 This produces `benchmark.json` and `benchmark.md` with pass_rate, time, and tokens
-for each configuration (mean ± stddev, delta). If you need to generate
+for each configuration (mean ± stddev, delta). To generate
 `benchmark.json` manually, see `schemas.md` for the exact schema the viewer expects.
 Put each with_skill entry *before* its baseline counterpart in the output.
 
@@ -209,7 +210,7 @@ Put each with_skill entry *before* its baseline counterpart in the output.
 
 ## 7. Launching the viewer
 
-Run `eval-viewer/generate_review.py` to produce the reviewer. On Claude Code it opens
+Run `../eval-viewer/generate_review.py` to produce the reviewer. On Claude Code it opens
 in the browser. On Cowork, use `--static <output_path>` to produce standalone HTML
 and give the user a link. On Claude.ai, skip this — present results inline instead
 (see SKILL.md environment notes).
@@ -233,7 +234,7 @@ feedback to `feedback.json`.
 ### In Cowork specifically
 
 The viewer's "Submit All Reviews" button downloads `feedback.json` as a file instead
-of posting to a server. You may need to request access to read it.
+of posting to a server, so reading it may require requesting access.
 
 ---
 
@@ -275,7 +276,7 @@ After applying improvements (Phase 4 in SKILL.md):
    so users can see before/after
 5. Wait for user review, read new feedback, improve again, repeat
 
-Stop when: user is happy, feedback is all empty, or you're not making meaningful
+Stop when: user is happy, feedback is all empty, or iterations stop making meaningful
 progress. Track B (rubric) has its own stopping rules — apply whichever triggers
 first.
 
@@ -284,6 +285,6 @@ first.
 ## Advanced: blind comparison
 
 For rigorous A/B between two versions ("is the new version actually better?"), read
-`agents/comparator.md` and `agents/analyzer.md`. Give two outputs to an independent
+`../agents/comparator.md` and `../agents/analyzer.md`. Give two outputs to an independent
 agent without labels, let it judge, analyze why the winner won. Optional, requires
 subagents, most users won't need it.

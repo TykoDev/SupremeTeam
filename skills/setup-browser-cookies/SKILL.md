@@ -2,12 +2,12 @@
 name: setup-browser-cookies
 description: >-
   Imports a user-owned, deliberately supplied authenticated session into an isolated
-  profile under a credential-hygiene contract: provenance, off-tracked-path storage,
-  restricted permissions, unconditional deletion. Use when the user asks to set up the
-  browser session, import cookies, prepare authenticated access, or verify a protected
-  page loads with the intended account — even when they only say "log the browser into
-  our app". Refuses harvested or third-party sessions. Prepares auth state only, not
-  launch, page-driving, or session-sharing.
+  browser profile under a credential-hygiene contract: provenance, off-tracked-path
+  storage, restricted permissions, unconditional deletion. Use when the user wants a
+  browser that is already signed in — import cookies, set up the browser session,
+  prepare authenticated access, or verify a protected page loads as the intended
+  account. Supplies the signed-in state; opening the window itself is `open-browser`,
+  driving the page is `browse`.
 version: 1.0.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---

@@ -1,13 +1,13 @@
 ---
 name: taste-review
 description: >-
-  Read-only reviewer for the Taste preference pipeline: checks a preference
-  package's provenance, conflicts, redaction, confirmation, and persistence
-  safety, then writes the taste-review record for the `taste-review` gate. Use
-  when `taste` hands a package to the review stage, or the user asks to review,
-  audit, or double-check a preference change before it is saved — even when they
-  only ask "is this safe to save?". Never mutates a preference store; defers
-  preference decisions to `taste`.
+  Read-only reviewer for the Taste preference pipeline: checks a preference package's
+  provenance, conflicts, redaction, confirmation, and persistence safety, then writes
+  the taste-review record for the `taste-review` gate. Use when `taste` hands a
+  package to the review stage, or the user asks to review, audit, or double-check a
+  preference, settings, or config change before it is saved — even when they only ask
+  "is this safe to save?". Never mutates a preference store; preference decisions
+  belong to `taste`.
 version: 1.0.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---

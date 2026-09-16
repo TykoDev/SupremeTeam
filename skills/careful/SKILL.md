@@ -1,13 +1,13 @@
 ---
 name: careful
 description: >-
-  Gates a destructive or irreversible action behind explicit evidence, reading the
-  live guard state first. Use when the user asks to be careful with
-  this, add a safety guard, protect the risky action, or pause before destructive
-  work — even when they only say "don't break anything". Issues a go, no-go, or
-  escalate verdict only: locking a path belongs to `freeze`, the
-  combined posture to `guard`, lifting a boundary to
-  `unfreeze`.
+  Gates a destructive or irreversible action the moment before it runs, behind
+  explicit evidence, reading the live guard state first. Use when the user is about to
+  do something they cannot undo — delete, overwrite, force-push, drop, deploy — and
+  wants intent confirmed first, even when they only say "don't break anything". Judges
+  an action, not a document: issues a go, no-go, or escalate verdict and nothing else.
+  Locking a path belongs to `freeze`, both halves together to `guard`, lifting a lock
+  to `unfreeze`.
 version: 1.0.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
@@ -23,9 +23,9 @@ A destructive step is cheap to run and expensive to undo, and the moment before 
 
 Use this skill to **add a confirmation checkpoint** before a destructive or irreversible action runs:
 
-- "be careful with this" / "pause before destructive work" — require explicit intent before the action proceeds
-- "add a safety guard" — insert an evidence-and-intent check ahead of the risky step
-- "protect the risky action" — make the consequences explicit before committing
+- "be careful with this" / "confirm intent first" — require explicit intent before the action proceeds
+- "don't break anything" — insert an evidence-and-intent check ahead of the irreversible step
+- "about to delete or overwrite something" — make the consequences explicit before it runs
 
 Route elsewhere to lock a path from any edits (`freeze`), combine intent checks with a write boundary (`guard`), or lift an existing boundary (`unfreeze`).
 

@@ -178,10 +178,16 @@ BACKTICKED = re.compile(r"`([a-z][A-Za-z0-9_-]*(?:/[A-Za-z0-9_-]+)?)`")
 def delegating_owners(skills: dict) -> dict[str, set[str]]:
     """For each internal specialist, the owner its own Entry Routing names.
 
-    `routing-doctrine.md` makes every nested specialist reachable "only through
-    the owning sub-orchestrator". So when a cold request that belongs to a
-    specialist arrives, routing it to that owner is not a miss — it is the
-    documented path, and the orchestrator delegates from there.
+    `routing-doctrine.md` makes an in-scope skill reachable "only through the
+    owning sub-orchestrator". So when a cold request that belongs to one of them
+    arrives, routing it to that owner is not a miss — it is the documented path,
+    and the orchestrator delegates from there.
+
+    Membership is read from the skill's own `## Entry Routing` section, not from
+    its depth in the tree. An earlier version used nesting as the proxy, which
+    was true until the directly-invokable skills moved to the catalog root:
+    `ship` then stopped being credited for routing to `admiral`, which its own
+    Entry Routing names, purely because its path got shorter.
 
     Scoring it as a miss measured the catalog against ground truth its own
     doctrine contradicts, and six of twenty-seven misroutes were exactly this.
@@ -190,12 +196,10 @@ def delegating_owners(skills: dict) -> dict[str, set[str]]:
     """
     owners: dict[str, set[str]] = {}
     for name in skills:
-        if "/" not in name:
-            continue  # a top-level skill is an entry point, not a specialist
         text = (SKILLS / name / "SKILL.md").read_text(encoding="utf-8", errors="replace")
         section = ENTRY_ROUTING.search(text)
         if not section:
-            continue
+            continue  # no declared route in; nothing to credit
         named = set(BACKTICKED.findall(section.group(1)))
         owners[name] = {ref for ref in named if ref in skills and ref != name}
     return owners

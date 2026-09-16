@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub>49 skills · 9 pipelines · one front door · Claude Code, Codex, Cursor, OpenCode</sub>
+  <sub>52 skills · 10 pipelines · one front door · Claude Code, Codex, Cursor, OpenCode</sub>
 </p>
 
 ---

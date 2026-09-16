@@ -17,7 +17,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 HOOK_DIR = Path(__file__).resolve().parent
-_DEFAULT_TMP_ROOT = Path.cwd() / "harness-test-work"
+import _state  # noqa: E402  (HOOK_DIR is on sys.path)
+
+# Test scratch lives under the project's .harness-state/, one of the two
+# sanctioned generated roots (save-ownership.yaml generated_roots).
+_DEFAULT_TMP_ROOT = _state.project_root() / ".harness-state" / "test-work"
 TEST_TMP_ROOT = Path(os.environ.get("SUPREMETEAM_HOOK_TEST_TMP", _DEFAULT_TMP_ROOT))
 
 

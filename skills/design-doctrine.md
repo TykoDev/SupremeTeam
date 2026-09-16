@@ -184,6 +184,7 @@ An inaccessible flow is a broken flow, not a polish item.
   without a recorded exception (§3).
 - Treats accessibility or responsive coverage as follow-up work (§6).
 - Lacks decision provenance or Taste traceability required by §0, or evaluates against a Taste digest other than the one approved with the design.
+- At `redesign-review`: fewer than four variants, directions that differ in fewer than three Taste categories, a prototype below full parity coverage, or a prototype that needs a build step or the network (§9).
 
 ## 8. Gate evidence
 
@@ -207,3 +208,47 @@ Three keys in [gates.yaml](gates.yaml) carry this doctrine mechanically:
 
 A render record with `result.status: inferred` is accepted only with a stated
 limitation and is labelled as inferred, never as observed.
+
+## 9. Redesign variants and living prototypes
+
+The redesign pipeline (`design/redesign`) compares four design systems before
+one is built for real. These rules keep the comparison honest.
+
+- **Inventory first.** `design-mapper` records the current surface as a
+  stable-id inventory (routes, states, components, interactions, flows,
+  tokens, accessibility baseline) with baseline captures at the six tiers in
+  both themes. The inventory is the parity contract; nothing is designed
+  before it exists.
+- **Four directions, genuinely different.** `architect` writes four
+  directions that diverge in at least three Taste categories
+  ([taste-doctrine.md](taste-doctrine.md) §3) and traces every decision to an
+  effective preference, an explicit instruction, or documented judgment.
+  Palette-only variation is one direction, not four.
+- **Living prototypes.** `prototyper` builds each variant as plain HTML, CSS,
+  and JavaScript: `tokens.css`, `components.css`, `components.js`, a
+  `components.html` catalog showing every primitive in every variant, size,
+  and state, and an `app.html` single-page prototype with hash routing over
+  every inventory route, a switcher for every declared state, mocked data,
+  working interactions and flows, dark mode, keyboard paths, and
+  `prefers-reduced-motion`. No build step, no network; the files open from disk.
+- **shadcn-shaped.** Component names, variant axes, and token names follow
+  §5 so the chosen variant maps one-to-one onto the production design system
+  the design pipeline then implements.
+- **Functional parity, mechanically proven.** Every inventory id appears as a
+  `data-route`, `data-state` (or `data-route-state`), `data-component`,
+  `data-interaction`, or `data-flow` marker on rendered markup.
+  `scripts/check_parity.py` writes a typed probe record per variant bound by
+  sha256 to the inventory and prototype files; it passes only at full
+  coverage. Pixel similarity is never the criterion.
+- **Evidence per variant.** `design-qa` renders every route and state at the
+  six tiers in both themes (§4); `frontier` grades accessibility with the
+  shared severities. A variant with an open Critical accessibility finding or
+  a parity gap is repaired by its builder before it enters the comparison.
+- **Gate evidence.** At `redesign-review` ([gates.yaml](gates.yaml)):
+  `design_inventory`, `taste_grilling`, `taste_snapshot`, `design_directions`,
+  `variant_set` (exactly four, every file hashed), `parity_evidence`,
+  `rendered_verification` (no fallback at this boundary),
+  `accessibility_evidence`, `recommendation`, and `residual_risk`.
+- **Handoff.** The chosen variant's `variant.md`, `tokens.css`, and
+  `components.html` are the design-system input to the design pipeline; a
+  merge choice is a brief for `architect`, not a fifth prototype.

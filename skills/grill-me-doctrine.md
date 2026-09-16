@@ -6,7 +6,7 @@ runs this protocol before delegating work or committing to a deliverable. A plan
 accepted without it is not gate-eligible.
 
 Bound skills: `admiral`, `commander`, `skill-maker`, `researcher`, `planner`,
-`architect`, and `engineer`.
+`architect`, `engineer`, `redesign`, and `taste` (for the taste grilling below).
 
 Resolve only decisions that change the next deliverable, a locked contract, a
 security boundary, migration path, rollback commitment, or user-visible
@@ -83,3 +83,37 @@ artifact fails the gate mechanically. The log carries:
   must reopen them.
 - Rejected options for material tradeoffs, with one-line rationale.
 - Non-goals and YAGNI deferrals with the trigger that reopens each.
+
+## Taste grilling
+
+The redesign pipeline runs a taste grilling: the same protocol, applied to
+presentation and interaction preferences, owned by `taste` because every
+confirmed answer becomes a preference entry under [taste-doctrine.md](taste-doctrine.md).
+
+- Work through the eleven Taste categories (taste-doctrine §3) one category
+  per prompt, in this order: visual-style, layout, density, typography,
+  color-behavior, component-behavior, interaction-patterns, motion,
+  content-tone, technology-ergonomics, anti-preference.
+- Anchor each question to the design inventory: state what the current
+  surface does today (the token, the pattern, the capture) and offer two or
+  three mutually exclusive options with the recommended one first and a
+  one-line rationale drawn from the inventory's inconsistencies or the
+  accessibility baseline.
+- Record every answer as a candidate entry: `category`, `normalized_rule`,
+  `strength` (`hard`, `strong`, `soft`), `source` (`explicit` for a direct
+  answer, `confirmed-inference` for an accepted recommendation), the
+  applicability selectors, and any anti-preference the answer implies.
+- Never derive a candidate from protected or personal characteristics, and
+  never let a Taste answer weaken an accessibility, security, or gate
+  requirement; surface the collision and keep the requirement.
+- Ask the scope question last: project only, or also global. Promotion to
+  global scope needs its own explicit confirmation.
+
+Write the result as the taste grilling log at
+`skillset-saves/runs/{run-id}/redesign/reports/taste-grilling.md` (the
+`taste-grilling-log` artifact behind the `taste_grilling` evidence key at
+`redesign-review`): one decision per category with the current state, the
+options, the recommendation, the answer, and the resulting candidate entries.
+`taste` then confirms and persists the candidates through its own pipeline and
+returns the effective-profile snapshot that `architect` and `prototyper`
+consume read-only.

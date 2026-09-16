@@ -26,7 +26,7 @@ ordinary conversation.
 | Tier | Skills |
 |---|---|
 | Entry orchestrator | `admiral` |
-| In-scope, defers to admiral when reached cold | `design/commander`, `build/build-management`, `review/code-chief`, `skill-maker`, `investigate`, `taste`, `session-memory`, `gatekeeper-admiral` |
+| In-scope, defers to admiral when reached cold | `design/commander`, `design/redesign`, `build/build-management`, `review/code-chief`, `skill-maker`, `investigate`, `taste`, `session-memory`, `gatekeeper-admiral` |
 | Internal specialists | every skill under `design/`, `build/`, `review/` not listed above |
 | Standalone tools | `safety-guardrails/*`, `browser-automation/*`, `release-and-deployment/*`, `testing-and-qa/*` |
 
@@ -37,6 +37,7 @@ Declared in `skills/pipelines.yaml`, gated by `skills/gates.yaml`.
 | Pipeline | Owner | Closes at |
 |---|---|---|
 | `design` | `commander` | `design-to-build` |
+| `redesign` | `redesign` | `redesign-review` |
 | `build` | `build-management` | `build-to-review` |
 | `review` | `code-chief` | `review-to-delivery` |
 | `security` | `cso` | `security-review` |
@@ -46,7 +47,7 @@ Declared in `skills/pipelines.yaml`, gated by `skills/gates.yaml`.
 | `skill-creation` | `skill-maker` | `skill-maker-to-delivery` |
 | `release` | `ship` | `deploy-readiness` |
 
-## The 49 skills
+## The 52 skills
 
 ### Admiral layer
 
@@ -55,7 +56,7 @@ Declared in `skills/pipelines.yaml`, gated by `skills/gates.yaml`.
 | **admiral** | `skills/admiral/SKILL.md` | Entry orchestrator for the full lifecycle, plus investigation, security, QA, resume, and skill or team creation |
 | **gatekeeper-admiral** | `skills/gatekeeper-admiral/SKILL.md` | Cross-stage adversarial validator at every delivery boundary |
 
-### Design (6)
+### Design (9)
 
 | Skill | Path | Role |
 |---|---|---|
@@ -64,7 +65,10 @@ Declared in `skills/pipelines.yaml`, gated by `skills/gates.yaml`.
 | **planner** | `skills/design/planner/SKILL.md` | Milestones, rollout, decision gates, risk handling |
 | **architect** | `skills/design/architect/SKILL.md` | System architecture, interface contracts, and the frontend design system |
 | **engineer** | `skills/design/engineer/SKILL.md` | Implementation spec: delivery slices, dependency order, operational constraints |
-| **gatekeeper-design** | `skills/design/gatekeeper-design/SKILL.md` | Design phase-exit validator |
+| **gatekeeper-design** | `skills/design/gatekeeper-design/SKILL.md` | Design phase-exit validator; also gates `redesign-review` |
+| **redesign** | `skills/design/redesign/SKILL.md` | Redesign pipeline owner: inventory, taste grilling, four living design-system variants, comparison and decision |
+| **design-mapper** | `skills/design/design-mapper/SKILL.md` | Records the current design as a stable-id inventory with baseline captures; verifies variant parity |
+| **prototyper** | `skills/design/prototyper/SKILL.md` | Builds one design-system variant: tokens, framework-free component library, living single-page prototype |
 
 The UI design system belongs to **architect** per `skills/design-doctrine.md`.
 There is no separate `designer` skill. `skills/tech-stacks/` is a resource library
@@ -155,8 +159,8 @@ Not skills. These are the files the skills are checked against.
 
 | File | Purpose |
 |---|---|
-| `skills/gates.yaml` | Nine boundaries: required and artifact-backed evidence, sanctioned fallbacks, typed records, finding policy, submitters |
-| `skills/pipelines.yaml` | Nine pipelines: ordered stages, owners, closing boundary, required scripts |
+| `skills/gates.yaml` | Ten boundaries: required and artifact-backed evidence, sanctioned fallbacks, typed records, finding policy, submitters |
+| `skills/pipelines.yaml` | Ten pipelines: ordered stages, owners, closing boundary, required scripts |
 | `skills/ownership.yaml` | One writer per design and handoff artifact |
 | `skills/save-ownership.yaml` | One writer per path class under `skillset-saves/` and `.harness-state/` |
 | `skills/team-manifest.yaml` | The roster every owner and submitter is checked against |
@@ -216,7 +220,7 @@ never approve it.
 
 ## Layout
 
-**49 skills**: Admiral 2, Design 6, Build 8, Review 11, Investigate 1,
+**52 skills**: Admiral 2, Design 9, Build 8, Review 11, Investigate 1,
 Skill-Maker 3, Session-Memory 1, Taste 2, Browser 4, Release 4, Safety 4, Testing 3. Plus
 the runtime harness, eight doctrine and protocol files, six canonical contracts,
 and the machine-readable specs.

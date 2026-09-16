@@ -49,8 +49,9 @@
     "save_lifecycle": "python skills/harness/hooks/save_run.py <create|checkpoint|heartbeat|complete|block|release|recover|status> --run-id <run>",
     "scan_record": "python skills/scripts/scan_record.py --out <run>/security/evidence/scan-<tool>.json --input <lockfile> -- <scanner command>",
     "output_paths": "python skills/scripts/output_paths.py --kind <reports|artifacts|evidence|packages|manifest|verdict|project_preferences|global_preferences> --run-id <run> --phase <phase> --name <file>",
-    "package_check": "python skills/scripts/package_check.py --root . [--out dist/supremeteam.zip]",
-    "stack_detect": "python skills/scripts/check_runtime.py --detect-project"
+    "package_check": "python skills/scripts/package_check.py --root . [--out .harness-state/packages/supremeteam.zip]",
+    "stack_detect": "python skills/scripts/check_runtime.py --detect-project",
+    "parity_check": "python skills/scripts/check_parity.py --inventory <design-inventory.json> --app <app.html> --components <components.html> --out <run>/redesign/evidence/parity-<variant>.json"
   },
   "ci_matrix": [
     {

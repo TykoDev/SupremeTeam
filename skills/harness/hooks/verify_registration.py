@@ -29,6 +29,8 @@ import shutil
 import sys
 from pathlib import Path
 
+import _state
+
 REQUIRED = [("pre", "pre_tool_use.py"), ("post", "post_tool_use.py"), ("prompt", "user_prompt_submit.py")]
 ENDOR_REQUIRED = [
 ]
@@ -76,7 +78,7 @@ def _python_launcher(token: str) -> bool:
 def _expand(token: str) -> str:
     """Expand ~, $VAR, ${VAR}, and %VAR%; unset project variables fall back to
     the project directory so a config written for the host still verifies."""
-    project = os.environ.get("CLAUDE_PROJECT_DIR") or os.environ.get("SUPREMETEAM_PROJECT_DIR") or os.getcwd()
+    project = str(_state.project_root())
 
     def sub(match):
         name = match.group(1) or match.group(2) or match.group(3)
@@ -162,8 +164,8 @@ def _commands(objects: list[dict], event: str) -> list[str]:
 
 
 def _paths(host: str) -> list[Path]:
-    home, cwd = Path.home(), Path.cwd()
-    project = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.environ.get("SUPREMETEAM_PROJECT_DIR") or cwd)
+    home = Path.home()
+    project = _state.project_root()
     if host == "claude":
         return [home / ".claude/settings.json", project / ".claude/settings.json", project / ".claude/settings.local.json"]
     if host == "codex":

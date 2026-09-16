@@ -23,8 +23,8 @@ SupremeTeam/
 │   ├── directory-structure.md            # This file
 │   └── assets/                           # Diagrams used across the docs
 └── skills/
-    ├── gates.yaml                        # Gate spec: 9 boundaries
-    ├── pipelines.yaml                    # Pipeline map: 9 pipelines
+    ├── gates.yaml                        # Gate spec: 10 boundaries
+    ├── pipelines.yaml                    # Pipeline map: 10 pipelines
     ├── ownership.yaml                    # One writer per artifact
     ├── save-ownership.yaml               # One writer per save path class
     ├── team-manifest.yaml                # Roster
@@ -56,7 +56,8 @@ SupremeTeam/
     │   └── agent/                        # agent-manifest.yaml, agent-protocol.md, adapters/
     ├── gatekeeper-admiral/               # Cross-stage validator
     ├── design/                           # commander, researcher, planner, architect,
-    │                                     # engineer, gatekeeper-design
+    │                                     # engineer, gatekeeper-design, redesign,
+    │                                     # design-mapper, prototyper
     ├── build/                            # build-management, bob-the-builder, test-builder,
     │                                     # security-builder, cross-check-build-confirm,
     │                                     # debugger, health-check, gatekeeper-build
@@ -79,7 +80,7 @@ SupremeTeam/
 |---|---|---|
 | `skillset-saves/` | Run state, locks, audit trails, evidence, gate packages | Ignored. Never commit |
 | `.harness-state/` | Guard records and trajectory observations | Ignored. Never commit |
-| `harness-test-work/` | Temporary harness regression workspace | Ignored. Never commit |
+| `.harness-state/test-work/`, `eval-reports/`, `eval-workspaces/`, `packages/` | Test scratch, skill-creator reports and workspaces, packages built outside a run | Ignored. Never commit |
 | `**/__pycache__/`, `*.pyc` | Interpreter caches | Ignored. Never publish |
 
 Ignore rules are not the delivery control, though.

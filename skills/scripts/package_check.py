@@ -6,7 +6,7 @@ the files that ``skills/package-manifest.yaml`` selects from the chosen root,
 rejects runtime residue classes, confirms required assets are present, and
 optionally writes the archive.
 
-    python skills/scripts/package_check.py --root . [--out dist/supremeteam.zip]
+    python skills/scripts/package_check.py --root . [--out .harness-state/packages/supremeteam.zip]
 
 Exit 0 when the enumerated set is clean, 1 when residue or a missing required
 file is found, 2 on manifest/engine error. The JSON report lists every
@@ -30,7 +30,7 @@ RESIDUE_CLASSES = {
     "interpreter-cache": ["**/__pycache__/**", "**/*.pyc"],
     "runtime-state": [".harness-state/**", "**/.harness-state/**"],
     "save-state": ["skillset-saves/**", "**/skillset-saves/**"],
-    "test-scratch": ["harness-test-work/**", "**/harness-test-work/**"],
+    "test-scratch": ["harness-test-work/**", "**/harness-test-work/**", "gatekeeper-test-work/**", "**/gatekeeper-test-work/**", "**/.harness-state/test-work/**"],
     "render-scratch": [".playwright-mcp/**", "**/.playwright-mcp/**"],
     "eval-workspace": ["**/*-workspace/**", "**/evals/workspace/**"],
     "archives": ["**/*.skill", "**/*.zip"],

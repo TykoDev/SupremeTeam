@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -178,7 +179,10 @@ class OutputPathTests(unittest.TestCase):
             "project_preferences": {},
             "trajectory": dict(run_id="r1", session="abc"),
             "product": dict(name="src/app.css"),
-            "design_spec": {},
+            "test_work": dict(name="case-1/README.md"),
+            "eval_reports": dict(name="report.html"),
+            "eval_workspace": dict(name="my-skill-workspace/iteration-1"),
+            "standalone_packages": dict(name="my-skill.skill"),
         }
         for kind, kwargs in cases.items():
             with self.subTest(kind=kind):
@@ -194,6 +198,59 @@ class OutputPathTests(unittest.TestCase):
             resolve(root, "manifest", run_id="../x", phase="design")
         with self.assertRaises(ValueError):
             resolve(root, "core", run_id="r1", name="manifest.json")
+
+
+class GeneratedRootPolicyTests(unittest.TestCase):
+    """Everything Supreme Team generates lands under skillset-saves/ or .harness-state/."""
+
+    CASES = {
+        "manifest": dict(run_id="r1", phase="redesign"),
+        "reports": dict(run_id="r1", phase="design", name="report_plan.md"),
+        "artifacts": dict(run_id="r1", phase="redesign", name="variants/v1/app.html"),
+        "evidence": dict(run_id="r1", phase="redesign", name="parity-v1.json"),
+        "packages": dict(run_id="r1", phase="skill-creation", name="my-skill.skill"),
+        "verdict": dict(run_id="r1", phase="redesign", boundary="redesign-review"),
+        "core": dict(run_id="r1", name="_state.md"),
+        "project_preferences": {},
+        "trajectory": dict(run_id="r1", session="abc"),
+        "guards": {},
+        "test_work": dict(name="case-1/README.md"),
+        "eval_reports": dict(name="report.html"),
+        "eval_workspace": dict(name="my-skill-workspace/iteration-1"),
+        "standalone_packages": dict(name="my-skill.skill"),
+    }
+
+    def test_every_project_kind_resolves_under_a_generated_root(self):
+        from output_paths import GENERATED_ROOTS, KINDS
+        self.assertEqual(set(self.CASES) | {"product", "global_preferences"}, KINDS)
+        root = Path(tempfile.gettempdir()) / "admiral-generated-roots"
+        for kind, kwargs in self.CASES.items():
+            with self.subTest(kind=kind):
+                target = resolve(root, kind, **kwargs)
+                for item in (target if isinstance(target, tuple) else (target,)):
+                    first = item.resolve().relative_to(root.resolve()).parts[0]
+                    self.assertIn(first, GENERATED_ROOTS, (kind, item))
+
+    def test_save_ownership_declares_exactly_the_two_roots(self):
+        save = load_data(ROOT / "save-ownership.yaml")
+        self.assertEqual(list(save["generated_roots"]), ["skillset-saves", ".harness-state"])
+        self.assertIn("redesign", save["phase_directories"])
+
+    def test_hook_state_root_walks_up_to_the_project_marker(self):
+        import _state
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / ".git").mkdir()
+            nested = root / "skills" / "harness" / "hooks"
+            nested.mkdir(parents=True)
+            self.assertEqual(_state.find_project_root(nested), root)
+            unmarked = Path(tempfile.mkdtemp()).resolve()
+            try:
+                self.assertEqual(_state.find_project_root(unmarked), unmarked)
+            finally:
+                unmarked.rmdir()
+            with unittest.mock.patch.dict(os.environ, {"SUPREMETEAM_PROJECT_DIR": str(nested)}):
+                self.assertEqual(_state.project_root(), nested)
 
 
 class ScanRecordTests(unittest.TestCase):

@@ -10,7 +10,7 @@
 ## Design Packet Validation Sequence
 
 0. Run `scripts/check.py <package-dir> [--prior <prior-verdict>]` first. It returns the deterministic structural facts (required design artifacts present; API contracts and frontend/UI handoff reported as `UNCHECKED` conditional artifacts; single-revision lineage, skip-record completeness, blocked-phrase cleanliness, idempotency drift, harness-doctrine §5 structure) as `PASS` / `FAIL` / `UNCHECKED` findings and a `gate_status`. Read its findings into the steps below; do not re-derive these checks by hand. The script never emits a verdict and never judges design coherence.
-1. Confirm the active design boundary and the artifact set that phase is required to exit with.
+1. Confirm the active design boundary and the artifact set that phase is required to exit with. At `redesign-review` the pre-check is `scripts/check_redesign.py`, and the boundary validator (`check.py --boundary redesign-review`) mechanizes the four-variant set, parity records, and the no-fallback rule for rendered verification; judge direction differentiation, comparison honesty, and the recorded decision.
 2. Check the packet for alignment across problem framing, constraints, architecture, API contracts, implementation specification, and locked technology choices.
 3. Verify that unresolved decisions are explicit and that the package does not ask downstream stages to discover foundational design intent on their own.
 4. Compare the current packet against the previous verdict so the new submission explains what changed.

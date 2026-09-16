@@ -110,8 +110,11 @@ repair cannot disagree about what should be registered.
 `allow_dangerous`.
 
 The state helper resolves that path under `SUPREMETEAM_PROJECT_DIR` first, then a
-known host workspace variable, then the working directory, then an isolated temp
-fallback. With the file absent or empty, only the built-in destructive-pattern
+known host workspace variable, then the nearest ancestor of the working
+directory that holds `skillset-saves/`, `.harness-state/`, or `.git`, then the
+working directory, then an isolated temp fallback. Every generated file lands
+under `skillset-saves/` or `.harness-state/` (`save-ownership.yaml`
+`generated_roots`). With the file absent or empty, only the built-in destructive-pattern
 guard applies. `unfreeze` clears `frozen_globs`.
 
 ## Gate validation

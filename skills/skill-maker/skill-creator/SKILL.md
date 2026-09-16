@@ -198,13 +198,13 @@ be substantive enough that Claude would actually benefit from consulting a skill
 python -m scripts.package_skill <path/to/skill-folder>
 ```
 
-This creates a `.skill` ZIP file excluding `evals/`, `__pycache__`, `.pyc`,
+This writes the `.skill` ZIP to `<project>/.harness-state/packages/` by default (pass an output directory, normally the active run's `skill-creation/packages/`, to place it elsewhere), excluding `evals/`, `__pycache__`, `.pyc`,
 `.DS_Store`. Point the user to the resulting file path.
 
 When updating an existing skill:
 - Preserve the original name — use the same directory name and `name` frontmatter
 - Copy to a writeable location before editing if the installed path is read-only
-- Stage in `/tmp/` first if packaging manually, then copy to output directory
+- Stage under the project's `.harness-state/packages/` if packaging manually (never `/tmp/` or the project root), then copy into the active run's `skill-creation/packages/` directory
 
 ## Script and Path Safety
 

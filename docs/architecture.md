@@ -1,6 +1,6 @@
 # Architecture
 
-Nine pipelines, one front door.
+Ten pipelines, one front door.
 
 Each pipeline closes at a gate boundary defined in
 [`skills/gates.yaml`](../skills/gates.yaml) and declared in
@@ -14,11 +14,12 @@ every required script is actually on disk.
 
 ![The delivery lifecycle](assets/Intro.jpg)
 
-## The nine
+## The ten
 
 | Pipeline | Owner | Closes at | What it is for |
 |---|---|---|---|
 | `design` | commander | `design-to-build` | Requirements, architecture, interfaces, design system, plan, implementation spec, stack lock |
+| `redesign` | redesign | `redesign-review` | Inventory of the current design, taste grilling, four living design-system variants at parity, comparison and decision |
 | `build` | build-management | `build-to-review` | Implementation, tests, hardening, runtime health, completeness |
 | `review` | code-chief | `review-to-delivery` | Correctness, quality, security, frontend, visual QA, developer experience |
 | `security` | cso | `security-review` | Threat model, vulnerability scan, adversarial probe, remediation |
@@ -27,9 +28,8 @@ every required script is actually on disk.
 | `taste` | taste | `taste-review` | Preference confirmation, conflict analysis, persistence, effective-profile handoff |
 | `skill-creation` | skill-maker | `skill-maker-to-delivery` | Skill and team drafting, review, packaging |
 | `release` | ship | `deploy-readiness` | Readiness, deploy config, rollout, release notes |
-| `taste` | taste | `taste-review` | Preference intake, normalization, atomic persistence, effective profile, consumer handoff |
 
-The last six are not side channels. They run inside the same state machine as the
+The last seven are not side channels. They run inside the same state machine as the
 first three, occupying a design-shaped or build-shaped state in their own phase
 directory, and meeting a gate at their own boundary.
 
@@ -119,6 +119,27 @@ sanctioned fallback when no runtime or framework changes. Detect the slug with
 
 Out: an approved design package with requirements, architecture, interface
 contracts, design system, plan, implementation spec, and traceability.
+
+## Redesign
+
+Owner: [`redesign`](../skills/design/redesign/SKILL.md)
+
+```text
+redesign -> design-mapper (inventory, baseline) -> taste (taste grilling, confirmation)
+         -> architect (four directions) -> prototyper x4 (living variants)
+         -> design-mapper (parity) -> design-qa (render) -> frontier (accessibility)
+         -> comparison and decision -> gatekeeper-design -> redesign-review
+```
+
+The inventory is the parity contract: every route, state, component,
+interaction, and flow gets a stable id, and `check_parity.py` proves each
+prototype carries all of them. `variant_set` is validated mechanically for
+exactly four variants with hashed files, and `rendered_verification` accepts no
+fallback at this boundary because a redesign always has a visible surface.
+
+Out: four living single-page prototypes with component libraries, evidence per
+variant, and a recorded decision; the chosen variant enters the design pipeline
+as its design-system input. Nothing under a redesign touches application source.
 
 ## Build
 

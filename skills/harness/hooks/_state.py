@@ -42,15 +42,35 @@ _LEGACY_TRAJ_PREFIX = "traj-"
 _SESSION_ENV = ("SUPREMETEAM_SESSION_ID", "CLAUDE_SESSION_ID", "CODEX_SESSION_ID", "COPILOT_SESSION_ID", "GITHUB_RUN_ID")
 
 
+# A project root is recognised by one of these markers. Walking up from the
+# working directory keeps runtime state at the project root even when a
+# script is invoked from a subdirectory (save-ownership.yaml generated_roots).
+_ROOT_MARKERS = ("skillset-saves", ".harness-state", ".git")
+_PROJECT_ENV = ("SUPREMETEAM_PROJECT_DIR", "CLAUDE_PROJECT_DIR", "CODEX_WORKSPACE_DIR", "GITHUB_WORKSPACE")
+
+
+def find_project_root(start: "str | Path | None" = None) -> Path:
+    """Nearest ancestor of ``start`` (default: cwd) holding a root marker, else ``start``."""
+    try:
+        origin = Path(start or os.getcwd()).resolve()
+    except Exception:
+        return Path(start or os.getcwd())
+    for candidate in (origin, *origin.parents):
+        try:
+            if any((candidate / marker).exists() for marker in _ROOT_MARKERS):
+                return candidate
+        except Exception:
+            continue
+    return origin
+
+
 def project_root() -> Path:
-    base = (
-        os.environ.get("SUPREMETEAM_PROJECT_DIR")
-        or os.environ.get("CLAUDE_PROJECT_DIR")
-        or os.environ.get("CODEX_WORKSPACE_DIR")
-        or os.environ.get("GITHUB_WORKSPACE")
-        or os.getcwd()
-    )
-    return Path(base)
+    """Explicit host or Supreme Team project variable first, then the nearest marked ancestor of cwd."""
+    for name in _PROJECT_ENV:
+        value = os.environ.get(name)
+        if value:
+            return Path(value)
+    return find_project_root()
 
 
 def state_dir() -> Path:
@@ -58,9 +78,11 @@ def state_dir() -> Path:
 
     Prefers ``$SUPREMETEAM_PROJECT_DIR/.harness-state`` so guard/freeze records
     and trajectory state live with the project; falls back through known host
-    project-directory variables, then the current working directory, then a
-    *project-namespaced* directory under the OS temp root (never one shared
-    temp directory across unrelated projects).
+    project-directory variables, then the nearest ancestor of the working
+    directory that holds ``skillset-saves/``, ``.harness-state/``, or ``.git``,
+    then the working directory itself, then a *project-namespaced* directory
+    under the OS temp root (never one shared temp directory across unrelated
+    projects).
     """
     base = project_root()
     try:

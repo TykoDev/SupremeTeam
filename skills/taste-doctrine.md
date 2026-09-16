@@ -187,3 +187,9 @@ Taste only after filtering it through project conventions and mandatory
 requirements. Review verifies both the chosen preferences and the constraints
 that outrank them. Taste is a semantic input to those phases, not a new pipeline,
 gate, stack lock, design-system owner, or session-memory namespace.
+
+The redesign pipeline's taste grilling ([grill-me-doctrine.md](grill-me-doctrine.md)
+§ Taste grilling) is the one place Taste is elicited systematically rather than
+captured from a passing request. `taste` runs it, and every confirmed answer
+enters the normal lifecycle (§5, §6): nothing a grilling produces becomes
+`active` without the confirmation the operations above require.

@@ -215,6 +215,7 @@ Delegate to **skill-creator** in Package mode.
 
 **Handoff includes:**
 - Skill directory path
+- Output directory: the active run's `skillset-saves/runs/{run-id}/skill-creation/packages/` (resolved with `python skills/scripts/output_paths.py --kind packages`), or `.harness-state/packages/` outside a run; never the skill directory or the project root
 
 **Expected return:**
 - `.skill` file path

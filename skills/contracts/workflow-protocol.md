@@ -78,6 +78,7 @@ boundary it validates, and every boundary guards a specific transition.
 | Boundary | Guards | Submitter | Validator |
 | --- | --- | --- | --- |
 | `design-to-build` | `DESIGN -> BUILD` | commander | gatekeeper-design, then gatekeeper-admiral |
+| `redesign-review` | `REDESIGN (design-shaped) -> GATE -> DESIGN or COMPLETE` | redesign | gatekeeper-design, then gatekeeper-admiral |
 | `build-to-review` | `BUILD -> REVIEW` | build-management | gatekeeper-build, then gatekeeper-admiral |
 | `review-to-delivery` | `REVIEW -> GATE -> COMPLETE` | code-chief | gatekeeper-code, then gatekeeper-admiral |
 | `security-review` | security pipeline to `GATE -> COMPLETE` | cso | gatekeeper-admiral |
@@ -93,7 +94,7 @@ its explicit `TASTE_*` states: approval at
 `TASTE_GATE_PENDING` transitions either to `COMPLETE` for preference-only work
 or returns the immutable effective-profile handoff to the applicable consuming
 pipeline; revision returns to `TASTE_GATE_REVISE` and then `TASTE_ACTIVE`.
-The security, investigation, qa, skill-creation, and release pipelines run
+The redesign, security, investigation, qa, skill-creation, and release pipelines run
 inside this state machine, not beside it: their work occupies `DESIGN`-shaped or `BUILD`-shaped
 states in their own phase directory and meets the gate at the boundary named
 above. `gates.yaml` is the single source of truth for each boundary's required
@@ -115,7 +116,10 @@ that depended on it. Rewind there, invalidate only dependent verdicts, and keep
 unaffected evidence. Do not merge two histories or advance past an unresolved
 load-bearing gap. A failed review normally enters `REVISE` at the smallest
 owner-controlled boundary; a changed design rewinds to `DESIGN`. Cap cross-stage
-revision cycles at two before escalating the dispute to the user.
+revision cycles at two before escalating the dispute to the user. A `REVISE` is
+one packet: every finding from the pass grouped by owner
+(`gates.yaml` `revise_policy`); the lead fixes owner groups in parallel,
+resubmits once, and the gate re-judges only the keys whose evidence changed.
 
 ## Resume rules
 

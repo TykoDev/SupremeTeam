@@ -33,6 +33,41 @@ owners:
     does_not_write:
       - build-package
       - gate-verdict
+  redesign:
+    role: redesign phase lead; owns the comparison, recommendation, and recorded decision
+    writes:
+      - redesign-package
+    consumes:
+      - grilling-log
+      - design-inventory
+      - taste-grilling-log
+      - design-directions
+      - design-system-variant
+      - parity-evidence
+    does_not_write:
+      - design-inventory
+      - design-system-variant
+      - gate-verdict
+  design-mapper:
+    role: records the current design as a stable-id inventory with baseline captures and verifies variant parity
+    writes:
+      - design-inventory
+      - parity-evidence
+    does_not_write:
+      - design-directions
+      - design-system-variant
+      - implementation
+  prototyper:
+    role: builds one design-system variant with a living prototype and component library per direction
+    writes:
+      - design-system-variant
+    consumes:
+      - design-inventory
+      - design-directions
+    does_not_write:
+      - design-inventory
+      - parity-evidence
+      - implementation
   build-management:
     role: build phase lead; owns the changed artifact set and its implementation evidence
     writes:
@@ -69,6 +104,7 @@ owners:
       - architecture
       - interface-contract
       - design-system
+      - design-directions
     consumes:
       - requirements-brief
     does_not_write:
@@ -236,6 +272,7 @@ owners:
       - taste-consumer-handoff
       - taste-package
       - preference-profile
+      - taste-grilling-log
     does_not_write:
       - gate-verdict
   taste-review:
@@ -427,6 +464,44 @@ artifacts:
       - UI/UX handoff template per design-doctrine.md section 5
       - responsive behavior across the six tiers
       - accessibility expectations
+  - id: design-inventory
+    owner: design-mapper
+    before: taste grilling and design directions
+    evidence:
+      - stable-id routes, states, components, interactions, and flows with sources
+      - tokens in use and off-scale values with locations
+      - baseline captures across the six tiers and both themes, or an INFERRED record with its limitation
+  - id: taste-grilling-log
+    owner: taste
+    before: design directions
+    evidence:
+      - one decision per Taste category anchored to the inventory, with recommendation and answer
+      - candidate entries with strength, anti-preferences, and confirmation status
+  - id: design-directions
+    owner: architect
+    before: variant build
+    evidence:
+      - four directions differentiated across at least three Taste categories
+      - per-direction token strategy, component approach, and Taste traceability rows
+  - id: design-system-variant
+    owner: prototyper
+    before: parity verification
+    evidence:
+      - variant.md, tokens.css, components.css, components.js, components.html, app.html with hashes
+      - every inventory id carried as a parity marker; opens offline with no framework
+  - id: parity-evidence
+    owner: design-mapper
+    before: redesign-review
+    evidence:
+      - check_parity.py probe record per variant bound to the inventory and prototype hashes
+      - coverage per list and the exact missing ids
+  - id: redesign-package
+    owner: redesign
+    before: redesign-review
+    evidence:
+      - comparison matrix across the four variants
+      - recommendation with rationale and the recorded user decision or deferral
+      - handoff brief naming the chosen variant's design-system inputs
   - id: plan
     owner: planner
     before: design-to-build

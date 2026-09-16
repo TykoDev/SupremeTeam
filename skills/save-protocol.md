@@ -14,6 +14,18 @@ the run record and writes it only through `harness/hooks/save_run.py`.
 
 ## §1 Layout
 
+Everything Supreme Team creates inside a project lives under `skillset-saves/`
+or `.harness-state/` ([save-ownership.yaml](save-ownership.yaml)
+`generated_roots`). `skillset-saves/` holds run state, run artifacts, and
+project preferences; `.harness-state/` holds guard records, trajectories,
+observations, test scratch (`test-work/`), skill-creator reports and
+workspaces, and packages built outside a run (`packages/`). The only exception
+is application source, which stays in the application's layout. A script run
+from a subdirectory still writes at the project root, because the hook state
+helper and every `--project-root` default walk up to the nearest
+`skillset-saves/`, `.harness-state/`, or `.git`; `scripts/output_paths.py`
+resolves every kind under these roots and rejects escapes.
+
 ```text
 skillset-saves/
   _latest.md                         # pointer (schema 1): run_id, revision, updated_at
@@ -25,7 +37,7 @@ skillset-saves/
     _history/                        # rev-<n>.state.json / rev-<n>.lock.json snapshots
     intake/report_grilling.md        # decisions artifact (writer: admiral)
     {phase}/                         # design, build, review, security, investigation,
-      manifest.json                  #   qa, taste, skill-creation, delivery, release
+      manifest.json                  #   qa, taste, redesign, skill-creation, delivery, release
       reports/
       artifacts/
       evidence/
@@ -40,8 +52,8 @@ security pipeline (`cso`), `investigation/` the investigation pipeline
 (`investigate`), `qa/` the testing pipeline (`qa`), `taste/` the Taste
 preference pipeline (`taste`; the durable preference store itself lives at
 `skillset-saves/preferences/` and is written only by `taste_prefs.py`),
-`skill-creation/` the skill-maker pipeline, and `release/` the release pipeline
-(`ship`). `intake/` and `delivery/` are `admiral`'s own phase directories:
+`redesign/` the redesign pipeline (`redesign`), `skill-creation/` the skill-maker
+pipeline, and `release/` the release pipeline (`ship`). `intake/` and `delivery/` are `admiral`'s own phase directories:
 `delivery/reports/handoff_{boundary}.md` is the cross-stage handoff record for
 each boundary and `delivery/reports/delivery-package.md` the final delivery
 package. A gate produces two verdict records in the phase directory: the phase

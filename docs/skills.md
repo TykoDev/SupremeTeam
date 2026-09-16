@@ -1,6 +1,6 @@
 # The Skills
 
-49 of them. Three delivery pipelines, a few cross-cutting components, and four
+52 of them. Three delivery pipelines, a few cross-cutting components, and four
 groups of standalone tools you can call whenever you like.
 
 The roster is declared in
@@ -20,7 +20,7 @@ For the flat machine-readable index with paths, see [AGENTS.md](../AGENTS.md).
 | **admiral** | The front door. Intake, routing, delegation, gate routing, delivery assembly |
 | **gatekeeper-admiral** | Argues with every package crossing between phases |
 
-## Design (6)
+## Design (9)
 
 Turns a vague idea into something you could hand to a builder without answering
 forty questions.
@@ -32,7 +32,10 @@ forty questions.
 | **planner** | Milestones, rollout, decision gates, risk handling |
 | **architect** | System architecture, API contracts, and the frontend design system |
 | **engineer** | The implementation spec: delivery slices, dependency order, operational constraints |
-| **gatekeeper-design** | Design phase-exit validator |
+| **gatekeeper-design** | Design phase-exit validator; also gates `redesign-review` |
+| **redesign** | Runs the redesign pipeline: inventory, taste grilling, four living design-system variants, comparison, decision |
+| **design-mapper** | Records the current design as a stable-id inventory with baseline captures, then verifies variant parity |
+| **prototyper** | Builds one variant: tokens, a framework-free shadcn-shaped component library, and a living single-page prototype |
 
 The UI design system belongs to **architect** per
 [`design-doctrine.md`](../skills/design-doctrine.md). There is no separate
@@ -140,8 +143,8 @@ Not skills, but load-bearing. See [architecture.md](architecture.md),
 
 | File | Purpose |
 |---|---|
-| `gates.yaml` | Nine boundaries: required and artifact-backed evidence, fallbacks, typed records, finding policy, submitters |
-| `pipelines.yaml` | Nine pipelines: ordered stages, owners, closing boundary, required scripts |
+| `gates.yaml` | Ten boundaries: required and artifact-backed evidence, fallbacks, typed records, finding policy, submitters |
+| `pipelines.yaml` | Ten pipelines: ordered stages, owners, closing boundary, required scripts |
 | `ownership.yaml` | One writer per design and handoff artifact |
 | `save-ownership.yaml` | One writer per path class under `skillset-saves/` and `.harness-state/` |
 | `team-manifest.yaml` | The roster everything else is checked against |

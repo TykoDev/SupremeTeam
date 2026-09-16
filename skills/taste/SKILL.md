@@ -47,6 +47,21 @@ operation-specific confirmation.
 11. **Gate:** submit the package as Taste, the canonical submitter, to `taste-review` using `../harness/gatekeeper/check.py`.
 12. **Maintain:** later requests may inspect, specialize a global entry for one project, promote a project entry, revoke one entry, reset a scope, or import/export records. Apply the same preview and confirmation rules.
 
+## Taste grilling
+
+When `design/redesign` delegates the taste-grilling stage (through Admiral),
+run the protocol in `../grill-me-doctrine.md` § Taste grilling against the design
+inventory: one Taste category per prompt, each question anchored to what the
+current surface does, a recommended answer every time. Write the
+`taste-grilling-log` at the destination the delegation names
+(`redesign/reports/taste-grilling.md`), then continue with steps 4 to 11 above
+for the candidate set: normalize, check, preview, confirm, persist to project
+scope (global only on a separate explicit confirmation), resolve, and hand the
+immutable effective-profile snapshot back to `redesign`. When the user declines
+to persist, return the log and the applicability record for the sanctioned
+no-profile fallback; the answers remain current-run instructions for
+`architect` and `prototyper`.
+
 See [references/workflow.md](references/workflow.md) for operation details and
 [references/examples.md](references/examples.md) for routing and confirmation
 examples. `intake-brief.yaml` defines intake and `stub-contract.md` defines the

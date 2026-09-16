@@ -74,6 +74,7 @@ VERDICTS = {"APPROVED", "REVISE", "ESCALATE"}
 RESULT_STATUSES = {"pass", "fail", "error", "not-run", "unavailable", "inferred"}
 FINDING_SEVERITIES = {"Critical", "Major", "Minor", "Info"}
 FINDING_STATUSES = {"open", "in-progress", "resolved", "verified", "deferred", "not-applicable"}
+VARIANT_FILES = ("spec", "tokens", "components", "app")
 
 
 class Engine(ValueError):
@@ -336,6 +337,7 @@ class Package:
         if not isinstance(value, dict) or value.get("applicable") is not False:
             return False
         waivable = set(self.spec.get("fallback_values", {})) | set(self.boundary.get("fallback_values", {}))
+        waivable -= set(self.boundary.get("no_fallback", []) or [])
         if key not in waivable:
             self.failures.append(f"evidence not waivable: {key}")
             return True
@@ -345,6 +347,8 @@ class Package:
         return True
 
     def fallback_match(self, key: str, value: object) -> bool:
+        if key in set(self.boundary.get("no_fallback", []) or []):
+            return False
         allowed = (self.boundary.get("fallback_values", {}).get(key)
                    or self.spec.get("fallback_values", {}).get(key, []))
         if isinstance(value, str):
@@ -407,6 +411,41 @@ class Package:
         elif kind in {"preference_diff", "confirmation", "conflict_analysis",
                       "persistence_result", "effective_profile", "consumer_handoff"}:
             self.check_taste_record(key, kind, value)
+        elif kind == "variant_set":
+            self.check_variant_set(key, value)
+
+    def check_variant_set(self, key: str, value: object) -> None:
+        """Exactly N variants, unique ids, every variant file a correctly hashed artifact."""
+        params = (self.spec.get("evidence_type_params", {}) or {}).get("variant_set", {}) or {}
+        required_count = int(params.get("required_count", 4))
+        if not isinstance(value, dict) or not isinstance(value.get("variants"), list):
+            self.failures.append(f"{key} must be a variant_set record with a variants list at schema 2")
+            return
+        variants = value["variants"]
+        if len(variants) != required_count:
+            self.failures.append(f"{key} requires exactly {required_count} variants, found {len(variants)}")
+        if value.get("count") is not None and value.get("count") != len(variants):
+            self.failures.append(f"{key} count {value.get('count')!r} does not match {len(variants)} variants")
+        seen: set[str] = set()
+        for index, variant in enumerate(variants):
+            label = f"{key}.variants[{index}]"
+            if not isinstance(variant, dict):
+                self.failures.append(f"{label} must be a mapping")
+                continue
+            ident = str(variant.get("id", "")).strip()
+            if not ident:
+                self.failures.append(f"{label} requires id")
+            elif ident in seen:
+                self.failures.append(f"{label} duplicate id {ident}")
+            seen.add(ident)
+            for field in VARIANT_FILES:
+                path = str(variant.get(field, "")).strip()
+                if not path:
+                    self.failures.append(f"{label} requires {field}")
+                elif path not in self.artifact_hashes:
+                    self.failures.append(f"{label} {field} is not a hashed artifact: {path}")
+                elif path not in self.hashed_ok:
+                    self.failures.append(f"{label} {field} references a defective artifact: {path}")
 
     def check_taste_record(self, key: str, kind: str, value: object) -> None:
         """Validate the preference-management records used by taste-review."""
@@ -656,18 +695,85 @@ class Package:
                     self.failures.append(f"link escapes {noun} in {path.name}: {target}")
 
 
-def prior_check(prior_path: Path, data: dict, current_fingerprint: str, spec_digest: str) -> tuple[bool, bool | None]:
-    """Return (drift, prior_reusable)."""
+def deep_strings(value: object):
+    """Every string inside a nested evidence value (lists and mappings included)."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for item in value:
+            yield from deep_strings(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from deep_strings(item)
+
+
+def evidence_digests(data: dict, artifact_hashes: dict[str, str]) -> dict[str, str]:
+    """Per-key digest of each evidence value plus the artifact hashes it references.
+
+    A resubmission can then be re-judged only where a key actually changed
+    (gates.yaml revise_policy.delta_review).
+    """
+    digests: dict[str, str] = {}
+    evidence = data.get("evidence") if isinstance(data.get("evidence"), dict) else {}
+    for key, value in evidence.items():
+        refs = {item for item in deep_strings(value) if is_path_like(item)}
+        bound = {item: artifact_hashes.get(item) for item in sorted(refs)}
+        payload = json.dumps({"value": value, "artifacts": bound}, sort_keys=True, separators=(",", ":"), default=str)
+        digests[str(key)] = hashlib.sha256(payload.encode()).hexdigest()
+    return digests
+
+
+def revise_packet(failures: list[str], required: list[str], owners: dict, submitter: str) -> dict:
+    """Group failures by the evidence key they name and by that key's owner.
+
+    One REVISE then routes to every owner at once (gates.yaml revise_policy.one_packet);
+    failures that name no key (lineage, hashes, blocked phrases) go to the submitter.
+    """
+    by_key: dict[str, list[str]] = {}
+    unassigned: list[str] = []
+    for failure in failures:
+        best: tuple[int, str] | None = None
+        for key in required:
+            match = re.search(r"(?:^|: )" + re.escape(key) + r"(?=$|[\s\[.:>,])", failure)
+            if match and (best is None or match.start() < best[0]):
+                best = (match.start(), key)
+        if best is None:
+            unassigned.append(failure)
+        else:
+            by_key.setdefault(best[1], []).append(failure)
+    by_owner: dict[str, list[str]] = {}
+    for key, items in by_key.items():
+        by_owner.setdefault(str(owners.get(key) or submitter), []).extend(items)
+    if unassigned:
+        by_owner.setdefault(submitter, []).extend(unassigned)
+    return {
+        "by_owner": {owner: sorted(items) for owner, items in sorted(by_owner.items())},
+        "by_key": {key: sorted(items) for key, items in sorted(by_key.items())},
+        "unassigned": sorted(unassigned),
+    }
+
+
+def prior_check(prior_path: Path, data: dict, current_fingerprint: str, spec_digest: str,
+                current_digests: dict[str, str] | None = None) -> tuple[bool, bool | None, list[str] | None, list[str] | None]:
+    """Return (drift, prior_reusable, changed_evidence, unchanged_evidence)."""
     prior = load_mapping(prior_path, "prior record")
+    # Delta review works across revisions: a resubmission is a new revision, and
+    # the gatekeeper still wants to know which evidence keys actually changed.
+    changed: list[str] | None = None
+    unchanged: list[str] | None = None
+    prior_digests = prior.get("evidence_digests")
+    if isinstance(prior_digests, dict) and current_digests is not None:
+        changed = sorted(k for k, v in current_digests.items() if prior_digests.get(k) != v)
+        unchanged = sorted(k for k, v in current_digests.items() if prior_digests.get(k) == v)
     same = prior.get("submission_id") == data.get("submission_id") and prior.get("revision") == data.get("revision")
     if not same:
-        return False, None
+        return False, None, changed, unchanged
     prior_fingerprint = prior.get("package_fingerprint") or fingerprint(prior)
     drift = prior_fingerprint != current_fingerprint
     prior_spec = prior.get("gate_spec_digest")
     prior_boundary = prior.get("boundary")
     reusable = (not drift) and prior_spec == spec_digest and (prior_boundary in (None, data.get("boundary")) )
-    return drift, reusable
+    return drift, reusable, changed, unchanged
 
 
 def main() -> int:
@@ -697,12 +803,17 @@ def main() -> int:
         package.scan_text(scan_files)
 
         current_fingerprint = fingerprint(data)
-        drift, prior_reusable = False, None
+        digests = evidence_digests(data, package.artifact_hashes)
+        drift, prior_reusable, changed_evidence, unchanged_evidence = False, None, None, None
         if args.prior:
-            drift, prior_reusable = prior_check(Path(args.prior).resolve(), data, current_fingerprint, spec_digest)
+            drift, prior_reusable, changed_evidence, unchanged_evidence = prior_check(
+                Path(args.prior).resolve(), data, current_fingerprint, spec_digest, digests)
             if drift:
                 package.failures.append("idempotency drift on unchanged revision")
         failures = sorted(set(package.failures))
+        packet = revise_packet(failures, list(boundaries[args.boundary]["required_evidence"]),
+                               (spec.get("evidence_owners", {}) or {}).get(args.boundary, {}) or {},
+                               str(boundaries[args.boundary].get("submitter", "")))
         verdict_id = hashlib.sha256("|".join([
             args.boundary, spec_digest, str(data.get("submission_id")), str(data.get("revision")), current_fingerprint,
         ]).encode()).hexdigest()
@@ -716,6 +827,9 @@ def main() -> int:
             "evidence_root": str(package.root), "evidence_root_kind": package.root_kind,
             "package_fingerprint": current_fingerprint, "gate_spec_digest": spec_digest,
             "verdict_id": verdict_id,
+            "evidence_digests": digests,
+            "changed_evidence": changed_evidence, "unchanged_evidence": unchanged_evidence,
+            "revise_packet": packet,
             "checked_at": datetime.now(timezone.utc).isoformat(),
             "mechanical_only": True,
         }

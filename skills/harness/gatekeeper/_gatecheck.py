@@ -304,6 +304,13 @@ def _parse_yaml_block(block: List[str]) -> dict:
 # Package discovery
 # =============================================================================
 
+def iter_all_files(root: Path) -> List[Path]:
+    """Every regular file under the package (JSON evidence records and HTML
+    prototypes included), sorted for stable output. Used for artifact
+    presence; lineage and phrase scans use the text-only enumeration."""
+    return [p for p in sorted(root.rglob("*")) if p.is_file()]
+
+
 def iter_package_files(root: Path) -> List[Path]:
     """All readable text files under the package, sorted for stable output."""
     files: List[Path] = []
@@ -331,7 +338,7 @@ def _rel(path: Path, root: Path) -> str:
 def check_required_artifacts(root: Path, manifest: Manifest,
                              report: Report) -> None:
     report.checks_run.append("required_artifacts")
-    files = iter_package_files(root)
+    files = iter_all_files(root)
     rels = [_rel(f, root) for f in files]
     for spec in manifest.artifacts:
         match = _find_artifact(files, rels, spec)
@@ -659,10 +666,10 @@ def run_gate(root: Path, manifest: Manifest,
             location=str(root),
         ))
         return report
-    if not iter_package_files(root):
+    if not iter_all_files(root):
         report.add(Finding(
             code="PACKAGE_EMPTY", severity="critical", status=FAIL,
-            message=f"No readable text artifacts under {root}.",
+            message=f"No artifacts under {root}.",
             location=str(root),
         ))
         return report

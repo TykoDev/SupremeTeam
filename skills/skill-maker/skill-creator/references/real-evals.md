@@ -60,7 +60,10 @@ Full schema including the `assertions` field (added later) is in `schemas.md`.
 
 ## 2. Workspace layout
 
-Put results in `<skill-name>-workspace/` as a sibling to the skill directory. Within
+Put results in a `<skill-name>-workspace/` directory under the active run's
+`skillset-saves/runs/{run-id}/skill-creation/evidence/`, or under
+`.harness-state/eval-workspaces/` when no run is active; never beside the skill
+directory or at the project root. Within
 the workspace, organize results by iteration and then by test case:
 
 ```

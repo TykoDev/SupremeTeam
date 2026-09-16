@@ -24,7 +24,7 @@ delivery-lifecycle work, as defined in `routing-doctrine.md` (skill set root). E
 in-scope request (design, build, review, ship, investigate, checkpoint/resume, gate
 validation, skill/team creation) initiates here so that one intake, one persisted run, and
 one cross-stage gatekeeper govern the whole pipeline. The in-scope sub-orchestrators and
-utilities (`design/commander`, `build/build-management`, `review/code-chief`, `skill-maker`,
+utilities (`design/commander`, `design/redesign`, `build/build-management`, `review/code-chief`, `skill-maker`,
 `investigate`, `taste`, `session-memory`, `gatekeeper-admiral`) defer to Admiral when reached without
 an active Admiral handoff; Admiral reaches them by name through its delegation surface, so
 its own delegations always carry the handoff signal and never bounce back. Only Tier-4
@@ -127,6 +127,7 @@ The workflow below applies after Tier 0 has been ruled out.
 - `design/commander`
 - `build/build-management`
 - `review/code-chief`
+- `design/redesign` for the redesign pipeline, gated at `redesign-review`; its chosen variant then enters `design/commander` as the design-system input
 - `review/cso` for the security pipeline, gated at `security-review`
 - `investigate` for the investigation pipeline, gated at `investigation-review`
 - `testing-and-qa/qa` for the qa pipeline, gated at `qa-review`; a report-only run stays under `qa`, which may run the sweep through `qa-only` but remains the only `qa-review` submitter
@@ -147,6 +148,7 @@ Immediately after the user confirms scope at intake — and before the first sub
 - Push remediation back to the owning sub-orchestrator instead of editing its package locally.
 - Map skill-maker verdicts as `SHIP` -> `APPROVED`, `ITERATE` -> `REVISE`, `BLOCKED` -> `ESCALATE`.
 - Cap cross-stage revision cycles at two before escalating the dispute to the user.
+- Treat every `REVISE` as one packet (`../gates.yaml` `revise_policy`): forward all of `revise_packet.by_owner` plus the gatekeeper's judgment findings to the owning sub-orchestrator in one delegation, expect it to fan owner groups out in parallel and resubmit once, and pass `--prior` on the resubmission so the gate re-judges only `changed_evidence`.
 
 ## Skip Rule
 
@@ -168,6 +170,7 @@ Skip only when an upstream artifact is fully approved, structurally complete, an
 | --- | --- | --- |
 | Design, build, and review end to end | `design/commander`, then `build/build-management`, then `review/code-chief` | `design-to-build`, `build-to-review`, `review-to-delivery` |
 | Design only, or continue from an approved design | the earliest incomplete boundary | as above |
+| Redesign an existing UI: map it, grill taste, compare four living design systems | `design/redesign`; the chosen variant then enters `design/commander` | `redesign-review` |
 | Security audit, threat model, hardening, or remediation | `review/cso` driving `security-review` and `mr-robot` | `security-review` |
 | Unknown failure mechanism | `investigate`; its bounded fix path returns to the owning phase | `investigation-review` |
 | Product testing with recorded evidence | `testing-and-qa/qa`; a report-only run runs the sweep through `qa-only`, but `qa` remains the `qa-review` submitter and carries the `fixes_applied` applicability record | `qa-review` |

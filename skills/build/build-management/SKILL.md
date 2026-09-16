@@ -71,6 +71,8 @@ This skill is a component of the **Admiral** delivery pipeline; `admiral` is the
 - Record each boundary before requesting a verdict.
 - Reuse prior verdicts only when the package revision is unchanged.
 - Push remediation back to the owning sub-surface instead of editing its package locally.
+- Self-check before submitting: run `python skills/harness/gatekeeper/check.py --boundary build-to-review --package build/manifest.json` (no `--verdict-out`) and fix every mechanical failure first; a package that fails the machine is never submitted (`../../gates.yaml` `revise_policy.self_check`).
+- Treat a `REVISE` as one packet: delegate each owner group in `revise_packet.by_owner` in parallel, batching every finding for a specialist into a single revision delegation, and resubmit once with `--prior` so the gate re-judges only `changed_evidence`.
 
 ## Skip Rule
 

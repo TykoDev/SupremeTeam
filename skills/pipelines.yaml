@@ -53,6 +53,68 @@
         "skills/scripts/validate_manifests.py"
       ]
     },
+    "redesign": {
+      "owner": "redesign",
+      "boundary": "redesign-review",
+      "stages": [
+        {
+          "step": "intake-grilling",
+          "owner": "admiral",
+          "artifact": "grilling-log"
+        },
+        {
+          "step": "design-inventory",
+          "owner": "design-mapper",
+          "artifact": "design-inventory"
+        },
+        {
+          "step": "taste-grilling",
+          "owner": "taste",
+          "artifact": "taste-grilling-log",
+          "then": "the taste pipeline (confirmation, persistence, effective profile) gated at taste-review"
+        },
+        {
+          "step": "design-directions",
+          "owner": "architect",
+          "artifact": "design-directions"
+        },
+        {
+          "step": "variant-build",
+          "owner": "prototyper",
+          "artifact": "design-system-variant",
+          "fan_out": 4
+        },
+        {
+          "step": "parity-verification",
+          "owner": "design-mapper",
+          "artifact": "parity-evidence"
+        },
+        {
+          "step": "visual-qa",
+          "owner": "design-qa",
+          "artifact": "rendered-verification"
+        },
+        {
+          "step": "frontend-review",
+          "owner": "frontier",
+          "artifact": "frontend-review-report"
+        },
+        {
+          "step": "recommendation",
+          "owner": "redesign",
+          "artifact": "redesign-package"
+        },
+        {
+          "step": "phase-gate",
+          "owner": "gatekeeper-design"
+        }
+      ],
+      "scripts": [
+        "skills/scripts/check_parity.py",
+        "skills/scripts/validate_manifests.py",
+        "skills/harness/gatekeeper/check.py"
+      ]
+    },
     "build": {
       "owner": "build-management",
       "boundary": "build-to-review",

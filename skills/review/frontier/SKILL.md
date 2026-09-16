@@ -36,6 +36,7 @@ Route elsewhere when the concern is purely visual hierarchy, tokens, and polish 
 - Interface-review priorities such as required viewports, accessibility targets, performance budgets, or interactions explicitly out of scope.
 - Performance baselines or budgets when performance is claimed, including Core Web Vitals, bundle-size, interaction latency, or endpoint timing evidence where applicable.
 - The immutable Taste snapshot approved with the design, including its canonical digest and preference-to-artifact traceability rows.
+- For the redesign pipeline: each variant's living prototype, to grade accessibility (contrast, focus, names, keyboard paths, reduced motion) and interaction resilience per variant as the `accessibility_evidence` findings record at `redesign-review`; a Critical finding returns the variant to `design/prototyper` before comparison.
 
 ## Outputs
 

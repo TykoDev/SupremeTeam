@@ -77,8 +77,9 @@ class BoundaryManifestTests(unittest.TestCase):
             required = set(contract["required_evidence"])
             fallbacks = dict(spec["fallback_values"])
             fallbacks.update(contract.get("fallback_values", {}))
+            blocked = set(contract.get("no_fallback", []))
             for key, values in fallbacks.items():
-                if key not in required:
+                if key not in required or key in blocked:
                     continue
                 for value in values:
                     with self.subTest(boundary=boundary, key=key):
@@ -98,6 +99,8 @@ class BoundaryManifestTests(unittest.TestCase):
             ("taste-review", "confirmation"),
             ("skill-maker-to-delivery", "link_report"),
             ("deploy-readiness", "rollback_plan"),
+            ("redesign-review", "variant_set"),
+            ("redesign-review", "parity_evidence"),
         ):
             with self.subTest(boundary=boundary, key=key):
                 self.assert_missing(boundary, key)

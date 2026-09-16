@@ -167,6 +167,27 @@ def check_gates(gates: dict[str, Any], owners: set[str], errors: list[str]) -> N
     orphan_types = sorted(typed - declared)
     if orphan_types:
         errors.append(f"gates.yaml: evidence_types for keys no boundary requires {orphan_types}")
+    owner_map = gates.get("evidence_owners", {}) or {}
+    for name, boundary in boundaries.items():
+        required = _names(boundary.get("required_evidence", []))
+        for key in _names(boundary.get("no_fallback", [])):
+            if key not in required:
+                errors.append(f"gates.yaml: boundary {name!r} no_fallback names unrequired key {key!r}")
+        mapping = owner_map.get(name)
+        if not isinstance(mapping, dict) or set(mapping) != required:
+            errors.append(f"gates.yaml: evidence_owners for {name!r} must map exactly its required evidence keys")
+            continue
+        for key, owner in mapping.items():
+            if str(owner) not in owners:
+                errors.append(f"gates.yaml: evidence_owners {name}.{key} names unknown owner {owner!r}")
+    type_names = set(map(str, (gates.get("evidence_types", {}) or {}).values()))
+    for kind in (gates.get("evidence_type_params", {}) or {}):
+        if kind not in type_names:
+            errors.append(f"gates.yaml: evidence_type_params for unknown record type {kind!r}")
+    policy = gates.get("revise_policy")
+    if not isinstance(policy, dict) or policy.get("cycle_cap") != 2 or not all(
+            str(policy.get(k, "")).strip() for k in ("self_check", "one_packet", "parallel_fix", "delta_review")):
+        errors.append("gates.yaml: revise_policy must declare self_check, one_packet, parallel_fix, delta_review, and cycle_cap 2")
 
 
 def check_runtime(runtime: dict[str, Any], root: Path, errors: list[str]) -> None:
@@ -252,6 +273,8 @@ def check_pipeline_mirrors(root: Path, team: dict[str, Any], ownership: dict[str
     for boundary, owners in boundary_owners.items():
         if len(owners) != 1:
             errors.append(f"pipelines.yaml: boundary {boundary!r} is owned by {owners}")
+    if _names(save.get("generated_roots", [])) != {"skillset-saves", ".harness-state"}:
+        errors.append("save-ownership.yaml: generated_roots must be exactly skillset-saves and .harness-state")
     phases = set(save.get("phase_directories", []) or [])
     for pipeline in pipelines:
         if pipeline not in phases:
@@ -263,7 +286,7 @@ def check_pipeline_mirrors(root: Path, team: dict[str, Any], ownership: dict[str
     mirrors = {
         root.parent / "AGENTS.md": (f"## The {skill_count} skills", f"**{skill_count} skills**", "| `taste` | `taste` | `taste-review` |"),
         root.parent / "README.md": (f"{skill_count} skills · {len(pipelines)} pipelines",),
-        root.parent / "docs/architecture.md": ("Nine pipelines", "| `taste` | taste | `taste-review` |"),
+        root.parent / "docs/architecture.md": ("Ten pipelines", "| `taste` | taste | `taste-review` |", "| `redesign` | redesign | `redesign-review` |"),
         root.parent / "docs/skills.md": (f"{skill_count} of them.", "## Taste (2)"),
         root.parent / "docs/gatekeepers.md": ("| `taste-review` |",),
         root.parent / "docs/directory-structure.md": (f"Gate spec: {len(gate_names)} boundaries", f"Pipeline map: {len(pipelines)} pipelines"),

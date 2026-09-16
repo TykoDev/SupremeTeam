@@ -62,7 +62,7 @@ dependency changes, and anything crossing systems take the ordinary route.
 | Tier | Skills | How they are reached |
 |---|---|---|
 | Entry orchestrator | `admiral` | The front door. Lifecycle work starts here |
-| In-scope, defers when cold | `design/commander`, `build/build-management`, `review/code-chief`, `skill-maker`, `investigate`, `taste`, `session-memory`, `gatekeeper-admiral` | Components of the Admiral pipeline. Reached without an active handoff, they hand off to `admiral` first, then take the delegation back |
+| In-scope, defers when cold | `design/commander`, `design/redesign`, `build/build-management`, `review/code-chief`, `skill-maker`, `investigate`, `taste`, `session-memory`, `gatekeeper-admiral` | Components of the Admiral pipeline. Reached without an active handoff, they hand off to `admiral` first, then take the delegation back |
 | Internal specialists | every skill under `design/`, `build/`, `review/` not listed above | Through their owning sub-orchestrator. Not a user entry point |
 | Standalone tools | `safety-guardrails/*`, `browser-automation/*`, `release-and-deployment/*`, `testing-and-qa/*` | Out of routing scope. Call them directly whenever |
 
@@ -77,6 +77,7 @@ by how they were reached, not by the skill.
 |---|---|
 | Design, build, and review a change end to end | `admiral`, then `commander`, `build-management`, `code-chief` in sequence |
 | Design only, or to continue from an approved design | `admiral` picks the earliest incomplete boundary |
+| To redesign an existing UI and compare alternatives | `admiral` delegates `redesign`, gated at `redesign-review`; the chosen variant then enters `commander` |
 | A security audit, threat model, hardening, or remediation | `admiral` delegates `cso`, gated at `security-review` |
 | To know why something is failing | `admiral` delegates `investigate`, gated at `investigation-review`; the bounded fix path returns to the owning phase |
 | Product testing with recorded evidence | `admiral` delegates `qa`, or `qa-only` for a report without fixes, gated at `qa-review` |

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Resolve the declared destination for every generated Supreme Team output.
 
-Workflows name bare files (``DESIGN.md``, ``tokens.css``, ``design-system.html``,
+Workflows name bare files (``design-system.md``, ``tokens.css``, ``app.html``,
 ``eval-0-.../outputs``); this resolver maps each output class to one governed
 location so nothing lands in an ambiguous current directory.
 
@@ -21,8 +21,15 @@ Kinds and destinations (relative to the project root):
     global_preferences <deterministic user-data>/SupremeTeam/preferences/{taste.json,taste.md}
     trajectory  .harness-state/trajectories/<run>/<session>.json                   writer: post_tool_use hook
     guards      .harness-state/guard-state.json                                    writer: guard/freeze/unfreeze
+    test_work   .harness-state/test-work/<name>                                    regression-test scratch
+    eval_reports .harness-state/eval-reports/<name>                                skill-creator live reports
+    eval_workspace .harness-state/eval-workspaces/<name>                           skill-creator eval workspaces outside a run
+    standalone_packages .harness-state/packages/<name>                             .skill or zip archives built outside a run
     product     <project>/<name>  (application source stays in the application's layout; snapshot into evidence with provenance)
-    design_spec <project>/DESIGN.md (durable project design spec; an immutable copy goes to <phase>/artifacts/DESIGN.md)
+
+Every kind except product resolves under skillset-saves/ or .harness-state/
+(GENERATED_ROOTS); a durable design specification is the run's
+<phase>/reports/design-system.md, not a file at the project root.
 
 Project paths are validated for project containment; global preferences are
 validated separately to remain outside the checkout. Exit 0 with a JSON object;
@@ -37,8 +44,11 @@ import re
 import sys
 from pathlib import Path
 
-KINDS = {"core", "manifest", "reports", "artifacts", "evidence", "packages", "verdict", "project_preferences", "global_preferences", "trajectory", "guards", "product", "design_spec"}
-PHASES = {"intake", "design", "architecture", "design-system", "build", "frontend", "security", "investigation", "qa", "review", "delivery", "release", "preferences", "skill-creation", "taste", "explore", "improve", "documentation"}
+# Every generated kind resolves under one of these project-relative roots; the
+# only exception is `product`, which is the application's own source layout.
+GENERATED_ROOTS = ("skillset-saves", ".harness-state")
+KINDS = {"core", "manifest", "reports", "artifacts", "evidence", "packages", "verdict", "project_preferences", "global_preferences", "trajectory", "guards", "test_work", "eval_reports", "eval_workspace", "standalone_packages", "product"}
+PHASES = {"intake", "design", "architecture", "design-system", "build", "frontend", "security", "investigation", "qa", "review", "delivery", "release", "preferences", "skill-creation", "taste", "redesign", "explore", "improve", "documentation"}
 SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
@@ -87,8 +97,14 @@ def resolve(project_root: Path, kind: str, *, run_id: str = "", phase: str = "",
         target = root / ".harness-state" / "trajectories" / seg(run_id or "no-run", "run_id") / (seg(session, "session") + ".json")
     elif kind == "product":
         target = root / rel_name(name)
-    elif kind == "design_spec":
-        target = root / "DESIGN.md"
+    elif kind == "test_work":
+        target = root / ".harness-state" / "test-work" / rel_name(name)
+    elif kind == "eval_reports":
+        target = root / ".harness-state" / "eval-reports" / rel_name(name)
+    elif kind == "eval_workspace":
+        target = root / ".harness-state" / "eval-workspaces" / rel_name(name)
+    elif kind == "standalone_packages":
+        target = root / ".harness-state" / "packages" / rel_name(name)
     else:
         run_dir = saves / "runs" / seg(run_id, "run_id")
         if kind == "core":

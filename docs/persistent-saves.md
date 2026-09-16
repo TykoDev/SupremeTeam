@@ -31,7 +31,7 @@ skillset-saves/
       packages/                    #   exported archives
       verdict_design-to-build.json #   the phase gatekeeper's durable verdict
       verdict_design-to-build.cross-stage.json  # gatekeeper-admiral's, beside it
-    build/  review/  security/  investigation/  qa/  taste/  skill-creation/  release/
+    build/  review/  security/  investigation/  qa/  taste/  redesign/  skill-creation/  release/
     delivery/reports/              # admiral's handoff_<boundary>.md and delivery-package.md
 ```
 

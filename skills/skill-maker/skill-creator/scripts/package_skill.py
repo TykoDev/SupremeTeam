@@ -16,6 +16,20 @@ import zipfile
 from pathlib import Path
 from scripts.quick_validate import validate_skill
 
+
+def _default_output_dir() -> Path:
+    """Packages built outside a run go under the project's .harness-state/packages/.
+
+    The project root is the nearest ancestor of the working directory holding
+    skillset-saves/, .harness-state/, or .git (save-ownership.yaml generated_roots).
+    """
+    start = Path.cwd().resolve()
+    root = next((c for c in (start, *start.parents)
+                 if any((c / m).exists() for m in ("skillset-saves", ".harness-state", ".git"))), start)
+    target = root / ".harness-state" / "packages"
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
 # Patterns to exclude when packaging skills.
 EXCLUDE_DIRS = {"__pycache__", "node_modules"}
 EXCLUDE_GLOBS = {"*.pyc"}
@@ -45,7 +59,7 @@ def package_skill(skill_path, output_dir=None):
 
     Args:
         skill_path: Path to the skill folder
-        output_dir: Optional output directory for the .skill file (defaults to current directory)
+        output_dir: Optional output directory for the .skill file (defaults to <project>/.harness-state/packages/)
 
     Returns:
         Path to the created .skill file, or None if error
@@ -82,7 +96,7 @@ def package_skill(skill_path, output_dir=None):
         output_path = Path(output_dir).resolve()
         output_path.mkdir(parents=True, exist_ok=True)
     else:
-        output_path = Path.cwd()
+        output_path = _default_output_dir()
 
     skill_filename = output_path / f"{skill_name}.skill"
 

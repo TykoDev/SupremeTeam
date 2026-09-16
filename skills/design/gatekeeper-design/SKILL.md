@@ -5,7 +5,8 @@ description: >-
   next design activity or leave the design pipeline. Use when the user asks to
   validate the design deliverable, review design phase output, check design
   readiness, or challenge this design packet — even when they only ask "is the
-  design done?". Gates the design→build boundary specifically; defers the
+  design done?". Gates the design→build boundary and the redesign phase exit
+  (`redesign-review`); defers the
   build→review gate to `build/gatekeeper-build`, the review→delivery gate to
   `review/gatekeeper-code`, and the cross-stage gate to `gatekeeper-admiral`.
 version: 1.0.0
@@ -24,6 +25,7 @@ Use this gate at the **design→build boundary** — deciding whether design evi
 - "validate the design deliverable" / "check design readiness" — confirm requirements, plan, and architecture are present and coherent
 - "review design phase output" — verify the package is complete enough for build consumption
 - "challenge this design packet" — pressure the evidence rather than the intent behind it
+- "validate the redesign package" — at `redesign-review`, check the inventory, taste grilling, four directions, four variants, and their parity, rendered, and accessibility evidence
 
 Route elsewhere for a different boundary: the build→review gate (`build/gatekeeper-build`), the review→delivery gate (`review/gatekeeper-code`), or the cross-stage delivery gate (`gatekeeper-admiral`).
 
@@ -49,6 +51,8 @@ Run the deterministic gate engine **before** applying judgment:
 python scripts/check.py <package-dir> [--prior <prior-verdict-file>] [--json]
 ```
 
+At the `redesign-review` boundary run `python scripts/check_redesign.py <redesign-phase-dir> [--prior <prior-verdict-file>] [--json]` instead: it declares the redesign artifact manifest (inventory, taste grilling log, directions, one `variant.md` per variant, parity records, the redesign package). Then run the boundary validator, `python ../../harness/gatekeeper/check.py --boundary redesign-review --package redesign/manifest.json --verdict-out redesign/verdict_redesign-review.json`, which mechanizes the four-variant `variant_set` record, the parity probe records bound to the inventory, and the no-fallback rule for `rendered_verification`; the differentiation of the four directions (`../../design-doctrine.md` §9) is judgment.
+
 `scripts/check.py` declares this boundary's required-artifact manifest (research evidence, project plan, architecture decisions, stack locks, implementation spec) and calls the shared engine at `../../harness/gatekeeper/_gatecheck.py`. API contracts and the frontend/UI handoff are **conditional**: the script cannot know whether endpoints or a user-facing surface are in scope, so it reports their absence as `UNCHECKED`, to be resolved against the actual scope and the `../architect/references/api-endpoint-design.md` / `../../design-doctrine.md` contracts. The engine also mechanizes single-revision lineage, skip-record completeness, the blocked-phrase scan, idempotency drift, and harness-doctrine §5 structure, returning `PASS` / `FAIL` / `UNCHECKED` findings plus a `gate_status`. It **never emits a verdict** and never judges design coherence — apply judgment to the findings to choose `APPROVED` / `REVISE` / `ESCALATE`. The script fails loud — a blocking failure exits non-zero, an internal error exits 2. See `../../harness/gatekeeper/README.md`.
 
 ## Workflow
@@ -67,6 +71,8 @@ python scripts/check.py <package-dir> [--prior <prior-verdict-file>] [--json]
 - **Taste snapshot**: Require its canonical digest, project and global source revisions, resolved and shadowed entries, unresolved conflicts, applicability decision, and effective-preference traceability rows. Confirm both source revisions are still current immediately before approval; reject stale snapshots or unresolved conflicts that affect a design decision.
 - **Harness-doctrine citation**: When the package adds or changes a cross-cutting runtime intervention, check it against `../../harness-doctrine.md` §5 and cite the violated section by number in the verdict.
 - **YAGNI and proof contract**: Reject packages that force speculative future commitments without current need, or that change behavior without a build-ready proof plan covering reproduction/contract tests, migration checks, and rollback evidence as applicable.
+
+- **Batched REVISE** (`../../gates.yaml` `revise_policy`): A `REVISE` carries every mechanical failure and every judgment finding from the pass, grouped by owner exactly as `check.py` reports them in `revise_packet.by_owner`; never return the first defect alone. On a resubmission run with `--prior`, re-judge only `changed_evidence` and carry the prior judgment on `unchanged_evidence`; the mechanical pass always covers the whole package. A package that fails mechanically was never eligible for submission (the submitter self-checks) and is returned without judgment.
 
 ## Verdict Model
 
@@ -121,6 +127,7 @@ verdict inline and preserve the run and revision.
 ## References
 
 - `scripts/check.py` for the deterministic gate engine wrapper and this boundary's artifact manifest.
+- `scripts/check_redesign.py` for the `redesign-review` artifact manifest.
 - `../../harness/gatekeeper/README.md` for the engine, the deterministic-vs-judgment split, and the fail-loud posture.
 - `references/workflow.md` for the detailed design-packet validation sequence and verdict rules.
 - `references/examples.md` for concrete design-gate examples.
@@ -129,4 +136,4 @@ verdict inline and preserve the run and revision.
 
 ## Packaging Notes
 
-Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which it locates by walking up to the repo root — ship the `harness/gatekeeper/` directory alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.
+Package `SKILL.md`, `scripts/check.py`, `scripts/check_redesign.py`, `references/workflow.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which it locates by walking up to the repo root — ship the `harness/gatekeeper/` directory alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.

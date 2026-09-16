@@ -7,6 +7,19 @@ purpose: >-
   save-protocol.md section 3 points here; ownership.yaml keeps the artifact-level
   owner map and validation/test_save_contracts.py checks that the two agree.
   Patterns are fnmatch globs relative to the project root.
+generated_roots:
+  - skillset-saves
+  - .harness-state
+generated_roots_rule: >-
+  Everything Supreme Team creates inside a project lives under one of these two
+  roots: skillset-saves/ holds run state, run artifacts, and project
+  preferences; .harness-state/ holds guard records, trajectories, observations,
+  test scratch (test-work/), eval reports and workspaces, and packages built
+  outside a run (packages/). The only exception is application source written
+  by build specialists, which belongs to the application's own layout.
+  scripts/output_paths.py resolves every kind under these roots and the hook
+  state helper locates the project root by walking up to the nearest
+  skillset-saves/, .harness-state/, or .git so nothing lands in a subdirectory.
 notes:
   - "Product source stays in the application's own layout. It is never written under skillset-saves; evidence that depends on it is snapshotted into <phase>/evidence/ with source path, revision, and sha256 provenance (typed-record inputs in gates.yaml)."
   - "Nothing under a run is deleted by automation. Superseded revisions move to _history/."
@@ -99,6 +112,7 @@ phase_directories:
   - investigation
   - qa
   - taste
+  - redesign
   - delivery
   - release
   - skill-creation

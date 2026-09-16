@@ -62,6 +62,8 @@ python scripts/check.py <package-dir> [--prior <prior-verdict-file>] [--json]
 - **CSO lens coverage**: When a review package claims security leadership signoff, accepted-risk readiness, release security posture, regulated-data governance, or operating-model control review, require a `review/cso` packet or an explicit scoped skip reason.
 - **Harness-doctrine citation**: When the package adds or changes a cross-cutting runtime intervention, check it against `../../harness-doctrine.md` §5 and cite the violated section by number in the verdict.
 
+- **Batched REVISE** (`../../gates.yaml` `revise_policy`): A `REVISE` carries every mechanical failure and every judgment finding from the pass, grouped by owner exactly as `check.py` reports them in `revise_packet.by_owner`; never return the first defect alone. On a resubmission run with `--prior`, re-judge only `changed_evidence` and carry the prior judgment on `unchanged_evidence`; the mechanical pass always covers the whole package. A package that fails mechanically was never eligible for submission (the submitter self-checks) and is returned without judgment.
+
 ## Verdict Model
 
 - **APPROVED**: The package is ready to advance with its current evidence.

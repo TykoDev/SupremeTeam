@@ -117,7 +117,11 @@ event.
 `pre_tool_use.py` enforces boundaries recorded by `guard` and `freeze` at
 `.harness-state/guard-state.json`. The state helper resolves that under
 `SUPREMETEAM_PROJECT_DIR` first, then known host workspace variables, then the
-current working directory, then an isolated OS temp fallback.
+nearest ancestor of the working directory that holds `skillset-saves/`,
+`.harness-state/`, or `.git`, then the working directory itself, then an
+isolated OS temp fallback. `save_run.py`, `check_readiness.py`, and
+`verify_registration.py` default their project root the same way, so a script
+run from `skills/` never scatters state into a subdirectory.
 
 ```json
 {

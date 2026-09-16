@@ -35,6 +35,7 @@ Route elsewhere when the concern is runtime performance, accessibility, or compo
 - Prior design-qa findings or design-review scorecards when the surface is being re-evaluated.
 - Design-review priorities such as target breakpoints, brand-token exceptions, animation polish expectations, or excluded screens.
 - The immutable `taste_snapshot` artifact approved at `design-to-build`, its canonical digest, and preference-to-artifact traceability rows.
+- For the redesign pipeline: each variant's `app.html` and `tokens.css` plus the baseline captures from `design/design-mapper`, to render every route and declared state at the six tiers in both themes per variant as the `rendered_verification` record at `redesign-review` (`../../design-doctrine.md` §9), bound by sha256 to the prototype files.
 
 ## Outputs
 

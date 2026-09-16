@@ -58,6 +58,11 @@ delegates_to:
     skill_path: review/code-chief
     handoff: review-package
     verdict_source: gatekeeper-admiral (handoff-3)
+  - name: redesign-agent
+    skill_path: design/redesign
+    handoff: redesign-package (inventory, taste grilling, four variants, evidence, decision)
+    verdict_source: gatekeeper-admiral (redesign-review)
+    optional: true
   - name: cso
     skill_path: review/cso
     handoff: security-review package

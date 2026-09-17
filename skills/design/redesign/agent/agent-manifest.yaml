@@ -6,11 +6,14 @@ version: 1.0.0
 parent: admiral-agent
 
 purpose: |
-  Autonomous redesign pipeline orchestrator. Maps the current design, runs the
-  project taste grilling through Admiral/Taste, commissions four design
-  directions, fans out four prototype builds, verifies parity, rendering, and
-  accessibility per variant, and assembles the comparison and decision package
-  gated at redesign-review by gatekeeper-design.
+  Autonomous redesign pipeline orchestrator, mock-first. Maps the current
+  design, runs the project taste grilling through Admiral/Taste, commissions
+  four design directions, fans out four static mock builds, checks mock parity
+  and rendering, and records the user's selection. Only then is one living
+  prototype built - for the selected mock alone - and verified for parity,
+  rendering, and accessibility, before the comparison and decision package is
+  gated at redesign-review by gatekeeper-design. Three of the four drafts are
+  never implemented, which is the point: the field is compared as mocks.
 
 capabilities:
   - phase-management
@@ -32,7 +35,7 @@ tools_required:
 tools_optional:
   - category: browser
     operations: [navigate, snapshot, interact]
-    purpose: Baseline captures and rendered verification of prototypes
+    purpose: Baseline captures, mock rendering, and rendered verification of the selected prototype
 
 delegates_to:
   - name: design-mapper
@@ -44,7 +47,7 @@ delegates_to:
     skill_path: design/architect
   - name: prototyper
     skill_path: design/prototyper
-    fan_out: 4
+    fan_out: 4                    # mock-build only; the selected-build stage runs once, for the chosen mock
   - name: design-qa
     skill_path: review/design-qa
   - name: frontier
@@ -56,4 +59,4 @@ detection_rules:
   agent_mode_conditions:
     - sub-agent invocation available
     - file system tools available
-  fallback: skill-mode           # prototypes are built sequentially in skill mode
+  fallback: skill-mode           # mocks are built sequentially in skill mode; the selected build is one delegation either way

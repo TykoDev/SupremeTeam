@@ -95,6 +95,18 @@ are hashed byte-for-byte, so a log is never reformatted, re-indented, or
 re-encoded after its hash is taken; do that and the gate reports hash drift on
 evidence that was never actually changed.
 
+A validation command that produces coverage sends it to the run, not the project
+root. Resolve the destination with
+`python skills/scripts/output_paths.py --run-id <run-id> --phase build --kind coverage --name .coverage --mkdir`
+and point `COVERAGE_FILE` / `--data-file`, `--cov-report=<fmt>:<dest>/...`,
+`--coverage.reportsDirectory`, or `--report-dir` + `--temp-dir` at it. Never use
+parallel or per-process mode (`-p`, `--parallel-mode`, `parallel = True`) unless
+the same command finishes with `coverage combine` into that destination, and
+never loop a coverage run per test file. When the step ends nothing named
+`.coverage`, `.coverage.*`, `.coverage/`, `htmlcov/`, or `.nyc_output/` is left
+at the project root; the full rule and the per-runner flags are in
+`../../test-builder/references/workflow.md` § Coverage destination.
+
 ## REVISE Handling
 
 A `REVISE` arrives through `build/build-management` as one packet, already

@@ -114,7 +114,7 @@ request:
 response:
   outcome: [completed, revised, blocked, or escalated]
   artifacts: [workspace-relative paths]
-  artifact_hashes: [path=sha256 digest]
+  artifact_hashes: [path=sha256 digest]  # from `python skills/scripts/content_hash.py <path>`: text folded to LF, binary byte-for-byte, so LF and CRLF checkouts agree
   evidence_paths: [workspace-relative paths]
   risks: [known residual risks]
   disputes: [unresolved decisions or none]
@@ -145,7 +145,7 @@ artifact_hashes:
 Typed records (`scan`, `render`, `probe`, `audit`, `findings`, `verdict`,
 `stack_lock`, `revision_ref`, and the Taste records `preference_diff`,
 `confirmation`, `conflict_analysis`, `persistence_result`, `effective_profile`,
-`consumer_handoff`, and `variant_set`) and the finding policy are defined in
+`consumer_handoff`, `variant_set`, and `selection`) and the finding policy are defined in
 [`../gates.yaml`](../gates.yaml); destinations for reports, artifacts, evidence,
 and packages in [`../save-ownership.yaml`](../save-ownership.yaml). Resolve every
 destination with `python skills/scripts/output_paths.py` rather than composing

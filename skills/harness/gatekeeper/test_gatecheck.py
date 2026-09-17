@@ -240,6 +240,114 @@ class HarnessDoctrineTests(unittest.TestCase):
         self.assertIn("NO_RUNTIME_INTERVENTION", _codes(report))
 
 
+class RedesignMockFirstLayoutTests(unittest.TestCase):
+    """`gatekeeper-design/scripts/check_redesign.py`'s own layout check.
+
+    The shared engine matches artifacts by glob, which cannot count four mock
+    directories or notice a living prototype built for a decision that chose
+    none. That check lives in the gate script, and this is the only suite that
+    runs it.
+    """
+
+    @staticmethod
+    def _module():
+        import importlib.util
+        path = (ENGINE_DIR.parents[1] / "design" / "gatekeeper-design" / "scripts"
+                / "check_redesign.py")
+        spec = importlib.util.spec_from_file_location("check_redesign_under_test", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    @staticmethod
+    def _draw(pkg: Path, mocks: int, decision: str | None, builds=()):
+        for index in range(1, mocks + 1):
+            mock = pkg / "artifacts" / "mocks" / f"m{index}"
+            mock.mkdir(parents=True, exist_ok=True)
+            (mock / "mock.html").write_text(
+                f'<html><body data-mock="true"><main data-route="r{index}"></main></body></html>\n',
+                encoding="utf-8")
+        reports = pkg / "reports"
+        reports.mkdir(parents=True, exist_ok=True)
+        if decision is not None:
+            (reports / "selection.md").write_text(
+                f"---\ndecision: {decision}\n---\n\n# Selection\n\nRecorded.\n", encoding="utf-8")
+        for name in builds:
+            built = pkg / "artifacts" / "variants" / name
+            built.mkdir(parents=True, exist_ok=True)
+            (built / "app.html").write_text("<html><body></body></html>\n", encoding="utf-8")
+
+    def _report(self, pkg: Path):
+        module = self._module()
+        report = gc.Report(boundary="layout", package_path=str(pkg))
+        module.check_mock_first_layout(pkg, report)
+        return report
+
+    def test_four_mocks_a_selection_and_one_build_pass(self):
+        with _package() as pkg:
+            self._draw(pkg, 4, "variant", builds=("m2",))
+            report = self._report(pkg)
+        self.assertEqual({"MOCK_SET_COMPLETE", "SELECTION_RECORDED", "SELECTED_BUILD_PRESENT"},
+                         _codes(report))
+        self.assertFalse(report.has_blocking)
+
+    def test_a_short_mock_field_fails(self):
+        with _package() as pkg:
+            self._draw(pkg, 3, "variant", builds=("m2",))
+            report = self._report(pkg)
+        self.assertIn("MOCK_SET_INCOMPLETE", _codes(report))
+        self.assertTrue(report.has_blocking)
+
+    def test_a_missing_selection_fails(self):
+        with _package() as pkg:
+            self._draw(pkg, 4, None)
+            report = self._report(pkg)
+        self.assertIn("SELECTION_MISSING", _codes(report))
+        self.assertTrue(report.has_blocking)
+
+    def test_a_deferral_that_shipped_a_prototype_fails(self):
+        with _package() as pkg:
+            self._draw(pkg, 4, "deferred", builds=("m1",))
+            report = self._report(pkg)
+        self.assertIn("UNSELECTED_BUILD_PRESENT", _codes(report))
+        self.assertTrue(report.has_blocking)
+
+    def test_a_deferral_with_no_prototype_passes(self):
+        with _package() as pkg:
+            self._draw(pkg, 4, "deferred")
+            report = self._report(pkg)
+        self.assertIn("NO_BUILD_AS_DECIDED", _codes(report))
+        self.assertFalse(report.has_blocking)
+
+    def test_four_built_prototypes_fail_even_on_a_variant_decision(self):
+        """The shape the mock-first pipeline exists to prevent."""
+        with _package() as pkg:
+            self._draw(pkg, 4, "variant", builds=("m1", "m2", "m3", "m4"))
+            report = self._report(pkg)
+        self.assertIn("SELECTED_BUILD_COUNT", _codes(report))
+        self.assertTrue(report.has_blocking)
+
+    def test_an_unreadable_decision_is_unchecked_not_a_pass(self):
+        with _package() as pkg:
+            self._draw(pkg, 4, None, builds=("m2",))
+            (pkg / "reports" / "selection.md").write_text(
+                "# Selection\n\nThe team talked it over.\n", encoding="utf-8")
+            report = self._report(pkg)
+        self.assertIn("SELECTION_DECISION_UNREAD", _codes(report))
+        self.assertIn("BUILD_WITHOUT_READABLE_DECISION", _codes(report))
+        self.assertFalse(report.has_blocking)
+        self.assertEqual("NEEDS_JUDGMENT", report.gate_status())
+
+    def test_a_body_line_states_the_decision_when_frontmatter_does_not(self):
+        with _package() as pkg:
+            self._draw(pkg, 4, None)
+            (pkg / "reports" / "selection.md").write_text(
+                "# Selection\n\n- **Decision:** merge\n", encoding="utf-8")
+            report = self._report(pkg)
+        self.assertIn("SELECTION_RECORDED", _codes(report))
+        self.assertIn("NO_BUILD_AS_DECIDED", _codes(report))
+
+
 class FailLoudTests(unittest.TestCase):
     def test_missing_package_is_critical_fail(self):
         report = gc.run_gate(_TMP_ROOT / "does-not-exist", _manifest())

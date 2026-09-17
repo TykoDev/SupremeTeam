@@ -47,7 +47,7 @@ Route elsewhere when the concern is static visual hierarchy, tokens, and finish 
 - Interface-review priorities such as required viewports, accessibility targets, performance budgets, or interactions explicitly out of scope.
 - Performance baselines or budgets when performance is claimed, including Core Web Vitals, bundle-size, interaction latency, or endpoint timing evidence where applicable.
 - The immutable Taste snapshot approved with the design, including its canonical digest and preference-to-artifact traceability rows.
-- For the redesign pipeline: each variant's living prototype, to grade accessibility (contrast, focus, names, keyboard paths, reduced motion) and interaction resilience per variant as the `accessibility_evidence` findings record at `redesign-review`; a Critical finding returns the variant to `design/prototyper` before comparison.
+- For the redesign pipeline: the selected variant's living prototype, to grade accessibility (contrast, focus, names, keyboard paths, reduced motion) and interaction resilience as the `accessibility_evidence` findings record at `redesign-review`; a Critical finding returns that variant to `design/prototyper` before the package gates. This lens is not delegated across the four mocks — a mock wires nothing, so there is no keyboard path, focus order, or motion behaviour to exercise, and the stage runs only when a variant was selected.
 - On a REVISE round, the `changed_evidence` key list from the gate packet and the prior packet's finding ids.
 
 ## Outputs
@@ -61,7 +61,7 @@ Route elsewhere when the concern is static visual hierarchy, tokens, and finish 
 | Boundary | What this lens owes | Shape |
 | --- | --- | --- |
 | `review-to-delivery` | No evidence key of its own. `../../gates.yaml` `evidence_owners` assigns every key here to `code-chief` or `design-qa`; `rendered_verification` belongs to `review/design-qa` and is never authored here. Graded items merge into `findings`, and the saved packet fills a lens slot | Items with id, one of the four severities, and a status |
-| `redesign-review` | `accessibility_evidence`, which `../../gates.yaml` `evidence_owners` assigns to frontier and `redesign` submits | `findings`: `{items: [{id, severity, status, owner?, reopen_trigger?, reason?}]}`. Not listed under `artifact_evidence` at this boundary, so the record carries itself; it has no sanctioned fallback, and a Critical returns the variant to `design/prototyper` before comparison |
+| `redesign-review` | `accessibility_evidence`, which `../../gates.yaml` `evidence_owners` assigns to frontier and `redesign` submits | `findings`: `{items: [{id, severity, status, owner?, reopen_trigger?, reason?}]}`, graded on the one selected variant. Not listed under `artifact_evidence` at this boundary, so the record carries itself; a Critical returns that variant to `design/prototyper` before the package gates. The only stand-ins are the two sanctioned strings `selection deferred - no variant built` and `merge brief recorded - implemented as a fifth direction in the design pipeline`, carried at schema 2 as the `reason` of an applicability record `{applicable: false, reason, scope, decided_by}` and written by `design/redesign` when no variant was selected and there is therefore nothing to grade — never by this lens |
 
 `review/gatekeeper-code`'s `scripts/check.py` collapses this lens and `review/mr-robot` into one `lens_adversarial` slot, matched on `*frontier*.md`, `*adversarial*.md`, or `*mr-robot*.md`. One file satisfies the slot, so two lenses under one generic name are indistinguishable to a reader and to the gate. The packet is therefore saved as `deliverable_frontier.md`, and mr-robot's as `deliverable_mr-robot.md`, so both remain separately attributable when both ran.
 
@@ -112,7 +112,7 @@ A clean pass asserts the interface was exercised and held, which is a stronger c
 | Boundary | Group addressed to frontier | How the work arrives |
 | --- | --- | --- |
 | `review-to-delivery` | None. Every key resolves to `code-chief` or `design-qa` | `code-chief` receives the group and sub-delegates the part this lens owns |
-| `redesign-review` | `accessibility_evidence`, the one key `evidence_owners` assigns to frontier | `redesign` submits and delegates that group straight to this lens |
+| `redesign-review` | `accessibility_evidence`, the one key `evidence_owners` assigns to frontier | `redesign` submits and delegates that group straight to this lens, for the selected variant only |
 
 Either way the `cycle_cap` is 2. `revise_policy.parallel_fix` is what lets that sub-delegation run alongside the other lenses rather than in sequence. A REVISE round is a delta pass, not a fresh review:
 
@@ -136,7 +136,7 @@ At the cycle cap, an unresolved Critical or Major returns unchanged with its blo
 - review/code-chief
 - review/gatekeeper-code
 - review/design-qa
-- `design/redesign`, which owns the `redesign` pipeline, delegates the `frontend-review` stage once per variant, and submits the package at `redesign-review`
+- `design/redesign`, which owns the `redesign` pipeline, delegates the `frontend-review` stage once for the selected variant, and submits the package at `redesign-review`
 
 ## Review Expectations
 

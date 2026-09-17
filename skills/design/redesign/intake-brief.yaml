@@ -3,9 +3,10 @@ target_path: design/redesign/
 purpose: |
   Orchestrates the redesign pipeline for an existing user-facing surface: maps
   the current design, runs a project taste grilling, commissions four distinct
-  design systems with living single-page prototypes and component libraries at
-  functional parity, verifies them, and hands the chosen variant to the design
-  pipeline.
+  design systems as static mocks with component catalogs at route and component
+  parity, verifies and captures them, puts the choice to the user, builds the
+  living single-page prototype for the selected direction only, and hands the
+  chosen variant to the design pipeline.
 triggers:
   - redesign the UI
   - refresh the look and feel
@@ -25,13 +26,18 @@ gate:
     - taste_grilling
     - taste_snapshot
     - design_directions
-    - variant_set
+    - mock_set
+    - mock_parity
+    - mock_rendering
+    - selection
+    - selected_variant
     - parity_evidence
     - rendered_verification
     - accessibility_evidence
     - recommendation
     - residual_risk
   authored_here:
+    - selection
     - recommendation
     - residual_risk
   artifact_backed:
@@ -39,27 +45,39 @@ gate:
     - taste_grilling
     - taste_snapshot
     - design_directions
-    - variant_set
+    - mock_set
+    - mock_parity
+    - mock_rendering
+    - selection
+    - selected_variant
     - parity_evidence
     - rendered_verification
   waivable:
     - taste_snapshot
   no_fallback:
+    - mock_rendering
+  selection_dependent:
+    - selected_variant
+    - parity_evidence
     - rendered_verification
+    - accessibility_evidence
 outputs:
   - design inventory and baseline captures
   - taste grilling log and effective-profile snapshot
   - four design directions
-  - four design-system variants with living prototypes and component libraries
-  - parity, rendered, and accessibility evidence per variant
+  - four static mocks with token sets and component catalogs
+  - mock parity records and mock captures across the set
+  - the recorded user decision at reports/selection.md
+  - one living design-system variant for the selected direction, with parity, rendered, and accessibility evidence
   - redesign package with comparison matrix, recommendation, and recorded decision
 severity_model: shared 4-tier (Critical | Major | Minor | Info)
 required_contracts:
   - Execution-contract clauses stated verbatim in SKILL.md
   - Grill-Me Intake
-  - Four distinct variants
+  - Four distinct mocks
+  - Mocks before implementation
   - Functional parity
-  - Framework-free prototypes
+  - Framework-free drafts
   - Taste read boundary
   - Save-Protocol Adherence
 authoring_rules:

@@ -59,7 +59,7 @@ Use this skill to **fix the structure** — of the system, of its interfaces, or
 - "audit or redesign an existing design system" — the eight-dimension adversarial review against the current surface
 - "propose four design directions" — the `design-directions` artifact for the redesign pipeline, delegated by `design/redesign`
 
-Route elsewhere when the need is requirement evidence and a grounded problem statement (`design/researcher`), milestones and rollout sequencing against these boundaries (`design/planner`), delivery slices and the build-ready spec (`design/engineer`), recording the current surface as an inventory (`design/design-mapper`), or building a living prototype of one direction (`design/prototyper`).
+Route elsewhere when the need is requirement evidence and a grounded problem statement (`design/researcher`), milestones and rollout sequencing against these boundaries (`design/planner`), delivery slices and the build-ready spec (`design/engineer`), recording the current surface as an inventory (`design/design-mapper`), or drawing a mock of one direction and building the living prototype for the selected one (`design/prototyper`).
 
 ## Inputs
 

@@ -19,7 +19,7 @@ every required script is actually on disk.
 | Pipeline | Owner | Closes at | What it is for |
 |---|---|---|---|
 | `design` | commander | `design-to-build` | Requirements, architecture, interfaces, design system, plan, implementation spec, stack lock |
-| `redesign` | redesign | `redesign-review` | Inventory of the current design, taste grilling, four living design-system variants at parity, comparison and decision |
+| `redesign` | redesign | `redesign-review` | Inventory of the current design, taste grilling, four design-system mocks at route and component parity, comparison, the user's decision, and one living prototype for the selected direction |
 | `build` | build-management | `build-to-review` | Implementation, tests, hardening, runtime health, completeness |
 | `review` | code-chief | `review-to-delivery` | Correctness, quality, security, frontend, visual QA, developer experience |
 | `security` | cso | `security-review` | Threat model, vulnerability scan, adversarial probe, remediation |
@@ -126,20 +126,32 @@ Owner: [`redesign`](../skills/design/redesign/SKILL.md)
 
 ```text
 redesign -> design-mapper (inventory, baseline) -> taste (taste grilling, confirmation)
-         -> architect (four directions) -> prototyper x4 (living variants)
-         -> design-mapper (parity) -> design-qa (render) -> frontier (accessibility)
-         -> comparison and decision -> gatekeeper-design -> redesign-review
+         -> architect (four directions) -> prototyper x4 (static mocks)
+         -> design-mapper (mock parity) -> design-qa (mock captures)
+         -> the user's selection
+         -> prototyper x1 (living prototype for the chosen direction)
+         -> design-mapper (full parity) -> design-qa (render) -> frontier (accessibility)
+         -> comparison and recommendation -> gatekeeper-design -> redesign-review
 ```
 
-The inventory is the parity contract: every route, state, component,
-interaction, and flow gets a stable id, and `check_parity.py` proves each
-prototype carries all of them. `variant_set` is validated mechanically for
-exactly four variants with hashed files, and `rendered_verification` accepts no
-fallback at this boundary because a redesign always has a visible surface.
+The four drafts are mocks: drawn screens, real tokens, a real component catalog,
+and no behaviour. Implementation follows selection, so exactly one living
+prototype is built — for the direction the user picked. Four prototypes built
+before the choice would be three implementations made to be thrown away.
 
-Out: four living single-page prototypes with component libraries, evidence per
-variant, and a recorded decision; the chosen variant enters the design pipeline
-as its design-system input. Nothing under a redesign touches application source.
+The inventory is the parity contract: every route, state, component,
+interaction, and flow gets a stable id. `check_parity.py --level mock` proves
+each mock carries every route and component; `--level full` proves the selected
+prototype carries every id in the inventory. `mock_set` is validated
+mechanically for exactly four mocks with hashed files and `selected_variant` for
+exactly one, and `mock_rendering` accepts no fallback at this boundary because
+the mocks are always built.
+
+Out: four static mocks with component catalogs, evidence across the set, a
+recorded decision, and one living single-page prototype for the selected
+direction with its own parity, rendering, and accessibility evidence; that
+variant enters the design pipeline as its design-system input. Nothing under a
+redesign touches application source.
 
 ## Build
 

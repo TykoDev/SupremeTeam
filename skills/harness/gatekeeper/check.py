@@ -34,7 +34,9 @@ Manifest schema
 ``schema_version`` 2 additionally requires ``boundary``, ``owner``, and
 ``run_id`` (inside a run), forbids bare-string fallbacks in favour of typed
 applicability records, and validates typed evidence records declared in the
-gate spec.
+gate spec. Typed records are mostly independent of each other; the ``selection``
+kind is the exception, because what it decides changes what four other keys are
+allowed to carry (see ``check_selection_dependencies``).
 
 Output: a JSON report on stdout. On engine error a JSON object carrying
 "engine_error" is written to stderr instead.
@@ -58,7 +60,7 @@ REGISTRY_PATH = SKILLS_ROOT / "tech-stacks" / "registry.yaml"
 if str(SKILLS_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(SKILLS_ROOT / "scripts"))
 
-from data_formats import DataFormatError, load_data  # noqa: E402
+from data_formats import DataFormatError, content_sha256, load_data  # noqa: E402
 
 SUPPORTED_MANIFEST_SCHEMAS = {1, 2}
 BLOCKED = re.compile(r"\b(TODO|FIXME|XXX|HACK)\b|\btrust me\b|\b100% complete\b|\blorem ipsum\b", re.IGNORECASE)
@@ -74,6 +76,7 @@ VERDICTS = {"APPROVED", "REVISE", "ESCALATE"}
 RESULT_STATUSES = {"pass", "fail", "error", "not-run", "unavailable", "inferred"}
 FINDING_SEVERITIES = {"Critical", "Major", "Minor", "Info"}
 FINDING_STATUSES = {"open", "in-progress", "resolved", "verified", "deferred", "not-applicable"}
+#: Default file fields of a variant_set record when the gate spec names none.
 VARIANT_FILES = ("spec", "tokens", "components", "app")
 
 
@@ -82,19 +85,24 @@ class Engine(ValueError):
 
 
 def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """Canonical artifact digest: text folded to LF, binary byte-for-byte.
+
+    Every hash the gate compares - ``artifact_hashes``, typed-record ``inputs``,
+    ``evidence_digests`` - goes through ``data_formats.content_sha256`` so the
+    same value verifies on an LF and a CRLF checkout, and so the writer
+    (``save_run.py``, ``check_parity.py``, ``scan_record.py``) and this checker
+    can never disagree on line endings.
+    """
+    return content_sha256(path)
 
 
 def overlay_digest(path: Path) -> str:
-    """Digest of a tech-stack overlay with line endings normalised to LF.
+    """Digest of a tech-stack overlay; the same canonical fold as ``digest``.
 
-    Registry digests are computed over the canonical LF content committed to the
-    repository. A checkout that converts line endings (core.autocrlf=true) must
-    not make every stack_lock fail, so overlays are hashed line-ending
-    independently. Package artifacts are hashed byte-for-byte because the same
-    machine writes and checks them.
+    Registry digests are computed over LF content, and a checkout that converts
+    line endings (core.autocrlf=true) must not make every stack_lock fail.
     """
-    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+    return content_sha256(path)
 
 
 def load_mapping(path: Path, what: str) -> dict:
@@ -346,16 +354,40 @@ class Package:
                 self.failures.append(f"applicability record incomplete: {key} requires {field}")
         return True
 
-    def fallback_match(self, key: str, value: object) -> bool:
+    def sanctioned_values(self, key: str) -> list[str]:
+        """The wordings this boundary sanctions for a key, or none if barred."""
         if key in set(self.boundary.get("no_fallback", []) or []):
-            return False
-        allowed = (self.boundary.get("fallback_values", {}).get(key)
-                   or self.spec.get("fallback_values", {}).get(key, []))
+            return []
+        return list(self.boundary.get("fallback_values", {}).get(key)
+                    or self.spec.get("fallback_values", {}).get(key, []))
+
+    def fallback_match(self, key: str, value: object) -> bool:
+        allowed = self.sanctioned_values(key)
         if isinstance(value, str):
             return value in allowed
         if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str):
             return value[0] in allowed
         return False
+
+    def waived_as(self, key: str, value: object) -> str | None:
+        """The sanctioned wording a key stands down on, whichever form it took.
+
+        A bare string is the schema-1 form; at schema 2 the same wording arrives
+        as the `reason` of an applicability record. Both are the key saying "not
+        applicable for this sanctioned reason", so a cross-key rule that asks
+        whether a key stood down has to read both.
+        """
+        allowed = self.sanctioned_values(key)
+        if not allowed:
+            return None
+        if isinstance(value, str):
+            return value if value in allowed else None
+        if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str):
+            return value[0] if value[0] in allowed else None
+        if isinstance(value, dict) and value.get("applicable") is False:
+            reason = str(value.get("reason", ""))
+            return reason if reason in allowed else None
+        return None
 
     def check_evidence(self) -> list[str]:
         evidence = self.data.get("evidence", {})
@@ -391,6 +423,10 @@ class Package:
                 self.failures.append(f"evidence not artifact-backed: {key}")
             if self.schema >= 2 and key in types:
                 self.check_typed(key, types[key], value)
+        if self.schema >= 2:
+            for key in required:
+                if types.get(key) == "selection":
+                    self.check_selection_dependencies(key)
         return missing
 
     # ---------------------------------------------------------------- typed
@@ -413,39 +449,157 @@ class Package:
             self.check_taste_record(key, kind, value)
         elif kind == "variant_set":
             self.check_variant_set(key, value)
+        elif kind == "selection":
+            self.check_selection(key, value)
+
+    def type_params(self, key: str, kind: str) -> dict:
+        """Typed-record parameters, read by evidence key first and kind second.
+
+        One type can serve several keys with different shapes - at
+        redesign-review `mock_set` and `selected_variant` are both `variant_set`
+        records but count four mocks and one variant - so the key-specific entry
+        wins and the kind-level entry stays the default for any key that has none.
+        """
+        params = self.spec.get("evidence_type_params", {}) or {}
+        for name in (key, kind):
+            entry = params.get(name)
+            if isinstance(entry, dict):
+                return entry
+        return {}
+
+    def set_ids(self, key: str) -> set[str] | None:
+        """The declared ids of a variant_set-shaped evidence key, if it has any."""
+        evidence = self.data.get("evidence", {})
+        value = evidence.get(key) if isinstance(evidence, dict) else None
+        params = self.type_params(key, "variant_set")
+        entries = value.get(str(params.get("list_field") or "variants")) if isinstance(value, dict) else None
+        if not isinstance(entries, list):
+            return None
+        return {str(item.get("id", "")).strip() for item in entries if isinstance(item, dict)}
 
     def check_variant_set(self, key: str, value: object) -> None:
-        """Exactly N variants, unique ids, every variant file a correctly hashed artifact."""
-        params = (self.spec.get("evidence_type_params", {}) or {}).get("variant_set", {}) or {}
+        """Exactly N entries, unique ids, every declared file a hashed artifact.
+
+        The list name, the file fields, and the count all come from the gate
+        spec, so the same rule counts four mocks under `mocks` and one built
+        variant under `variants`.
+        """
+        params = self.type_params(key, "variant_set")
         required_count = int(params.get("required_count", 4))
-        if not isinstance(value, dict) or not isinstance(value.get("variants"), list):
-            self.failures.append(f"{key} must be a variant_set record with a variants list at schema 2")
+        list_field = str(params.get("list_field") or "variants")
+        file_fields = tuple(str(f) for f in (params.get("file_fields") or VARIANT_FILES))
+        if not isinstance(value, dict) or not isinstance(value.get(list_field), list):
+            self.failures.append(f"{key} must be a variant_set record with a {list_field} list at schema 2")
             return
-        variants = value["variants"]
-        if len(variants) != required_count:
-            self.failures.append(f"{key} requires exactly {required_count} variants, found {len(variants)}")
-        if value.get("count") is not None and value.get("count") != len(variants):
-            self.failures.append(f"{key} count {value.get('count')!r} does not match {len(variants)} variants")
+        entries = value[list_field]
+        if len(entries) != required_count:
+            self.failures.append(f"{key} requires exactly {required_count} {list_field}, found {len(entries)}")
+        if value.get("count") is not None and value.get("count") != len(entries):
+            self.failures.append(f"{key} count {value.get('count')!r} does not match {len(entries)} {list_field}")
         seen: set[str] = set()
-        for index, variant in enumerate(variants):
-            label = f"{key}.variants[{index}]"
-            if not isinstance(variant, dict):
+        for index, entry in enumerate(entries):
+            label = f"{key}.{list_field}[{index}]"
+            if not isinstance(entry, dict):
                 self.failures.append(f"{label} must be a mapping")
                 continue
-            ident = str(variant.get("id", "")).strip()
+            ident = str(entry.get("id", "")).strip()
             if not ident:
                 self.failures.append(f"{label} requires id")
             elif ident in seen:
                 self.failures.append(f"{label} duplicate id {ident}")
             seen.add(ident)
-            for field in VARIANT_FILES:
-                path = str(variant.get(field, "")).strip()
+            for field in file_fields:
+                path = str(entry.get(field, "")).strip()
                 if not path:
                     self.failures.append(f"{label} requires {field}")
                 elif path not in self.artifact_hashes:
                     self.failures.append(f"{label} {field} is not a hashed artifact: {path}")
                 elif path not in self.hashed_ok:
                     self.failures.append(f"{label} {field} references a defective artifact: {path}")
+
+    def check_selection(self, key: str, value: object) -> None:
+        """The recorded decision: a shape, and ids drawn from the set it chose from."""
+        params = self.type_params(key, "selection")
+        decisions = [str(d) for d in (params.get("decision_values") or ("variant", "merge", "deferred"))]
+        variant_decision = str(params.get("variant_decision") or "variant")
+        if not isinstance(value, dict):
+            self.failures.append(f"{key} must be a typed selection record at schema 2")
+            return
+        decision = value.get("decision")
+        if decision not in decisions:
+            self.failures.append(f"{key} decision must be one of {sorted(decisions)}")
+        for field in ("recommended", "decided_by", "decided_at", "basis"):
+            if not isinstance(value.get(field), str) or not value.get(field).strip():
+                self.failures.append(f"{key} record requires {field}")
+        chosen = value.get("chosen")
+        if decision == variant_decision:
+            if not isinstance(chosen, str) or not chosen.strip():
+                self.failures.append(f"{key} decision {variant_decision!r} requires a chosen id")
+        elif decision in decisions and chosen is not None:
+            self.failures.append(f"{key} decision {decision!r} requires chosen: null")
+        option_key = str(params.get("option_key") or "")
+        option_ids = self.set_ids(option_key) if option_key else None
+        if option_ids:
+            for field in ("recommended", "chosen"):
+                ident = value.get(field)
+                if isinstance(ident, str) and ident.strip() and ident not in option_ids:
+                    self.failures.append(
+                        f"{key} {field} {ident!r} is not one of the {option_key} ids {sorted(option_ids)}")
+
+    def check_selection_dependencies(self, key: str) -> None:
+        """The cross-key half of the decision: what the four dependent keys carry.
+
+        A decision that names a variant means that variant was built, so the
+        keys that describe a built prototype must hold real evidence and the
+        built variant must be the one that was chosen. Any other decision means
+        no prototype exists, so each of them must stand down on the exact
+        sanctioned wording for that decision - not a different one, and not
+        silence.
+        """
+        evidence = self.data.get("evidence", {})
+        record = evidence.get(key) if isinstance(evidence, dict) else None
+        if not isinstance(record, dict):
+            return
+        params = self.type_params(key, "selection")
+        decisions = [str(d) for d in (params.get("decision_values") or ())]
+        dependent = [str(d) for d in (params.get("dependent_keys") or ())]
+        if not dependent:
+            return
+        decision = record.get("decision")
+        variant_decision = str(params.get("variant_decision") or "variant")
+        if decision == variant_decision:
+            for dep in dependent:
+                waived = self.waived_as(dep, evidence.get(dep))
+                if waived is not None:
+                    self.failures.append(
+                        f"{dep} stands down on {waived!r} but {key} decision is {variant_decision!r}: "
+                        f"a selected variant was built, so this key carries real evidence")
+            built_key = str(params.get("built_key") or "")
+            built_ids = self.set_ids(built_key) if built_key else None
+            chosen = record.get("chosen")
+            built = evidence.get(built_key) if built_key else None
+            list_field = str(self.type_params(built_key, "variant_set").get("list_field") or "variants")
+            entries = built.get(list_field) if isinstance(built, dict) else None
+            first = entries[0] if isinstance(entries, list) and entries and isinstance(entries[0], dict) else None
+            if first is not None and isinstance(chosen, str) and chosen.strip():
+                ident = str(first.get("id", "")).strip()
+                if ident != chosen.strip():
+                    self.failures.append(
+                        f"{built_key} was built for {ident!r} but {key} chose {chosen.strip()!r}: "
+                        f"the built variant must be the selected one")
+            elif built_ids is None and isinstance(chosen, str) and chosen.strip():
+                self.failures.append(
+                    f"{built_key} declares no {list_field} to compare against the {key} decision")
+        elif decision in decisions:
+            expected = (params.get("fallback_by_decision") or {}).get(str(decision))
+            if not expected:
+                return
+            for dep in dependent:
+                waived = self.waived_as(dep, evidence.get(dep))
+                if waived != expected:
+                    self.failures.append(
+                        f"{dep} must stand down on {expected!r} because {key} decision is {decision!r}, "
+                        f"not {waived!r}")
 
     def check_taste_record(self, key: str, kind: str, value: object) -> None:
         """Validate the preference-management records used by taste-review."""

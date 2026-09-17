@@ -10,6 +10,9 @@ import unittest
 from unittest import mock
 import zipfile
 
+import hashlib
+
+from data_formats import content_sha256, load_data, normalize_line_endings
 from output_paths import global_data_root, resolve
 from package_check import REQUIRED_ASSET_GLOBS
 
@@ -39,6 +42,56 @@ class RuntimeUtilitiesTests(unittest.TestCase):
                         resolve(root, "reports", run_id="audit", phase=phase, name="result.md"),
                         root / "skillset-saves" / "runs" / "audit" / phase / "reports" / "result.md",
                     )
+
+    def test_coverage_kind_resolves_under_the_run_phase_evidence(self):
+        """Coverage data is phase evidence in the run, never project-root residue.
+
+        The observed failure was a `.coverage` tree of thousands of files at a
+        target project's root; this destination is what a test step points
+        COVERAGE_FILE, --report-dir, or --coverage.reportsDirectory at instead.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            for phase, name in (("build", ".coverage"), ("qa", "html/index.html")):
+                with self.subTest(phase=phase, name=name):
+                    self.assertEqual(
+                        resolve(root, "coverage", run_id="r1", phase=phase, name=name),
+                        root / "skillset-saves" / "runs" / "r1" / phase / "evidence" / "coverage" / Path(name),
+                    )
+            # It is a subdirectory of the phase-evidence class, not a sibling of it.
+            evidence = resolve(root, "evidence", run_id="r1", phase="build", name="tests.log")
+            self.assertEqual(
+                resolve(root, "coverage", run_id="r1", phase="build", name=".coverage").parent,
+                evidence.parent / "coverage",
+            )
+
+    def test_coverage_kind_rejects_traversal_and_unknown_phases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            for kwargs in (
+                dict(run_id="r1", phase="build", name="../../escape"),
+                dict(run_id="r1", phase="build", name=""),
+                dict(run_id="r1", phase="not-a-phase", name=".coverage"),
+                dict(run_id="", phase="build", name=".coverage"),
+            ):
+                with self.subTest(**kwargs):
+                    with self.assertRaises(ValueError):
+                        resolve(root, "coverage", **kwargs)
+
+    def test_coverage_residue_never_packages(self):
+        """package_check.py rejects the residue classes so a stray tree cannot ship."""
+        from package_check import RESIDUE_CLASSES, matches
+
+        patterns = RESIDUE_CLASSES["coverage-residue"]
+        for relative in (".coverage", ".coverage.host.123.abc", ".coverage/nested/a.json",
+                         "htmlcov/index.html", ".nyc_output/out.json", "app/.coverage",
+                         "app/htmlcov/index.html"):
+            with self.subTest(relative=relative):
+                self.assertTrue(matches(relative, patterns), relative)
+        for relative in ("skills/scripts/output_paths.py", "docs/coverage-notes.md",
+                         "src/coverage/report.ts", "README.md"):
+            with self.subTest(relative=relative):
+                self.assertFalse(matches(relative, patterns), relative)
 
     def test_package_contains_root_docs_and_excludes_root_secrets(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -130,6 +183,68 @@ class RuntimeUtilitiesTests(unittest.TestCase):
             record.mkdir()
             self.assert_wrapper_error(root, record)
             self.assertFalse((root / "scan.json.tmp").exists())
+
+
+class LineEndingAgnosticHashTests(unittest.TestCase):
+    """The catalog must work on an LF and a CRLF checkout alike: every recorded
+    sha256 folds text to LF first, binary is untouched, and the CLI that
+    specialists use to report hashes agrees with the gate."""
+
+    TEXT = "line one\nline two\n\nend\n"
+
+    def test_text_hashes_agree_across_line_endings(self):
+        lf = self.TEXT.encode("utf-8")
+        crlf = self.TEXT.replace("\n", "\r\n").encode("utf-8")
+        self.assertEqual(normalize_line_endings(crlf), lf)
+        self.assertEqual(normalize_line_endings(lf), lf)
+        with tempfile.TemporaryDirectory() as directory:
+            a = Path(directory) / "a.md"
+            a.write_bytes(lf)
+            b = Path(directory) / "b.md"
+            b.write_bytes(crlf)
+            self.assertEqual(content_sha256(a), content_sha256(b))
+            self.assertEqual(content_sha256(a), hashlib.sha256(lf).hexdigest())
+
+    def test_binary_content_is_hashed_byte_for_byte(self):
+        payload = b"PK\x03\x04\r\n\x00\x00binary\r\n"
+        self.assertEqual(normalize_line_endings(payload), payload)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "archive.zip"
+            path.write_bytes(payload)
+            self.assertEqual(content_sha256(path), hashlib.sha256(payload).hexdigest())
+
+    def test_registry_digest_verifies_on_lf_and_crlf_overlays(self):
+        import check_runtime
+        entry = load_data(SCRIPTS.parent / "tech-stacks" / "registry.yaml")["overlays"][0]
+        lf = normalize_line_endings((SCRIPTS.parent / entry["path"]).read_bytes())
+        self.assertEqual(hashlib.sha256(lf).hexdigest(), entry["sha256"], "registry digests are LF-folded")
+        for ending in (b"\n", b"\r\n"):
+            with self.subTest(ending=ending):
+                with tempfile.TemporaryDirectory() as directory:
+                    catalog = Path(directory).resolve() / "skills"
+                    (catalog / "tech-stacks").mkdir(parents=True)
+                    (catalog / entry["path"]).write_bytes(lf.replace(b"\n", ending))
+                    (catalog / "tech-stacks" / "registry.yaml").write_text(json.dumps({
+                        "schema_version": 1, "kind": "supremeteam-tech-stack-registry",
+                        "overlays": [entry]}), encoding="utf-8")
+                    errors: list[str] = []
+                    check_runtime._load_registry(catalog, errors)
+                    self.assertEqual([e for e in errors if "digest" in e], [], errors)
+
+    def test_content_hash_cli_matches_the_gate_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            path = root / "evidence.md"
+            path.write_bytes(self.TEXT.replace("\n", "\r\n").encode("utf-8"))
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "content_hash.py"), str(path), "--project-root", str(root)],
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            out = json.loads(proc.stdout)
+            self.assertEqual(out["hashes"], {"evidence.md": hashlib.sha256(self.TEXT.encode("utf-8")).hexdigest()})
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "content_hash.py"), str(root / "missing.md")],
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 1)
+            self.assertFalse(json.loads(proc.stdout)["ok"])
 
 
 if __name__ == "__main__":

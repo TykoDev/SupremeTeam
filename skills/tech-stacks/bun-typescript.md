@@ -33,6 +33,7 @@
 ## Testing defaults
 - Use Bun's built-in test runner for unit tests and keep tests close to the domain behavior they prove.
 - Exercise Elysia handlers through their in-process request method or Hono's test client rather than binding a real port for unit coverage.
+- Send coverage output to the run, never the project root: resolve the destination with `scripts/output_paths.py --kind coverage`, then use `bun test --coverage --coverage-dir=<dest>`, `vitest --coverage.reportsDirectory=<dest>`, or `nyc`/`c8` with `--report-dir=<dest> --temp-dir=<dest>/tmp`. A step that leaves `coverage/` or `.nyc_output/` at the project root has produced residue, not evidence.
 - Use Playwright for browser-level flows and add persistence integration tests against the same database dialect used in production.
 - Include a dependency audit and a compatibility check for native addons when the runtime version changes.
 

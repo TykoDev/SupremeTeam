@@ -40,7 +40,7 @@ normalizing either side.
 - [6. Accessibility as correctness](#6-accessibility-as-correctness)
 - [7. Gate behavior](#7-gate-behavior)
 - [8. Gate evidence](#8-gate-evidence)
-- [9. Redesign variants and living prototypes](#9-redesign-variants-and-living-prototypes)
+- [9. Redesign mocks, selection, and the living prototype](#9-redesign-mocks-selection-and-the-living-prototype)
 - [Failure paths](#failure-paths)
 
 ## Enforcement status
@@ -57,14 +57,15 @@ decides whether it is quiet, restrained, harmonious, or accessible.
 | A `rendered_verification` record is a typed `render` record with hashed captures, declared breakpoints and themes, and `inputs` bound to the rendered source by sha256 | machine-checked | `check.py`, `evidence_type_rules.render` in [gates.yaml](gates.yaml) |
 | An artifact-backed evidence key references a correctly hashed artifact in the package | machine-checked | `check.py`, the `artifact_evidence` list per boundary |
 | A fallback uses only the sanctioned applicability string for that key | machine-checked | `check.py`, `fallback_values` in [gates.yaml](gates.yaml) |
-| `rendered_verification` has no fallback at `redesign-review` | machine-checked | `check.py`, `no_fallback` on that boundary |
-| A `variant_set` carries exactly four variants with unique ids and four correctly hashed files each | machine-checked | `check.py`, `evidence_type_params.variant_set.required_count` in [gates.yaml](gates.yaml) |
-| Every inventory id appears as a parity marker on rendered markup (§9) | machine-checked | `skills/scripts/check_parity.py`, which passes only at full coverage |
+| `mock_rendering` has no fallback at `redesign-review` | machine-checked | `check.py`, `no_fallback` on that boundary |
+| A `mock_set` carries exactly four mocks with unique ids and four correctly hashed files each, and `selected_variant` carries exactly one | machine-checked | `check.py`, `evidence_type_params.mock_set.required_count` and `.selected_variant.required_count` in [gates.yaml](gates.yaml) |
+| When `selection.decision` is `variant`, the four selected-build keys carry evidence rather than a fallback string, and `selected_variant.variants[0].id` equals `selection.chosen` | machine-checked | `check.py`, the `redesign-review` selection consistency rule |
+| Every inventory id the level scores appears as a parity marker on rendered markup (§9) | machine-checked | `skills/scripts/check_parity.py`, which passes only at full coverage of the lists its `--level` scores |
 | The package carries no unfinished-work marker and no hollow-completion claim | machine-checked | `skills/harness/gatekeeper/_gatecheck.py`, the blocked-phrase check and its default phrase list |
 | §7 bullets 1 to 6 — cards as a default primitive, a missing component template, a missing UI/UX handoff, missing behavior for all six tiers, off-scale spacing or ad-hoc color, accessibility treated as follow-up | **judgement** | nothing; a reviewer reads the package and cites the section |
-| §7 bullets 7 and 8 | **part mechanical, part judgement** | the keys in §8 and §9 check presence, shape, hashes, and the variant count; the traceability content, the digest match, and category divergence are read by a reviewer |
+| §7 bullets 7 and 8 | **part mechanical, part judgement** | the keys in §8 and §9 check presence, shape, hashes, the mock count, and the selected-variant count; the traceability content, the digest match, category divergence, and whether a draft stayed a mock are read by a reviewer |
 | That the breakpoints a `render` record declares actually cover the six tiers §4 requires | judgement | the record's shape is checked; the coverage claim is read by a reviewer |
-| That four directions genuinely differ in three or more Taste categories (§9) | judgement | `variant_set` counts variants; it cannot measure divergence |
+| That four directions genuinely differ in three or more Taste categories (§9) | judgement | `mock_set` counts mocks; it cannot measure divergence |
 | WCAG 2.2 AA contrast, focus visibility, semantic HTML, reduced motion (§6) | judgement | `frontier` grades it; no automated contrast check is wired to a gate key |
 | This document itself | **judgement** | nothing — no comparator opens this file. The mechanical rows above are properties of [gates.yaml](gates.yaml) with `check.py`, and of `check_parity.py`; they would keep passing if §1–§9 here were rewritten. `team-manifest.yaml` `design_system_doctrine` names this doctrine, and nothing resolves that name to a file (its own `authority.unchecked_keys` records the same gap). |
 
@@ -257,11 +258,13 @@ An inaccessible flow is a broken flow, not a polish item.
   the design. `taste_snapshot` is a required, hashed, artifact-backed key at
   `design-to-build` (§8); that the traceability table is complete and that the
   digest is the approved one are judgements.
-- **(part mechanical)** At `redesign-review`: fewer than four variants,
-  directions that differ in fewer than three Taste categories, a prototype below
-  full parity coverage, or a prototype that needs a build step or the network
-  (§9). The variant count and the parity coverage are mechanical; category
-  divergence and the no-build-step claim are judgements.
+- **(part mechanical)** At `redesign-review`: fewer than four mocks, directions
+  that differ in fewer than three Taste categories, a mock or a selected
+  prototype below full parity coverage at its level, a living prototype built
+  before a variant was selected, or a mock or prototype that needs a build step
+  or the network (§9). The mock count, the selected-variant count, and the
+  parity coverage are mechanical; category divergence, the no-build-step claim,
+  and whether a draft stayed a mock are judgements.
 
 Marking six of these eight as judgement is not a softening. A judgement
 rejection is as binding as a mechanical one, and a reviewer who declines to make
@@ -297,8 +300,11 @@ this section is derived from it.
   `result.status` of `pass` or `inferred`. A run with no visible change carries
   the applicability record for the sanctioned fallback string
   `no visible surface changed - rendered verification not applicable`. That
-  fallback does not exist at `redesign-review`, where the key is listed under
-  `no_fallback`.
+  fallback does not exist at `redesign-review`; there the key stands for the
+  selected variant's captures and carries, when no variant was selected, one of
+  that boundary's own sanctioned strings instead. The key listed under
+  `no_fallback` at `redesign-review` is `mock_rendering`, which is always
+  produced because the four mocks are always built.
 
 A render record with `result.status: inferred` is accepted only with a stated
 limitation and is labelled as inferred, never as observed.
@@ -307,10 +313,13 @@ What these three verify is record shape, hashes, and sanctioned fallback
 strings. None of them verifies tier coverage, component-template content, or
 design quality; those are the judgement clauses marked in §7.
 
-## 9. Redesign variants and living prototypes
+## 9. Redesign mocks, selection, and the living prototype
 
-The redesign pipeline (`design/redesign`) compares four design systems before
-one is built for real. These rules keep the comparison honest.
+The redesign pipeline (`design/redesign`) compares four design systems as
+**mocks**, and implements one only after a mock has been selected. Four living
+prototypes built before a choice is three implementations made to be thrown
+away; that waste is the failure this section exists to prevent. These rules keep
+the comparison honest and the implementation late.
 
 - **Inventory first.** `design-mapper` records the current surface as a
   stable-id inventory (routes, states, components, interactions, flows,
@@ -322,43 +331,76 @@ one is built for real. These rules keep the comparison honest.
   ([taste-doctrine.md](taste-doctrine.md) §3) and traces every decision to an
   effective preference, an explicit instruction, or documented judgment.
   Palette-only variation is one direction, not four.
-- **Living prototypes.** `prototyper` builds each variant as plain HTML, CSS,
-  and JavaScript: `tokens.css`, `components.css`, `components.js`, a
-  `components.html` catalog showing every primitive in every variant, size,
-  and state, and an `app.html` single-page prototype with hash routing over
-  every inventory route, a switcher for every declared state, mocked data,
+- **Four mocks, not four implementations.** `prototyper` draws each direction as
+  a static mock under `redesign/artifacts/mocks/<id>/`: `variant.md`,
+  `tokens.css`, `components.css`, `components.html`, and `mock.html`.
+  `mock.html` renders one screen per inventory route with `data-route="<id>"` on
+  each screen's root, uses hard-coded sample content, carries every inventory
+  component somewhere across `components.html` and `mock.html` marked
+  `data-component="<id>"`, and offers light and dark through `tokens.css`. Its
+  root element carries `data-mock="true"` so the parity checker and the
+  reviewers can tell a mock from a living prototype.
+- **What a mock must not contain.** No hash router with real navigation state,
+  no in-memory data or state machine, no wired interactions or flows, no
+  `components.js`. The only JavaScript a mock may carry is an optional theme
+  toggle and an optional screen picker that shows and hides the static screens.
+  `data-interaction` and `data-flow` markers are not required; route states may
+  be drawn as extra static screens (`data-route-state`) but are not required
+  either. A mock that wires an interaction is not a better mock, it is an
+  implementation built before the decision that justifies it.
+- **Mock parity, mechanically proven.** `scripts/check_parity.py --level mock`
+  scores **routes and components only**, at `--min-coverage 1.0` for those two
+  lists; interactions, flows, and states are reported as informational counts
+  and never fail the mock level. The mapper writes one record per mock and one
+  aggregated probe record over the set. Pixel similarity is never the criterion.
+- **Selection before implementation.** The user picks one mock, asks for a
+  merge, or defers, and the answer is recorded verbatim in
+  `redesign/reports/selection.md` and in the typed `selection` record. Nothing
+  is implemented before that decision exists.
+- **One living prototype, for the chosen mock only.** When a variant was
+  selected, `prototyper` builds `redesign/artifacts/variants/<id>/`:
+  `variant.md`, `tokens.css`, `components.css`, `components.js`,
+  `components.html`, and an `app.html` single-page prototype with hash routing
+  over every inventory route, a switcher for every declared state, mocked data,
   working interactions and flows, dark mode, keyboard paths, and
-  `prefers-reduced-motion`. No build step, no network; the files open from disk.
+  `prefers-reduced-motion`. It is derived from the selected mock's tokens and
+  catalog. No build step, no network; the files open from disk. Every inventory
+  id appears as a `data-route`, `data-state` (or `data-route-state`),
+  `data-component`, `data-interaction`, or `data-flow` marker on rendered
+  markup, and `check_parity.py --level full` passes only at full coverage of
+  every list.
 - **shadcn-shaped.** Component names, variant axes, and token names follow
   §5 so the chosen variant maps one-to-one onto the production design system
   the design pipeline then implements.
-- **Functional parity, mechanically proven.** Every inventory id appears as a
-  `data-route`, `data-state` (or `data-route-state`), `data-component`,
-  `data-interaction`, or `data-flow` marker on rendered markup.
-  `scripts/check_parity.py` writes a typed probe record per variant bound by
-  sha256 to the inventory and prototype files; it passes only at full
-  coverage. Pixel similarity is never the criterion.
-- **Evidence per variant.** `design-qa` renders every route and state at the
-  six tiers in both themes (§4); `frontier` grades accessibility with the
-  shared severities. A variant with an open Critical accessibility finding or
-  a parity gap is repaired by its builder before it enters the comparison.
-- **Gate evidence.** At `redesign-review` ([gates.yaml](gates.yaml)) the ten
-  required keys are `design_inventory`, `taste_grilling`, `taste_snapshot`,
-  `design_directions`, `variant_set`, `parity_evidence`,
+- **Evidence per stage.** `design-qa` captures every mock screen at the six
+  tiers in both themes (§4), and captures the selected variant's routes and
+  states the same way once it exists; `frontier` grades accessibility on the
+  selected variant with the shared severities. A mock with a parity gap is
+  repaired by its builder before it enters the comparison, and a Critical
+  accessibility finding on the selected variant is repaired before the package
+  gates.
+- **Gate evidence.** At `redesign-review` ([gates.yaml](gates.yaml)) the
+  fourteen required keys are `design_inventory`, `taste_grilling`,
+  `taste_snapshot`, `design_directions`, `mock_set`, `mock_parity`,
+  `mock_rendering`, `selection`, `selected_variant`, `parity_evidence`,
   `rendered_verification`, `accessibility_evidence`, `recommendation`, and
-  `residual_risk`. Seven of them are also `artifact_evidence` and so must
+  `residual_risk`. Eleven of them are also `artifact_evidence` and so must
   reference correctly hashed artifacts: every key above except
   `accessibility_evidence`, `recommendation`, and `residual_risk`.
-  `rendered_verification` is listed under `no_fallback` at this boundary, so the
-  applicability record accepted at `review-to-delivery` is refused here.
-  "Exactly four" is not prose: `evidence_type_params.variant_set.required_count`
-  is `4`, and the typed `variant_set` rule requires four variants with unique
-  ids whose `spec`, `tokens`, `components`, and `app` files are each a correctly
-  hashed artifact in the package, with `count` equal to the list length when
-  present. A fifth variant fails the gate as mechanically as a third does.
+  `mock_rendering` is listed under `no_fallback` at this boundary, because the
+  mocks are always built and therefore always renderable; `rendered_verification`
+  is not, because a merge or a deferral legitimately leaves no living prototype
+  to render. "Exactly four" is not prose:
+  `evidence_type_params.mock_set.required_count` is `4`, and the typed record
+  requires four mocks with unique ids whose `spec`, `tokens`, `components`, and
+  `mock` files are each a correctly hashed artifact in the package, with `count`
+  equal to the list length when present. A fifth mock fails the gate as
+  mechanically as a third does. `selected_variant` is the mirror rule at
+  `required_count` 1.
 - **Handoff.** The chosen variant's `variant.md`, `tokens.css`, and
-  `components.html` are the design-system input to the design pipeline; a
-  merge choice is a brief for `architect`, not a fifth prototype.
+  `components.html` — from the selected living build, not from the mock — are
+  the design-system input to the design pipeline; a merge choice is a brief for
+  `architect`, not a fifth mock and not a second prototype.
 
 ## Failure paths
 
@@ -373,8 +415,9 @@ one is built for real. These rules keep the comparison honest.
   not waived for a package that has one.
 - **No browser or renderer is available.** A `render` record may carry
   `result.status: inferred`, but only with a stated limitation and labelled as
-  inferred. At `redesign-review` there is no such relief and no fallback: the
-  boundary does not close until rendering evidence exists.
+  inferred. At `redesign-review` there is no fallback on `mock_rendering`: the
+  boundary does not close until a render record for the four mocks exists, even
+  if it is an inferred one.
 - **The Taste store revision changed between the snapshot and the gate.** The
   snapshot is invalid (§0). Re-resolve, re-snapshot, and re-run the affected
   design decisions against the new digest rather than approving against a digest
@@ -391,9 +434,10 @@ one is built for real. These rules keep the comparison honest.
   primitive in the same shape (Radix-based, token-driven, variant-typed) and
   document the new component in the §5 variant matrix. Hand-rolling a
   replacement for a primitive that does exist is the case §5 forbids.
-- **`check_parity.py` reports a coverage gap.** The variant's builder repairs it
-  before the variant enters the comparison (§9). Parity is pass-or-fail at full
-  coverage; there is no partial credit and no reviewer override.
+- **`check_parity.py` reports a coverage gap.** The builder repairs it before
+  the mock enters the comparison, or before the selected variant gates (§9).
+  Parity is pass-or-fail at full coverage of the lists the level scores; there is
+  no partial credit and no reviewer override.
 - **Two clauses of this doctrine conflict.** §6 and §0 outrank the rest: an
   accessibility requirement is never traded away for a §1 through §3 aesthetic
   rule, and a decision without provenance is not gate-eligible regardless of how

@@ -32,6 +32,10 @@ RESIDUE_CLASSES = {
     "save-state": ["skillset-saves/**", "**/skillset-saves/**"],
     "test-scratch": ["harness-test-work/**", "**/harness-test-work/**", "gatekeeper-test-work/**", "**/gatekeeper-test-work/**", "**/.harness-state/test-work/**"],
     "render-scratch": [".playwright-mcp/**", "**/.playwright-mcp/**"],
+    # Coverage data and reports are run evidence under
+    # skillset-saves/runs/*/*/evidence/coverage/ (output_paths.py --kind coverage),
+    # never project-root residue and never part of a package.
+    "coverage-residue": ["**/.coverage", "**/.coverage.*", "**/.coverage/**", "**/htmlcov/**", "**/.nyc_output/**"],
     "eval-workspace": ["**/*-workspace/**", "**/evals/workspace/**"],
     "archives": ["**/*.skill", "**/*.zip"],
     "secrets": ["**/.env", "**/.env.*", "**/*.pem", "**/*.key"],

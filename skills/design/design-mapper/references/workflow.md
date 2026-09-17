@@ -83,30 +83,49 @@ directions and the report.
 
 ## Parity-Marker Contract
 
-`skills/scripts/check_parity.py` reads the inventory and scans a variant's
-`app.html` and `components.html` for these attributes:
+`skills/scripts/check_parity.py` reads the inventory and scans the draft's
+markup — `mock.html` at mock level, `app.html` at full level — together with
+`components.html`, for these attributes. The last column says which markers a
+mock owes and which belong to the living prototype alone.
 
-| Inventory list | Marker | Where it must appear |
-| --- | --- | --- |
-| `routes[].id` | `data-route="<id>"` | on the view element of that route in `app.html` |
-| `routes[].states[]` | `data-state="<state>"` inside that route's view, or `data-route-state="<route id>:<state>"` anywhere | `app.html`; every declared state of every route |
-| `components[].id` | `data-component="<id>"` | at least once in `components.html` (the catalog) and at least once in `app.html` |
-| `interactions[].id` | `data-interaction="<id>"` | on the control that triggers it in `app.html` |
-| `flows[].id` | `data-flow="<id>"` | on the flow's entry control or container in `app.html` |
+| Inventory list | Marker | Where it must appear | Required in a mock |
+| --- | --- | --- | --- |
+| `routes[].id` | `data-route="<id>"` | on the screen element of that route in `mock.html`, or on the view element in `app.html` | Yes — scored at mock level |
+| `components[].id` | `data-component="<id>"` | at least once in `components.html` (the catalog) and at least once in the screens file | Yes — scored at mock level |
+| `routes[].states[]` | `data-state="<state>"` inside that route's view, or `data-route-state="<route id>:<state>"` anywhere | `app.html`; every declared state of every route | No — a mock may draw a state as an extra static screen, and the count is informational |
+| `interactions[].id` | `data-interaction="<id>"` | on the control that triggers it in `app.html` | No — a mock wires nothing |
+| `flows[].id` | `data-flow="<id>"` | on the flow's entry control or container in `app.html` | No — a mock wires nothing |
 
-Coverage is the fraction of inventory ids found; the record passes only at full
-coverage (`--min-coverage 1.0` is the default). The record is a typed probe:
-`artifacts` (the record itself), `inputs` (inventory, `app.html`,
-`components.html` with sha256), `coverage` per list, `missing` per list, and
-`result.status`.
+One marker has no inventory id behind it: `data-mock="true"` on `mock.html`'s
+root element. It is how the checker and the reviewers tell a mock from a living
+prototype, and it never appears on `app.html`.
+
+Coverage is the fraction of inventory ids found in the lists the level scores;
+the record passes only at full coverage of those lists (`--min-coverage 1.0` is
+the default at both levels). At `--level mock` that means routes and components
+alone — states, interactions, and flows are reported as informational counts and
+never fail the level. At `--level full` every list is scored. The record is a
+typed probe: `artifacts` (the record itself), `inputs` (inventory, the screens
+file, `components.html` with sha256), `coverage` per list, `missing` per list,
+and `result.status`.
 
 ## Checker Contract
 
-`skills/scripts/check_parity.py` is the only source of a `parity-evidence`
-record. Its behaviour is part of the contract, not an implementation detail.
+`skills/scripts/check_parity.py` is the only source of a `mock-parity-evidence`
+or `parity-evidence` record. Its behaviour is part of the contract, not an
+implementation detail.
 
 ```bash
-python skills/scripts/check_parity.py \
+# mock parity, once per mock
+python skills/scripts/check_parity.py --level mock \
+  --inventory <design-inventory.json> \
+  --app <mock>/mock.html \
+  --components <mock>/components.html \
+  --out redesign/evidence/mock-parity-<id>.json \
+  --project-root .
+
+# full parity, once, for the selected variant only
+python skills/scripts/check_parity.py --level full \
   --inventory <design-inventory.json> \
   --app <variant>/app.html \
   --components <variant>/components.html \
@@ -114,17 +133,28 @@ python skills/scripts/check_parity.py \
   --project-root .
 ```
 
+The four mock-level records are then summarised into one aggregated probe record
+of the same shape, whose `artifacts` list names them; that aggregate is what the
+package carries as `mock_parity`. The full-level record stands alone as
+`parity_evidence`.
+
 | Exit | Meaning | Record written |
 | --- | --- | --- |
 | 0 | Coverage meets `--min-coverage` (default `1.0`) | Yes, `result.status: pass` |
-| 1 | Inventory ids are missing from the prototype | Yes, `result.status: fail`, with the exact ids per list |
+| 1 | Inventory ids the level scores are missing from the draft | Yes, `result.status: fail`, with the exact ids per list |
 | 2 | Input or engine error: unreadable file, wrong `schema_version`, a parity list that is not a list, an invalid or duplicate id | No — `engine_error` on stderr only |
 
 - `--project-root .` makes every `inputs[].path` in the record project-relative.
   Without it the record can carry absolute paths, which the gate cannot bind to
   the package's hashed artifacts. Pass it on every run.
+- `--level` follows the stage, not the artifact. `mock` for a `mock-build` output,
+  `full` for the selected variant. Scoring a mock at full level manufactures a
+  failure for behaviour the mock was never meant to have; scoring a prototype at
+  mock level manufactures a pass.
 - `--min-coverage` is not a dial. The default of `1.0` is the parity definition in
-  `../../../design-doctrine.md` §9; lowering it converts a defect into a pass.
+  `../../../design-doctrine.md` §9 and applies at both levels — to routes and
+  components at mock level, to every list at full level; lowering it converts a
+  defect into a pass.
 - An inventory whose parity lists are all empty scores coverage `1.0`, because an
   empty expectation set is trivially met. A surface with no router therefore gets
   one implicit `route.root` row rather than an empty `routes` list, or the check
@@ -184,8 +214,9 @@ explicitly; an omitted section reads at the gate as an unmapped area.
   inventory even when the running surface never showed it.
 - One id per thing: duplicates are two ids plus an inconsistency, never one
   merged id.
-- Parity is binary per variant: missing ids go back to the builder; the
-  threshold does not move.
+- Parity is binary per draft and per level: missing ids in a list the level
+  scores go back to the builder; the threshold does not move, and neither does
+  which lists the level scores.
 
 ## Acceptance Checklist
 
@@ -198,7 +229,7 @@ explicitly; an omitted section reads at the gate as an unmapped area.
 
 ## Collaboration Notes
 
-- `design/redesign` consumes the inventory as the parity contract and delegates parity verification per variant.
+- `design/redesign` consumes the inventory as the parity contract, delegates mock parity across the four mocks, and delegates full parity verification for the selected variant only.
 - `design/architect` reads the inventory and the taste grilling log to write the four directions.
-- `design/prototyper` reads the inventory to place every parity marker and self-checks with the same script.
-- `review/design-qa` reuses the baseline captures as the before-state for rendered verification.
+- `design/prototyper` reads the inventory to place every parity marker its level requires and self-checks with the same script at the same level.
+- `review/design-qa` reuses the baseline captures as the before-state for the mock captures and for rendered verification.

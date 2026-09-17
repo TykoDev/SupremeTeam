@@ -54,6 +54,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+SCRIPT_ROOT = Path(__file__).resolve().parents[2] / "scripts"
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
+
+from data_formats import content_sha256  # noqa: E402
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _saves import ACTIVE_STATUSES, SCHEMA_VERSION, STALE_AFTER_SECONDS, TERMINAL_STATUSES, inspect_saves  # noqa: E402
 import _state  # noqa: E402
@@ -78,7 +84,12 @@ def now_iso() -> str:
 
 
 def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """Canonical evidence digest (text folded to LF, binary byte-for-byte).
+
+    Shared with ``harness/gatekeeper/check.py`` so a hash registered at a
+    checkpoint verifies at the gate on either line-ending convention.
+    """
+    return content_sha256(path)
 
 
 def safe_run_id(run_id: str) -> str:

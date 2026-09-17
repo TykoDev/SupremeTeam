@@ -46,8 +46,8 @@ mechanically certain signal.
 
 | File | Event | Layer | What it does |
 |---|---|---|---|
-| `pre_tool_use.py` | `PreToolUse` | 3 | Blocks dangerous shell commands, writes into a frozen or guarded boundary, and direct edit-tool writes to core run files |
-| `post_tool_use.py` | `PostToolUse` | 4 | Records repeated failures, empty-output streaks, and oscillation; refreshes the pinned run's heartbeat from real activity |
+| `pre_tool_use.py` | `PreToolUse` | 3 | Blocks dangerous shell commands, writes into a frozen or guarded boundary, and direct edit-tool writes to core run files; advises (never denies) when a coverage command names no destination |
+| `post_tool_use.py` | `PostToolUse` | 4 | Records repeated failures, empty-output streaks, and oscillation; refreshes the pinned run's heartbeat from real activity; sweeps project-root coverage residue into the run |
 | `user_prompt_submit.py` | `UserPromptSubmit` | routing | Points lifecycle work at `admiral`, reinforces the session pin, stays quiet on slash commands |
 | `save_run.py` | CLI | persistence | The only writer of the run record |
 | `verify_registration.py` | diagnostic | | Inspects host hook config without touching it. Exit 0 registered, 1 missing, 2 unknown |
@@ -116,6 +116,32 @@ working directory, then an isolated temp fallback. Every generated file lands
 under `skillset-saves/` or `.harness-state/` (`save-ownership.yaml`
 `generated_roots`). With the file absent or empty, only the built-in destructive-pattern
 guard applies. `unfreeze` clears `frozen_globs`.
+
+## Coverage residue
+
+Coverage data belongs in the run at `<phase>/evidence/coverage/`
+(`scripts/output_paths.py --kind coverage`), not at the project root. Point
+`COVERAGE_FILE`, `--data-file`, `--cov-report`, `--coverage.reportsDirectory`, or
+`--report-dir` plus `--temp-dir` there before the runner starts, and never use
+parallel or per-process mode without a `coverage combine` into that destination:
+one observed run wrote a `.coverage` tree of over three thousand files in under
+two minutes that way.
+
+Two hooks back that rule up. `pre_tool_use.py` emits advisory context — never a
+deny — for a shell command that writes coverage with no destination named
+(`coverage run -p` without a combine, `pytest --cov` with no `--cov-report`,
+`nyc`/`c8` with no `--report-dir`/`--temp-dir`, `vitest --coverage` with no
+`reportsDirectory`). After a command action, `post_tool_use.py` sweeps
+`.coverage`, `.coverage.*`, `.coverage/`, `htmlcov/`, and `.nyc_output/` from the
+project root into the active run's `evidence/coverage/`, or into
+`.harness-state/test-work/coverage-residue/<timestamp>/` when no run is active.
+The sweep keeps the relative structure, combines relocated `.coverage.*`
+fragments where the `coverage` module is importable (with `--keep`, so the
+originals survive), skips anything inside a frozen or blocked glob, never touches
+`skillset-saves/` or `.harness-state/` themselves, is bounded to 5000 project-root
+entries per call, and deletes nothing. It reports what moved and where as
+additional context. A sweep that had to run means the step never named its
+destination.
 
 ## Gate validation
 

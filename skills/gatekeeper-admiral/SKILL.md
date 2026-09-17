@@ -77,7 +77,7 @@ the spec first — a boundary judged under the wrong row checks the wrong facts.
 | Boundary | Guards | Submitter | Required evidence |
 | --- | --- | --- | --- |
 | `design-to-build` | DESIGN to BUILD | commander | `decisions` `architecture` `interfaces` `plan` `acceptance` `security_seed` `stack_lock` `taste_snapshot` `ui_evidence` |
-| `redesign-review` | REDESIGN (design-shaped) to GATE to DESIGN with the chosen variant, or COMPLETE | redesign | `design_inventory` `taste_grilling` `taste_snapshot` `design_directions` `variant_set` `parity_evidence` `rendered_verification` `accessibility_evidence` `recommendation` `residual_risk` |
+| `redesign-review` | REDESIGN (design-shaped) to GATE to DESIGN with the chosen variant, or COMPLETE | redesign | `design_inventory` `taste_grilling` `taste_snapshot` `design_directions` `mock_set` `mock_parity` `mock_rendering` `selection` `selected_variant` `parity_evidence` `rendered_verification` `accessibility_evidence` `recommendation` `residual_risk` |
 | `build-to-review` | BUILD to REVIEW | build-management | `approved_design_revision` `implementation` `tests` `runtime` `traceability` `security_evidence` |
 | `review-to-delivery` | REVIEW to GATE to COMPLETE | code-chief | `review_verdict` `findings` `executed_probes` `rendered_verification` `residual_risk` `revision_lineage` |
 | `security-review` | security pipeline to GATE to COMPLETE | cso | `scope` `threat_model` `findings` `vulnerability_scan` `denial_path_evidence` `remediation_plan` `residual_risk` |
@@ -118,7 +118,7 @@ boundary's submitter.
 | Boundary | Keys whose owner is not the submitter |
 | --- | --- |
 | `design-to-build` | `decisions` admiral · `architecture` `interfaces` `ui_evidence` architect · `plan` `acceptance` planner · `security_seed` security-builder · `taste_snapshot` taste |
-| `redesign-review` | `design_inventory` `parity_evidence` design-mapper · `taste_grilling` `taste_snapshot` taste · `design_directions` architect · `variant_set` prototyper · `rendered_verification` design-qa · `accessibility_evidence` frontier |
+| `redesign-review` | `design_inventory` `mock_parity` `parity_evidence` design-mapper · `taste_grilling` `taste_snapshot` taste · `design_directions` architect · `mock_set` `selected_variant` prototyper · `mock_rendering` `rendered_verification` design-qa · `accessibility_evidence` frontier |
 | `build-to-review` | `implementation` bob-the-builder · `tests` test-builder · `runtime` health-check · `security_evidence` security-builder |
 | `review-to-delivery` | `rendered_verification` design-qa |
 | `security-review` | `vulnerability_scan` security-review · `denial_path_evidence` mr-robot |

@@ -5,3 +5,13 @@ harness-test-work/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Coverage residue. Coverage data belongs in the run at
+# skillset-saves/runs/<run>/<phase>/evidence/coverage/ (output_paths.py --kind
+# coverage); anything matching these at the project root is residue a step left
+# behind, and post_tool_use.py relocates it on the next tool call.
+.coverage
+.coverage.*
+.coverage/
+htmlcov/
+.nyc_output/

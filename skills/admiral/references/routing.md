@@ -19,7 +19,7 @@ it and must not contradict it; where they disagree, the file wins.
 | --- | --- | --- |
 | Design, build, and review end to end | `design/commander`, then `build/build-management`, then `review/code-chief` | `design-to-build`, `build-to-review`, `review-to-delivery` |
 | Design only, or continue from an approved design | the earliest incomplete boundary | as above |
-| Redesign an existing UI: map it, grill taste, compare four living design systems | `design/redesign`; the chosen variant then enters `design/commander` | `redesign-review` |
+| Redesign an existing UI: map it, grill taste, compare four design systems as mocks, then build the selected one | `design/redesign`; the chosen variant then enters `design/commander` | `redesign-review` |
 | Security audit, threat model, hardening, or remediation | `review/cso` driving `security-review` and `mr-robot` | `security-review` |
 | Unknown failure mechanism | `investigate`; its bounded fix path returns to the owning phase | `investigation-review` |
 | Product testing with recorded evidence | `qa`; a report-only run runs the sweep through `qa-only`, but `qa` remains the `qa-review` submitter and carries the `fixes_applied` applicability record | `qa-review` |

@@ -9,7 +9,7 @@
   ],
   "evidence_rules": {
     "required_evidence": "Every listed key must be present and non-falsy under the manifest's top-level evidence object.",
-    "artifact_evidence": "These keys must reference at least one path that appears in the manifest's artifact_hashes map, so the evidence is a shipped, hashed file rather than a bare claim. A key whose value exactly equals one of its sanctioned fallback_values is exempt.",
+    "artifact_evidence": "These keys must reference at least one path that appears in the manifest's artifact_hashes map, so the evidence is a shipped, hashed file rather than a bare claim. A key whose value exactly equals one of its sanctioned fallback_values is exempt. Every sha256 this spec names - artifact_hashes, typed-record inputs, overlay digests, evidence_digests - is the line-ending-agnostic digest scripts/data_formats.py content_sha256 produces (text folded to LF, binary byte-for-byte), so a hash recorded on an LF checkout verifies on a CRLF one and the reverse; scripts/content_hash.py prints it for a file.",
     "fallback_values": "The only sanctioned non-artifact values for a key. Any other bare string fails the artifact-backing check.",
     "evidence_root": "Artifact paths are manifest-relative. Inside the canonical save layout (skillset-saves/runs/<run-id>/<phase>/) the authorised evidence root is the run directory when the manifest run_id matches the directory and _state.md, so sibling phase evidence is admissible. Otherwise the root is the manifest directory. Another run, traversal, absolute/drive/UNC paths, and links leaving the root are rejected.",
     "path_references": "Every path-shaped string in an artifact-backed evidence value (every evidence value at manifest schema 2) must be a correctly hashed artifact; free-text annotations are ignored.",
@@ -49,7 +49,11 @@
         "taste_grilling",
         "taste_snapshot",
         "design_directions",
-        "variant_set",
+        "mock_set",
+        "mock_parity",
+        "mock_rendering",
+        "selection",
+        "selected_variant",
         "parity_evidence",
         "rendered_verification",
         "accessibility_evidence",
@@ -61,13 +65,35 @@
         "taste_grilling",
         "taste_snapshot",
         "design_directions",
-        "variant_set",
+        "mock_set",
+        "mock_parity",
+        "mock_rendering",
+        "selection",
+        "selected_variant",
         "parity_evidence",
         "rendered_verification"
       ],
       "no_fallback": [
-        "rendered_verification"
-      ]
+        "mock_rendering"
+      ],
+      "fallback_values": {
+        "selected_variant": [
+          "selection deferred - no variant built",
+          "merge brief recorded - implemented as a fifth direction in the design pipeline"
+        ],
+        "parity_evidence": [
+          "selection deferred - no variant built",
+          "merge brief recorded - implemented as a fifth direction in the design pipeline"
+        ],
+        "rendered_verification": [
+          "selection deferred - no variant built",
+          "merge brief recorded - implemented as a fifth direction in the design pipeline"
+        ],
+        "accessibility_evidence": [
+          "selection deferred - no variant built",
+          "merge brief recorded - implemented as a fifth direction in the design pipeline"
+        ]
+      }
     },
     "build-to-review": {
       "guards": "BUILD -> REVIEW",
@@ -241,8 +267,8 @@
       "single skill - no team manifest produced"
     ]
   },
-  "spec_revision": 3,
-  "unchecked_fields": "Fields of this spec that a comparator does not read, so a wrong value here fails nothing. `guards` is no longer one of them. `scripts/validate_manifests.py` check_gates and `harness/gatekeeper/test_gate_manifests.py` GateSpecContractTests.test_gate_spec_shape still check only that the string is non-empty, but validation/test_orchestration.py GuardedTransitionTests reads what it says: it parses the `## States and transitions` table in contracts/workflow-protocol.md and requires every ALL-CAPS token in a `guards` string to be a state that table declares - or the name of the pipeline that closes this boundary, standing at the origin of the chain, which is how REDESIGN and TASTE are admitted - and every adjacent pair in a chain to be an allowed transition out of the state it leaves. Lowercase prose origins (security pipeline, investigation) and trailing commentary (with the chosen variant, or consuming pipeline) are not read, and neither is the Guards column of that document, which stays a deliberate paraphrase the drift test skips. `evidence_type_params.variant_set.required_count` gained a second reader for the same reason: validation/test_orchestration.py StageConditionTests requires the `fan_out` of the pipelines.yaml stage whose owner owns that evidence key at this boundary to equal it, so the fan-out and the count the gate enforces can no longer drift apart. Still unread: `purpose`, this note, `evidence_rules`, `evidence_type_rules`, `spec_revision`, and `finding_policy.statement` - all prose that describes behaviour check.py implements in code rather than reads from here. What IS read per boundary: `guards` (against the state machine, as above), `submitter`, `required_evidence`, `artifact_evidence`, `fallback_values`, `no_fallback`, `evidence_types`, `evidence_type_params`, `evidence_owners`, `verdicts`, and `revise_policy.cycle_cap`.",
+  "spec_revision": 4,
+  "unchecked_fields": "Fields of this spec that a comparator does not read, so a wrong value here fails nothing. `guards` is no longer one of them. `scripts/validate_manifests.py` check_gates and `harness/gatekeeper/test_gate_manifests.py` GateSpecContractTests.test_gate_spec_shape still check only that the string is non-empty, but validation/test_orchestration.py GuardedTransitionTests reads what it says: it parses the `## States and transitions` table in contracts/workflow-protocol.md and requires every ALL-CAPS token in a `guards` string to be a state that table declares - or the name of the pipeline that closes this boundary, standing at the origin of the chain, which is how REDESIGN and TASTE are admitted - and every adjacent pair in a chain to be an allowed transition out of the state it leaves. Lowercase prose origins (security pipeline, investigation) and trailing commentary (with the chosen variant, or consuming pipeline) are not read, and neither is the Guards column of that document, which stays a deliberate paraphrase the drift test skips. `evidence_type_params.mock_set.required_count` gained a second reader for the same reason: validation/test_orchestration.py StageConditionTests pairs the counted evidence keys a stage owner holds at this boundary, in required_evidence order, with that owner's artifact-bearing stages in pipeline order, and requires each stage's `fan_out` - one when the stage declares none - to equal the required_count of the key it produces. So `mock-build` must fan out four ways for `mock_set` and `selected-build` must not fan out at all for `selected_variant`, and the fan-out and the count the gate enforces can no longer drift apart. Still unread: `purpose`, this note, `evidence_rules`, `evidence_type_rules`, `spec_revision`, and `finding_policy.statement` - all prose that describes behaviour check.py implements in code rather than reads from here. What IS read per boundary: `guards` (against the state machine, as above), `submitter`, `required_evidence`, `artifact_evidence`, `fallback_values`, `no_fallback`, `evidence_types`, `evidence_type_params`, `evidence_owners`, `verdicts`, and `revise_policy.cycle_cap`.",
   "evidence_types": {
     "tests": "probe",
     "runtime": "probe",
@@ -266,7 +292,11 @@
     "persistence_result": "persistence_result",
     "effective_profile": "effective_profile",
     "consumer_handoff": "consumer_handoff",
-    "variant_set": "variant_set",
+    "mock_set": "variant_set",
+    "selected_variant": "variant_set",
+    "mock_parity": "probe",
+    "mock_rendering": "render",
+    "selection": "selection",
     "parity_evidence": "probe",
     "accessibility_evidence": "findings"
   },
@@ -285,16 +315,35 @@
     "persistence_result": "Record {requested_destinations, committed_revisions, hashes, atomicity_status, rollback_result}.",
     "effective_profile": "Record {entries: [{id, source_scope, source_id}], digest}. Every effective entry carries its source scope and source id.",
     "consumer_handoff": "Record {consuming_pipeline, effective_profile_digest, applicability_summary}. The digest is the immutable effective-profile sha256.",
-    "variant_set": "Record {artifacts, variants: [{id, name, direction, spec, tokens, components, app}], count}. Exactly evidence_type_params.variant_set.required_count variants with unique ids; spec, tokens, components, and app of every variant are correctly hashed artifacts in the package; count, when present, equals the list length. At redesign-review, parity_evidence is a single check_parity.py probe record whose artifacts list names the hashed parity file for every variant: check.py requires one mapping, so a list of per-variant records fails as 'parity_evidence must be a typed probe record at schema 2'. Binding inputs to the inventory and prototype files is required by the gate but not machine-checked - check_result_record demands non-empty inputs only for scan and render records, so a probe with no inputs passes the validator and the binding is a gatekeeper judgement."
+    "variant_set": "Record {artifacts, <list_field>: [{id, name, direction, ...files}], count}. The list name, the file fields, and the required length come from evidence_type_params, read by evidence key first and by the type name second, so one rule serves two keys at redesign-review: mock_set holds exactly four mocks under `mocks` with spec, tokens, components, and mock, and selected_variant holds the one built variant under `variants` with spec, tokens, components, and app. Ids are unique; every declared file is a correctly hashed artifact in the package; count, when present, equals the list length. parity_evidence and mock_parity are each a single check_parity.py probe record whose artifacts list names the hashed parity file it aggregates: check.py requires one mapping, so a list of per-mock records fails as 'must be a typed probe record at schema 2'. Binding inputs to the inventory and the scanned files is required by the gate but not machine-checked - check_result_record demands non-empty inputs only for scan and render records, so a probe with no inputs passes the validator and the binding is a gatekeeper judgement.",
+    "selection": "Record {schema_version, artifacts: [the hashed selection report], decision in evidence_type_params.selection.decision_values, chosen, recommended, decided_by, decided_at, basis}. decision 'variant' requires a non-null chosen that is one of the mock_set ids and makes selected_variant.<list_field>[0].id equal it; 'merge' and 'deferred' require chosen null. recommended is always a mock_set id. The decision is the hinge of the boundary: on 'variant' the four dependent keys named in evidence_type_params.selection.dependent_keys carry real evidence and may not fall back, and on any other decision each of them carries the sanctioned wording evidence_type_params.selection.fallback_by_decision fixes for that decision - as the bare string at manifest schema 1, or as an applicability record whose reason is that wording at schema 2. check.py enforces both directions; whether the recorded basis is the user's actual decision stays a gatekeeper judgement."
   },
   "evidence_type_params": {
-    "variant_set": {
-      "required_count": 4
+    "mock_set": {
+      "required_count": 4,
+      "list_field": "mocks",
+      "file_fields": ["spec", "tokens", "components", "mock"]
+    },
+    "selected_variant": {
+      "required_count": 1,
+      "list_field": "variants",
+      "file_fields": ["spec", "tokens", "components", "app"]
+    },
+    "selection": {
+      "decision_values": ["variant", "merge", "deferred"],
+      "variant_decision": "variant",
+      "option_key": "mock_set",
+      "built_key": "selected_variant",
+      "dependent_keys": ["selected_variant", "parity_evidence", "rendered_verification", "accessibility_evidence"],
+      "fallback_by_decision": {
+        "deferred": "selection deferred - no variant built",
+        "merge": "merge brief recorded - implemented as a fifth direction in the design pipeline"
+      }
     }
   },
   "evidence_owners": {
     "design-to-build": {"decisions": "admiral", "architecture": "architect", "interfaces": "architect", "plan": "planner", "acceptance": "planner", "security_seed": "security-builder", "stack_lock": "commander", "taste_snapshot": "taste", "ui_evidence": "architect"},
-    "redesign-review": {"design_inventory": "design-mapper", "taste_grilling": "taste", "taste_snapshot": "taste", "design_directions": "architect", "variant_set": "prototyper", "parity_evidence": "design-mapper", "rendered_verification": "design-qa", "accessibility_evidence": "frontier", "recommendation": "redesign", "residual_risk": "redesign"},
+    "redesign-review": {"design_inventory": "design-mapper", "taste_grilling": "taste", "taste_snapshot": "taste", "design_directions": "architect", "mock_set": "prototyper", "mock_parity": "design-mapper", "mock_rendering": "design-qa", "selection": "redesign", "selected_variant": "prototyper", "parity_evidence": "design-mapper", "rendered_verification": "design-qa", "accessibility_evidence": "frontier", "recommendation": "redesign", "residual_risk": "redesign"},
     "build-to-review": {"approved_design_revision": "build-management", "implementation": "bob-the-builder", "tests": "test-builder", "runtime": "health-check", "traceability": "build-management", "security_evidence": "security-builder"},
     "review-to-delivery": {"review_verdict": "code-chief", "findings": "code-chief", "executed_probes": "code-chief", "rendered_verification": "design-qa", "residual_risk": "code-chief", "revision_lineage": "code-chief"},
     "security-review": {"scope": "cso", "threat_model": "cso", "findings": "cso", "vulnerability_scan": "security-review", "denial_path_evidence": "mr-robot", "remediation_plan": "cso", "residual_risk": "cso"},

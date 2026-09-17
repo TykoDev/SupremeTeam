@@ -1215,41 +1215,48 @@ class StageConditionTests(unittest.TestCase):
     four are mechanical; this class takes them, and the enforcement block was
     corrected to match.
 
-    * **`fan_out` against the gate spec.** `redesign/variant-build` fans out four
-      prototype builds and `gates.yaml` `evidence_type_params.variant_set`
-      requires four variants in the submitted record - a link `check.py`
-      genuinely enforces at the gate (`check_variant_set` fails the package when
-      `len(variants) != required_count`), so a fan-out that drifts is a pipeline
-      that cannot close. The link is derived, not hard-coded: the stage owner
-      `prototyper` is exactly who `gates.yaml` `evidence_owners` makes
-      responsible for `variant_set` at that pipeline's boundary, and that is the
-      only key at the boundary whose evidence type carries a `required_count`.
-      `design/redesign/agent/agent-manifest.yaml` states the same number a third
-      time, for the same delegate, and is compared too.
+    * **`fan_out` against the gate spec.** `redesign/mock-build` fans out four
+      mock builds and `gates.yaml` `evidence_type_params.mock_set` requires four
+      mocks in the submitted record - a link `check.py` genuinely enforces at the
+      gate (`check_variant_set` fails the package when the list length is not
+      `required_count`), so a fan-out that drifts is a pipeline that cannot
+      close. The link is derived, not hard-coded: the stage owner `prototyper` is
+      exactly who `gates.yaml` `evidence_owners` makes responsible for `mock_set`
+      at that pipeline's boundary. Since the redesign pipeline became mock-first
+      that owner holds *two* counted keys there - `mock_set` at four and
+      `selected_variant` at one - so the comparator pairs an owner's counted keys
+      with that owner's artifact-bearing stages positionally, and reads a stage
+      with no `fan_out` as running once. That makes `selected-build` checkable
+      too: the gate counts one built variant, and a stage that quietly started
+      fanning out would be caught.
+      `design/redesign/agent/agent-manifest.yaml` states the fanned-out number a
+      third time, for the same delegate, and is compared too.
 
     * **`when` against the prose that invokes the stage.** A conditional stage
       that no document admits is conditional gets run every time, or skipped with
       no record - `failure_paths.when_condition_ambiguous` calls the second one
-      an evidence gap. Seventeen stages carry a `when`.
+      an evidence gap. Twenty-one stages carry a `when`; four of them are the
+      redesign stages that run only when a variant was selected.
 
-    **What was measured before this asserted anything.** Of the seventeen, the
-    *stage owner's* own SKILL.md stated the condition in ten. The catalog does
-    not put stage conditionality in the specialist as a rule; it puts it in the
-    orchestrator that invokes the stage. `review/code-chief` names all five of
-    its conditional lenses with their conditions in one sentence, and three of
-    those five specialists quote no condition of their own. So the asserted rule
-    accepts either end of the handoff - the stage owner or the pipeline owner -
-    which held for fifteen of seventeen, and for all seventeen once
-    `investigate` and `qa` were corrected to quote conditions
-    they already described in other words.
+    **What was measured before this asserted anything.** Of the original
+    seventeen, the *stage owner's* own SKILL.md stated the condition in ten. The
+    catalog does not put stage conditionality in the specialist as a rule; it
+    puts it in the orchestrator that invokes the stage. `review/code-chief` names
+    all five of its conditional lenses with their conditions in one sentence, and
+    three of those five specialists quote no condition of their own. So the
+    asserted rule accepts either end of the handoff - the stage owner or the
+    pipeline owner - which held for fifteen of seventeen, and for all seventeen
+    once `investigate` and `qa` were corrected to quote conditions they already
+    described in other words. The four mock-first redesign stages follow the same
+    pattern: one condition, stated by the pipeline owner `redesign`.
 
-    The stage-owner-only rule is deliberately **not** asserted. At twelve of
-    seventeen it would fail five stages that are correctly documented one step
+    The stage-owner-only rule is deliberately **not** asserted. At sixteen of
+    twenty-one it would fail five stages that are correctly documented one step
     up the handoff - `review/security-review`, `review/penetration-review`,
     `review/frontend-review`, `security/remediation` and `qa/browser-session` -
     and rewriting five specialists to satisfy a rule the catalog does not follow
     is a worse trade than reporting the number. The floor below keeps that
-    twelve from eroding to nothing unnoticed.
+    sixteen from eroding to nothing unnoticed.
     """
 
     #: A word that frames a quoted phrase as a condition rather than a passing
@@ -1298,38 +1305,66 @@ class StageConditionTests(unittest.TestCase):
         return False
 
     @staticmethod
-    def fan_out_violations(gates: dict, pipelines: dict) -> list:
-        """Every `fan_out` that disagrees with the count its gate requires."""
-        boundaries = gates.get("boundaries") or {}
+    def counted_count(gates: dict, key: str) -> int | None:
+        """The required_count a key is held to, read by key then by record type."""
         types = gates.get("evidence_types") or {}
         params = gates.get("evidence_type_params") or {}
+        for name in (key, types.get(key)):
+            entry = params.get(name) if name else None
+            if isinstance(entry, dict) and entry.get("required_count") is not None:
+                return int(entry["required_count"])
+        return None
+
+    @classmethod
+    def fan_out_violations(cls, gates: dict, pipelines: dict) -> list:
+        """Every stage whose instance count disagrees with what its gate counts.
+
+        One owner can hold more than one counted key at a boundary - at
+        `redesign-review` `prototyper` owes four `mock_set` entries and one
+        `selected_variant` - so the pairing is positional: that owner's counted
+        keys in `required_evidence` order against that owner's artifact-bearing
+        stages in pipeline order. A stage that declares no `fan_out` runs once,
+        which is a claim about the count too, so it is compared as one rather
+        than skipped.
+        """
+        boundaries = gates.get("boundaries") or {}
         owners = gates.get("evidence_owners") or {}
         found = []
         for name, pipeline in sorted((pipelines.get("pipelines") or {}).items()):
             boundary = pipeline.get("boundary")
             spec = boundaries.get(boundary) or {}
+            by_owner: dict[str, list] = {}
             for stage in pipeline.get("stages") or []:
-                if stage.get("fan_out") is None:
+                if stage.get("owner") and stage.get("artifact"):
+                    by_owner.setdefault(stage["owner"], []).append(stage)
+            for owner, stages in sorted(by_owner.items()):
+                counted = [key for key in spec.get("required_evidence") or []
+                           if (owners.get(boundary) or {}).get(key) == owner
+                           and cls.counted_count(gates, key) is not None]
+                if not counted:
+                    fanned = [s for s in stages if s.get("fan_out") is not None]
+                    found.extend(
+                        f"{name}/{s.get('step')} fans out {s['fan_out']} ways but "
+                        f"{boundary} gives its owner {owner!r} no counted evidence key, "
+                        f"so the number the fan-out must equal is undecidable"
+                        for s in fanned)
                     continue
-                counted = [
-                    key for key in spec.get("required_evidence") or []
-                    if (owners.get(boundary) or {}).get(key) == stage.get("owner")
-                    and (params.get(types.get(key)) or {}).get("required_count") is not None
-                ]
-                if len(counted) != 1:
+                if len(counted) != len(stages):
                     found.append(
-                        f"{name}/{stage.get('step')} fans out {stage['fan_out']} ways but "
-                        f"{boundary} gives its owner {stage.get('owner')!r} "
-                        f"{len(counted)} counted evidence keys "
-                        f"({', '.join(counted) or 'none'}), so the number the fan-out "
-                        f"must equal is undecidable")
+                        f"{name} gives {owner!r} {len(stages)} artifact-bearing stages but "
+                        f"{boundary} counts {len(counted)} of its evidence keys "
+                        f"({', '.join(counted)}), so which stage produces which count is "
+                        f"undecidable")
                     continue
-                required = params[types[counted[0]]]["required_count"]
-                if stage["fan_out"] != required:
-                    found.append(
-                        f"{name}/{stage.get('step')} fans out {stage['fan_out']} ways but "
-                        f"{boundary} requires exactly {required} {counted[0]} entries, so "
-                        f"the package can never close the gate")
+                for key, stage in zip(counted, stages):
+                    required = cls.counted_count(gates, key)
+                    declared = stage.get("fan_out")
+                    if (declared if declared is not None else 1) != required:
+                        found.append(
+                            f"{name}/{stage.get('step')} runs "
+                            f"{declared if declared is not None else 1} time(s) but "
+                            f"{boundary} requires exactly {required} {key} entries, so "
+                            f"the package can never close the gate")
         return found
 
     @staticmethod
@@ -1361,9 +1396,13 @@ class StageConditionTests(unittest.TestCase):
     def test_the_fan_out_comparator_reports_a_disagreement(self):
         """Both sides moved independently, so both directions must be caught."""
         gates = copy.deepcopy(GATES)
-        gates["evidence_type_params"]["variant_set"]["required_count"] += 1
+        gates["evidence_type_params"]["mock_set"]["required_count"] += 1
         self.assertNotEqual([], self.fan_out_violations(gates, PIPELINES),
                             "a raised required_count went unreported")
+        gates = copy.deepcopy(GATES)
+        gates["evidence_type_params"]["selected_variant"]["required_count"] += 1
+        self.assertNotEqual([], self.fan_out_violations(gates, PIPELINES),
+                            "a stage that runs once against a count of two went unreported")
         pipelines = copy.deepcopy(PIPELINES)
         for pipeline in (pipelines.get("pipelines") or {}).values():
             for stage in pipeline.get("stages") or []:
@@ -1412,24 +1451,24 @@ class StageConditionTests(unittest.TestCase):
         self.assertEqual(undocumented, [],
                          "a conditional stage must read as conditional somewhere on the "
                          "handoff:\n  " + "\n  ".join(undocumented))
-        self.assertGreaterEqual(checked, 15,
+        self.assertGreaterEqual(checked, 19,
                                 "the conditional stages are no longer found")
 
     def test_the_specialists_own_share_of_that_coverage_does_not_erode(self):
         """A floor, not the invariant - see the class docstring.
 
-        Twelve of the seventeen conditions are stated by the stage owner itself.
-        The rule above accepts the pipeline owner instead, which is how the other
-        five are documented; without this floor that allowance could hollow out
-        until every specialist read as unconditional. The floor is ten, not
-        twelve, so an honest rewording is not a test failure.
+        Sixteen of the twenty-one conditions are stated by the stage owner
+        itself. The rule above accepts the pipeline owner instead, which is how
+        the other five are documented; without this floor that allowance could
+        hollow out until every specialist read as unconditional. The floor is
+        fourteen, not sixteen, so an honest rewording is not a test failure.
         """
         by_owner = [f"{name}/{stage.get('step')}"
                     for name, _pipeline_owner, stage in self.conditional_stages()
                     if stage.get("owner") in SKILL_DIRS
                     and self.states_the_condition(_skill_md(stage["owner"]), stage["when"])]
         self.assertGreaterEqual(
-            len(by_owner), 10,
+            len(by_owner), 14,
             f"only {len(by_owner)} stage owners still state their own condition")
 
     def test_the_condition_detector_tells_a_stated_condition_from_a_bare_mention(self):

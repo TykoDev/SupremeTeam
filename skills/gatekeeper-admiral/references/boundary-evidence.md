@@ -25,7 +25,7 @@ string fails the artifact-backing check.
 | Boundary | Artifact-backed keys |
 | --- | --- |
 | `design-to-build` | `decisions` `architecture` `plan` `taste_snapshot` |
-| `redesign-review` | `design_inventory` `taste_grilling` `taste_snapshot` `design_directions` `variant_set` `parity_evidence` `rendered_verification` |
+| `redesign-review` | `design_inventory` `taste_grilling` `taste_snapshot` `design_directions` `mock_set` `mock_parity` `mock_rendering` `selection` `selected_variant` `parity_evidence` `rendered_verification` |
 | `build-to-review` | `tests` `runtime` |
 | `review-to-delivery` | `executed_probes` `rendered_verification` |
 | `security-review` | `threat_model` `denial_path_evidence` |
@@ -54,7 +54,8 @@ this table is untyped — required and non-falsy, nothing more.
 | `verdict` | `review_verdict` | APPROVED, or REVISE/ESCALATE with a challenge record naming `by` and `reason` |
 | `stack_lock` | `stack_lock` | `{slug, versions, overlay_sha256}` validated against `../../tech-stacks/registry.yaml` |
 | `revision_ref` | `approved_design_revision` `approved_delivery` | a non-empty approved upstream revision identifier |
-| `variant_set` | `variant_set` | exactly `evidence_type_params.variant_set.required_count` variants, unique ids, and `spec` / `tokens` / `components` / `app` hashed per variant |
+| `variant_set` | `mock_set` `selected_variant` | exactly `evidence_type_params.<key>.required_count` entries (4 mocks, 1 selected variant) with unique ids, and the key's `file_fields` (`spec` / `tokens` / `components` / `mock` for a mock, `spec` / `tokens` / `components` / `app` for the built variant) hashed per entry |
+| `selection` | `selection` | `{decision, chosen, recommended, decided_by, decided_at, basis}` with `decision` in `variant` / `merge` / `deferred`; `chosen` names a `mock_set` id only under `variant`, and `selected_variant.variants[0].id` must equal it; under `merge` or `deferred` the four build-dependent keys carry the matching sanctioned applicability record |
 | Taste records | `preference_diff` `confirmation` `conflict_analysis` `persistence_result` `effective_profile` `consumer_handoff` | the field sets in `evidence_type_rules`; `confirmation.candidate_ids` must equal the exact changed id set |
 
 ## 3. Sanctioned waivers, verbatim

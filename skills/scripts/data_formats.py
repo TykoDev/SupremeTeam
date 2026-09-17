@@ -11,6 +11,7 @@ is also valid YAML and is useful for fixtures that need exact types.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -275,3 +276,30 @@ def parse_frontmatter(text: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise DataFormatError("frontmatter must be a mapping")
     return value
+
+
+# --- Line-ending-agnostic content hashing ------------------------------------
+
+#: Bytes inspected for a NUL to decide whether a file is text.
+_TEXT_PROBE = 8192
+
+
+def normalize_line_endings(data: bytes) -> bytes:
+    """Return ``data`` with CRLF folded to LF when it is text; binary is untouched.
+
+    A file is treated as text when its first 8 KiB carries no NUL byte. Every
+    sha256 the catalog records or verifies - ``artifact_hashes``, probe, scan and
+    render ``inputs``, tech-stack overlay digests, save evidence registrations -
+    goes through this fold, so a checkout that converts line endings
+    (core.autocrlf, editor settings, a zip round-trip) never turns a valid hash
+    into ``input hash drift``. Binary artifacts (captures, archives) hash
+    byte-for-byte because a CRLF pair inside them is data, not a line ending.
+    """
+    if b"\x00" in data[:_TEXT_PROBE]:
+        return data
+    return data.replace(b"\r\n", b"\n")
+
+
+def content_sha256(path: Path | str) -> str:
+    """sha256 of a file's line-ending-normalised content (see ``normalize_line_endings``)."""
+    return hashlib.sha256(normalize_line_endings(Path(path).read_bytes())).hexdigest()

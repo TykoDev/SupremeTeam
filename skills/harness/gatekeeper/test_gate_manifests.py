@@ -10,6 +10,8 @@ import hashlib, json, re, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 SKILLS = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(SKILLS / "scripts"))
+from data_formats import content_sha256  # noqa: E402
 CHECK = SKILLS / "harness" / "gatekeeper" / "check.py"
 GATE_SPEC = SKILLS / "gates.yaml"
 GATE_DOC = SKILLS.parent / "docs" / "gatekeepers.md"
@@ -41,7 +43,7 @@ class BoundaryManifestTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
         root = Path(tmp.name); art = root / ARTIFACT; art.write_text(artifact, encoding="utf-8")
         package.setdefault("artifact_hashes", {})[art.name] = (
-            "0" * 64 if corrupt_hash else hashlib.sha256(art.read_bytes()).hexdigest()
+            "0" * 64 if corrupt_hash else content_sha256(art)
         )
         manifest = root / "package.json"; manifest.write_text(json.dumps(package), encoding="utf-8")
         cmd = [sys.executable, str(CHECK), "--boundary", boundary, "--package", str(manifest)]
@@ -112,7 +114,9 @@ class BoundaryManifestTests(unittest.TestCase):
             ("taste-review", "confirmation"),
             ("skill-maker-to-delivery", "link_report"),
             ("deploy-readiness", "rollback_plan"),
-            ("redesign-review", "variant_set"),
+            ("redesign-review", "mock_set"),
+            ("redesign-review", "selection"),
+            ("redesign-review", "selected_variant"),
             ("redesign-review", "parity_evidence"),
         ):
             with self.subTest(boundary=boundary, key=key):

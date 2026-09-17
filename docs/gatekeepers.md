@@ -34,7 +34,7 @@ so this table cannot quietly rot.
 | Boundary | Guards | Submitter | Required evidence |
 | --- | --- | --- | --- |
 | `design-to-build` | DESIGN to BUILD | commander | `decisions` `architecture` `interfaces` `plan` `acceptance` `security_seed` `stack_lock` `taste_snapshot` `ui_evidence` |
-| `redesign-review` | REDESIGN (design-shaped) to GATE to DESIGN or COMPLETE | redesign | `design_inventory` `taste_grilling` `taste_snapshot` `design_directions` `variant_set` `parity_evidence` `rendered_verification` `accessibility_evidence` `recommendation` `residual_risk` |
+| `redesign-review` | REDESIGN (design-shaped) to GATE to DESIGN or COMPLETE | redesign | `design_inventory` `taste_grilling` `taste_snapshot` `design_directions` `mock_set` `mock_parity` `mock_rendering` `selection` `selected_variant` `parity_evidence` `rendered_verification` `accessibility_evidence` `recommendation` `residual_risk` |
 | `build-to-review` | BUILD to REVIEW | build-management | `approved_design_revision` `implementation` `tests` `runtime` `traceability` `security_evidence` |
 | `review-to-delivery` | REVIEW to GATE to COMPLETE | code-chief | `review_verdict` `findings` `executed_probes` `rendered_verification` `residual_risk` `revision_lineage` |
 | `security-review` | security pipeline to GATE to COMPLETE | cso | `scope` `threat_model` `findings` `vulnerability_scan` `denial_path_evidence` `remediation_plan` `residual_risk` |
@@ -51,24 +51,35 @@ the package's `artifact_hashes` map, which means the evidence is a real file wit
 a real digest:
 
 `decisions`, `architecture`, `plan`, `taste_snapshot`, `design_inventory`,
-`taste_grilling`, `design_directions`, `variant_set`, `parity_evidence`, `tests`,
+`taste_grilling`, `design_directions`, `mock_set`, `mock_parity`,
+`mock_rendering`, `selection`, `selected_variant`, `parity_evidence`, `tests`,
 `runtime`, `executed_probes`, `rendered_verification`, `threat_model`,
 `denial_path_evidence`, `reproduction`, `evidence_chain`, `test_matrix`,
 `link_report`, `validation_report`, `deploy_config`, `verification_plan`,
 `rollback_plan`, `preference_diff`, `confirmation`, `conflict_analysis`,
 `persistence_result`, `effective_profile`, `taste_review_record`.
 
-Twelve keys may instead carry a typed applicability record naming `reason`,
+Fifteen keys may instead carry a typed applicability record naming `reason`,
 `scope`, and `decided_by`, and only for the exact reasons listed under
 `fallback_values`: `security_evidence`, `stack_lock`, `taste_snapshot`, `ui_evidence`,
 `rendered_verification`, `denial_path_evidence`, `vulnerability_scan`,
 `fixes_applied`, `team_manifest`, `before_revision`, `consumer_handoff`,
-`residual_uncertainty`. Any other bare string is rejected. `confirmation` has no
+`residual_uncertainty`, and — at `redesign-review` only, and only when the
+selection named no variant — `selected_variant`, `parity_evidence`, and
+`accessibility_evidence`. Any other bare string is rejected. `confirmation` has no
 fallback: inferred preferences and global writes, promotions, resets, or
 revocations always require an explicit confirmation record. A boundary can also
 refuse a fallback for a key it requires (`no_fallback`): at `redesign-review`,
-`rendered_verification` accepts neither the fallback string nor an
-applicability record, because a redesign always has a visible surface.
+`mock_rendering` accepts neither the fallback string nor an applicability
+record, because the four mocks are always built and always rendered.
+`rendered_verification` is not on that list at this boundary, because a merge or
+a deferral leaves no living prototype to render; instead it, `selected_variant`,
+`parity_evidence`, and `accessibility_evidence` all stand down together on the
+one sanctioned wording for the recorded decision — `selection deferred - no
+variant built` or `merge brief recorded - implemented as a fifth direction in
+the design pipeline`. The validator enforces both directions: a decision naming
+a variant may not stand any of the four down, and any other decision must stand
+all four down on the wording that matches it.
 
 ## Typed evidence records
 
@@ -77,9 +88,9 @@ records rather than prose.
 
 | Type | Keys | Must carry |
 |---|---|---|
-| `probe` | `tests`, `runtime`, `executed_probes`, `reproduction`, `evidence_chain`, `test_matrix`, `denial_path_evidence`, `parity_evidence` | Hashed artifacts and `result.status: pass`. The executed log is the artifact. A bare count is not evidence. |
+| `probe` | `tests`, `runtime`, `executed_probes`, `reproduction`, `evidence_chain`, `test_matrix`, `denial_path_evidence`, `mock_parity`, `parity_evidence` | Hashed artifacts and `result.status: pass`. The executed log is the artifact. A bare count is not evidence. |
 | `scan` | `vulnerability_scan` | Hashed artifacts, tool, command, exit code, `observed_at`, `inputs` bound by sha256, and a passing status. `unavailable` or `error` is a data gap, never a clean scan. |
-| `render` | `rendered_verification` | Hashed captures, the breakpoints and themes covered, `inputs` bound to the rendered source, and pass or `inferred` with a stated limitation. |
+| `render` | `rendered_verification`, `mock_rendering` | Hashed captures, the breakpoints and themes covered, `inputs` bound to the rendered source, and pass or `inferred` with a stated limitation. |
 | `findings` | `findings`, `security_evidence`, `defects`, `accessibility_evidence` | Items with id, severity, status. Critical must be verified or not-applicable with a reason. Major must be verified, not-applicable with a reason, or deferred with a named owner and reopen trigger. |
 | `verdict` | `review_verdict` | APPROVED, or REVISE/ESCALATE with a challenge record naming `by` and `reason`. |
 | `stack_lock` | `stack_lock` | Registry slug, versions, and overlay sha256, checked against `skills/tech-stacks/registry.yaml`. |
@@ -90,7 +101,8 @@ records rather than prose.
 | `persistence_result` | `persistence_result` | Requested destinations, committed revisions, SHA-256 hashes, atomicity status, and rollback result. |
 | `effective_profile` | `effective_profile` | Every effective entry's id, source scope, and source id, plus the profile digest. |
 | `consumer_handoff` | `consumer_handoff` | Consuming pipeline, immutable effective-profile digest, and applicability summary. |
-| `variant_set` | `variant_set` | Exactly four variants with unique ids; each variant's `spec`, `tokens`, `components`, and `app` is a hashed artifact in the package. The count comes from `evidence_type_params`. |
+| `variant_set` | `mock_set`, `selected_variant` | A list of entries with unique ids, each declaring hashed files. The list name, the file fields, and the count all come from `evidence_type_params`, read by evidence key: `mock_set` holds exactly four `mocks` with `spec`, `tokens`, `components`, and `mock`; `selected_variant` holds the one `variants` entry with `spec`, `tokens`, `components`, and `app`. |
+| `selection` | `selection` | The hashed selection report, a `decision` of `variant`, `merge`, or `deferred`, a `chosen` mock id (null unless the decision is `variant`), a `recommended` mock id, and `decided_by`, `decided_at`, `basis`. On `variant` the built variant's id must equal `chosen`. |
 
 `inputs` is the part that stops evidence going stale. It binds a record to the
 project source it describes, so when that source changes the evidence fails as

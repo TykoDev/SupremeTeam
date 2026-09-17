@@ -55,7 +55,19 @@ Passing untouched:
   the run journal keep working.
 
 Outside the harness entirely: the boundary is a tool-call guard, not a filesystem
-permission. Product data created by exercising a flow — an account, an invite, a queued
+permission. A command the hook does not classify as mutating still writes whatever the
+process it starts writes, so a test runner invoked read-only can still drop `.coverage`,
+`.coverage.*`, `htmlcov/`, or `.nyc_output/` at the project root. That is residue, not
+evidence: resolve the destination with
+`python skills/scripts/output_paths.py --run-id <run> --phase qa --kind coverage --name .coverage --mkdir`
+and point `COVERAGE_FILE` / `--data-file`, `--cov-report`,
+`--coverage.reportsDirectory`, or `--report-dir` + `--temp-dir` at it — it is inside the
+allow glob, so the write is permitted and the surface still ends as it started. Never use
+parallel or per-process mode without a `coverage combine` into that destination.
+`post_tool_use.py` relocates anything left behind, but a report-only sweep that needed the
+relocation did change the workspace, which is the one thing it promised not to do.
+
+Product data created by exercising a flow — an account, an invite, a queued
 job, a webhook the product emits — is not a tool call and is not stopped. That is the
 expected shape of a real sweep; record those side effects in the report. When a flow's
 side effects are not acceptable to the owner, stop and report the flow as untested

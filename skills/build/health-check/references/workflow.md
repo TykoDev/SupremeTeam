@@ -105,6 +105,17 @@ then build the record with `artifacts`, `result.status: pass`, `tool`,
 `command`, `observed_at`, and the environment and revision probed. Artifacts are
 hashed byte-for-byte, so no log is reformatted after its hash is taken.
 
+If a probe command is one that also produces coverage — a smoke run through the
+project's test runner, for instance — its coverage output goes to the run's
+`evidence/coverage/` destination
+(`python skills/scripts/output_paths.py --run-id <run-id> --phase build --kind coverage --name .coverage --mkdir`)
+through `COVERAGE_FILE` / `--data-file`, `--cov-report`,
+`--coverage.reportsDirectory`, or `--report-dir` + `--temp-dir`, never in
+parallel or per-process mode without a `coverage combine` into that destination.
+A runtime probe leaves no `.coverage`, `.coverage.*`, `.coverage/`, `htmlcov/`,
+or `.nyc_output/` at the project root; see
+`../../test-builder/references/workflow.md` § Coverage destination.
+
 ## REVISE Handling
 
 A `REVISE` arrives through `build/build-management` as one packet, already

@@ -52,8 +52,8 @@ route each.
 
 **Output:**
 - Mode: partial pipeline on the redesign route. The request never says "redesign the UI", but an existing user-facing surface plus a request for alternatives is the redesign entry condition.
-- Route: `design/redesign`, closing at `redesign-review`. The chosen variant then enters `design/commander` as the `design-system` input and is locked at `design-to-build`; Admiral does not hand the prototype to build directly.
-- Gate note: `rendered_verification` has no fallback at `redesign-review`, so a browserless host returns the `render` record with `result.status: inferred` labelled `INFERRED - no browser available` plus its limitation, and the verdict records the limitation rather than treating it as a clean pass.
+- Route: `design/redesign`, closing at `redesign-review`. Four static mocks are compared, the user picks one, and only then is a living prototype built for that direction. The chosen variant then enters `design/commander` as the `design-system` input and is locked at `design-to-build`; Admiral does not hand the prototype to build directly.
+- Gate note: `mock_rendering` has no fallback at `redesign-review`, so a browserless host returns the `render` record with `result.status: inferred` labelled `INFERRED - no browser available` plus its limitation, and the verdict records the limitation rather than treating it as a clean pass.
 
 ## Example 5 — Security-audit route
 

@@ -257,10 +257,11 @@ A redesign of an existing user-facing surface (a new look, alternative design
 directions, a design-system exploration) runs the `redesign` pipeline under
 `design/redesign`, gated at `redesign-review`: `design-mapper` records the
 current design as a stable-id inventory, `taste` runs a project taste
-grilling, `architect` writes four directions, `prototyper` builds four living
-single-page prototypes with component libraries at functional parity, and the
-chosen variant enters the design pipeline as its design-system input. A
-redesign never changes application source.
+grilling, `architect` writes four directions, `prototyper` builds four static
+mocks with component catalogs, the user selects one, `prototyper` then builds a
+living single-page prototype at functional parity for the selected direction
+only, and that variant enters the design pipeline as its design-system input.
+A redesign never changes application source.
 
 Mutation is the exception to the consumption rule above. Explicit preference
 lifecycle requests run the `taste` pipeline under `taste` and close at

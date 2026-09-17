@@ -52,4 +52,4 @@ lands in the sequence above, so the two documents do not restate each other.
 - `review/code-chief` merges the frontier packet with the other review lenses and owns the graded record the gate reads.
 - `review/gatekeeper-code` checks that user-facing behavior risks survive the final consolidation intact, and matches this packet through the `lens_adversarial` slot it shares with `review/mr-robot`.
 - `review/design-qa` takes static fidelity questions this lens surfaces but does not judge, and supplies the capture set that shows what the surface looked like when it was exercised.
-- `design/redesign` consumes the per-variant `accessibility_evidence` record at `redesign-review`, and `design/prototyper` repairs any variant carrying a Critical accessibility finding before comparison.
+- `design/redesign` consumes the `accessibility_evidence` record for the selected variant at `redesign-review`, and `design/prototyper` repairs that variant before the package gates when it carries a Critical accessibility finding. The four mocks are never graded here: they wire nothing, and the stage runs only when a variant was selected.

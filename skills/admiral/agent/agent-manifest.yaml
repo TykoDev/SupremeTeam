@@ -60,7 +60,7 @@ delegates_to:
     verdict_source: gatekeeper-admiral (handoff-3)
   - name: redesign-agent
     skill_path: design/redesign
-    handoff: redesign-package (inventory, taste grilling, four variants, evidence, decision)
+    handoff: redesign-package (inventory, taste grilling, four mocks, evidence, decision, selected variant)
     verdict_source: gatekeeper-admiral (redesign-review)
     optional: true
   - name: cso

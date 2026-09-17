@@ -19,11 +19,13 @@ allowed-tools: Read, Grep, Glob, Bash, Write
 Hold two boundaries that share a phase and almost nothing else.
 
 `design-to-build` asks whether a plan is specific enough to build from.
-`redesign-review` asks whether four real alternatives were explored, compared
-honestly against an existing surface, and one was chosen for a stated reason.
-The evidence sets overlap on a single key, `taste_snapshot`, so the first move at
-this gate is always classification — judging a redesign package against the
-design-to-build list checks almost nothing that package actually owes.
+`redesign-review` asks whether four real alternatives were drawn as mocks,
+compared honestly against an existing surface, one was chosen for a stated
+reason, and the single living prototype that followed was built for that choice
+and no other. The evidence sets overlap on a single key, `taste_snapshot`, so the
+first move at this gate is always classification — judging a redesign package
+against the design-to-build list checks almost nothing that package actually
+owes.
 
 What this gate is protecting downstream is narrow and concrete: build reads the
 package as a specification, not as a suggestion, and cannot tell a decision that
@@ -43,7 +45,7 @@ This skill holds two boundaries — **design→build** and **redesign-review** �
 - "validate the design deliverable" / "check design readiness" — confirm requirements, plan, and architecture are present and coherent
 - "review design phase output" — verify the package is complete enough for build consumption
 - "challenge this design packet" — pressure the evidence rather than the intent behind it
-- "validate the redesign package" — at `redesign-review`, check the inventory, taste grilling, four directions, four variants, and their parity, rendered, and accessibility evidence
+- "validate the redesign package" — at `redesign-review`, check the inventory, taste grilling, four directions, four mocks with their parity and captures, the recorded selection, and the one selected variant with its parity, rendered, and accessibility evidence
 - "is the design done?" — the bare question, before any package has been named
 
 Route elsewhere for a different boundary: the build→review gate (`build/gatekeeper-build`), the review→delivery gate (`review/gatekeeper-code`), or the cross-stage delivery gate (`gatekeeper-admiral`).
@@ -72,7 +74,7 @@ Confirm the declared boundary first.
 | Boundary | Guards | Submitter | Required evidence |
 | --- | --- | --- | --- |
 | `design-to-build` | DESIGN to BUILD | commander | `decisions` `architecture` `interfaces` `plan` `acceptance` `security_seed` `stack_lock` `taste_snapshot` `ui_evidence` |
-| `redesign-review` | REDESIGN (design-shaped) to GATE to DESIGN with the chosen variant, or COMPLETE | redesign | `design_inventory` `taste_grilling` `taste_snapshot` `design_directions` `variant_set` `parity_evidence` `rendered_verification` `accessibility_evidence` `recommendation` `residual_risk` |
+| `redesign-review` | REDESIGN (design-shaped) to GATE to DESIGN with the chosen variant, or COMPLETE | redesign | `design_inventory` `taste_grilling` `taste_snapshot` `design_directions` `mock_set` `mock_parity` `mock_rendering` `selection` `selected_variant` `parity_evidence` `rendered_verification` `accessibility_evidence` `recommendation` `residual_risk` |
 
 `references/boundary-evidence.md` carries what each key must be — its record
 type, its artifact-backing, and the exact sanctioned waiver text. The decisions
@@ -85,14 +87,27 @@ framework), `ui_evidence` (no user-facing surface), `taste_snapshot` (no saved
 Taste profile available) — each only as a typed applicability record naming
 reason, scope, and decided_by. The other six accept no fallback.
 
-**At `redesign-review`**, seven of the ten are artifact-backed:
+**At `redesign-review`**, eleven of the fourteen are artifact-backed:
 `design_inventory`, `taste_grilling`, `taste_snapshot`, `design_directions`,
-`variant_set`, `parity_evidence`, and `rendered_verification`. Only
-`taste_snapshot` is waivable, because `../../gates.yaml` lists
-`rendered_verification` under this boundary's `no_fallback`: there it accepts
-neither the sanctioned fallback string nor an applicability record, even though a
-global fallback exists for it elsewhere. A redesign always has a visible surface,
-so "no visible surface changed" can never be true at this boundary.
+`mock_set`, `mock_parity`, `mock_rendering`, `selection`, `selected_variant`,
+`parity_evidence`, and `rendered_verification`. Only `taste_snapshot` is
+waivable. `../../gates.yaml` lists `mock_rendering` under this boundary's
+`no_fallback`: there it accepts neither the sanctioned fallback string nor an
+applicability record, even though a global fallback exists for it elsewhere. The
+four mocks are always built, so "no visible surface changed" can never be true of
+them.
+
+Four keys are not waivable but are **conditional on the decision**:
+`selected_variant`, `parity_evidence`, `rendered_verification`, and
+`accessibility_evidence` exist only when a variant was selected. When
+`selection.decision` is `merge` or `deferred` each carries the matching sanctioned
+wording — `merge brief recorded - implemented as a fifth direction in the design
+pipeline` or `selection deferred - no variant built` — as the `reason` of a typed
+applicability record, never as a bare string. That is a statement that the
+requirement did not arise, not a waiver of one, and the distinction matters when
+judging: a package that defers has nothing to show for those keys and is still
+complete, while a package that built a variant and then reaches for one of those
+strings is hiding evidence it owes.
 
 ### Owner routing
 
@@ -125,7 +140,11 @@ it. Both tables below mirror `../../gates.yaml` `evidence_owners`.
 | `taste_grilling` | taste |
 | `taste_snapshot` | taste |
 | `design_directions` | architect |
-| `variant_set` | prototyper |
+| `mock_set` | prototyper |
+| `mock_parity` | design-mapper |
+| `mock_rendering` | design-qa |
+| `selection` | redesign |
+| `selected_variant` | prototyper |
 | `parity_evidence` | design-mapper |
 | `rendered_verification` | design-qa |
 | `accessibility_evidence` | frontier |
@@ -147,8 +166,9 @@ python scripts/check.py <package-dir> [--prior <prior-verdict-file>] [--json]
 
 At `redesign-review`, run `scripts/check_redesign.py <redesign-phase-dir>`
 instead — it declares the redesign artifact manifest: inventory, taste grilling
-log, directions, one `variant.md` per variant, the assembled redesign package,
-and the parity probe output.
+log, directions, one `variant.md` per mock, the recorded selection, the selected
+variant's files when one was built, the assembled redesign package, and the
+parity probe output.
 
 Both wrap the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which
 also mechanizes single-revision lineage, skip-record completeness, the
@@ -172,12 +192,17 @@ python ../../harness/gatekeeper/check.py --boundary <design-to-build|redesign-re
   --verdict-out <phase>/verdict_<boundary>.json
 ```
 
-At `redesign-review` it mechanizes the four-variant `variant_set` record, the
-single aggregated parity probe record — `parity_evidence` must be one mapping
-with hashed artifacts and a passing status, and a list of per-variant records
-fails — and the no-fallback rule for `rendered_verification`. Judgment keeps the
-differentiation of the four directions (`../../design-doctrine.md` §9) and
-whether the parity record actually binds to the inventory: `inputs` is optional
+At `redesign-review` it mechanizes the four-mock `mock_set` record and the
+single-variant `selected_variant` record, the two aggregated parity probe records
+— `mock_parity` and `parity_evidence` must each be one mapping with hashed
+artifacts and a passing status, and a list of per-mock records fails — the
+no-fallback rule for `mock_rendering`, and the selection consistency rule: when
+`selection.decision` is `variant` the four selection-dependent keys carry
+evidence rather than a sanctioned wording and `selected_variant.variants[0].id`
+equals `selection.chosen`, and when it is not, all four carry the matching
+wording. Judgment keeps the differentiation of the four directions
+(`../../design-doctrine.md` §9), whether each draft actually stayed a mock, and
+whether the parity records actually bind to the inventory: `inputs` is optional
 on a `probe`, so the validator does not require it. See
 `../../harness/gatekeeper/README.md`.
 
@@ -197,28 +222,32 @@ advances with a file present and its evidence key empty.
 | `design_inventory` | `check_redesign.py`: a `*design-inventory*` file exists | required at `redesign-review`, artifact-backed |
 | `taste_grilling` | `check_redesign.py`: a grilling log file exists | required at `redesign-review`, artifact-backed |
 | `design_directions` | `check_redesign.py`: `*direction*.md` files exist | required at `redesign-review`, artifact-backed |
-| `parity_evidence` | `check_redesign.py`: a `*parity*.json` file exists | a `probe` record per variant, bound by `inputs` to the inventory and prototype files |
-| `rendered_verification` | `check_redesign.py`: conditional — a `*render*` or `*capture*` file, absence reported `UNCHECKED` | a `render` record with hashed captures, breakpoints, themes, and bound `inputs`; `no_fallback` at this boundary |
+| `parity_evidence` | `check_redesign.py`: a `*parity*.json` file exists | the full-level `probe` record for the selected variant, bound by `inputs` to the inventory and prototype files; conditional on `selection.decision` |
+| `rendered_verification` | `check_redesign.py`: conditional — a `*render*` or `*capture*` file, absence reported `UNCHECKED` | a `render` record for the selected variant with hashed captures, breakpoints, themes, and bound `inputs`; conditional on `selection.decision` |
 
-Six shape keys have no evidence counterpart at all — `research`, `impl_spec`,
-`api_contracts`, `ui_handoff`, `variant_specs`, `redesign_package` — and nine
-evidence keys have no shape counterpart: `decisions`, `interfaces`, `acceptance`,
-`security_seed`, `ui_evidence`, `variant_set`, `accessibility_evidence`,
-`recommendation`, `residual_risk`. Neither absence is a defect in the other
+A shape key and an evidence key of the same name answer different questions, and
+several evidence keys have no shape counterpart at all — `decisions`,
+`interfaces`, `acceptance`, `security_seed`, `ui_evidence`, `mock_set`,
+`mock_parity`, `mock_rendering`, `selection`, `selected_variant`,
+`accessibility_evidence`, `recommendation`, `residual_risk` — while the shape
+keys `research`, `impl_spec`, `api_contracts`, and `ui_handoff` have no evidence
+counterpart. Read `scripts/check_redesign.py` for the current shape manifest
+rather than this table's memory of it. Neither absence is a defect in the other
 validator; it is why both run.
 
-### The `rendered_verification` requirement discrepancy
+### The capture-key requirement discrepancy
 
-`scripts/check_redesign.py` declares `rendered_verification` with
-`requirement="conditional"`, so its absence from the redesign phase directory is
-reported `UNCHECKED` rather than `FAIL`. `../../gates.yaml` lists the same key
+`scripts/check_redesign.py` declares the capture keys with
+`requirement="conditional"`, so their absence from the redesign phase directory is
+reported `UNCHECKED` rather than `FAIL`. `../../gates.yaml` lists `mock_rendering`
 under `redesign-review`'s `no_fallback`, where it is neither waivable nor
 optional. The two are answering different questions, and the discrepancy is
 recorded here rather than repaired in the script:
 
 - The script asks whether a capture file is present, and cannot know which filenames a given redesign produced; marking it `required` would fail honest packages on a naming mismatch.
 - The spec asks whether the evidence key carries a hashed `render` record, which the boundary validator can answer exactly.
-- Therefore: treat the script's `UNCHECKED` on this key as **unresolved, never as a waiver**. The boundary validator is the authority, and it fails the key outright.
+- Therefore: treat the script's `UNCHECKED` on `mock_rendering` as **unresolved, never as a waiver**. The boundary validator is the authority, and it fails the key outright.
+- On `rendered_verification` the same `UNCHECKED` is resolved against the selection: when a variant was selected the key owes a `render` record and the boundary validator fails it outright; when the decision was a merge or a deferral no prototype exists, and the key legitimately carries its sanctioned wording as the `reason` of an applicability record.
 
 ## Execution Contract
 
@@ -255,8 +284,8 @@ before invoking and return `ESCALATE` naming the rejected path.
 
 1. Classify the boundary from the submitted manifest's `boundary` and `owner` — `design-to-build` (submitter `commander`) or `redesign-review` (submitter `redesign`) — and read that row's required-evidence list from `../../gates.yaml` rather than from memory. The two sets share only `taste_snapshot`.
 2. Run the package-shape validator for that boundary: `scripts/check.py` at `design-to-build`, `scripts/check_redesign.py` at `redesign-review`. Treat its `UNCHECKED` findings as unresolved questions, not as passes.
-3. Run the boundary validator for that boundary. At `design-to-build`, confirm `decisions`, `architecture`, `interfaces`, `plan`, `acceptance`, `security_seed`, `stack_lock`, `taste_snapshot`, and `ui_evidence` are present and non-falsy, that `decisions`, `architecture`, `plan`, and `taste_snapshot` resolve to hashed artifacts, and that `stack_lock` validates against `../../tech-stacks/registry.yaml`. At `redesign-review`, confirm `design_inventory`, `taste_grilling`, `taste_snapshot`, `design_directions`, `variant_set`, `parity_evidence`, `rendered_verification`, `accessibility_evidence`, `recommendation`, and `residual_risk`, with only the last three unbacked. Accept a waiver only as a typed applicability record carrying a sanctioned reason, and never for `rendered_verification` at `redesign-review`.
-4. Judge what neither validator can. At `design-to-build`: whether stakeholder goals, system structure, frontend and backend decisions, deployment assumptions, YAGNI deferrals, and unresolved questions contradict each other. At `redesign-review`: whether the four directions are genuinely differentiated (`../../design-doctrine.md` §9), whether the comparison is honest, and whether the recommendation follows from it.
+3. Run the boundary validator for that boundary. At `design-to-build`, confirm `decisions`, `architecture`, `interfaces`, `plan`, `acceptance`, `security_seed`, `stack_lock`, `taste_snapshot`, and `ui_evidence` are present and non-falsy, that `decisions`, `architecture`, `plan`, and `taste_snapshot` resolve to hashed artifacts, and that `stack_lock` validates against `../../tech-stacks/registry.yaml`. At `redesign-review`, confirm `design_inventory`, `taste_grilling`, `taste_snapshot`, `design_directions`, `mock_set`, `mock_parity`, `mock_rendering`, `selection`, `selected_variant`, `parity_evidence`, `rendered_verification`, `accessibility_evidence`, `recommendation`, and `residual_risk`, with only the last three unbacked. Read `selection` before judging the last six: its `decision` decides whether `selected_variant`, `parity_evidence`, `rendered_verification`, and `accessibility_evidence` owe evidence or carry their sanctioned wording, and whether `selected_variant.variants[0].id` must equal `selection.chosen`. Accept a waiver only as a typed applicability record carrying a sanctioned reason, and never for `mock_rendering` at `redesign-review`.
+4. Judge what neither validator can. At `design-to-build`: whether stakeholder goals, system structure, frontend and backend decisions, deployment assumptions, YAGNI deferrals, and unresolved questions contradict each other. At `redesign-review`: whether the four directions are genuinely differentiated (`../../design-doctrine.md` §9), whether each of the four drafts actually stayed a mock rather than becoming an implementation the user had not yet asked for, whether the comparison is honest, whether the recommendation follows from it, and whether `selection.md` records a decision a person actually made rather than the recommendation restated.
 5. Check that migration/deprecation, proof-first testing, frontend state/API handoff, and threat-model surfaces are present when the design scope requires them.
 6. Decide the narrowest justified verdict and return only the mandatory changes the design owner must make, grouped by the owner each failing key belongs to.
 7. Preserve verdict history across revisions and reject silent scope broadening disguised as normal design evolution, undocumented architecture drift, or an unearned pipeline exit.
@@ -300,9 +329,14 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | Taste source revisions changed before the gate, or an effective entry used by the active design was revoked | Return `REVISE`, require Admiral/Taste re-resolution, and surface revocation drift for a user retain/replay decision. |
 | The package removes, replaces, or deprecates behavior without consumer/usage evidence, replacement readiness, migration steps, and removal criteria | Return `REVISE` and require the planner/engineer packets to make the migration path build-ready. |
 | The implementation spec changes behavior but does not identify the first failing test, contract test, or runtime verification expected from the build phase | Return `REVISE` and require a proof-first validation plan before build begins. |
-| `variant_set` holds fewer than four variants, repeats a variant id, or leaves a variant's `spec`, `tokens`, `components`, or `app` unhashed | Return `REVISE` to `prototyper`. `../../gates.yaml` `evidence_type_params` fixes the required count at four; three variants is a comparison with a predetermined winner, and an unhashed variant cannot be the one that was compared. |
-| `parity_evidence` is a probe record whose `inputs` are absent or do not bind by sha256 to the inventory and prototype files | Return `REVISE` to `design-mapper`. An unbound parity probe proves that something passed, not that the redesign matches the inventory it claims parity with. |
-| `rendered_verification` at `redesign-review` carries the sanctioned fallback string or an applicability record, or the shape check's `UNCHECKED` on it is read as a waiver | Return `REVISE` to `design-qa` and require hashed captures across the required breakpoints and themes, bound by `inputs` to the rendered variant. The boundary lists the key under `no_fallback`, which beats the global fallback, and a conditional `UNCHECKED` from `check_redesign.py` is an unresolved question rather than permission. |
+| `mock_set` holds fewer than four mocks, repeats a mock id, or leaves a mock's `spec`, `tokens`, `components`, or `mock` unhashed | Return `REVISE` to `prototyper`. `../../gates.yaml` `evidence_type_params` fixes the required count at four; three mocks is a comparison with a predetermined winner, and an unhashed mock cannot be the one that was compared. |
+| A mock in `mock_set` carries a router, an in-memory store, wired interactions, or a `components.js` | Return `REVISE` to `prototyper` and require the draft reduced to a mock. This is a judgement the validators cannot make: the record shape is identical either way. Four implementations built before the user chose is the failure the pipeline's ordering exists to prevent, and approving one of them ratifies the waste. |
+| `selection` is missing, names a `chosen` id that is not in `mock_set`, or carries `decision: variant` with `chosen: null` | Return `REVISE` to `redesign`. Without a well-formed selection the four dependent keys cannot be judged at all: nothing says whether a variant was owed. |
+| `selected_variant` holds more than one variant, or its variant's id does not equal `selection.chosen` | Return `REVISE` to `prototyper`. The one build this pipeline pays for must be the direction the user picked; a variant built for another id is an implementation nobody asked for. |
+| A selection-dependent key carries a sanctioned wording while `selection.decision` is `variant`, or carries evidence while the decision was a merge or a deferral | Return `REVISE` to the key's owner, and to `redesign` for the mismatch itself. The wording means the requirement did not arise; beside a built variant it conceals evidence the package owes, and its absence after a deferral claims work that was never commissioned. |
+| `mock_parity` or `parity_evidence` is a probe record whose `inputs` are absent or do not bind by sha256 to the inventory and the mock or prototype files | Return `REVISE` to `design-mapper`. An unbound parity probe proves that something passed, not that the redesign matches the inventory it claims parity with. |
+| `mock_parity` fails a mock on a missing state, interaction, or flow | Return `REVISE` to `design-mapper`, not to the builder. Mock level scores routes and components only; those three lists are informational, and failing a mock on them asks its builder to implement before the selection stage has run. |
+| `mock_rendering` at `redesign-review` carries the sanctioned fallback string or an applicability record, or the shape check's `UNCHECKED` on it is read as a waiver | Return `REVISE` to `design-qa` and require hashed captures across the required breakpoints and themes, bound by `inputs` to the rendered mocks. The boundary lists the key under `no_fallback`, which beats the global fallback, and a conditional `UNCHECKED` from `check_redesign.py` is an unresolved question rather than permission. |
 
 ## Save Protocol
 
@@ -346,7 +380,7 @@ revision.
 - `references/workflow.md` for the detailed validation sequence and verdict rules.
 - `references/examples.md` for worked submissions at both boundaries.
 - `../architect/references/api-endpoint-design.md` for the required API endpoint design contract.
-- `../../design-doctrine.md` for the shadcn Component Template, the UI/UX Handoff requirements, and §9 direction differentiation.
+- `../../design-doctrine.md` for the shadcn Component Template, the UI/UX Handoff requirements, and §9 direction differentiation, the mock definition, and the selection-before-implementation rule.
 
 ## Packaging Notes
 

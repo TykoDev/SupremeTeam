@@ -160,4 +160,6 @@ duplicate by keeping one Button; fixes `a11y.contrast.muted` (3.9:1) by moving
 ```
 
 **Returned**: `design-directions.md` with its sha256, to `design/redesign` for the
-four parallel variant builds by `design/prototyper`.
+four parallel mock builds by `design/prototyper`. Only one of the four becomes a
+living prototype, and only after the user has chosen, so the differentiation this
+document settles is the last cheap chance to fix a near-duplicate.

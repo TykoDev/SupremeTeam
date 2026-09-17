@@ -20,6 +20,7 @@ action proceed.
 """
 
 import fnmatch
+import json
 import re
 import sys
 from datetime import datetime, timezone
@@ -151,7 +152,24 @@ def _deny(reason: str) -> None:
             "permissionDecisionReason": reason,
         }
     }
-    print(__import__("json").dumps(out))
+    print(json.dumps(out))
+    sys.exit(0)
+
+
+def _advise(hint: str) -> None:
+    """Emit advisory context and allow the action.
+
+    Deliberately not a deny: running coverage is legitimate work. What is not
+    legitimate is leaving its output at the project root, and that is a
+    destination mistake the caller can still correct before the command runs.
+    """
+    out = {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": "[harness:coverage-residue] " + hint,
+        }
+    }
+    print(json.dumps(out))
     sys.exit(0)
 
 
@@ -192,6 +210,56 @@ _SHELL_MUTATION = re.compile(
 
 def _command_mutates(cmd: str) -> bool:
     return bool(_SHELL_MUTATION.search(cmd))
+
+
+# --- Coverage destination advisory -------------------------------------------
+#
+# Each pattern is a command that writes coverage data with no destination named,
+# which is how `.coverage`/`.coverage.*`/`htmlcov/`/`.nyc_output/` accumulate at
+# the project root. Parallel mode without a combine is the one that explodes: it
+# writes one `.coverage.<host>.<pid>.<rand>` per process and nothing ever merges
+# them. Advisory only — the action is allowed either way.
+_COVERAGE_RUN = re.compile(r"(?:^|[\s;&|(])coverage\s+run(?![\w-])")
+_PARALLEL_FLAG = re.compile(r"(?:^|\s)(?:-p|--parallel-mode)(?=\s|$)")
+_COVERAGE_COMBINE = re.compile(r"(?:^|[\s;&|(])coverage\s+combine(?![\w-])")
+_PYTEST_CALL = re.compile(r"(?:^|[\s;&|(])(?:py\.test|pytest)(?![\w-])|(?:^|\s)-m\s+pytest(?![\w-])")
+_PYTEST_COV = re.compile(r"--cov(?![\w-])|--cov=")
+_NYC_CALL = re.compile(r"(?:^|[\s;&|(])(?:npx\s+|pnpm\s+(?:dlx\s+)?|yarn\s+|bunx\s+)?(?:nyc|c8)(?=\s)")
+_VITEST_CALL = re.compile(r"(?:^|[\s;&|(])(?:npx\s+|pnpm\s+(?:dlx\s+)?|yarn\s+|bunx\s+)?vitest(?![\w-])")
+
+
+def _coverage_advisory(cmd: str) -> "str | None":
+    """Return the residue risk this command carries, or None when it names a destination."""
+    if not cmd:
+        return None
+    if _COVERAGE_RUN.search(cmd) and _PARALLEL_FLAG.search(cmd) and not _COVERAGE_COMBINE.search(cmd):
+        return ("`coverage run` in parallel/per-process mode with no `coverage combine` in the same "
+                "command: this writes one .coverage.<host>.<pid>.<rand> file per process and nothing "
+                "merges them")
+    if _PYTEST_CALL.search(cmd) and _PYTEST_COV.search(cmd) and "--cov-report" not in cmd:
+        return "`pytest --cov` with no `--cov-report` destination: the data file lands at the project root"
+    if _NYC_CALL.search(cmd) and "--report-dir" not in cmd and "--temp-dir" not in cmd:
+        return "`nyc`/`c8` with no `--report-dir` or `--temp-dir`: coverage/ and .nyc_output/ land at the project root"
+    if _VITEST_CALL.search(cmd) and "--coverage" in cmd and "reportsDirectory" not in cmd:
+        return "`vitest --coverage` with no `--coverage.reportsDirectory`: the report lands at the project root"
+    return None
+
+
+_COVERAGE_ADVICE = (
+    "Resolve the destination first with "
+    "`python skills/scripts/output_paths.py --project-root . --run-id <run> --phase <phase> "
+    "--kind coverage --name .coverage --mkdir`, which is "
+    "skillset-saves/runs/<run>/<phase>/evidence/coverage/. Then point the tool at it: "
+    "COVERAGE_FILE=<dest>/.coverage or --data-file, --cov-report=<fmt>:<dest>/..., "
+    "--report-dir=<dest> --temp-dir=<dest>/tmp, --coverage.reportsDirectory=<dest>. "
+    "Never use parallel/per-process mode unless the same command ends with `coverage combine` "
+    "into that destination, and never loop coverage per test file. "
+    "When the step ends, nothing named .coverage, .coverage.*, .coverage/, htmlcov/, or "
+    ".nyc_output/ may remain at the project root; a coverage percentage is not evidence, the "
+    "hashed data file or report in evidence/coverage/ is. "
+    "post_tool_use.py relocates whatever is left anyway, so naming the destination up front "
+    "is the cheaper path."
+)
 
 
 def _path_token_present(cmd_norm: str, token: str) -> bool:
@@ -363,6 +431,14 @@ def main() -> None:
             _deny(_CORE_SAVE_REASON)
         if cmd and "guard_state.py" not in cmd and _command_mutates(cmd) and _GUARD_STATE_TOKEN.search(cmd_norm):
             _deny(_GUARD_STATE_REASON)
+
+    # --- Rule E: coverage destination advisory. Last, so a denied command never
+    # reaches it. Never a deny: the command is legitimate, only its destination
+    # is unnamed, and post_tool_use.py sweeps whatever residue it leaves.
+    if tool_name in ("Bash", "PowerShell"):
+        risk = _coverage_advisory(_command_text(tool_input))
+        if risk:
+            _advise(f"{risk}. {_COVERAGE_ADVICE}")
 
     # No rule fired — stay silent and let the action proceed.
 

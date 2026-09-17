@@ -77,7 +77,8 @@
     "output_paths": "python skills/scripts/output_paths.py --kind <reports|artifacts|evidence|packages|manifest|verdict|project_preferences|global_preferences> --run-id <run> --phase <phase> --name <file>",
     "package_check": "python skills/scripts/package_check.py --root . [--out .harness-state/packages/supremeteam.zip]",
     "stack_detect": "python skills/scripts/check_runtime.py --detect-project",
-    "parity_check": "python skills/scripts/check_parity.py --inventory <design-inventory.json> --app <app.html> --components <components.html> --out <run>/redesign/evidence/parity-<variant>.json"
+    "parity_check": "python skills/scripts/check_parity.py --level <mock|full> --inventory <design-inventory.json> --app <mock.html|app.html> --components <components.html> --out <run>/redesign/evidence/<mock-parity-<id>|parity-<id>>.json",
+    "content_hash": "python skills/scripts/content_hash.py <path> [<path> ...] [--project-root .]"
   },
   "ci_matrix": [
     {

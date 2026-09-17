@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
-from data_formats import DataFormatError, load_data, parse_yaml
+from data_formats import DataFormatError, content_sha256, load_data, parse_yaml
 
 
 SKIPPED_DIRECTORIES = frozenset({".git", "node_modules", ".venv", "target", "__pycache__"})
@@ -951,7 +951,9 @@ def _load_registry(catalog_root: Path, errors: list[str]) -> dict[str, dict[str,
             row_valid = False
         elif isinstance(digest, str) and REGISTRY_DIGEST_RE.fullmatch(digest):
             try:
-                actual_digest = hashlib.sha256(overlay.read_bytes()).hexdigest()
+                # Registry digests are line-ending agnostic (LF-folded text), the
+                # same fold harness/gatekeeper/check.py applies to stack_lock.
+                actual_digest = content_sha256(overlay)
             except OSError as exc:
                 _add_error(errors, f"tech-stacks/registry.yaml: {slug} overlay cannot be read ({exc})")
                 row_valid = False

@@ -76,11 +76,34 @@ Each phase directory has four governed subdirectories:
 | `reports/` | reports, plans, summaries | `report_plan.md`, `architecture.md`, `review-packet.md` |
 | `artifacts/` | normalized data, generated tokens and components, snapshots | `tokens.css`, `component-template.md` |
 | `evidence/` | command logs, scan records, captures | `tests.log`, `scan-pip-audit.json`, `capture-1280-dark.png` |
+| `evidence/coverage/` | coverage data files and reports | `.coverage`, `coverage.xml`, `html/index.html` |
 | `packages/` | exported archives | `my-skill.skill`, `release-bundle.zip` |
+
+Coverage output is run evidence, never project-root residue. Resolve its
+destination with `scripts/output_paths.py --kind coverage`
+(`skillset-saves/runs/<run>/<phase>/evidence/coverage/<name>`) and point the
+runner at it before it starts — `COVERAGE_FILE` / `--data-file`,
+`--cov-report=<fmt>:<dest>/...`, `--coverage.reportsDirectory`, or
+`--report-dir` plus `--temp-dir`. Never run coverage in parallel or per-process
+mode (`-p`, `--parallel-mode`, `parallel = True`) unless the same command
+finishes with `coverage combine` into that destination, and never loop a
+coverage run per test file: per-process mode with nothing combining it is how an
+observed run produced a `.coverage` tree of over three thousand files at a
+project root in under two minutes. When a step ends, nothing named `.coverage`,
+`.coverage.*`, `.coverage/`, `htmlcov/`, or `.nyc_output/` remains at the project
+root. `harness/hooks/post_tool_use.py` relocates what is left after a command
+action — into the active run's `evidence/coverage/`, or, with no active run,
+into `.harness-state/test-work/coverage-residue/<timestamp>/` — and never
+deletes anything; a sweep that had to run means the destination was never named.
 
 Application source stays in the application's own layout; it is never copied
 wholesale into a run. Evidence that depends on it binds to it through typed
-record `inputs` (`path` + `sha256`) so stale evidence fails the gate.
+record `inputs` (`path` + `sha256`) so stale evidence fails the gate. Every
+sha256 the protocol records is line-ending agnostic: text is folded to LF before
+hashing and binary is hashed byte-for-byte (`scripts/data_formats.py`
+`content_sha256`, printed by `python skills/scripts/content_hash.py <path>`), so
+a CRLF checkout and an LF checkout agree and `sha256sum` on a CRLF file is the
+wrong value.
 `scripts/output_paths.py` resolves every kind to its destination and rejects
 escapes.
 

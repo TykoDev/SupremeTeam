@@ -44,7 +44,8 @@ Route elsewhere when the concern is responsive behavior, accessibility, or runti
 - Prior design-qa findings or design-review scorecards when the surface is being re-evaluated.
 - Design-review priorities such as target breakpoints, brand-token exceptions, finish expectations, or excluded screens.
 - The immutable `taste_snapshot` artifact approved at `design-to-build`, its canonical digest, and preference-to-artifact traceability rows.
-- For the redesign pipeline: each variant's `app.html` and `tokens.css` plus the baseline captures from `design/design-mapper`, to render every route and declared state at the six tiers in both themes per variant as the `rendered_verification` record at `redesign-review` (`../../design-doctrine.md` §9), bound by sha256 to the prototype files.
+- For the redesign pipeline, at the `mock-review` stage: each of the four mocks' `mock.html` and `tokens.css` plus the baseline captures from `design/design-mapper`, to capture every mock screen at the six tiers in both themes as the `mock_rendering` record at `redesign-review` (`../../design-doctrine.md` §9), bound by sha256 to the mock files. A mock draws rather than behaves, so there are no declared states to drive — what is captured is the screen each mock actually renders, plus any route state it chose to draw.
+- For the redesign pipeline, at the `visual-qa` stage: the selected variant's `app.html` and `tokens.css`, to render every route and declared state at the six tiers in both themes as the `rendered_verification` record at `redesign-review`, bound by sha256 to the prototype files. This stage runs only when a variant was selected; a merge or a deferral leaves no living prototype, and `design/redesign` records the sanctioned string for that key instead.
 - On a REVISE round, the `changed_evidence` key list from the gate packet and the prior packet's finding ids.
 
 ## Outputs
@@ -55,12 +56,13 @@ Route elsewhere when the concern is responsive behavior, accessibility, or runti
 
 ### Gate evidence owned at `review-to-delivery` and `redesign-review`
 
-`../../gates.yaml` `evidence_owners` assigns `rendered_verification` to design-qa at both boundaries, and it is the only `review-to-delivery` key this lens owns. `code-chief` submits the review boundary and `redesign` the redesign boundary; design-qa authors this key and hands it over unchanged.
+`../../gates.yaml` `evidence_owners` assigns `rendered_verification` to design-qa at both boundaries, and `mock_rendering` to design-qa at `redesign-review` as well; `rendered_verification` is the only `review-to-delivery` key this lens owns. `code-chief` submits the review boundary and `redesign` the redesign boundary; design-qa authors these keys and hands them over unchanged.
 
 | Key | What it must contain | Artifact-backed | Typed record | Sanctioned fallback |
 | --- | --- | --- | --- | --- |
 | `rendered_verification` at `review-to-delivery` | The `rendered-verification` artifact `../../ownership.yaml` assigns to design-qa: captures across the declared breakpoints and themes for the changed surface, with the inputs bound to the rendered source | Yes. `artifact_evidence` at this boundary names this key, so its value references paths recorded in the manifest `artifact_hashes` map | `render`: hashed captures with `breakpoints`, `themes`, `inputs` bound to the rendered source, and `result.status` pass — or `inferred`, which requires a limitation statement and the label `INFERRED - no browser available`. Breakpoints cover the responsive tiers `../../design-doctrine.md` §4 requires for the changed surface | `no visible surface changed - rendered verification not applicable`, used only when no visible surface changed — never to paper over a visual-qa stage that was skipped while one did. At `schema_version: 2` that wording is never the key's value: `check.py` refuses a bare fallback string and accepts only the applicability record `{applicable: false, reason, scope, decided_by}`, with the sanctioned wording carried as `reason` |
-| `rendered_verification` at `redesign-review` | The same record, per variant: every route and declared state rendered at all six tiers in both themes, bound by sha256 to that variant's `app.html` and `tokens.css` | Yes, on the same rule | Same `render` record, produced once per variant | None. `../../gates.yaml` lists this key under `no_fallback` at this boundary, so neither the fallback string nor an applicability record is accepted |
+| `mock_rendering` at `redesign-review` | The `mock-rendering` artifact `../../ownership.yaml` assigns to design-qa: every screen of every one of the four mocks captured at all six tiers in both themes, bound by sha256 to each mock's `mock.html` and `tokens.css` | Yes, on the same rule | Same `render` record, covering the four mocks | None. `../../gates.yaml` lists this key under `no_fallback` at this boundary, so neither the fallback string nor an applicability record is accepted. The mocks are always built, so there is always a surface to capture; a browserless host returns an `inferred` record, not a waiver |
+| `rendered_verification` at `redesign-review` | The same record for the one selected variant: every route and declared state rendered at all six tiers in both themes, bound by sha256 to that variant's `app.html` and `tokens.css` | Yes, on the same rule | Same `render` record, produced once for the selected variant | Only `selection deferred - no variant built` or `merge brief recorded - implemented as a fifth direction in the design pipeline`, and neither is this lens's to write. When the user selects no variant there is no prototype to render, and `design/redesign` records the string; this key is not under `no_fallback` at this boundary for exactly that reason |
 
 The packet itself is saved as `deliverable_design-qa.md` beside the captures; the captures are the hashed evidence, and the packet is the reading of them.
 
@@ -125,7 +127,7 @@ At the cycle cap, an unresolved Critical or Major returns unchanged with its blo
 - review/code-chief
 - review/gatekeeper-code
 - review/frontier
-- `design/redesign`, which owns the `redesign` pipeline, delegates the `visual-qa` stage once per variant, and submits the package at `redesign-review`
+- `design/redesign`, which owns the `redesign` pipeline, delegates the `mock-review` stage across the four mocks and the `visual-qa` stage once for the selected variant, and submits the package at `redesign-review`
 
 ## Review Expectations
 
@@ -136,7 +138,7 @@ At the cycle cap, an unresolved Critical or Major returns unchanged with its blo
 
 ## Skip Rule
 
-Skip only when the surface required by the review lens does not exist — for this visual lens that means a rendered interface, screenshots, or equivalent visual evidence must be absent for the skip to apply. A skip is recorded as a `_skip-record.md` carrying `pipeline`, `skipped_at`, `reason`, and `approved_by`, which `review/gatekeeper-code` validates, and at `review-to-delivery` the key `rendered_verification` carries its sanctioned fallback value alongside it. At `redesign-review` no fallback exists, so a missing capture set is a gate failure rather than a skip.
+Skip only when the surface required by the review lens does not exist — for this visual lens that means a rendered interface, screenshots, or equivalent visual evidence must be absent for the skip to apply. A skip is recorded as a `_skip-record.md` carrying `pipeline`, `skipped_at`, `reason`, and `approved_by`, which `review/gatekeeper-code` validates, and at `review-to-delivery` the key `rendered_verification` carries its sanctioned fallback value alongside it. At `redesign-review` `mock_rendering` accepts no fallback, so a missing mock capture set is a gate failure rather than a skip; `rendered_verification` there is not skipped either — when no variant was selected, `design/redesign` carries the sanctioned string because no prototype was ever built to capture.
 
 ## Failure Modes
 
@@ -155,7 +157,7 @@ Skip only when the surface required by the review lens does not exist — for th
 
 When a `### Save Context` block is included in the delegation prompt with `Persistence active: yes`:
 
-1. Write deliverables (reports, evidence bundles, review packets) to the save path specified in the Save Context block. Captures and the `rendered_verification` record are evidence, so they land under the phase's `evidence/` directory and are hashed into the manifest.
+1. Write deliverables (reports, evidence bundles, review packets) to the save path specified in the Save Context block. Captures and the `rendered_verification` record — and, at the redesign pipeline's `mock-review` stage, the `mock_rendering` record — are evidence, so they land under the phase's `evidence/` directory and are hashed into the manifest.
 2. Name the lens packet `deliverable_design-qa.md`. This lens fills no lens slot in `review/gatekeeper-code`'s `scripts/check.py` — its gate evidence is the hashed capture set, not a filename match — so the packet name exists for the reader, and the captures carry the gate.
 3. Never write `_phase-state.md`. No class in the save-ownership policy declares that path, so it is not an orchestrator-owned file either — phase state is published only through `save_run.py checkpoint`, which keeps revision lineage and the audit trail coherent.
 

@@ -41,6 +41,9 @@ except ModuleNotFoundError:  # pragma: no cover - environment without PyYAML
 SKILLS = Path(__file__).resolve().parent.parent
 REPO = SKILLS.parent
 CHECK = SKILLS / "harness" / "gatekeeper" / "check.py"
+if str(SKILLS / "scripts") not in sys.path:
+    sys.path.insert(0, str(SKILLS / "scripts"))
+from data_formats import content_sha256  # noqa: E402
 
 if yaml is None:  # pragma: no cover
     raise unittest.SkipTest("PyYAML is required for the pipeline workflow contracts")
@@ -60,14 +63,19 @@ ARTIFACT_BODY = "# evidence\n\nSynthetic but real: this file is hashed.\n"
 
 
 def _digest_of(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return content_sha256(path)
 
 
-def _typed_record(kind: str, artifact: str, digest: str) -> object:
+def _typed_record(kind: str, artifact: str, digest: str, key: str = "") -> object:
     """A record of ``kind`` the checker accepts.
 
     Every field here was added because the checker demanded it by name. The
     comments mark the ones that are not obvious from the spec prose.
+
+    ``key`` matters for the two kinds the gate spec parameterises per evidence
+    key: a ``variant_set`` is four mocks under ``mocks`` for ``mock_set`` and one
+    built variant under ``variants`` for ``selected_variant``, and a
+    ``selection`` has to name an id the mock set actually declares.
     """
     base = {
         "artifacts": [artifact],
@@ -88,10 +96,26 @@ def _typed_record(kind: str, artifact: str, digest: str) -> object:
     if kind == "findings":
         return {"items": [{"id": "F-01", "severity": "Minor", "status": "resolved"}]}
     if kind == "variant_set":
-        variants = [{"id": f"v{i}", "name": f"Direction {i}", "direction": f"d{i}",
-                     "spec": artifact, "tokens": artifact,
-                     "components": artifact, "app": artifact} for i in range(1, 5)]
-        return {"artifacts": [artifact], "variants": variants, "count": 4}
+        # Shape, list name and count all come from the spec, so the fixture
+        # follows the spec rather than restating four-of-everything.
+        params = (GATES.get("evidence_type_params") or {}).get(key) or {}
+        list_field = params.get("list_field", "variants")
+        fields = params.get("file_fields", ["spec", "tokens", "components", "app"])
+        count = int(params.get("required_count", 1))
+        entries = [{"id": f"v{i}", "name": f"Direction {i}", "direction": f"d{i}",
+                    **{field: artifact for field in fields}} for i in range(1, count + 1)]
+        return {"artifacts": [artifact], list_field: entries, "count": count}
+    if kind == "selection":
+        params = (GATES.get("evidence_type_params") or {}).get(key) or {}
+        option = (GATES.get("evidence_type_params") or {}).get(params.get("option_key", ""), {})
+        built = (GATES.get("evidence_type_params") or {}).get(params.get("built_key", ""), {})
+        # The chosen id has to be one the mock set declares *and* the one the
+        # built variant carries, so it is read off the same generator above.
+        chosen = f"v{int(built.get('required_count', 1))}" if option else "v1"
+        return {"schema_version": 2, "artifacts": [artifact],
+                "decision": params.get("variant_decision", "variant"),
+                "chosen": chosen, "recommended": chosen, "decided_by": "workflow probe",
+                "decided_at": "2026-09-16T00:00:00Z", "basis": "synthetic decision"}
     if kind == "revision_ref":
         # A scalar identifier, not a record: it names an upstream revision.
         return "r-3"
@@ -142,7 +166,7 @@ def build_package(boundary: str, root: Path) -> dict:
     for key in spec["required_evidence"]:
         kind = types.get(key)
         if kind:
-            evidence[key] = _typed_record(kind, ARTIFACT_REL, digest)
+            evidence[key] = _typed_record(kind, ARTIFACT_REL, digest, key)
         elif key in artifact_backed:
             evidence[key] = ARTIFACT_REL
         else:
@@ -429,6 +453,33 @@ class StageCoverageTests(unittest.TestCase):
                         f"{pipeline}/{stage.get('step')} produces {artifact!r}, "
                         "which ownership.yaml does not declare")
         self.assertEqual([], unknown, "\n".join(unknown))
+
+    def test_the_redesign_pipeline_builds_mocks_before_it_builds_anything(self):
+        """Order is judgement everywhere else; here it is the whole fix.
+
+        Four living prototypes built before a choice is three implementations
+        thrown away. The stage list is what stops that recurring, so the two
+        facts it rests on are pinned: every stage that produces the
+        selected-variant evidence runs after the stage that records the
+        selection, and each of those stages is conditional on it.
+        """
+        stages = PIPELINES["pipelines"]["redesign"]["stages"]
+        order = {stage["step"]: index for index, stage in enumerate(stages)}
+        self.assertIn("selection", order, "the redesign pipeline records no selection")
+        self.assertLess(order["mock-build"], order["selection"],
+                        "the mocks are drawn before the choice, not after it")
+
+        owners = GATES["evidence_owners"]["redesign-review"]
+        after_the_choice = {owners[key] for key in
+                            ("selected_variant", "parity_evidence", "rendered_verification")}
+        late = [s for s in stages if s.get("owner") in after_the_choice
+                and order[s["step"]] > order["selection"]]
+        self.assertTrue(late, "no stage runs after the selection")
+        for stage in late:
+            with self.subTest(stage=stage["step"]):
+                self.assertEqual("a variant was selected", stage.get("when"),
+                                 f"{stage['step']} runs unconditionally, so a deferral "
+                                 f"or a merge would still build a prototype")
 
     def test_phase_gate_stages_match_what_the_gate_model_claims(self):
         """`gate_model` names which pipelines carry a phase-gate stage.

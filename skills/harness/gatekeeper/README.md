@@ -79,9 +79,10 @@ error.
 match the spec `submitter`), `run_id`, typed records for keys named in
 `evidence_types` (scan, render, probe, audit, findings, verdict, stack_lock,
 revision_ref, and the Taste records preference_diff, confirmation,
-conflict_analysis, persistence_result, effective_profile, consumer_handoff, and
-variant_set for the four redesign variants),
-`inputs` that bind evidence to project files by sha256 (stale
+conflict_analysis, persistence_result, effective_profile, consumer_handoff,
+variant_set for the four redesign mocks and for the one variant built from the
+chosen mock, and selection for the decision between them),
+`inputs` that bind evidence to project files by sha256 (line-ending agnostic: `data_formats.content_sha256`) (stale
 evidence fails as `input hash drift`), and applicability records instead of bare
 fallback strings. Schema 1 flat packages keep working.
 
@@ -93,7 +94,7 @@ spec digest.
 
 ## Boundaries
 
-`gates.yaml` (spec revision 3) carries ten boundaries. Each names the
+`gates.yaml` (spec revision 4) carries ten boundaries. Each names the
 transition it guards and the single skill permitted to submit it. The
 human-readable table lives in [`../../../docs/gatekeepers.md`](../../../docs/gatekeepers.md)
 and a drift test asserts it matches `gates.yaml` exactly.
@@ -104,24 +105,33 @@ at the four with a phase gatekeeper it revalidates after that gatekeeper, and
 at the other six it is the only gatekeeper. Its scope is not limited to the
 phase-to-phase handoffs.
 
-Twenty-nine evidence keys are artifact-backed, meaning the value must reference
+Thirty-three evidence keys are artifact-backed, meaning the value must reference
 a path in the package's `artifact_hashes` map rather than a bare claim:
 `decisions`, `architecture`, `plan`, `taste_snapshot`, `design_inventory`,
-`taste_grilling`, `design_directions`, `variant_set`, `parity_evidence`, `tests`,
+`taste_grilling`, `design_directions`, `mock_set`, `mock_parity`,
+`mock_rendering`, `selection`, `selected_variant`, `parity_evidence`, `tests`,
 `runtime`, `executed_probes`, `rendered_verification`, `threat_model`,
 `denial_path_evidence`, `reproduction`, `evidence_chain`, `test_matrix`,
 `link_report`, `validation_report`, `deploy_config`, `verification_plan`,
 `rollback_plan`, `preference_diff`, `confirmation`, `conflict_analysis`,
-`persistence_result`, `effective_profile`, and `taste_review_record`. Twelve keys
-accept a sanctioned applicability record instead (`security_evidence`,
+`persistence_result`, `effective_profile`, and `taste_review_record`. Fifteen
+keys accept a sanctioned applicability record instead (`security_evidence`,
 `stack_lock`, `ui_evidence`, `taste_snapshot`, `rendered_verification`,
 `denial_path_evidence`, `vulnerability_scan`, `fixes_applied`, `team_manifest`,
-and, at `taste-review` only, `before_revision`, `consumer_handoff`,
-`residual_uncertainty`), and only the exact reasons listed under
-`fallback_values` are accepted; any other bare string fails the
+at `taste-review` only `before_revision`, `consumer_handoff`,
+`residual_uncertainty`, and at `redesign-review` only `selected_variant`,
+`parity_evidence`, `accessibility_evidence`), and only the exact reasons listed
+under `fallback_values` are accepted; any other bare string fails the
 artifact-backing check. `confirmation` is never waivable, and a boundary's
-`no_fallback` list removes a key's fallback there (`rendered_verification` at
-`redesign-review`).
+`no_fallback` list removes a key's fallback there (`mock_rendering` at
+`redesign-review`: the four mocks are always built and always rendered).
+
+At `redesign-review` those waivers are not independent of each other. `selection`
+records what was decided, and `check_selection_dependencies` makes four keys
+follow it: a decision naming a variant may not stand `selected_variant`,
+`parity_evidence`, `rendered_verification` or `accessibility_evidence` down, and
+a merge or a deferral must stand all four down on the one sanctioned wording
+that matches the decision.
 
 ## Batched REVISE
 

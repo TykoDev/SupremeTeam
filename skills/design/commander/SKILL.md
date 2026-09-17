@@ -48,8 +48,12 @@ This skill is a component of the **Admiral** delivery pipeline; `admiral` is the
 - plan and architect this project
 
 A user-facing surface that already exists and is being reworked enters
-`design/redesign` first; its chosen variant returns here as the `design-system`
-input and is locked at `design-to-build`.
+`design/redesign` first. That pipeline compares four mocks, records the user's
+choice, and builds one living prototype for the chosen direction; that variant's
+`variant.md`, `tokens.css`, and `components.html` return here as the
+`design-system` input and are locked at `design-to-build`. A merge choice arrives
+as a brief to implement rather than a prototype, and a deferral hands nothing
+over at all.
 
 ## Inputs
 

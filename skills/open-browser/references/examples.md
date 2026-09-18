@@ -2,24 +2,25 @@
 
 ## Contents
 
-1. Example 1
-2. Example 2
-3. Example 3
+1. Example 1 — Clean visible session on staging
+2. Example 2 — Expired session token, credential recorded by reference
+3. Example 3 — Session opens but CSP blocks the rendered surface
 4. Example 4 — Acquisition by reuse (no install)
 5. Example 5 — Install fallback (last resort)
 6. Example 6 — Offline / locked environment (escalate, don't install)
 7. Example 7 — Remote host session, credential recorded by reference
 
-## Example 1
+## Example 1 — Clean visible session on staging
 
 **User request:** open the browser workspace for staging so I can watch the checkout flow live
 
 **Output:**
-- Launch state: visible browser opened against the staging storefront with a clean profile and no authenticated user loaded.
-- Evidence: starting URL, page title, and a screenshot of the landing state are recorded immediately after launch.
-- Next move: run `browse` against the checkout path or load authenticated session state first if the flow requires login.
+- Acquisition: rung 2 — Chrome 131 already installed at the system path, so nothing was downloaded. The rung reached and why the ones above it were skipped are recorded, because "a browser opened" does not say whether the host gained a 400 MB install.
+- Launch state: visible browser opened against `https://staging.example.com/` with a clean named profile (`ob-staging-01`) and no authenticated user loaded. The user's own Chrome profile was not touched; rung 1 is opt-in and no opt-in was given.
+- Evidence: starting URL, page title (`Example Store — Home`), and a screenshot of the landing state, captured immediately after launch and before any interaction, so the baseline is the surface as it arrived rather than as the first click left it.
+- Next move: run `browse` against the checkout path. The flow requires login past the cart step, so either load authenticated state through `setup-browser-cookies` first, or expect the walkthrough to stop at the login wall and record it there.
 
-## Example 2
+## Example 2 — Expired session token, credential recorded by reference
 
 **User request:** launch a visible browser on the admin page
 
@@ -28,7 +29,7 @@
 - Evidence: redirect URL and the rendered challenge page are recorded. The expired token is referenced by issuer and expiry timestamp only — the value itself appears nowhere in the record, and the challenge-page screenshot was checked for a token-bearing URL in the address bar before it was saved.
 - Next move: refresh the scoped browser credentials, then relaunch the session.
 
-## Example 3
+## Example 3 — Session opens but CSP blocks the rendered surface
 
 **User request:** inspect the page live
 

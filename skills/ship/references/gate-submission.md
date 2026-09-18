@@ -95,8 +95,7 @@ Delegate both groups in parallel — `revise_policy.parallel_fix` exists so inde
 not queue behind each other — then resubmit once with the prior verdict record:
 
 ```bash
-python skills/harness/gatekeeper/check.py --boundary deploy-readiness --package <manifest.json> \
-    --prior <verdict.json>
+python skills/harness/gatekeeper/check.py --boundary deploy-readiness --package <manifest.json> --prior <verdict.json>
 ```
 
 `--prior` reports `changed_evidence` and `unchanged_evidence` from per-key digests, so the

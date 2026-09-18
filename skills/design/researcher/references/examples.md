@@ -3,6 +3,13 @@
 Three delegations and the actual brief text returned. The five-field row, the
 confidence tiers, and the document template are in `workflow.md`.
 
+Every file path, ticket count, interview date, and policy citation below is
+illustrative — invented to show what a well-formed `Source` cell looks like, not
+read from any repository. Copy the *shape* (a resolvable locator, narrowed to the
+line or record that carries the claim); never copy a path. A real brief's sources
+must resolve in the run's own codebase and evidence set, and a source that does
+not resolve is not `observed`.
+
 ## Contents
 
 1. Example 1 — "research this problem space"

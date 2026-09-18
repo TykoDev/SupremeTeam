@@ -71,22 +71,31 @@ outputs:
   - one living design-system variant for the selected direction, with parity, rendered, and accessibility evidence
   - redesign package with comparison matrix, recommendation, and recorded decision
 severity_model: shared 4-tier (Critical | Major | Minor | Info)
+# Mirrors the eight contracts in SKILL.md "Execution Contract", in order.
+# Any change to that section must be reflected here in the same order.
 required_contracts:
-  - Execution-contract clauses stated verbatim in SKILL.md
   - Grill-Me Intake
   - Four distinct mocks
   - Mocks before implementation
   - Functional parity
   - Framework-free drafts
   - Taste read boundary
+  - Design doctrine
   - Save-Protocol Adherence
 authoring_rules:
   - First-principles wording only
   - No provenance or comparison language
   - No references to planning-note filenames inside generated artifacts
-  - Supporting files must be one level deep and directly referenced
-acceptance:
-  rubric_score: 100/100
-  blocked_phrase_scan: zero hits
-  cross_cutting_contracts_embedded: true
-  package_ready: true
+  - >-
+      Supporting files sit one level deep (references/, agent/) and are directly
+      referenced from SKILL.md. Two exceptions, each of which must still be directly
+      referenced - a named sub-group under a bundled directory (agent/adapters/), and
+      a nested skill shipped with its own SKILL.md and supporting tree
+      (skill-maker/skill-creator/). Anything deeper that is neither is a packaging defect.
+# Authoring-time checklist, not a shipped grade. Re-derived on every run; never
+# read as a recorded result.
+acceptance_checklist:
+  - blocked-phrase scan returns zero hits
+  - cross-cutting contracts embedded verbatim
+  - every bundled file referenced from SKILL.md
+  - package builds from the resolved output directory

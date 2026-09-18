@@ -6,22 +6,31 @@ Redesign owns the redesign pipeline boundary from an existing user-facing surfac
 through the `redesign-review` gate and the handoff of the chosen variant into the
 design pipeline.
 
-## Stage Order
+## Delegation Order
 
-The order `../../pipelines.yaml` declares for the `redesign` pipeline. Stages 1
-through 8 are unconditional; only the taste grilling has a documented skip, and
-only when the user declines preference capture. Stages 9 through 12 are
-conditional: they run only when a variant was selected.
+The canonical stage numbering is the fourteen-row table in
+`references/workflow.md` §Stage Order, which mirrors `../../pipelines.yaml`.
+**This list is not a second numbering.** It is the same fourteen stages grouped
+into the eight delegations Admiral actually issues, with the canonical stage
+numbers in brackets so the two can always be reconciled. Where they appear to
+disagree, the workflow table is right.
 
-1. `design-mapper` (inventory, baseline captures)
-2. `taste` (project taste grilling, confirmation, persistence, effective profile)
-3. `architect` (four design directions)
-4. `prototyper`, four times (one static mock per direction)
-5. `design-mapper` (mock parity across the set), `design-qa` (mock rendering)
-6. `redesign` (comparison matrix, recommendation, the user's recorded decision)
-7. `prototyper`, once (the living prototype for the chosen id), then `design-mapper` (full parity), `design-qa` (rendered verification), `frontier` (accessibility findings) — all four only when a variant was selected
-8. `redesign` (package consolidation)
-9. `gatekeeper-design` (phase gate at `redesign-review`)
+Stages 1 through 8 are unconditional; only the taste grilling (stage 3) has a
+documented skip, and only when the user declines preference capture. Stages 9
+through 12 are conditional: they run only when a variant was selected.
+
+| # | Delegation | Canonical stages |
+| --- | --- | --- |
+| D1 | `admiral` (intake grilling) — the stage this contract is handed across, not one redesign delegates | 1 |
+| D2 | `design-mapper` (inventory, baseline captures) | 2 |
+| D3 | `taste` (project taste grilling, confirmation, persistence, effective profile) | 3 |
+| D4 | `architect` (four design directions) | 4 |
+| D5 | `prototyper`, four times (one static mock per direction) | 5 |
+| D6 | `design-mapper` (mock parity across the set), `design-qa` (mock rendering) | 6, 7 |
+| D7 | `redesign` (comparison matrix, recommendation, the user's recorded decision) | 8 |
+| D8 | `prototyper`, once (the living prototype for the chosen id), then `design-mapper` (full parity), `design-qa` (rendered verification), `frontier` (accessibility findings) — all four only when a variant was selected | 9, 10, 11, 12 |
+| D9 | `redesign` (package consolidation) | 13 |
+| D10 | `gatekeeper-design` (phase gate at `redesign-review`) | 14 |
 
 ## Required Inputs
 

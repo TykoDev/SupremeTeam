@@ -89,7 +89,7 @@ the moment it is owed and the evidence it carries:
 ## Workflow
 
 1. **Classify the request** as a checkpoint, a learning write, a resume, or a lookup against prior learnings. Only the first three write anything; a lookup is read-only and never opens a run.
-2. **Checkpoint.** Capture the minimum state another session needs to resume without guessing: (a) **active boundary/phase** — the current pipeline stage and gate status; (b) **approved artifacts + revision lineage** — paths and revision identifiers for every artifact that has passed a gate; (c) **open decisions/deferred branches** — unresolved choices and any branches parked for later; (d) **next action** — the exact step the next session takes to continue safely. Publish it with `python skills/harness/hooks/save_run.py checkpoint --run-id <run-id> --expect-revision <n> --evidence <path>`, then read `result` before reporting anything: `ok`, `degraded`, and `refused` are three different outcomes and Failure Modes gives each its branch.
+2. **Checkpoint.** Capture the minimum state another session needs to resume without guessing: (a) **active boundary/phase** — the current pipeline stage and gate status; (b) **approved artifacts + revision lineage** — paths and revision identifiers for every artifact that has passed a gate; (c) **open decisions/deferred branches** — unresolved choices and any branches parked for later; (d) **next action** — the exact step the next session takes to continue safely. Publish it with `python skills/harness/hooks/save_run.py checkpoint --run-id <run-id> --expect-revision <n> --evidence <path>` — except on a run's *first* save, where the subcommand is `create` and carries no `--expect-revision`, there being no prior revision to expect. Then read `result` before reporting anything: `ok`, `degraded`, and `refused` are three different outcomes and Failure Modes gives each its branch.
 3. **Learning write.** Validate the file reference and set the confidence level before recording, then store the learning in the tagged form under Learning Taxonomy so a later lookup retrieves it by layer and category instead of by recall.
 4. **Resume.** Reload only the verified artifacts and notes the immediate next step needs, then surface drift — missing, stale, or wrong-run evidence — before the run advances.
 5. **Lookup.** Search the run's learning reports for the queried subject and return each match with its evidence and confidence. Report an empty result as empty: a lookup that invents a plausible learning is worse than no memory at all, because the caller cannot tell the two apart.
@@ -101,8 +101,7 @@ record, not inside it. Resolve every destination through the governed resolver
 rather than composing a path by hand — the same rule `design/commander` follows:
 
 ```bash
-python skills/scripts/output_paths.py --run-id <run-id> --phase <phase> \
-    --kind reports --name report_learnings.md --mkdir
+python skills/scripts/output_paths.py --run-id <run-id> --phase <phase> --kind reports --name report_learnings.md --mkdir
 ```
 
 Write only to the path it prints, and confirm that path is still inside

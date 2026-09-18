@@ -91,12 +91,7 @@ The `mock-parity` stage, run once per mock at mock level. Two of the four
 abridged, then the aggregate.
 
 ```bash
-python skills/scripts/check_parity.py --level mock \
-  --inventory redesign/artifacts/inventory/design-inventory.json \
-  --app redesign/artifacts/mocks/v1/mock.html \
-  --components redesign/artifacts/mocks/v1/components.html \
-  --out redesign/evidence/mock-parity-v1.json \
-  --project-root .
+python skills/scripts/check_parity.py --level mock --inventory redesign/artifacts/inventory/design-inventory.json --app redesign/artifacts/mocks/v1/mock.html --components redesign/artifacts/mocks/v1/components.html --out redesign/evidence/mock-parity-v1.json --project-root .
 ```
 
 `v1` — exit 0. The record, abridged:
@@ -166,12 +161,7 @@ not optional dressing: it makes the record's `inputs[].path` values
 project-relative, which is what the gate binds by sha256.
 
 ```bash
-python skills/scripts/check_parity.py --level full \
-  --inventory redesign/artifacts/inventory/design-inventory.json \
-  --app redesign/artifacts/variants/v3/app.html \
-  --components redesign/artifacts/variants/v3/components.html \
-  --out redesign/evidence/parity-v3.json \
-  --project-root .
+python skills/scripts/check_parity.py --level full --inventory redesign/artifacts/inventory/design-inventory.json --app redesign/artifacts/variants/v3/app.html --components redesign/artifacts/variants/v3/components.html --out redesign/evidence/parity-v3.json --project-root .
 ```
 
 Exit 1 — missing ids. The record it wrote, abridged to the failing lists:

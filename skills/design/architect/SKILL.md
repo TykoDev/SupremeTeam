@@ -45,7 +45,7 @@ block, an active run lock with `session_pin: true` exists under
 Reached cold — "design the architecture" with no handoff — decide nothing and
 write nothing. The requirements brief, the locked stack, the revision the
 decisions are recorded against, and the save path all arrive with the handoff;
-none can be reconstructed from the request. Route the user to `fabled`, which
+none can be reconstructed from the request. Route the user to `admiral`, which
 runs intake and persistence before any specialist is delegated.
 
 ## Use This Skill When
@@ -55,7 +55,7 @@ Use this skill to **fix the structure** — of the system, of its interfaces, or
 - "design the architecture" / "define system boundaries" / "write the architecture package" — the component model, data flow, and boundary rationale
 - "lock the component model" — freeze ownership so downstream phases stop renegotiating it
 - "design the UI" / "build a design system or component library" / "set up shadcn/ui tokens" — the token system and component template for a user-facing surface
-- "produce UI/UX specs" / "preview a design" — the `design-system.md` handoff and the approval preview
+- "produce UI/UX specs" / "preview the design system" — the `design-system.md` handoff and the Phase 5 approval preview of the token and component system itself. A preview of one *direction*, or of a drawn screen, is `design/prototyper`'s mock
 - "audit or redesign an existing design system" — the eight-dimension adversarial review against the current surface
 - "propose four design directions" — the `design-directions` artifact for the redesign pipeline, delegated by `design/redesign`
 

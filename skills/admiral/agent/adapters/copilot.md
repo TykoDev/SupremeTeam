@@ -104,7 +104,7 @@ If a Copilot session ends mid-pipeline:
 
 ## Write-Capability Probe
 
-The probe defined in `save-protocol.md` §2 Startup maps to Copilot tools as:
+The manual probe defined in `../../../save-protocol.md` §2.4b maps to Copilot tools as:
 
 1. `create_file` writes a short ASCII payload to `{workspace}/skillset-saves/_probe-{run-id}.tmp`. If `create_file` returns an error or the file is not created, the probe fails immediately.
 2. `read_file` reads it back and admiral verifies byte equality.

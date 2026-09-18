@@ -76,13 +76,14 @@ rather than exercising it and describing the damage afterwards.
 ## 4. Releasing, and Who May Release
 
 ```bash
-python skills/harness/hooks/guard_state.py release-read-only --run-id <run> --requester <requester> \
-    [--reason "<why the run ended>"]
+python skills/harness/hooks/guard_state.py release-read-only --run-id <run> --requester <requester> [--reason "<why the run ended>"]
 ```
 
 The release is authority-checked: `guard_state.py` accepts it only from the `--owner`
-recorded at `read-only` time or from a name listed in that record's approvers, so the
-boundary cannot be dropped by whoever happens to be running the next command. Exit 0 is
+recorded at `read-only` time, so the boundary cannot be dropped by whoever happens to
+be running the next command. There is no delegate path for this key — `cmd_read_only`
+writes no `approvers` field, unlike a frozen glob — so name an owner who will still be
+around to release it, or the run ends with a boundary nobody present can lift. Exit 0 is
 released; exit 1 is refused, with the reason on stderr. A refusal is a contract violation
 to resolve, never something to work around — and hand-editing `.harness-state/guard-state.json`
 is itself denied by the hook, which routes every change through this writer.
@@ -99,11 +100,10 @@ python skills/harness/hooks/guard_state.py status --json    # run ids, owners, a
 ```
 
 `status` prints the active read-only run ids. Match the stuck run id to its recorded
-owner, then release it as that owner or as a recorded approver, stating the reason:
+owner, then release it as that owner — nobody else can — stating the reason:
 
 ```bash
-python skills/harness/hooks/guard_state.py release-read-only --run-id qa-only-2026-04-19-checkout \
-    --requester <recorded-owner> --reason "sweep interrupted before step 5"
+python skills/harness/hooks/guard_state.py release-read-only --run-id qa-only-2026-04-19-checkout --requester <recorded-owner> --reason "sweep interrupted before step 5"
 ```
 
 Two habits keep the recovery cheap. Name the owner in the report while the run is still

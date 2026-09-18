@@ -46,12 +46,12 @@ This skill never submits a gate, in either mode. `../gates.yaml` makes `qa` the 
 - Product surface under test, including critical workflows, supported environments, and expected behaviors.
 - Known defects, prior QA findings, and any scope limitations such as environment access or data constraints.
 - Test-scope boundaries defining what is in scope and what should be excluded from the report.
-- The requester identity that owns the read-only boundary, because only that owner or a recorded approver can release it.
+- The requester identity that owns the read-only boundary, because that owner alone can release it — `cmd_read_only` records no `approvers` field, so there is no delegate path for this key.
 
 ## Outputs
 
 - QA-only defect report with reproducible issues, severity ratings, and reproduction steps for the remediation team.
-- Evidence bundle with screenshots, logs, or recordings for each defect — no fixes applied.
+- Evidence bundle with screenshots, logs, or recordings for each defect — no fixes applied. **Where it lands differs by mode.** Delegated, it is written to the run's `qa/evidence/` directory and returned to `qa` by path and digest. Standalone, the allow-glob covers only `.harness-state/packages/**`, so that is the destination: write the bundle under `.harness-state/packages/qa-only-<timestamp>/` and name that path in the report. Nothing goes to the product tree in either mode, and a standalone run that reports screenshots without saying where they were written has produced a claim rather than a bundle.
 - Blocked-environment summary listing any surfaces that could not be tested and why.
 - Read-only boundary record: the run id, the allow globs, and the `release-read-only` result, reported as evidence that the surface was protected rather than as a claim that nothing was touched.
 
@@ -86,7 +86,15 @@ A bare pass rate is not evidence. `test_matrix` and `executed_probes` are typed 
    ```
 
    `references/read-only-boundary.md` gives the run id and allow glob for each mode, and what the boundary does and does not stop.
-2. Map the critical workflows, supported environments, and failure checkpoints that must be tested before any report is written.
+2. Map the critical workflows, supported environments, and failure checkpoints that must be tested before any report is written, then **order the sweep by risk rather than by the order the surface presents**. A read-only run has a fixed budget and no second pass, so what gets tested first is what decides the report's value:
+
+   - **Money, data loss, and auth first.** Anything that moves funds, deletes or overwrites user data, or decides who may see what. A defect here is Critical by consequence before its likelihood is even considered.
+   - **Then the paths the change touched.** The delegation names a changed surface; its entry points, its immediate callers, and the first screen a user reaches through it.
+   - **Then the workflows that carry the most traffic**, whether or not this revision touched them — a regression in the most-walked path costs more than a defect in a rarely-reached one.
+   - **Then state transitions and boundaries**: empty, first-run, permission-denied, expired-session, offline, and the seams between them. This is where defects concentrate and where a sweep that walks only happy paths finds nothing.
+   - **Last, cosmetic and copy issues.** Real findings, but ones a later pass can still catch.
+
+   Record the order used and where the sweep stopped. An untested area named explicitly is a scope statement; an untested area left unmentioned reads as tested and clean, which is the one outcome a report-only run must never produce.
 3. Execute the test sweep without mutating the product surface. For each defect, capture: (a) numbered reproduction steps, (b) observed vs. expected behavior, (c) environment details (OS, runtime, test data state), (d) relevant logs or screenshots. If environment access is partial, record what could and could not be verified — do not imply coverage for untested surfaces.
 4. Re-run flaky or ambiguous paths only to tighten the evidence boundary, not to apply fixes. If a path cannot be reliably reproduced, record the unstable reproduction boundary and mark confidence accordingly.
 5. Release the boundary once the evidence is written and before the run ends:
@@ -132,7 +140,7 @@ Skip only when the requested surface, tool, or environment does not exist and a 
 | The browser surface, harness, or another required tool is unavailable for a planned probe | Record the probe as not-run with the reason rather than inferring its outcome, narrow the report to what was actually exercised, and list the unreached surface in the blocked-environment summary. |
 | A defect reproduces inconsistently across runs | Capture the unstable reproduction boundary and avoid overstating confidence in the failure narrative. |
 | Someone requests a quick fix while the QA-only boundary is active | Refuse the mutation, keep the scope report-only, and hand the defect to the team that owns remediation. The harness denies the write regardless, so agreeing would produce a denial rather than a fix; offer the alternative instead — finish the report, then rerun under `qa`, which is the skill that may fix. |
-| The run ends before the boundary is released — a crash, an interrupt, a refused release, or a handoff that never returns | Treat the workspace as blocked, not the run as finished. The unreleased record makes hook Rule D deny every edit-tool write and mutating shell command project-wide in later sessions. Recover with `python skills/harness/hooks/guard_state.py status` to read the stuck run id and its owner, then release it as that owner or a recorded approver: `python skills/harness/hooks/guard_state.py release-read-only --run-id <run> --requester <owner> --reason "<why the run ended>"`. Nobody else can release it, and hand-editing `guard-state.json` is denied by the hook, so record the owner in the report while the run is still live. |
+| The run ends before the boundary is released — a crash, an interrupt, a refused release, or a handoff that never returns | Treat the workspace as blocked, not the run as finished. The unreleased record makes hook Rule D deny every edit-tool write and mutating shell command project-wide in later sessions. Recover with `python skills/harness/hooks/guard_state.py status` to read the stuck run id and its owner, then release it as that owner: `python skills/harness/hooks/guard_state.py release-read-only --run-id <run> --requester <owner> --reason "<why the run ended>"`. Nobody else can release it, and hand-editing `guard-state.json` is denied by the hook, so record the owner in the report while the run is still live. |
 | Multiple failures collapse into one probable root cause | Group them under one evidence-backed defect chain so the report does not exaggerate the number of independent issues. |
 | `qa` reports that `check.py` returned `REVISE` twice on the same package | Stop re-running the sweep for a third attempt. `../gates.yaml` `revise_policy` sets `cycle_cap: 2`, so the second `REVISE` escalates rather than starting another cycle: return the evidence that did and did not change between the two packets, plus the released boundary, and leave the `ESCALATE` to `qa`, which owns the boundary. |
 

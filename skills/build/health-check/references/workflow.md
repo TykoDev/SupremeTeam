@@ -25,6 +25,7 @@ order; this file states the procedure.
 3. Execute the probe matrix — startup, readiness poll, dependency reachability, smoke flow — capturing each to its own log under the phase `evidence/` directory, scrubbed as it is written.
 4. Evaluate each boundary as healthy, degraded, or unverified, using repeatability across the poll series rather than a single sample.
 5. Package the hashed smoke log, its typed probe record, the dependency status, and every side effect the pass created, so build-management and the gate see exactly what is ready and what still blocks confidence.
+6. Tear down what the pass started: stop the process the startup probe left running, confirm it stopped, dispose of or hash every response body the polls wrote, and state both in the pass. A probe that returns while its service is still listening has not finished.
 
 ## Start-Command Discovery
 
@@ -73,16 +74,46 @@ destination with
 Redirect combined streams so a failing probe captures its own error text, and
 scrub each capture as it is written.
 
-| Probe | What it proves | Command shape | Log |
-| --- | --- | --- | --- |
-| Startup | The entry point boots and reaches a running state without crashing or restart-looping | `<discovered start command> > <log> 2>&1`, with the process left running for the readiness poll | `evidence/runtime-startup.log` |
-| Readiness poll | Readiness is reached inside the declared window, and holds for the stability requirement | `curl -sS -o <body> -w "%{http_code} %{time_total}\n" --max-time 5 <base>/<readiness path>`, repeated at the poll interval until the window expires, every line appended to one log | `evidence/runtime-readiness.log` |
-| Liveness | The process answers at all, separately from readiness | Same shape against the liveness path | appended to `evidence/runtime-readiness.log` |
-| HTTP dependency | A declared downstream service is reachable from inside the runtime's network position | `curl -sS -o /dev/null -w "%{http_code} %{time_total}\n" --max-time 5 <dependency url>` | `evidence/runtime-dependencies.log` |
-| TCP dependency | A database, cache, or broker accepts a connection | `python -c "import socket,sys; s=socket.create_connection((sys.argv[1],int(sys.argv[2])),5); s.close(); print('open')" <host> <port>` | appended to `evidence/runtime-dependencies.log` |
-| Environment references | Every required credential and config reference resolves, by name | Resolution check that prints the reference name and `present`/`empty` — never the value | `evidence/runtime-environment.log` |
-| Smoke flow | One critical user path works end to end on the real target | The declared flow's requests, in order, with status and duration per step | `evidence/runtime-smoke.log` |
-| Startup ordering | A migration, warm-up, or cache fill completes before the first authenticated request succeeds | The startup log read against the first smoke-flow step's timestamp | cited from the two logs above |
+Two things the matrix creates are neither a log nor a product side effect, so the
+side-effect ledger — which is data-only by `../SKILL.md`'s scope — does not cover
+them. Both are this workflow's to close:
+
+- **The response body.** `curl -o` writes the readiness and liveness bodies somewhere. Resolve that somewhere under the run (`output_paths.py --kind evidence --name runtime-readiness-body.json`), scrub it on the same pass as the log, and evaluate the predicate against it. Once the predicate is decided, either hash it into the package as evidence — a body reporting a degraded dependency is exactly what a later reader needs — or delete it. What it must never be is a stray file at the project root, unscrubbed and unhashed, holding whatever the service chose to return.
+- **The started process.** Step 1 deliberately leaves it running so the poll has something to poll. Step 8 stops it: terminate the process the startup probe started, confirm it is gone, and record the teardown in the pass. A probe run that leaves a service listening has changed the machine's state after returning, which is the thing the ledger exists to make visible even though this particular residue is not data.
+
+| Probe | What it proves | Log |
+| --- | --- | --- |
+| Startup | The entry point boots and reaches a running state without crashing or restart-looping | `evidence/runtime-startup.log` |
+| Readiness poll | Readiness is reached inside the declared window, and holds for the stability requirement | `evidence/runtime-readiness.log` |
+| Liveness | The process answers at all, separately from readiness | appended to `evidence/runtime-readiness.log` |
+| HTTP dependency | A declared downstream service is reachable from inside the runtime's network position | `evidence/runtime-dependencies.log` |
+| TCP dependency | A database, cache, or broker accepts a connection | appended to `evidence/runtime-dependencies.log` |
+| Environment references | Every required credential and config reference resolves, by name | `evidence/runtime-environment.log` |
+| Smoke flow | One critical user path works end to end on the real target | `evidence/runtime-smoke.log` |
+| Startup ordering | A migration, warm-up, or cache fill completes before the first authenticated request succeeds | cited from the two logs above |
+
+Command shapes, in the same order:
+
+```bash
+# Startup — leave the process running for the readiness poll; step 8 tears it down.
+<discovered start command> > evidence/runtime-startup.log 2>&1
+
+# Readiness poll, and liveness against its own path. Repeat at the poll interval
+# until the window expires, appending every line to the one log.
+curl -sS -o "$BODY" -w "%{http_code} %{time_total}\n" --max-time 5 <base>/<readiness path>
+
+# HTTP dependency
+curl -sS -o /dev/null -w "%{http_code} %{time_total}\n" --max-time 5 <dependency url>
+
+# TCP dependency
+python -c "import socket,sys; s=socket.create_connection((sys.argv[1],int(sys.argv[2])),5); s.close(); print('open')" <host> <port>
+```
+
+The remaining three are not single commands. **Environment references** are a
+resolution step printing each reference name with `present` or `empty`, never the
+value. The **smoke flow** is the declared flow's own requests in order, with
+status and duration per step. **Startup ordering** is read out of the startup log
+against the first smoke-flow step's timestamp rather than probed separately.
 
 A probe that cannot run is recorded as not run, with the command attempted and
 the observed error. It is never recorded as a pass, and the surface it would

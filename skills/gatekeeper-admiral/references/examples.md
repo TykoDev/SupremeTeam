@@ -92,7 +92,7 @@ revision 3, owner `commander`.
 - Next action: build may consume the package at revision 3.
 - Revision: 3. If the UI evidence, tokens, or any hashed design artifact changes, generate a new submission id before reusing this verdict.
 
-## Example 5 — `redesign-review`, `REVISE` on a refused waiver
+## Example 5 — `redesign-review`, `REVISE` on a refused waiver, with a sanctioned one accepted alongside
 
 **Submission:** `admiral` routes the redesign package. Save Context: run `r-2301`,
 phase `redesign`, submission `r-2301-rd2`, revision 2, owner `redesign`.
@@ -100,8 +100,10 @@ phase `redesign`, submission `r-2301-rd2`, revision 2, owner `redesign`.
 **Output:**
 - Verdict: `REVISE`.
 - Boundary: `redesign-review`, submitted by `redesign`.
-- Evidence: `rendered_verification` carries the applicability record "no visible surface changed". `../../gates.yaml` lists that key under this boundary's `no_fallback`, so the waiver is rejected — a redesign always has a visible surface, and a boundary-level `no_fallback` beats the global fallback.
-- Next action: route to `design-qa`, the owner of `rendered_verification`, for hashed captures across the required breakpoints and themes, bound by `inputs` to the rendered variant. The other nine keys are unchanged and carry their prior judgment.
+- Evidence, and the waiver that is *not* a failure:
+  - `mock_rendering` carries the applicability record "no visible surface changed". `../../gates.yaml` lists that key under this boundary's `no_fallback`, so the waiver is rejected — the four directions are mocks, a mock that was never rendered is not evidence, and a boundary-level `no_fallback` beats the global fallback.
+  - `rendered_verification`, `selected_variant`, `parity_evidence`, and `accessibility_evidence` each carry the record `selection deferred - no variant built`, and `selection.decision` is `deferred`. That reason is sanctioned at this boundary by its own `fallback_values`, so all four pass. Refusing them would route a `REVISE` to `design-qa` for a render of a variant this run never built.
+- Next action: route to `design-qa`, the owner of `mock_rendering`, for hashed captures of the four mocks across the required breakpoints and themes, bound by `inputs` to each mock. The other nine keys are unchanged and carry their prior judgment.
 - Revision: 2.
 
 ## Example 6 — `taste-review`, `REVISE` split between two owners
@@ -117,7 +119,7 @@ phase `taste`, submission `taste-42-r3`, revision 3, owner `taste`.
 - Boundary: `taste-review`, submitted by `taste`, revision 3.
 - Evidence, grouped by owner:
   - `taste` — `confirmation` was waived. It appears in no fallback list at all, so the failure reads *evidence not waivable*, not *bad reason*. The promotion of `pref-new` from project to global is exactly the operation that requires the explicit record, with `candidate_ids` equal to the changed id set.
-  - `taste-review` — `taste_review_record` is referenced but unhashed, so the record behind the twelfth key cannot be verified.
+  - `taste-review` — `taste_review_record` is referenced but unhashed, so the record behind the eleventh of the boundary's twelve required keys cannot be verified.
 - Open risks: `residual_uncertainty` carries an applicability record whose `reason` is "none observed", the sanctioned wording at this boundary; the record form is what makes it acceptable, since this schema-2 package would fail on the bare string.
 - Next action: both owners fix in parallel; `taste` resubmits at revision 4.
 - Revision: 3.

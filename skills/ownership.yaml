@@ -7,6 +7,17 @@ source_of_truth: >-
   two files must agree (validation/test_save_contracts.py). Stage artifacts named
   in pipelines.yaml must appear here as an artifact id
   (validation/test_pipeline_contracts.py).
+  Artifact ids here and evidence keys in gates.yaml are two different namespaces,
+  and the ids do not have to match the keys. An evidence key is scoped to one
+  boundary, so the same key name at two boundaries is two different artifacts with
+  two different writers - findings belongs to code-chief at review-to-delivery and
+  to cso at security-review, and executed_probes to qa at qa-review and to
+  code-chief at review-to-delivery. Each of those is a separate id here
+  (findings / security-findings, executed-probes / review-executed-probes),
+  because one id with two owners would break the single-writer rule this file
+  exists to state. Read gates.yaml evidence_owners as keyed by (boundary, key) and
+  this file as keyed by artifact id; check_gates pairs them on the owner name,
+  which is the only field both namespaces share.
 enforcement:
   machine_checked: >-
     scripts/validate_manifests.py check_ownership is the comparator for the
@@ -138,6 +149,7 @@ owners:
       - review-package
       - review-verdict
       - findings
+      - review-executed-probes
     consumes:
       - build-package
       - design-package
@@ -268,6 +280,7 @@ owners:
     writes:
       - threat-model
       - remediation-plan
+      - security-findings
       - security-review-package
     consumes:
       - vulnerability-scan
@@ -328,6 +341,7 @@ owners:
       - taste-package
       - preference-profile
       - taste-grilling-log
+      - taste-snapshot
     does_not_write:
       - gate-verdict
   taste-review:
@@ -675,6 +689,12 @@ artifacts:
     evidence:
       - scope and residual uncertainty
       - reproduction and evidence chain paths
+  - id: review-executed-probes
+    owner: code-chief
+    before: review-to-delivery
+    evidence:
+      - probe log as a hashed file, executed against the reviewed revision
+      - the lens that ran each probe, so a finding traces to the run behind it
   - id: findings
     owner: code-chief
     before: review-to-delivery
@@ -717,6 +737,12 @@ artifacts:
     evidence:
       - executed probe log for unauthorized, malformed, replayed, expired, and over-broad requests
       - observed denial at the boundary, or the sanctioned fallback value
+  - id: security-findings
+    owner: cso
+    before: security-review
+    evidence:
+      - graded items with id, severity, status
+      - deferral owner and reopen trigger for any Major not verified
   - id: remediation-plan
     owner: cso
     before: security-review
@@ -844,6 +870,12 @@ artifacts:
     evidence:
       - environment settings and target
       - secrets handling policy
+  - id: taste-snapshot
+    owner: taste
+    before: design-to-build
+    evidence:
+      - the resolved effective profile as a hashed file, or the sanctioned fallback value
+      - the store revision the snapshot was taken at
   - id: taste-intake
     owner: taste
     before: taste-review

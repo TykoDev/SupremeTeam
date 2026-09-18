@@ -2,13 +2,13 @@
 
 ## Contents
 
-1. Example 1
-2. Example 2
-3. Example 3
+1. Example 1 — Clean import, verified account and tenant
+2. Example 2 — Cookies import but auth state is incomplete
+3. Example 3 — Authenticated into the wrong org
 4. Example 4 — credential hygiene end to end
 5. Example 5 — provenance refusal
 
-## Example 1
+## Example 1 — Clean import, verified account and tenant
 
 **User request:** set up the browser session for the customer billing page
 
@@ -17,7 +17,7 @@
 - Verification: browser opens directly on `/billing` under the intended finance-admin account and tenant.
 - Next move: hand the session to `browse` for the requested billing walkthrough before the 20-minute expiry window closes.
 
-## Example 2
+## Example 2 — Cookies import but auth state is incomplete
 
 **User request:** import cookies for browser work
 
@@ -26,7 +26,7 @@
 - Evidence: redirect chain and rendered login page are captured.
 - Next move: obtain the full authenticated browser state, not just the cookie export.
 
-## Example 3
+## Example 3 — Authenticated into the wrong org
 
 **User request:** prepare the authenticated browser
 

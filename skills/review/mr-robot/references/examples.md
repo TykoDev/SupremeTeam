@@ -1,6 +1,6 @@
 # Example Invocations
 
-Four passes, each rendered in the full packet shape `../SKILL.md` mandates:
+Five passes, each rendered in the full packet shape `../SKILL.md` mandates:
 Outcome, Evidence, Findings, Open risks, Next action, Revision, in that order and
 with no verdict, because this lens owns no gate — `cso` issues the
 `security-review` verdict (`../../../execution-contract.md`, clause 6). The graded
@@ -8,7 +8,11 @@ passes carry the shape too, not just the clean one: the attacker model and the
 probe envelope live in the Outcome and Evidence lines, and a chain reported
 without them is a claim with no stated reach. Severities are the shared four
 tiers — `Critical | Major | Minor | Info` — and nothing else; "exploit chain"
-names the form of a finding, never its grade.
+names the form of a finding, never its grade. Example 5 is a REVISE delta round
+rather than a fresh engagement, because two of the delta rules — re-probe rather
+than re-argue, and re-check the authorization envelope before the round's first
+request — have no first-round analogue, and the second is the one most easily
+skipped when a fix opens a boundary that was never scoped.
 
 ## Example 1
 
@@ -62,3 +66,21 @@ names the form of a finding, never its grade.
 - Open risks: the denial behavior is read from code rather than observed, and the assumed attacker model excludes an insider holding a valid signing key.
 - Next action: none from this lens; an authorized probe window would convert the open risk above into evidence.
 - Revision: r2.
+
+## Example 5 — REVISE delta round
+
+**User request:** (routed, not asked) `cso` delegates the `denial_path_evidence`
+group of the `security-review` REVISE packet straight to this lens;
+`changed_evidence` names the reset-initiation and verification endpoints.
+Continues Example 2.
+
+**Output:**
+- Outcome: mr-robot delta, r2 <- r1, 2 findings carried: 1 verified, 1 still conditional, plus one authorization gap recorded. Attacker model unchanged: unauthenticated external.
+- Evidence, and the envelope re-check that came before it: the r1 engagement authorized probing against the reset initiation and verification endpoints on the staging instance. The fix moved rate limiting behind a **new** edge service that was not in scope at r1, so authorization was re-checked before the round's first request rather than assumed to carry over — a boundary the fix introduced is a new target, whatever its purpose. The owner extended authorization to the two original endpoints on the same instance but not to the new edge service, so that boundary was not probed and `denial_path_evidence` records the sanctioned fallback `static analysis only - active probes not authorized` for it, scoped to that service alone.
+- **Re-probed, not re-argued**: the timing-equalization fix was verified by re-running the r1 enumeration probe class against the initiation endpoint and recording the new denial, not by reading the patch. Probe transcript at `security/evidence/probe-reset-enumeration-r2.log`, hashed into the manifest; the r1 transcript stays as lineage.
+- Findings:
+  - `MR-03` | Major | reset initiation endpoint → response-timing difference → user enumeration | **verified** — the re-run measures no usable timing difference between known and unknown accounts across 500 paired requests; the work is queued behind a uniform response path. Same id, same severity, status `verified`.
+  - `MR-04` | Major | verification endpoint → per-IP-only rate limit → credential stuffing | **conditional, unchanged** — the effective tier now lives in the unprobed edge service, so the missing link moved rather than closed. It returns under its original id and severity: a chain whose evidence became *less* reachable is not a chain that was fixed, and recording it as verified because the probe could not run would invert the meaning of the grade.
+- Open risks: the whole of `MR-04` now depends on a boundary this round was not authorized to probe. Either authorization for the edge service or its deployed limiter configuration settles it; until then the conditional stands with its reason named.
+- Next action: `cso` decides whether to obtain probe authorization for the edge service inside this cycle or carry `MR-04` into the verdict as a conditional with its stated gap. Cycle 1 of a `cycle_cap` of 2 is spent.
+- Revision: r2 <- r1.

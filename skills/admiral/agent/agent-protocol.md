@@ -54,9 +54,9 @@ tools_verified: [list of confirmed tool categories]
 Before Admiral creates a new run or accepts a fresh-looking request, inspect `skillset-saves/` per `../../save-protocol.md` §2 Startup:
 
 1. Read `_latest.md` when present, then read the latest run's `_state.md` and `_lock.md`. Treat `_latest.md` as a pointer only — if it is missing or stale, scan `runs/*/_state.md` directly rather than concluding no run exists.
-2. Classify the save directory as `active`, `inactive`, `orphaned`, `missing`, `unreadable`, or `conflict`.
+2. Classify the save directory into one of the ten values `../../save-protocol.md` §2 Startup defines: `active`, `inactive`, `complete`, `stale`, `orphaned`, `conflicting`, `corrupt`, `interrupted`, `missing`, `unreadable`. The classifier is `save_run.py status --run-id <id>`; only `active` and `orphaned` reinforce the session pin. The value is `conflicting`, not `conflict` — that is the spelling `_saves.py` emits and the one the state field below must carry.
 3. If the directory is `active`, run the resume protocol and continue from the earliest incomplete boundary.
-4. If the directory is `orphaned` (a non-terminal run exists under `runs/` but `_latest.md` is missing, unreadable, or points at a missing/terminal run), rebuild `_latest.md` to point at the most recent non-terminal run, append `LATEST_POINTER_REBUILT`, then run the resume protocol. Never fork a fresh run over a recoverable orphan.
+4. If the directory is `orphaned` (a non-terminal run exists under `runs/` but `_latest.md` is missing, unreadable, or points at a missing/terminal run), restore `_latest.md` through the sanctioned writer — `save_run.py heartbeat --run-id <run> --owner admiral` while the lock is held and fresh, or `save_run.py recover --run-id <run> --owner admiral --reason "<why>"` (with `--rollback` if an interrupted-checkpoint journal is present) when it is not — then run the resume protocol. The writer's own audit event (`recover` / `rollforward` / `rollback`) is what lands in `_audit-trail.md`; the pointer is never hand-written. `LATEST_POINTER_REBUILT` is an agent-mode state field (see the field list below), recorded with `--set` on the same call — it is not an audit event and cannot be appended to the trail. Never fork a fresh run over a recoverable orphan.
 5. If the directory is `conflict`, stop and warn that another fresh session owns the run unless the lock is stale and reclaimable.
 6. If the directory is `inactive` or `missing`, create `skillset-saves/`, run the write-capability probe, and initialize a new run only after activation succeeds.
 7. If activation fails, warn once, attempt read-only resume from any readable latest artifacts, and continue in transient mode only when no coherent boundary can be proven.
@@ -70,8 +70,9 @@ Mode is not static. Hosts can gain or lose capabilities mid-session — most com
 1. Re-run the three-capability probe above.
 2. Compare the result to `execution_mode` in `_state.md`.
 3. If they differ:
-   - Update `execution_mode` and `execution_mode_detected_at` in `_state.md`.
-   - Append `MODE_RECHECK` to `_audit-trail.md` with `cached={old}`, `detected={new}`, `action={upgrade|downgrade}`.
+   - Publish the change through the writer, which is the only path that reaches `_state.md`:
+     `save_run.py checkpoint --run-id {run-id} --owner admiral --expect-revision <n> --set execution_mode=<new> --set execution_mode_detected_at=<ISO> --set mode_recheck="cached={old},detected={new},action={upgrade|downgrade}"`.
+     The trail records the writer's own `checkpoint` event; the recheck detail rides in the state it publishes.
    - Continue the delegation under the new mode in place. Do not abort, do not force the user to retry.
 4. If they match, log a cache hit only.
 
@@ -81,12 +82,12 @@ Mode is not static. Hosts can gain or lose capabilities mid-session — most com
 
 ### Write-Capability Probe
 
-Before the first save and at every heartbeat refresh, run the write-capability probe defined in `save-protocol.md` after the startup classification above:
+Before the first save and at every heartbeat refresh, run the manual write-capability probe defined in `../../save-protocol.md` §2.4b, after the startup classification above. It is distinct from the probe `save_run.py create` runs internally at `<run-dir>/.probe`: this one is the agent's pre-flight check, deliberately at a path outside the core-run-record class so no sanctioned writer is bypassed.
 
 1. Write a short ASCII payload to `skillset-saves/_probe-{run-id}.tmp`.
 2. Read it back and verify byte equality.
 3. Delete the probe file.
-4. Record the result in `_state.md` (`persistence_active`, `persistence_probe_result`) and append `PERSISTENCE_PROBE` to `_audit-trail.md`.
+4. Record the result through the writer: `--set persistence_active=<true|false> --set persistence_probe_result=<ok|failed|skipped>` on the next `save_run.py checkpoint` (or read it straight off the `create` result, which returns `degraded` when the probe failed). Both fields land in `_state.md`; neither is appendable to `_audit-trail.md`.
 
 If the probe fails at intake or activation, set `Persistence active: no`, surface a single user-visible warning, attempt read-only resume from any readable latest artifacts, and continue in transient mode only if no coherent resume boundary exists. If a heartbeat probe fails mid-run, downgrade `persistence_active` to `no`, warn once, emit `RESUME_FALLBACK` when readable state exists, and stop emitting save calls — do not pretend writes succeeded.
 
@@ -97,7 +98,7 @@ Hosts that support continuous turns (Claude Code, Codex chat, Copilot chat) hono
 1. When the run enters any `*_ACTIVE`, `*_GATE_PENDING`, or `*_GATE_REVISE` state and `_lock.md` is held, set `session_pin: true` in `_state.md`.
 2. Every subsequent user input in the same session — even without the keyword "admiral" — is interpreted as input to the active sub-orchestrator.
 3. Routing precedence: explicit slash command > admiral session pin > free conversation.
-4. The pin clears on `RUN_COMPLETE` (`DELIVERED`), the user command `release admiral` or `/exit-admiral`, or lock staleness; each release appends `SESSION_PIN_RELEASE` to `_audit-trail.md`.
+4. The pin clears on `RUN_COMPLETE` (`DELIVERED`), the user command `release admiral` or `/exit-admiral`, or lock staleness; each release is recorded by the `save_run.py` call that ends the run — `complete`, `block`, or `release`, whose audit event is `complete` / `blocked` / `released` — with the reason carried as `--set session_pin_release=<delivered|user-release|lock-stale>`. Nothing appends a `SESSION_PIN_RELEASE` line directly; Rule C denies it.
 
 Hosts without continuous turns ignore the pin and rely on explicit invocation each turn.
 
@@ -144,8 +145,8 @@ For each active stage:
      - **ESCALATE**: freeze the boundary, preserve the state, and present the blocking issue to the user.
 
 5. **State persistence**
-   - Update the run-state record after every state transition.
-   - Append to the audit-trail record after every significant event.
+   - Publish every state transition through `save_run.py` — it writes `_state.md`, `_lock.md`, `_latest.md`, and the audit line atomically, and it is the only writer the hooks admit.
+   - Carry agent-mode detail as `--set key=value` on that same call. The audit trail is not separately appendable: its event vocabulary is fixed by the writer, and no operation accepts an arbitrary event name.
    - Refresh the lock heartbeat at least every 300 seconds, and at the same cadence re-run the write-capability probe and the three-capability mode probe. Reconcile any drift in place per the rules above.
 
 ### Skill-Creation Utility Path
@@ -239,7 +240,7 @@ agent_platform: "copilot" | "codex" | "claude" | "other"
 tools_verified: ["file-system", "terminal", "search", "sub-agent", "memory"]
 persistence_active: true | false
 persistence_probe_result: "ok" | "failed" | "skipped"
-save_directory_status: "active" | "inactive" | "missing" | "unreadable" | "conflict"
+save_directory_status: "active" | "inactive" | "complete" | "stale" | "orphaned" | "conflicting" | "corrupt" | "interrupted" | "missing" | "unreadable"
 persistence_activation_result: "activated" | "resumed" | "failed" | "skipped"
 persistence_activation_checked_at: "{ISO 8601}"
 resume_source: "latest" | "explicit" | "none"
@@ -261,16 +262,51 @@ skills_engaged: ["{skill-name}", ...]   # canonical, append-once list of every c
 checkpoint plus the first stage sub-orchestrator are both unconditional, this list always holds at least two
 entries by the time any stage completes.
 
-Agent mode adds these events to the audit-trail record:
+### Where agent-mode events are actually recorded
+
+Read this before using the list below, because the obvious reading of it is
+wrong. These event names are **not** appendable to `_audit-trail.md`, and an
+agent that tries produces a denial rather than a record:
+
+- `_audit-trail.md`, `_state.md`, `_lock.md`, `_latest.md`, `_journal.json` and
+  `_history/*` have exactly one writer, `save_run.py`
+  (`../../save-ownership.yaml` class `core-run-record`). `pre_tool_use.py`
+  Rule C denies every edit-tool write to them and every mutating shell command
+  that names one without invoking `save_run.py`.
+- `save_run.py` emits its own fixed event vocabulary and has **no annotation
+  operation**: nothing in `create | checkpoint | heartbeat | complete | block |
+  release | recover | status` takes an arbitrary event name. The trail can only
+  ever contain `create`, `checkpoint`, `reopen`, `resume`, `complete`,
+  `blocked`, `released`, `recover`, `rollforward`, `rollback`, and
+  `pointer-degraded`.
+
+So the events below are **run-state fields, not trail lines**. Record each one
+the only way the harness allows — as a `--set key=value` on the next
+`save_run.py checkpoint`, which lands it in `_state.md` beside the state block
+above:
+
+```bash
+python skills/harness/hooks/save_run.py checkpoint --run-id {run-id} --owner admiral   --expect-revision <n> --set mode_recheck=upgrade --set persistence_probe_result=ok
+```
+
+`--set` refuses the reserved fields (`schema_version`, `run_id`, `status`,
+`session_pin`, `revision`, `parent_revision`, `active_owner`, `evidence_paths`,
+`timestamp`, `artifact_hashes`) and accepts any other key. The writer's own
+`checkpoint` event is what appears in the trail; the agent-mode detail rides in
+the state it published. Where a row describes a state change, the `save_run.py`
+call *is* the record — there is no second annotation step to perform.
+
+Read the rows below as the field vocabulary for that `--set`, one line per
+recordable agent-mode fact:
 
 ```
 - AGENT_MODE_DETECTED — execution_mode set to agent, platform: {platform}
-- SAVE_STATUS_CHECK — status: {active|inactive|orphaned|missing|unreadable|conflict}, action: {resume|recover|activate|transient|stop}
+- SAVE_STATUS_CHECK — status: {active|inactive|complete|stale|orphaned|conflicting|corrupt|interrupted|missing|unreadable}, action: {resume|recover|activate|transient|stop}
 - PERSISTENCE_ACTIVATION — result: {activated|failed|skipped}, reason: {message}
 - MODE_RECHECK — cached: {old_mode}, detected: {new_mode}, action: {upgrade|downgrade|cache-hit}
 - PERSISTENCE_PROBE — result: {ok|failed|skipped}, persistence_active: {true|false}
 - RESUME_FALLBACK — source: {latest|explicit}, result: {resumed-read-only|transient}
-- LATEST_POINTER_REBUILT — source: runs-scan, run: {run-id}, reason: {missing|stale|terminal}-latest-pointer
+- LATEST_POINTER_REBUILT — source: runs-scan, run: {run-id}, reason: {missing|stale|terminal}-latest-pointer, writer_op: {heartbeat|recover|rollforward|rollback} (the named writer call rebuilds the pointer and writes its own audit event; this field only records that it happened)
 - MCP_REGISTRY_CHECK — action: {use-cache|refreshed}, age_hours: {N}
 - SESSION_PIN_RELEASE — reason: {delivered|user-release|lock-stale}
 - DELEGATION_STARTED — target: {name}, submission_id: {id}

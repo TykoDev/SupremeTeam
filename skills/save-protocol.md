@@ -164,6 +164,32 @@ prompt-submit hook, and the gate checker's run-root verification.
    first, because a second held run beside a stale one leaves both
    `conflicting` and neither pinnable), and publishes revision 1 with the
    pointer.
+4b. **Manual write-capability probe (agent mode).** `create`'s internal probe
+   runs *inside* `create`, so it reports a read-only workspace only by failing the
+   run's first write. An agent host that must know before it commits to a run —
+   and that re-checks at every heartbeat — runs this probe instead, at a path
+   deliberately outside the core-run-record class so no sanctioned writer is
+   bypassed:
+
+   - Path: `skillset-saves/_probe-{run-id}.tmp`, one per run, never under
+     `runs/`. `pre_tool_use.py` Rule C covers `_latest.md` and `runs/*/` core
+     files; this path is neither, so an ordinary edit tool may write it.
+   - Steps: write a short ASCII payload, read it back and verify byte equality,
+     then delete it. Any step failing is a probe failure.
+   - Recording: the result is state, not a trail line — carry it as
+     `--set persistence_active=<true|false> --set persistence_probe_result=<ok|failed|skipped>`
+     on the next `save_run.py checkpoint`. There is no audit operation that
+     accepts a probe event.
+   - Cadence: before the first save, and again at every heartbeat refresh.
+   - On failure: set `Persistence active: no`, warn once, attempt read-only
+     resume from any readable latest artifacts, and continue transiently only
+     when no coherent boundary can be proven.
+
+   The two probes are complementary, not alternatives: this one is a pre-flight
+   check the agent controls, `create`'s is the writer proving its own first
+   write. Neither substitutes for the other, and the temp file is deleted in
+   both the pass and the fail path — a `_probe-*.tmp` left behind is a defect.
+
 5. Mark persistence active only after `create` returns `result: ok`. A
    `degraded` result (exit 2) means the write failed and nothing coherent was
    published: warn once, keep readable evidence, and use transient mode only

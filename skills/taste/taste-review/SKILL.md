@@ -5,8 +5,8 @@ description: >-
   provenance, conflicts, redaction, confirmation, and persistence safety, then writes
   the taste-review record for the `taste-review` gate. Use when `taste` hands a
   package to the review stage, or the user asks to review, audit, or double-check a
-  preference, settings, or config change before it is saved — even when they only ask
-  "is this safe to save?". Never mutates a preference store; preference decisions
+  change to the Taste preference store before it is saved — even when they only ask
+  "is this safe to save?". Not a reviewer for application settings or config files. Never mutates a preference store; preference decisions
   belong to `taste`.
 version: 1.0.0
 allowed-tools: Read, Grep, Glob, Bash, Write
@@ -86,10 +86,13 @@ inherits unexamined.
 | `taste_review_record` | artifact | no | step 8 |
 | `residual_uncertainty` | claim | yes — "none observed" | step 8 |
 
-Every "yes" in the Waivable column means the wording travels as the `reason` of an
-applicability record `{applicable: false, reason, scope, decided_by}`, never as a bare
-string: this package is `schema_version: 2`, where `check.py` fails a bare fallback
-with `bare fallback string not accepted at schema 2`.
+**The schema-2 waiver rule, stated once.** Every "yes" in the Waivable column
+means the sanctioned wording travels as the `reason` of an applicability record
+`{applicable: false, reason, scope, decided_by}`, never as a bare string: this
+package is `schema_version: 2`, where `check.py` fails a bare fallback with
+`bare fallback string not accepted at schema 2`. Every per-key check in
+`references/workflow.md` inherits this rule rather than restating it; what those
+steps add is *when each reason is admissible*, which differs per key.
 
 Two properties of that table decide most findings:
 
@@ -132,7 +135,7 @@ Two properties of that table decide most findings:
 When the Save Context block carries `Persistence active: yes`, write the review
 record to the destination it names (normally
 `skillset-saves/runs/{run-id}/taste/reports/taste-review-record.md`, resolved
-with `python skills/scripts/output_paths.py --phase taste --kind reports`) and
+with `python skills/scripts/output_paths.py --run-id <run-id> --phase taste --kind reports --name taste-review-record.md` — all four are required) and
 return its path and sha256 so `taste` can register it as `taste_review_record`
 in `taste/manifest.json`. Write nothing else. When persistence is inactive,
 return the record inline.

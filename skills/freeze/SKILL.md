@@ -66,7 +66,26 @@ python skills/harness/hooks/guard_state.py freeze --glob "src/payments/**" --own
 python skills/harness/hooks/guard_state.py status
 ```
 
-Each run appends one owned record to `frozen_globs`. Two fields decide who can ever lift it: `owner`, and the `approvers` the writer records from `--approver`. A release is authorized by either, so a boundary whose owner may go off-shift is recorded with a named delegate at freeze time rather than negotiated later. A record stays effective until its owner records `released_at`; age alone never expires a protection.
+**Globs are always written with forward slashes, on every platform.** This is a
+Windows-first repository, so the backslash form is the one a contributor is most
+likely to paste:
+
+```bash
+# Wrong on Windows - a backslash path is stored verbatim and read back as a
+# different string than the one status prints.
+python skills/harness/hooks/guard_state.py freeze --glob "src\payments\**" --owner <contributor> --scope "<why>"
+
+# Right on every platform.
+python skills/harness/hooks/guard_state.py freeze --glob "src/payments/**" --owner <contributor> --scope "<why>"
+```
+
+The enforcement hook normalizes backslashes to forward slashes before matching
+(`pre_tool_use.py`), so a backslash glob still *enforces*. The writer does not:
+it stores and compares the string exactly as given, so a backslash spelling and a
+forward-slash spelling of the same boundary are two independent records, each
+needing its own release. Write the forward-slash form once and release it once.
+
+Each run appends one owned record to `frozen_globs`. Two fields decide who can ever lift it: `owner`, and the `approvers` the writer records from `--approver`. A release is authorized by either, so a boundary whose owner may go off-shift is recorded with a named delegate at freeze time rather than negotiated later. A record stays effective until `released_at` is recorded by its owner **or by one of its approvers** — the same two-field authority the sentence above describes, and what `references/enforcement.md` § Authority fields enforces. Age alone never expires a protection.
 
 The writer exits 1 and changes nothing when the glob is already recorded and unreleased or the record on disk is corrupt, so a duplicate or damaged freeze surfaces instead of being silently overwritten. Any other non-zero exit means the freeze was **not recorded** at all — check the command actually ran before reporting a boundary that does not exist.
 

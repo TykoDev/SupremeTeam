@@ -254,9 +254,25 @@ boundary.
 
 ## State safety
 
-Resolve runtime state beneath `SUPREMETEAM_PROJECT_DIR` when set, then the
-verified project root, then an isolated temporary harness state directory. Do not
-read or honor legacy aliases.
+Resolve runtime state in this order, which is what `harness/hooks/_state.py`
+implements — `_PROJECT_ENV` at `:48` for the variables, `_ROOT_MARKERS` at `:47`
+for the markers, `state_dir()` for the fallback:
+
+1. `SUPREMETEAM_PROJECT_DIR`, the catalog's own variable.
+2. The host's project-directory variable, tried in order: `CLAUDE_PROJECT_DIR`,
+   `CODEX_WORKSPACE_DIR`, `GITHUB_WORKSPACE`. These exist so the harness lands in
+   the right tree when it runs inside a host that already knows the workspace, and
+   the first one set wins — none of them is a legacy alias for the first.
+3. The verified project root: the nearest ancestor of the working directory
+   holding `skillset-saves/`, `.harness-state/`, or `.git`.
+4. The working directory itself.
+5. A *project-namespaced* directory under the OS temp root — never one temp
+   directory shared across unrelated projects.
+
+State lives at `<resolved base>/.harness-state`. No other variable is read: there
+is no deprecated or renamed spelling of any of the four that the harness still
+honours, so a variable outside this list has no effect rather than a
+quietly-supported one.
 
 ## Failure paths
 

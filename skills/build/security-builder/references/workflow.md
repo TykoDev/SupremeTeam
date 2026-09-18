@@ -66,7 +66,7 @@ unchanged; neither boundary is submitted by security-builder itself. The
 | Key | Boundary | What it must contain | Artifact-backed | Typed record | Sanctioned fallback |
 | --- | --- | --- | --- | --- | --- |
 | `security_seed` | `design-to-build`, submitted by `design/commander` | The `security-seed` artifact `../../../ownership.yaml` assigns to security-builder: the trust boundaries the design introduces or moves, and the controls the build must implement for each one | No. `artifact_evidence` at `design-to-build` lists `decisions`, `architecture`, `plan`, and `taste_snapshot` only | None. `evidence_types` assigns this key no shape, so a plain statement satisfies the mechanical check | None. `../../../gates.yaml` `fallback_values` carries no entry for this key, so it is not waivable at that boundary and no applicability record substitutes for it |
-| `security_evidence` | `build-to-review`, submitted by `build/build-management` | The `security-evidence` artifact `../../../ownership.yaml` assigns to security-builder: the graded record of what was found, and the controls actually implemented against the seeded boundaries | No. `artifact_evidence` at `build-to-review` lists `tests` and `runtime` only | `findings`: `{items: [{id, severity, status, owner?, reopen_trigger?, reason?}]}`. Critical is verified or not-applicable with a reason; Major is verified, not-applicable with a reason, or deferred with an owner and a reopen trigger | `no trust-boundary change - security-builder not engaged`, used only when no trust boundary moved, never to cover a checkpoint that was skipped while one did. Carried at manifest schema 2 as an applicability record with reason, scope, and decider — a bare string is refused |
+| `security_evidence` | `build-to-review`, submitted by `build/build-management` | The `security-evidence` artifact `../../../ownership.yaml` assigns to security-builder: the graded record of what was found, and the controls actually implemented against the seeded boundaries | No. `artifact_evidence` at `build-to-review` lists `tests` and `runtime` only | `findings`: `{items: [{id, severity, status, owner?, reopen_trigger?, reason?}]}`. Critical is verified or not-applicable with a reason; Major is verified, not-applicable with a reason, or deferred with an owner and a reopen trigger | `no trust-boundary change - security-builder not engaged`, used only when no trust boundary moved, never to cover a checkpoint that was skipped while one did. Carried at manifest schema 2 as an applicability record with `reason`, `scope`, and `decided_by` — a bare string is refused |
 
 ## Scan Record Assembly
 
@@ -74,12 +74,7 @@ A scanner's output becomes evidence only as a typed record. Produce it with the
 repository's own writer rather than by hand:
 
 ```bash
-python skills/scripts/scan_record.py \
-  --out <phase>/evidence/security-scan.json \
-  --input <lockfile or manifest> \
-  --tool <scanner name> \
-  --version-command "<scanner> --version" \
-  -- <scanner command>
+python skills/scripts/scan_record.py --out <phase>/evidence/security-scan.json --input <lockfile or manifest> --tool <scanner name> --version-command "<scanner> --version" -- <scanner command>
 ```
 
 Resolve `<phase>/evidence/` with

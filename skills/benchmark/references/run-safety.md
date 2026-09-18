@@ -13,6 +13,7 @@ partial sample set.
 4. The restore register
 5. Partial sample sets
 6. Sensitive performance data
+7. Where the load generator runs
 
 ## 1. Why a Non-Production Target Still Needs a Ceiling
 
@@ -98,3 +99,17 @@ Throughput ceilings, queue depths, and latency distributions describe business l
 code. Treat a benchmark report as an internal metric: keep customer identifiers out of workload
 descriptions, keep production-derived volume figures out of anything externally circulated, and
 name the owner when a figure has to travel further than the team.
+
+## 7. Where the Load Generator Runs
+
+The generator is part of the measured system whether or not it is meant to be.
+Running it on the host that runs the target means the two compete for the same
+CPU, the same memory bandwidth, and the same network stack, and the contention
+grows with the load — so the measurement degrades exactly where the numbers
+matter most, at the top of the range.
+
+- **Default: a separate host on the same network segment.** The generator's own CPU should stay below roughly 50% at peak; a saturated generator reports its own queueing delay as the target's latency, and the two are indistinguishable from the result.
+- **When it must share the host**, say so in the environment fingerprint, pin the generator and the target to disjoint CPU sets where the platform allows it, and treat the absolute numbers as comparative only. A same-host run can still answer "is the candidate slower than the baseline?" — it cannot answer "what is the latency?"
+- **Check for self-contention before trusting a result**: re-run the baseline arm at half the load. If per-request latency drops more than the load reduction alone explains, the generator or the host was the bottleneck, and the full-load numbers describe the harness rather than the target.
+- **Network position is part of the workload.** A generator on the loopback interface skips the network stack the real client traverses. That is a legitimate choice for isolating a code change, and a misleading one for a latency budget; name which the run is for.
+- The generator's own version, concurrency model, and connection-reuse settings belong in the environment fingerprint alongside the target's. A generator upgrade between baseline and candidate invalidates the comparison as surely as a runtime upgrade would.

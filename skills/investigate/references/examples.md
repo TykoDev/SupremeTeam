@@ -13,6 +13,17 @@ it never writes, so every example ends with a handoff rather than a change.
 4. A mitigation that removes the symptom without proving the chain
 5. REVISE on the evidence chain
 
+## Example 0 — Contrast collapse traced to a token layer (DESIGN-owned)
+
+**User request:** find the root cause (secondary buttons became unreadable in dark mode after a design-system sync)
+
+**Output:**
+- `scope`: the secondary button's foreground/background pair in dark mode across the six responsive tiers, from the token sync commit onward; component-level overrides elsewhere in the surface are excluded, and the owning phase is DESIGN.
+- `reproduction`: the dark-theme render of the button catalog at the two tiers where it fails, captured through `design-qa` and written to the destination `output_paths.py --kind evidence --name reproduction-contrast.json` resolves, hashed into `artifact_hashes`, with the measured ratio (2.9:1) recorded beside the required floor.
+- `evidence_chain`: four observed links — the computed pair in the rendered capture, the resolved value of `--color-fg-muted` in the built stylesheet, the sync commit's diff against the upstream token set, and the upstream release note narrowing that token's lightness range in dark mode.
+- `mechanism`: the sync adopted an upstream lightness change for one semantic token without re-deriving the pairs that consume it, so a pair that was compliant before the sync no longer clears AA. Confidence: high.
+- `fix_path` and `residual_uncertainty`: re-derive the muted-foreground pair against the dark surface token and re-verify the ratio at both failing tiers — owned by DESIGN (`architect` holds the token system, `design-qa` re-captures), not by BUILD, since nothing in the application code is implicated. Whether other pairs consuming the same token sit close to the floor is not covered; a full pair sweep would settle it.
+
 ## Example 1 — Latency spike after two simultaneous changes
 
 **User request:** investigate this issue (checkout latency spiked after a deploy)

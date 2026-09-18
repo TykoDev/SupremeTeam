@@ -1,6 +1,7 @@
 # Example Invocations
 
-Four passes, each rendered in the full packet shape `../SKILL.md` mandates:
+Five passes — four fresh and one REVISE delta — each rendered in the full packet
+shape `../SKILL.md` mandates:
 Outcome, Evidence, Findings, Open risks, Next action, Revision, in that order and
 with no verdict, because this lens owns no gate (`../../../execution-contract.md`,
 clause 6). The graded passes carry the shape too, not just the clean one — a pass
@@ -60,3 +61,22 @@ them there teaches the packet as decoration. Severities are the shared four tier
 - Open risks: no fixture covers a negative total, so behavior below zero is untested rather than proven correct.
 - Next action: none from this lens.
 - Revision: r3.
+
+## Example 5 — a REVISE delta pass
+
+The round after Example 1. `review/code-chief` sub-delegates the part of the
+`review-to-delivery` REVISE group this lens owns; `changed_evidence` names
+`orders/retry_handler.ts` and `orders/tests/test_retry.ts`.
+
+**User request:** re-review the retry handler against the REVISE packet
+
+**Output:**
+- Outcome: bug-review delta, r5 <- r4, 1 finding carried, 1 verified, 1 new out-of-delta.
+- Evidence: only the two paths in `changed_evidence`, plus `orders/persistence.ts` because `BUG-01`'s correctness depends on the transaction boundary it owns. Everything else keeps its r4 judgment and was not re-read.
+- Findings:
+  - `BUG-01` | Critical | `orders/retry_handler.ts:142` | **verified** — the marker write now sits inside the emit's transaction, and the added interleaving test fails against the r4 code and passes against r5. Same id, same severity, status `verified`.
+  - `BUG-02` | Info | unchanged and still with `review/security-review`; nothing in `changed_evidence` touches it, so it is carried forward rather than re-judged.
+  - `BUG-06` | Major | `orders/persistence.ts:88` | **out-of-delta** — the new transaction wrapper swallows a rollback error, so a failed marker write reports success. Found while reading a path `BUG-01` depends on, but outside `changed_evidence`: reported as out-of-delta rather than folded into the round. `review/code-chief` decides whether it enters this cycle or the next.
+- Open risks: unchanged from r4 — the redelivery guarantee is still read rather than observed.
+- Next action: `review/code-chief` rules on `BUG-06`'s cycle. Cycle 1 of a `cycle_cap` of 2 is now spent.
+- Revision: r5 <- r4.

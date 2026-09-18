@@ -53,7 +53,7 @@ Example 5 shows a correctly waived package passing rather than being blocked.
 | `D-01` event routing | `notifications/dispatcher.py` `1ae141ad…fa20` | `evidence/tests-unittest.log` :: `test_dispatcher_routes` | `SEC-04` verified | `proven` | waiver: none |
 | `D-02` template rendering | `notifications/templates.py` `f787e815…da5f` | `evidence/tests-unittest.log` :: `test_template_render` | `SEC-04` verified | `proven` | waiver: none |
 | `D-03` API contract | `api/endpoints/notify.py` `02c0661b…3762` | `evidence/tests-unittest.log` :: `test_notify_endpoint`, `test_notify_denied` | `SEC-07` verified | `proven` | waiver: none |
-| `D-04` config keys | `config/settings.py` `389dc786…8aff`, `config/env.sample` `7b9e596e…8af0` | `evidence/tests-unittest.log` :: `test_config_parity` | `SEC-09` verified | `proven` | waiver: none |
+| `D-04` config keys | `config/settings.py` `389dc786…8aff`, `config/env.sample` `7b9e596e…8af0` | `evidence/tests-unittest.log` :: `test_config_parity` | `SEC-09` deferred | `proven` | waiver: none; `SEC-09` carried, owner `build/build-management` |
 | `D-05` delivery receipts | — | — | — | `unproven` | `missing-artifact` |
 | `runtime` (package-level) | — | `evidence/runtime-smoke.log` `ff1dd65d…bf0d` | — | `proven` | waiver: none |
 
@@ -61,6 +61,21 @@ Example 5 shows a correctly waived package passing rather than being blocked.
 located in the package, found in the manifest's `artifact_hashes` map, and
 confirmed against package revision 3. `evidence/tests-unittest.log` carries
 `input_revision: 3`, matching.
+
+**Reading the deferred security cell.** `D-04` cites `SEC-09` as `deferred`,
+not `verified`, because that is the grade the run's own `security_evidence`
+record carries — `../../security-builder/references/examples.md` grades it
+`deferred` with owner `build/build-management` and a reopen trigger. The two
+records describe one finding and must agree: copying a `verified` into the matrix
+because the row's tests passed would launder a security grade through a build
+artifact, which is the single thing this pass exists to catch.
+
+A deferred finding does not make the row `unproven`. The `status` column grades
+build completeness — an approved decision with a hashed artifact and bound test
+evidence — and `D-04` has both. The deferral is a live security obligation
+travelling with an owner and a reopen trigger, recorded here so the gatekeeper
+reads one consistent grade, and it does not convert into a traceability gap.
+Grade the two axes separately and quote each from its own owner's record.
 
 **Counts:** 5 rows `proven`, 0 proven by waiver, 1 `unproven`.
 
@@ -109,9 +124,9 @@ status per row", so no translation step sits between the matrix and the manifest
 
 | decision_id | changed_artifact | test_evidence | security_evidence | status | reason |
 | --- | --- | --- | --- | --- | --- |
-| `D-01` help copy | `web/help/index.html` `8b2b6180…4dbb` | `evidence/tests-unittest.log` :: `test_help_render` | `no trust-boundary change - security-builder not engaged` | `proven` | waiver: `gates.yaml` `fallback_values.security_evidence` |
-| `D-02` template strings | `web/templates/notify.txt` `dbdae20c…f100` | `evidence/tests-unittest.log` :: `test_template_strings` | same sanctioned fallback | `proven` | waiver: same |
-| `runtime` (package-level) | — | `evidence/runtime-smoke.log` `7587f02c…1fb9` | — | `proven` | waiver: none |
+| `D-01` help copy | `web/help/index.html` `1a881292…b51b` | `evidence/tests-unittest.log` :: `test_help_render` | `no trust-boundary change - security-builder not engaged` | `proven` | waiver: `gates.yaml` `fallback_values.security_evidence` |
+| `D-02` template strings | `web/templates/notify.txt` `54d463dd…68b5` | `evidence/tests-unittest.log` :: `test_template_strings` | same sanctioned fallback | `proven` | waiver: same |
+| `runtime` (package-level) | — | `evidence/runtime-smoke.log` `ccba6169…a2b3` | — | `proven` | waiver: none |
 
 The waiver wording above is the `reason` of an applicability record
 `{applicable: false, reason, scope, decided_by}` in the manifest, not a bare

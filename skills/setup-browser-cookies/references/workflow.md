@@ -3,9 +3,10 @@
 ## Contents
 
 1. Authenticated-session setup sequence
-2. Decision rules
-3. Acceptance checklist
-4. Collaboration notes
+2. Credential-hygiene contract
+3. Decision rules
+4. Acceptance checklist
+5. Collaboration notes
 
 ## Authenticated-Session Setup Sequence
 

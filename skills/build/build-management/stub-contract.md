@@ -12,10 +12,10 @@ on every build.
 
 1. `bob-the-builder` for implementation
 2. `test-builder` for automated validation coverage, producing the `tests` probe log
-3. `security-builder` for hardening and remediation guidance, when a trust boundary is in scope
+3. *(conditional)* `security-builder` for hardening and remediation guidance, when a trust boundary is in scope
 4. `health-check` for runtime health, producing the `runtime` probe log — unconditional, and the one evidence key at `build-to-review` that a passing test suite can never stand in for
-5. `debugger` for a reproduced build-phase failure, when one exists
-6. `investigate` for the investigation pipeline, when the failure mechanism is unknown
+5. *(conditional)* `debugger` for a reproduced build-phase failure, when one exists
+6. *(conditional)* `investigate` for the investigation pipeline, when the failure mechanism is unknown
 7. `cross-check-build-confirm` for completeness confirmation
 8. `gatekeeper-build` for the phase gate at `build-to-review`
 

@@ -61,6 +61,26 @@ this pipeline enters there as the `design-system` input. The bare lifecycle
 phrasings — `redesign the UI`, `refresh the look and feel` — are advertised by
 the front door `admiral`, which runs intake and delegates here.
 
+### Scoping a surface too large to inventory exhaustively
+
+Parity is scored at coverage 1.0 against the inventory, so the inventory — not
+the application — is what the run commits to. Above roughly 25 routes, an
+exhaustive inventory and its twelve-capture-per-route baseline stop being
+affordable, and the answer is to **narrow the declared surface, never to accept
+partial coverage inside it**.
+
+At intake, before delegating stage 2, fix one of these and record which:
+
+- **Route-count ceiling.** Take the parity-defining flows named in the request and the routes they traverse, plus every route reachable in one step from them. Everything else is an explicit non-goal of this revision, listed by id in the inventory's scope note.
+- **Template sampling.** Where a surface repeats a template across many records (a detail page per entity, a settings pane per section), scope one representative per template and name the rest as covered-by-template.
+- **Phased redesign.** Split into two runs with their own inventories and gates, and say which routes belong to which. A second run's inventory is written against the surface as the first run left it.
+
+Whichever is chosen, the inventory is the contract: coverage 1.0 against a
+declared subset is a pass, and coverage 0.7 against the whole application is a
+`REVISE`. Never let a large surface turn into a short parity report; turn it into
+a smaller declared one. `design/design-mapper`'s Workflow step 7 carries the
+matching sampling rule for baseline captures inside whatever scope this fixes.
+
 ## Inputs
 
 - Admiral-normalized redesign request: the surface in scope (routes, screens, or the whole application), constraints, non-goals, brand inputs, and the flows that define functional parity.
@@ -102,7 +122,7 @@ requires every orchestrator and gatekeeper to carry the clauses verbatim; a
 paraphrase is drift.
 
 1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under
-   the Tier 0 fast path in routing-doctrine.md; Tier 1 for bounded read-only work beyond Tier 0;
+   the Tier 0 fast path in `skills/routing-doctrine.md`; Tier 1 for bounded read-only work beyond Tier 0;
    Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for
    destructive, security-sensitive, production, or irreversible work. Record the tier and
    rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline

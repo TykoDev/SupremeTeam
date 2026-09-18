@@ -106,12 +106,29 @@ Only when rungs 1–3 all fail, install the browser. This is a network and files
 announce it first, and in offline, locked, or frozen environments escalate instead of forcing
 the download.
 
+**Probe the target before the network call.** The install writes hundreds of
+megabytes to `PLAYWRIGHT_BROWSERS_PATH` (or the platform default), and a
+read-only path, a full volume, or a quota ceiling fails it *after* the download —
+leaving a partial cache that rung 3 will then detect and be unable to use on the
+next run. Confirm the destination is writable and has room first, and record the
+probe:
+
+```bash
+DEST="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
+mkdir -p "$DEST" && test -w "$DEST" && df -h "$DEST"
+```
+
+A probe failure is its own outcome, not a reason to try the install anyway: record
+the destination, the error, and the free space observed, and escalate to a host
+with a writable install path — the same escalation an offline environment takes.
+
 ```bash
 npx playwright install chromium          # or: chrome | msedge | firefox | webkit
 # On Linux CI hosts missing system libraries: npx playwright install --with-deps chromium
 ```
 
-Record that an install occurred and why reuse was not possible.
+Record that an install occurred, the probe result that preceded it, and why reuse
+was not possible.
 
 ## Decision Rules
 

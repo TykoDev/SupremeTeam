@@ -1,6 +1,6 @@
 # Example Invocations
 
-Four passes, each rendered in the full packet shape `../SKILL.md` mandates:
+Five passes, each rendered in the full packet shape `../SKILL.md` mandates:
 Outcome, Evidence, Findings, Open risks, Next action, Revision, in that order and
 with no verdict, because this lens owns no gate (`../../../execution-contract.md`,
 clause 6). The graded passes carry the shape too, not just the clean one. That
@@ -9,7 +9,10 @@ the Evidence line carries the sandbox identifier, the read-only boundary record,
 and the approved commands — so a finding from a step that ran and a finding from
 a step that was read are told apart by the packet rather than by the wording of
 the finding. Severities are the shared four tiers —
-`Critical | Major | Minor | Info` — and nothing else.
+`Critical | Major | Minor | Info` — and nothing else. Example 5 is a REVISE
+delta round rather than a fresh journey, because the three rules that make a
+re-walk trustworthy — a *fresh* sandbox, re-approval of any command the fix
+changed, and carried ids — are all invisible in a first-round packet.
 
 ## Example 1
 
@@ -65,3 +68,20 @@ the finding. Severities are the shared four tiers —
 - Open risks: only the Linux path was walked; the documented Windows variant has no sandbox available to this pass and is not covered by this result.
 - Next action: none from this lens.
 - Revision: r3.
+
+## Example 5 — REVISE delta round
+
+**User request:** (routed, not asked) `review/code-chief` sub-delegates the devex
+portion of its `review-to-delivery` REVISE group; `changed_evidence` names
+`scripts/bootstrap.sh` and `docs/setup.md`. Continues Example 3.
+
+**Output:**
+- Outcome: devex-review delta, r6 <- r5, journey executed, 3 findings carried: 2 verified, 1 new out-of-delta.
+- Evidence: sandbox `devex-r6-localstack-01` — a **newly built** container, not the one r5 left behind. That is the whole basis of the claim: r5's sandbox already carried a provisioned toolchain, so re-running there would have shown the fix working for a developer who had already onboarded, which is the one developer this lens does not speak for. Read-only boundary re-recorded over the reviewed tree before the first command and released at the end. The bootstrap step was **re-approved**: the fix replaced the remote-installer line with a pinned, checksummed fetch, and a changed command is a new command regardless of its unchanged name and purpose, so it was quoted to the owner again and approved on its new text. Steps re-walked: bootstrap, environment setup, and the health check that depended on the installer step. Transcripts under `review/evidence/`; sandbox destroyed at the end.
+- Findings:
+  - `DX-05` | Major | `scripts/bootstrap.sh:14` versus `docs/setup.md` | **verified** — the script's floor is now Node 22, matching the docs; the fresh sandbox bootstrapped from nothing on the documented version. Same id, same severity, status `verified`.
+  - `DX-06` | Major | `scripts/bootstrap.sh:31` | **verified** — the installer is pinned to a released version and checksum-verified before execution. Approved and executed this round, which is what moves the journey from partially executed to executed and settles the r5 open risk: the stack comes up.
+  - `DX-08` | Minor | `docs/setup.md:52` | **out-of-delta** — the docs still tell the reader to export a variable the new bootstrap sets itself, so a developer following both ends up setting it twice. Found inside `changed_evidence` by path, but unrelated to either r5 finding; reported as out-of-delta rather than folded into the round. `review/code-chief` decides the cycle.
+- Open risks: still Linux only — the documented Windows variant has no sandbox available to this pass, unchanged from r5.
+- Next action: both Majors are cleared, so this lens no longer blocks. `review/code-chief` rules on `DX-08`; cycle 1 of a `cycle_cap` of 2 is spent.
+- Revision: r6 <- r5.

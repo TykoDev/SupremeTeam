@@ -29,7 +29,7 @@ end.
 | `file` | The path the probe was added to, or the scratch file created |
 | `probe` | What was added, in one line |
 | `question` | The question it answers — a probe with no question is not a probe, it is a change |
-| `added_at` | When, so the observer effect can be lined up against the timeline |
+| `added` | When, so the observer effect can be lined up against the timeline |
 | `removed` | The removal, confirmed against the returned diff rather than from memory |
 
 Before the fix is handed back, remove every ledger entry and prove the removal

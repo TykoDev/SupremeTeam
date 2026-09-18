@@ -135,6 +135,15 @@ Recording it requires explicit owner confirmation first: a named approval, the
 scope it is for, and the reason a narrower command will not do. The writer
 records all three plus an expiry.
 
+**That confirmation is a convention, not a mechanism.** `cmd_allow_dangerous`
+writes whatever `--owner`, `--reason`, and `--scope` it is given; there is no
+confirmation step in the code, and the owner name is self-asserted like every
+other `--requester`/`--owner` string in this writer. So the fields prove that
+someone *recorded* an approval, never that one was *obtained*. The control that
+does bite is the expiry, which the hook re-reads on every call. Treat a grant
+whose reason reads thin the way you would treat an unsigned change: ask the named
+owner, rather than inferring approval from the record's existence.
+
 ```bash
 python skills/harness/hooks/guard_state.py allow-dangerous --owner <contributor> --reason "<why a narrower command will not do>" --scope "<the operation>" --minutes 15
 ```

@@ -12,7 +12,7 @@
 
 ## Browser Walkthrough Sequence
 
-1. Confirm the requested URL, environment, auth expectations, and any no-touch areas before beginning the walkthrough. Validate the target URL: require `http` or `https` scheme and refuse internal/loopback/metadata targets (localhost, 127.0.0.0/8, 169.254.169.254, RFC-1918 ranges, `*.internal`) and non-web schemes (`file:`, `chrome:`, etc.) unless the user has explicitly authorized an internal target — this prevents SSRF-style misuse where a supplied URL probes the internal network.
+1. Confirm the requested URL, environment, auth expectations, and any no-touch areas before beginning the walkthrough. Validate the target URL against the full rule in `../SKILL.md` Workflow step 1 — `http`/`https` only, internal and loopback targets on explicit authorization, non-web schemes never — before any navigation.
 2. Open or reuse the browser state that matches the requested surface, then capture the starting URL, visible page identity, and session status with the tooling below.
 3. Move through the requested flow one state at a time, anchoring observations in rendered UI, navigation changes, console signals, and screenshots.
 4. Stop at the first meaningful blocker, permission wall, or destructive boundary instead of pushing through with guesses.
@@ -34,10 +34,22 @@ path was used. Never assert a capture that no tool actually produced.
 | Accessibility snapshot | `mcp__playwright:browser_snapshot` | the structural read — roles, names, and states. Prefer it over a screenshot for verifying text and structure, and over any selector recalled from memory |
 | Screenshot | `mcp__playwright:browser_take_screenshot` | the visual read; pairs with the snapshot, never replaces it |
 | Interact | `mcp__playwright:browser_click` | drive from a snapshot reference rather than a guessed selector |
+| Type into a field | `mcp__playwright:browser_type` | target by snapshot reference; use placeholder or clearly synthetic values, never a real credential or a real person's data |
+| Fill a form | `mcp__playwright:browser_fill_form` | several fields in one call when the flow's evidence is the submitted state rather than the per-field behavior |
+| Select an option | `mcp__playwright:browser_select_option` | a `<select>` cannot be driven by clicking its options; snapshot the resolved value afterwards |
+| Press a key | `mcp__playwright:browser_press_key` | Enter to submit, Escape to dismiss, Tab to check focus order — the keyboard path is often the one a click never exercises |
+| Hover | `mcp__playwright:browser_hover` | reveals menus and tooltips that no snapshot shows until they open |
+| Upload a file | `mcp__playwright:browser_file_upload` | only a file the walkthrough created for the purpose |
 | Viewport | `mcp__playwright:browser_resize` | for responsive checks; record the width alongside the observation |
 | Tabs | `mcp__playwright:browser_tabs` | for flows that open a new context |
 | Console signals | `mcp__playwright:browser_console_messages` | client-side errors in the reader's own words |
 | Network signals | `mcp__playwright:browser_network_requests`, `mcp__playwright:browser_network_request` | request list, then one response body when a specific call is in question |
+
+Two rules over the typing rows. **Snapshot after every input**, not only after
+submit: a field that silently rejects or reformats what was typed is invisible
+otherwise. And **what is typed is evidence too** — record the values used, which
+is also why they must be synthetic. A walkthrough that types a real credential
+has put it into the page, the network log, and every capture that follows.
 
 ### Fallback: the Playwright library
 
@@ -109,7 +121,7 @@ exposure.
 
 ## Decision Rules
 
-- Validate the target URL before navigating: require `http`/`https` and refuse internal, loopback, metadata, or non-web-scheme targets unless the user explicitly authorized them.
+- Validate the target URL before navigating: require `http`/`https`, and refuse internal, loopback, and metadata targets unless the user explicitly authorized that network target. Authorization reaches network targets only — a non-web scheme (`file:`, `chrome:`, `chrome-extension:`, `devtools:`, `view-source:`) is refused unconditionally, whoever asks.
 - Prefer visible browser evidence over assumed selectors or stale notes; prefer the accessibility snapshot over a screenshot for anything about text or structure.
 - Name the tooling that produced each capture, and say whether it came from the registered MCP surface or the library fallback.
 - Redact every capture before it is written, and never write session-state material to the save path.

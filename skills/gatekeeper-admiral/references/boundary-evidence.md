@@ -12,7 +12,7 @@ the spec wins and this file is the defect.
 1. Artifact-backed keys per boundary
 2. Typed-record roster
 3. Sanctioned waivers, verbatim
-4. The `redesign-review` override
+4. The `redesign-review` overrides
 5. Reading a key that is neither artifact-backed nor typed
 
 ## 1. Artifact-backed keys per boundary
@@ -61,8 +61,22 @@ this table is untyped — required and non-falsy, nothing more.
 ## 3. Sanctioned waivers, verbatim
 
 A waiver is a typed applicability record — `{applicable: false, reason, scope,
-decided_by}` — whose reason is one of the strings below. Any other string, and
-any waiver on a key not listed here, fails mechanically.
+decided_by}` — whose reason should be one of the strings below.
+
+**Know how much of that the machine enforces**, because it is less than the
+sentence above suggests. `check.py` mechanically rejects two things: a waiver on
+a key this boundary does not list as waivable (*evidence not waivable*), and an
+applicability record missing any of `reason`, `scope`, `decided_by`
+(`check.py:343-355`). It does **not** compare the reason *text* against this
+table for an ordinary waivable key — any non-empty reason passes. The wording is
+compared in exactly two places: for a bare fallback string, which schema 2
+rejects on form anyway, and for the four selection-dependent keys at
+`redesign-review`, where `check_selection_dependencies` requires the reason to
+match the one the `selection.decision` implies, exactly.
+
+So for most keys the sanctioned wording is a **judgement** standard, enforced by
+workflow step 4 and by this gate returning `REVISE`, not by the checker. A green
+self-check does not mean the reasons were read. Read them.
 
 | Key | The only sanctioned reason |
 | --- | --- |
@@ -81,23 +95,61 @@ boundary: `before_revision` ("new store - no prior revision"), `consumer_handoff
 ("preference management only - no downstream consumer"), and
 `residual_uncertainty` ("none observed").
 
+The table above is the *global* map. Two boundaries depart from it, and the
+boundary's own entry in `../../gates.yaml` always wins: `redesign-review` removes
+`mock_rendering` from waivability entirely and **replaces** the list for
+`rendered_verification` and three sibling keys with two reasons of its own (§4),
+so the global `rendered_verification` reason is not available there; and
+`taste-review` adds the three reasons named above for keys with no global entry.
+Check the boundary before checking this table.
+
 `confirmation` is deliberately absent from every list. Inferred preferences and
 any global write, promotion, reset, or revocation require the explicit record, so
 a `confirmation` waiver is rejected as *evidence not waivable* rather than as a
 bad reason.
 
-## 4. The `redesign-review` override
+## 4. The `redesign-review` overrides
 
-`../../gates.yaml` lists `rendered_verification` under `redesign-review`'s
-`no_fallback`. At that boundary the key accepts neither the sanctioned string in
-§3 nor an applicability record, even though the global fallback exists
-everywhere else.
+`redesign-review` overrides the global fallback map in both directions. Read the
+boundary's own `no_fallback` and `fallback_values` off `../../gates.yaml` before
+judging any waiver there.
 
-The reasoning is substantive rather than procedural: a redesign changes a visible
-surface by definition, so "no visible surface changed" cannot be a true statement
-about a redesign package. Treat an attempted waiver there as a `REVISE` routed to
-`design-qa`, and ask for hashed captures across the required breakpoints and
-themes, bound by `inputs` to the rendered variant.
+**Narrowed — `mock_rendering`.** The boundary lists it under `no_fallback`, so it
+accepts neither a sanctioned string nor an applicability record, even though
+`render`-typed keys are waivable elsewhere. The reasoning is substantive: the
+four directions are mocks, and a mock that was never rendered is not evidence of
+anything. Treat an attempted waiver as a `REVISE` routed to `design-qa`, the
+key's owner, and ask for hashed captures across the required breakpoints and
+themes, bound by `inputs` to each mock.
+
+**Replaced — `rendered_verification` and its three build-dependent siblings.** At
+this boundary `rendered_verification`, `selected_variant`, `parity_evidence`, and
+`accessibility_evidence` each carry a boundary-level `fallback_values` list, and
+that list is **exhaustive**: a boundary entry shadows the global entry for the
+same key instead of extending it. `../../harness/gatekeeper/check.py:361-362`
+resolves `boundary.fallback_values[key] or spec.fallback_values[key]` — the
+boundary list short-circuits, so the two reasons below are the only sanctioned
+wordings here, both quoted verbatim in `../../gates.yaml`:
+
+| Reason | When it is true |
+| --- | --- |
+| `selection deferred - no variant built` | `selection.decision` is `deferred` — the run stopped at the mock set |
+| `merge brief recorded - implemented as a fifth direction in the design pipeline` | `selection.decision` is `merge` — the chosen direction is a synthesis handed onward, not a built variant |
+
+The consequence is easy to get backwards, so state it plainly: the global
+`rendered_verification` reason — `no visible surface changed - rendered
+verification not applicable` — is **not sanctioned at `redesign-review`**, even
+though it is sanctioned at every other boundary that requires the key. A package
+asserting it here is a `REVISE` for an unsanctioned waiver reason, not a granted
+waiver. The other three keys have no global entry at all, so the same two reasons
+are the whole list for them by construction.
+
+Accept either only when `selection` actually carries the matching `decision`, and
+only as a typed applicability record. A `variant` decision makes all four keys
+mandatory: there is a built variant, so it can be rendered, measured, and
+compared. Rejecting a correctly-recorded deferred or merge record is as much a
+failure as granting a waiver the boundary refuses — it routes a `REVISE` to
+`design-qa` for evidence no one was ever required to produce.
 
 ## 5. Reading a key that is neither artifact-backed nor typed
 

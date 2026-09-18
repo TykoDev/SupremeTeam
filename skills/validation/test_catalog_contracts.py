@@ -327,9 +327,10 @@ class SaveContextParityTests(unittest.TestCase):
     """Every copy of the Save Context block carries the same field set.
 
     `contracts/handoff-templates.md` and `save-protocol.md` both declare that
-    neither may drop a field the other carries, and seven skills embed the same
-    block. Nothing compared them, so adding `Preamble tier` to the canonical copy
-    would have left eight stale ones behind.
+    neither may drop a field the other carries, and eight more files embed the
+    same block — ten recognized copies in all, counting the canonical one.
+    Nothing compared them, so adding `Preamble tier` to the canonical copy would
+    have left the other nine stale.
     """
 
     CANONICAL = SKILLS / "contracts" / "handoff-templates.md"

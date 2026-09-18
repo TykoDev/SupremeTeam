@@ -1,6 +1,7 @@
 # Example Invocations
 
-Four passes, each rendered in the full packet shape `../SKILL.md` mandates:
+Five passes — four fresh and one REVISE delta — each rendered in the full
+packet shape `../SKILL.md` mandates:
 Outcome, Evidence, Findings, Open risks, Next action, Revision, in that order and
 with no verdict, because this lens owns no gate (`../../../execution-contract.md`,
 clause 6). The graded passes carry the shape too, not just the clean one — a
@@ -66,3 +67,22 @@ nothing else.
 - Open risks: the delivery adapters are behind an interface this scope does not include, so drift on the far side of that seam was not visible to this pass.
 - Next action: none from this lens.
 - Revision: r4.
+
+## Example 5 — a REVISE delta pass, with a deferred Major returning
+
+The round after Example 1, and the case `../SKILL.md` describes but no fresh pass
+can show: a Major that returns as *deferred* rather than resolved.
+`changed_evidence` names `services/` and `mappers/`.
+
+**User request:** re-assess the service-layer refactor against the REVISE packet
+
+**Output:**
+- Outcome: quality-review delta, r4 <- r3, 1 finding verified, 1 deferred, 1 new out-of-delta.
+- Evidence: only `services/` and `mappers/`, plus the import graph edges between them and `http/controllers/`, because `QR-01`'s judgment is a claim about that direction. The three endpoints keep their r3 judgment and were not re-walked.
+- Findings:
+  - `QR-02` | Minor | `mappers/` | status `verified` | the direction convention now matches the rest of the tree; the rename landed as directed.
+  - `QR-01` | Major | `services/` and `http/controllers/` | status `deferred` | consolidation did not land. It returns under its original id and severity — never renumbered, never downgraded — but it now carries what it lacked at r3: owner `build/bob-the-builder`, and the reopen trigger "the next rule change that touches both layers". That is what moves it from open to deferred; a Major without both fields is still open debt, and `../../../gates.yaml` `finding_policy.major_deferral` rejects it.
+  - `QR-03` | Minor | `services/mapper_registry.py:24` | status `open` | **out-of-delta** — the rename introduced a registry lookup that re-resolves on every call. Found inside `changed_evidence`, but unrelated to either r3 finding; reported as out-of-delta rather than folded into the round.
+- Open risks: unchanged from r3, and now sharper — deferring `QR-01` means the older endpoints' relationship to the second orchestration layer stays unmeasured while the debt stays live.
+- Next action: `review/code-chief` accepts or rejects the `QR-01` deferral and rules on `QR-03`'s cycle. Cycle 1 of a `cycle_cap` of 2 is spent; at the cap `QR-01` returns unchanged with its blocking status intact.
+- Revision: r4 <- r3.

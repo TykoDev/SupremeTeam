@@ -53,8 +53,13 @@ omitted row is indistinguishable from a decision nobody checked.
 names for the `build-traceability` deliverable build-management authors from this
 matrix: "proven and unproven status per row". `gates.yaml` checks `traceability`
 for presence only — the key has no `evidence_types` entry — so the vocabulary is an
-ownership contract, not a machine check. The nuance lives in `reason`, not in a
-third status.
+ownership contract, not a machine check. What keeps it true is the same mechanism
+the gate-evidence table below cites: `build/gatekeeper-build` reads the matrix as
+judgment rather than as a validated record, and an `unproven` row that should read
+`proven`, or a third invented status, surfaces there as a `REVISE` to
+`build/build-management`. Nothing downstream re-derives it, which is exactly why
+the vocabulary is fixed at two. The nuance lives in `reason`, not in a third
+status.
 
 | Status | When |
 | --- | --- |

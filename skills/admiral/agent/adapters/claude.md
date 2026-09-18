@@ -76,7 +76,7 @@ The mode re-probe rule in `../agent-protocol.md` ("Per-Boundary Re-Probe") cover
 
 ## Write-Capability Probe
 
-The probe defined in `save-protocol.md` §2 Startup maps to Claude Code tools as:
+The manual probe defined in `../../../save-protocol.md` §2.4b maps to Claude Code tools as:
 
 1. `Write` to `skillset-saves/_probe-{run-id}.tmp` with a short ASCII payload.
 2. `Read` the same path and verify byte equality.

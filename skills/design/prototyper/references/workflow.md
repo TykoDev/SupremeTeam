@@ -18,10 +18,11 @@ self-check commands at both levels, and the acceptance checklists.
 9. Decision rules
 10. Acceptance checklists
 11. Collaboration notes
+12. Gate evidence
 
 ## Two Modes, One Skill
 
-`../../pipelines.yaml` gives this skill two stages in the `redesign` pipeline,
+`../../../pipelines.yaml` gives this skill two stages in the `redesign` pipeline,
 and a delegation is always one of them.
 
 | Stage | Fan-out | Output directory | Files | Parity level |
@@ -30,7 +31,7 @@ and a delegation is always one of them.
 | `selected-build` | none; one delegation | `redesign/artifacts/variants/<id>/` | `variant.md`, `tokens.css`, `components.css`, `components.js`, `components.html`, `app.html` | `--level full` |
 
 `selected-build` runs only when a variant was selected — the stage's `when`
-condition in `../../pipelines.yaml` — and only for the id `selection.chosen`
+condition in `../../../pipelines.yaml` — and only for the id `selection.chosen`
 names. A merge or a deferral commissions no build at all, and `design/redesign`
 records the sanctioned fallback strings instead.
 
@@ -141,20 +142,10 @@ python skills/scripts/output_paths.py --kind test_work --name parity-selfcheck-v
 # -> {"ok": true, "kind": "test_work", "path": "...", "relative": ".harness-state/test-work/parity-selfcheck-v2.json"}
 
 # mock build
-python skills/scripts/check_parity.py --level mock \
-  --inventory redesign/artifacts/inventory/design-inventory.json \
-  --app redesign/artifacts/mocks/v2/mock.html \
-  --components redesign/artifacts/mocks/v2/components.html \
-  --out .harness-state/test-work/parity-selfcheck-v2.json \
-  --project-root .
+python skills/scripts/check_parity.py --level mock --inventory redesign/artifacts/inventory/design-inventory.json --app redesign/artifacts/mocks/v2/mock.html --components redesign/artifacts/mocks/v2/components.html --out .harness-state/test-work/parity-selfcheck-v2.json --project-root .
 
 # selected build
-python skills/scripts/check_parity.py --level full \
-  --inventory redesign/artifacts/inventory/design-inventory.json \
-  --app redesign/artifacts/variants/v2/app.html \
-  --components redesign/artifacts/variants/v2/components.html \
-  --out .harness-state/test-work/parity-selfcheck-v2.json \
-  --project-root .
+python skills/scripts/check_parity.py --level full --inventory redesign/artifacts/inventory/design-inventory.json --app redesign/artifacts/variants/v2/app.html --components redesign/artifacts/variants/v2/components.html --out .harness-state/test-work/parity-selfcheck-v2.json --project-root .
 ```
 
 - Pass the resolver's `relative` value to `--out`. The resolver rejects an
@@ -215,3 +206,14 @@ python skills/scripts/check_parity.py --level full \
 - `review/design-qa` captures the four mocks across the six tiers and two themes, and the selected variant the same way once it exists.
 - `review/frontier` grades accessibility and interaction resilience on the selected variant.
 - `design/architect` implements the chosen variant in the production stack after the redesign gate.
+
+## Gate Evidence
+
+The authoritative record shapes for the two keys `../SKILL.md` summarizes.
+`../../../gates.yaml` `evidence_owners` assigns both to prototyper;
+`design/redesign` packages them at `redesign-review`.
+
+| Key | Boundary | Must contain | Artifact-backed | Fallback |
+| --- | --- | --- | --- | --- |
+| `mock_set` | `redesign-review` | A record `{artifacts, mocks: [{id, name, direction, spec, tokens, components, mock}], count}` holding exactly the four mocks `evidence_type_params.mock_set.required_count` requires, with unique ids, and with the `spec`, `tokens`, `components`, and `mock` of every mock correctly hashed in the package; `count`, when present, equals the list length | Yes — every mock file is a hashed artifact in `artifact_hashes` | None sanctioned; a set short of four mocks fails mechanically and returns as a `REVISE` |
+| `selected_variant` | `redesign-review` | A record `{artifacts, variants: [{id, name, direction, spec, tokens, components, app}], count}` holding exactly one variant, whose `id` equals `selection.chosen`, with `spec`, `tokens`, `components`, and `app` correctly hashed in the package | Yes — every variant file is a hashed artifact in `artifact_hashes` | The sanctioned strings `selection deferred - no variant built` and `merge brief recorded - implemented as a fifth direction in the design pipeline`, and only when `selection.decision` is not `variant`. Neither is this skill's to write: `design/redesign` records them when no build was commissioned, carried at schema 2 as the `reason` of an applicability record `{applicable: false, reason, scope, decided_by}` rather than as a bare string |

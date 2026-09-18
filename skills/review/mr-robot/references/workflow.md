@@ -21,6 +21,18 @@ sequence and the judgment calls inside it.
 4. At the `adversarial-probe` stage, clear the envelope in `probe-protocol.md`, execute one probe per request class at each boundary in scope, and write the redacted log as it runs.
 5. Package confirmed and conditional exploit paths separately for `review/code-chief`, or the hashed probe log and its record for `review/cso`.
 
+### Packaging the review-pipeline half
+
+The probe half of this sequence ends in one artifact; the review half ends in a
+packet another lens has to act on, and it is the half `../SKILL.md` compresses
+into a single sentence. Expanded:
+
+1. **Split the chains by confidence, not by severity.** *Confirmed* means every precondition was observed in the surface under review. *Conditional* means one link is assumed — a permission the artifacts do not show, a reachable route nobody traced. The two travel in separate lists, because a conditional chain that a reader takes as confirmed produces hardening against an attack nobody can mount, and a confirmed chain read as speculative produces none at all.
+2. **Give each chain its preconditions, its steps, and the control that breaks it.** A chain without a breaking control is an observation; the control is what `review/code-chief` routes to an owner.
+3. **State the blast radius separately from the severity.** Severity is the shared four tiers. Blast radius is what the chain reaches once it runs, and the two diverge often enough that collapsing them loses the containment decision.
+4. **Name the smallest non-destructive proof for every conditional chain**, and say what it would cost to run. That is what lets `review/code-chief` decide whether promoting the chain is worth a probe rather than leaving it in Open risks forever.
+5. **Route what this lens does not adjudicate.** A weakness needing a dependency or sink assessment goes to `review/security-review`; a structural cause goes to `review/quality-review`. Naming the receiving lens in the packet is what stops the item being re-found next round.
+
 ## Decision Rules
 
 - Favor chained attacker behavior over isolated lint-style security comments.

@@ -96,8 +96,9 @@ not offer them. That is the intended reading of "reached only through the owning
 sub-orchestrator" expressed in the filesystem rather than only in prose.
 
 Nesting costs those specialists nothing, because delegation never used the skill
-loader. `admiral` holds `Read`, `Grep` and `Glob` and no `Skill` tool: its
-delegation surface names `build/build-management` and it reads that file. A
+loader. `admiral` holds `Read`, `Grep`, `Glob`, `Bash`, `Write` and `Edit` — and no
+`Skill` tool, which is the part that matters here: its delegation surface names
+`build/build-management` and it reads that file. A
 specialist is reachable because its path resolves, not because the host
 registered it.
 

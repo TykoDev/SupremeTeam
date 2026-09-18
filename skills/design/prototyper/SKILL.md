@@ -33,7 +33,7 @@ Use this skill in **one of two delegated modes**, never both in one delegation:
 
 - "build the mock for a direction" — the `mock-build` mode: tokens, catalog, and a static drawn screen per route for one direction
 - "draft this direction to compare it" — the same mode, for a single direction
-- "preview the component library" — the catalog page for one direction
+- "preview the component library" — the static catalog page drawn for **one direction under comparison**. Implementing a production component library or design system is `design/architect`'s, and wiring one into an application is the build pipeline's
 - "show me this direction" — the underspecified ask, once one direction is already on the table
 - "build the selected variant" — the `selected-build` mode: the living single-page prototype for the one direction the user picked
 - "build the prototype at parity with the design inventory" — every inventoried screen, state, interaction, and flow actually wired, not a representative sample; this is always the selected build
@@ -114,10 +114,16 @@ entry to the first; `design/redesign` assembles the four entries into the single
 record it packages at `redesign-review`. One `selected-build` delegation
 produces the whole of the second.
 
-| Key | Boundary | Must contain | Artifact-backed | Fallback |
-| --- | --- | --- | --- | --- |
-| `mock_set` | `redesign-review` | A record `{artifacts, mocks: [{id, name, direction, spec, tokens, components, mock}], count}` holding exactly the four mocks `evidence_type_params.mock_set.required_count` requires, with unique ids, and with the `spec`, `tokens`, `components`, and `mock` of every mock correctly hashed in the package; `count`, when present, equals the list length | Yes — every mock file is a hashed artifact in `artifact_hashes` | None sanctioned; a set short of four mocks fails mechanically and returns as a `REVISE` |
-| `selected_variant` | `redesign-review` | A record `{artifacts, variants: [{id, name, direction, spec, tokens, components, app}], count}` holding exactly one variant, whose `id` equals `selection.chosen`, with `spec`, `tokens`, `components`, and `app` correctly hashed in the package | Yes — every variant file is a hashed artifact in `artifact_hashes` | The sanctioned strings `selection deferred - no variant built` and `merge brief recorded - implemented as a fifth direction in the design pipeline`, and only when `selection.decision` is not `variant`. Neither is this skill's to write: `design/redesign` records them when no build was commissioned, carried at schema 2 as the `reason` of an applicability record `{applicable: false, reason, scope, decided_by}` rather than as a bare string |
+| Key | Mode that produces it | The one thing that breaks it |
+| --- | --- | --- |
+| `mock_set` | `mock-build`, four times | Anything other than exactly four mocks, a duplicate id, or one unhashed file among the four |
+| `selected_variant` | `selected-build`, once | An id that is not `selection.chosen`, or one unhashed file among the six |
+
+Neither key is ever waivable by this skill. `design/redesign` writes the two
+sanctioned applicability records for `selected_variant` when `selection.decision`
+is `merge` or `deferred` and no build was commissioned. `references/workflow.md`
+§Gate evidence carries the full record shapes, the hashing requirements, and the
+exact fallback wording; read it before returning either key.
 
 Returning a mock whose files are unhashed, whose id collides with a sibling's, or
 which is one of three rather than four breaks the record for the whole set, so
@@ -132,7 +138,17 @@ Step 1 is the same in both modes. Steps 2 onward fork.
 
 ### Mock build
 
-2. Write `tokens.css` first: derive every value from the direction's token strategy, verify body and large-text contrast to WCAG 2.2 AA in both themes, and keep one spacing scale, one type scale, one radius, and one shadow elevation.
+2. Write `tokens.css` first: derive every value from the direction's token strategy, verify body and large-text contrast to WCAG 2.2 AA in both themes, and keep one spacing scale, one type scale, one radius, and one shadow elevation. Measure the ratio rather than eyeballing it — the WCAG 2.1 relative-luminance formula is a few lines and needs no dependency:
+
+   ```python
+   def _lin(c): c/=255; return c/12.92 if c<=0.04045 else ((c+0.055)/1.055)**2.4
+   def ratio(fg, bg):  # fg, bg as (r, g, b) 0-255
+       L = lambda c: 0.2126*_lin(c[0]) + 0.7152*_lin(c[1]) + 0.0722*_lin(c[2])
+       a, b = sorted((L(fg), L(bg)), reverse=True)
+       return (a + 0.05) / (b + 0.05)
+   ```
+
+   AA is 4.5:1 for body text and 3:1 for large text (≥24 px, or ≥18.66 px bold) and for UI component boundaries. Record the computed ratio for every pair the direction introduces, in both themes, and state the number in `variant.md` — a quoted ratio with no computation behind it is the thing this step exists to prevent.
 3. Write `components.css` and the `components.html` catalog: one section per component, every variant and size, every state rendered as a static appearance (default, hover, focus-visible, active, disabled, loading, error), light and dark side by side, each instance marked `data-component`.
 4. Write `mock.html`: one screen per inventory route with `data-route="<id>"` on the screen's root, `data-mock="true"` on the root element, hard-coded sample content that reads like the real thing, and every inventory component present somewhere across the catalog and the screens. Draw route states as extra static screens (`data-route-state`) only where the direction is easier to judge with them.
 5. Self-check: open both files without a network, then resolve the scratch destination with `python skills/scripts/output_paths.py --kind test_work --name parity-selfcheck-<id>.json` and run `python skills/scripts/check_parity.py --level mock --inventory <inventory> --app mock.html --components components.html --out <the resolver's `relative` value> --project-root .`. Mock level scores routes and components only; interactions, flows, and states come back as informational counts and never fail it. Fix every missing route or component id before returning.

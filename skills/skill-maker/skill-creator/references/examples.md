@@ -124,12 +124,7 @@ allowed-tools: Read, Grep, Glob, Bash
 ## 4. Optimize mode — the before/after
 
 ```bash
-python -m scripts.run_loop \
-  --eval-set .harness-state/eval-reports/log-triage-trigger.json \
-  --skill-path skills/log-triage \
-  --model <model-id> \
-  --max-iterations 5 \
-  --verbose
+python -m scripts.run_loop --eval-set .harness-state/eval-reports/log-triage-trigger.json --skill-path skills/log-triage --model <model-id> --max-iterations 5 --verbose
 ```
 
 **Result:**
@@ -162,8 +157,7 @@ That line, written to a file and hashed, is the `validation_report` evidence at
 evidence.
 
 ```bash
-python -m scripts.package_skill ../../log-triage \
-  skillset-saves/runs/2026-04-12_log-triage_5fe2/skill-creation/packages
+python -m scripts.package_skill ../../log-triage skillset-saves/runs/2026-04-12_log-triage_5fe2/skill-creation/packages
 ```
 
 ```text

@@ -15,6 +15,7 @@ checklist.
 6. Decision rules
 7. Acceptance checklist
 8. Collaboration notes
+9. Gate evidence owned
 
 ## Mapping Sequence
 
@@ -117,20 +118,10 @@ implementation detail.
 
 ```bash
 # mock parity, once per mock
-python skills/scripts/check_parity.py --level mock \
-  --inventory <design-inventory.json> \
-  --app <mock>/mock.html \
-  --components <mock>/components.html \
-  --out redesign/evidence/mock-parity-<id>.json \
-  --project-root .
+python skills/scripts/check_parity.py --level mock --inventory <design-inventory.json> --app <mock>/mock.html --components <mock>/components.html --out redesign/evidence/mock-parity-<id>.json --project-root .
 
 # full parity, once, for the selected variant only
-python skills/scripts/check_parity.py --level full \
-  --inventory <design-inventory.json> \
-  --app <variant>/app.html \
-  --components <variant>/components.html \
-  --out redesign/evidence/parity-<variant>.json \
-  --project-root .
+python skills/scripts/check_parity.py --level full --inventory <design-inventory.json> --app <variant>/app.html --components <variant>/components.html --out redesign/evidence/parity-<variant>.json --project-root .
 ```
 
 The four mock-level records are then summarised into one aggregated probe record
@@ -233,3 +224,16 @@ explicitly; an omitted section reads at the gate as an unmapped area.
 - `design/architect` reads the inventory and the taste grilling log to write the four directions.
 - `design/prototyper` reads the inventory to place every parity marker its level requires and self-checks with the same script at the same level.
 - `review/design-qa` reuses the baseline captures as the before-state for the mock captures and for rendered verification.
+
+## Gate Evidence Owned
+
+`../../../gates.yaml` `evidence_owners` assigns three keys to design-mapper;
+`design/redesign` packages them under the manifest's top-level `evidence` object
+at `redesign-review`. `../SKILL.md` summarizes these three rows; this table is the
+authoritative one.
+
+| Key | Boundary | Must contain | Artifact-backed | Fallback |
+| --- | --- | --- | --- | --- |
+| `design_inventory` | `redesign-review` | Stable-id routes, states, components, interactions, and flows with their sources; the tokens in use and the off-scale values with their locations; baseline captures across the six tiers and both themes, or an INFERRED record stating its limitation | Yes — the value references the hashed inventory files in `artifact_hashes` | None sanctioned; the inventory is never waived in a redesign run |
+| `mock_parity` | `redesign-review` | One aggregated `check_parity.py --level mock` probe record whose `artifacts` list names the four per-mock records, `result.status` pass, full coverage of routes and components across every mock, and the exact missing ids when coverage is short; interactions, flows, and states appear as informational counts and never fail the level | Yes — the aggregated record and the four per-mock records are hashed artifacts in the package | None sanctioned; a short coverage report is a `REVISE` to the builder, not a waiver |
+| `parity_evidence` | `redesign-review` | The `check_parity.py --level full` probe record for the selected variant, `result.status` pass, `inputs` bound by sha256 to the inventory and the prototype files, coverage per list, and the exact missing ids when coverage is short | Yes — the probe record is a hashed artifact in the package | Only the sanctioned strings `selection deferred - no variant built` and `merge brief recorded - implemented as a fifth direction in the design pipeline`, carried at schema 2 as the `reason` of an applicability record `{applicable: false, reason, scope, decided_by}` and written by `design/redesign` when no variant was selected and therefore no prototype exists to check. This skill never writes one |

@@ -135,8 +135,7 @@ name files that appear in `artifact_hashes`.
 Self-check, run without `--verdict-out` before submitting:
 
 ```bash
-python skills/harness/gatekeeper/check.py --boundary skill-maker-to-delivery \
-    --package skillset-saves/runs/2026-04-12_log-triage_5fe2/skill-creation/manifest.json
+python skills/harness/gatekeeper/check.py --boundary skill-maker-to-delivery --package skillset-saves/runs/2026-04-12_log-triage_5fe2/skill-creation/manifest.json
 ```
 
 ---
@@ -187,7 +186,7 @@ anything.
 
 ## 5. A single-skill `team_manifest`
 
-The one value that is checked mechanically rather than read. For a run that
+The one value whose wording is fixed rather than composed. For a run that
 produced one skill:
 
 ```text
@@ -196,8 +195,25 @@ single skill - no team manifest produced
 
 Not "no team manifest", not "single skill — no team manifest produced" (em dash),
 not "the statement that no team was created". `../../gates.yaml`
-`fallback_values.team_manifest` sanctions exactly the string above, and anything
-else fails the artifact-backing check as an unsanctioned bare string.
+`fallback_values.team_manifest` sanctions exactly the string above.
+
+**What the machine actually catches, and what it does not.** It is tempting to
+read the rule above as mechanically enforced in both directions. It is not, and
+the asymmetry runs the wrong way:
+
+| Value submitted | Self-check result |
+| --- | --- |
+| The applicability record below | passes — the correct form |
+| A bare string with the *sanctioned* wording | **fails**: `bare fallback string not accepted at schema 2: team_manifest (use an applicability record)` |
+| A bare string with a *paraphrase* — "no team manifest was produced for this single-skill run" | **passes silently** |
+
+The paraphrase passes because `team_manifest` has no row in `../../gates.yaml`
+`evidence_types`, so `check.py` runs no typed check on it, and a non-path string
+that matches no sanctioned wording trips neither the fallback branch nor the
+artifact-backing branch. So the precise value fails the checker and the vague one
+does not. A paraphrase is caught by gatekeeper judgment and returned as `REVISE`
+— by a reader, never by the machine. Treat a green self-check on this key as
+proof of nothing: read the value before you submit it.
 
 The string is the `reason`, not the value. At `schema_version: 2` the key carries
 a typed applicability record, and a bare string — even the sanctioned one — is

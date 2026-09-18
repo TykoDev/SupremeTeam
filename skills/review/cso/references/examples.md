@@ -49,7 +49,11 @@ The package this skill delivers is `security/manifest.json`. Schema 2 requires
 `boundary`, `owner`, `run_id` inside a run, one `revision`, typed records for the
 keys in `evidence_types`, and an applicability record — never a bare string — for
 a waived key. This is the manifest for the Example 1 engagement after
-remediation, abridged to one finding and one artifact hash per key:
+remediation, abridged in two ways: to one finding and one `artifact_hashes` entry
+per key, and at the hash level — every sha256 below is shown truncated with an
+ellipsis for legibility. A real manifest carries the full 64-character digest for
+every entry, and the boundary validator rejects a truncated one, so do not copy
+these values or their shape:
 
 ```json
 {
@@ -61,13 +65,16 @@ remediation, abridged to one finding and one artifact hash per key:
   "artifact_hashes": {
     "security/reports/threat-model.md": "31ca9f0b…",
     "security/evidence/scan-pip-audit.json": "9b2e4417…",
+    "security/evidence/scan-pip-audit.stdout.txt": "4d8a1c60…",
+    "security/evidence/scan-pip-audit.stderr.txt": "e91f3b72…",
     "security/evidence/probe-admin-denial.log": "c07d1a55…"
   },
   "evidence": {
     "scope": "Authenticated admin surface, its session store, and the two destructive account actions. Excluded: the marketing site, which shares no session. Active probing authorized by the engagement owner; remediation authorized.",
     "threat_model": "security/reports/threat-model.md",
     "vulnerability_scan": {
-      "artifacts": ["security/evidence/scan-pip-audit.json"],
+      "artifacts": ["security/evidence/scan-pip-audit.stdout.txt",
+                    "security/evidence/scan-pip-audit.stderr.txt"],
       "tool": "pip-audit",
       "command": "pip-audit -r requirements.txt --strict",
       "exit_code": 0,
@@ -95,8 +102,7 @@ remediation, abridged to one finding and one artifact hash per key:
 Self-check before submitting, and fix every mechanical failure first:
 
 ```bash
-python skills/harness/gatekeeper/check.py --boundary security-review \
-    --package skillset-saves/runs/2026-05-02_admin-audit_b41d/security/manifest.json
+python skills/harness/gatekeeper/check.py --boundary security-review --package skillset-saves/runs/2026-05-02_admin-audit_b41d/security/manifest.json
 ```
 
 ## Example 5 — a REVISE round
@@ -118,9 +124,7 @@ two owners.
 - Resubmitted **once**, at revision 3, with `--prior` so the gate re-judges only `changed_evidence`:
 
 ```bash
-python skills/harness/gatekeeper/check.py --boundary security-review \
-    --package skillset-saves/runs/2026-05-02_admin-audit_b41d/security/manifest.json \
-    --prior skillset-saves/runs/2026-05-02_admin-audit_b41d/security/verdict_security-review.json
+python skills/harness/gatekeeper/check.py --boundary security-review --package skillset-saves/runs/2026-05-02_admin-audit_b41d/security/manifest.json --prior skillset-saves/runs/2026-05-02_admin-audit_b41d/security/verdict_security-review.json
 ```
 
 - `scope`, `threat_model`, `denial_path_evidence`, and `residual_risk` came back as `unchanged_evidence` and carried their prior judgment; only the two repaired keys were re-judged.

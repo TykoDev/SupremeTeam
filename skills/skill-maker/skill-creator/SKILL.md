@@ -4,8 +4,9 @@ description: >-
   Drafts and revises skill content for `skill-maker`, which owns the pipeline and
   delegates each mode: Create writes the SKILL.md and supporting files, Improve
   applies a reviewer's scorecard to fix reviewer findings, Eval runs behavioral evals
-  against real queries, and Package produces the `.skill` bundle. Use when skill-maker
-  delegates drafting, findings to apply, an eval run, or packaging. An internal
+  against real queries, Optimize tunes the description's trigger surface, and Package
+  produces the `.skill` bundle. Use when skill-maker delegates drafting, findings to
+  apply, an eval run, a description optimization, or packaging. An internal
   specialist, never the front door: a cold "write me a skill" belongs to
   `skill-maker`.
 version: 1.0.0
@@ -60,7 +61,7 @@ delegating owner and states the mode.
 Reached cold — "write me a skill" with no handoff — draft nothing. Without the
 mode there is no way to tell a create from an improve, and without the intake
 there is no trigger set, no acceptance contract, and no findings list to apply.
-Route the user to `fabled`, which runs intake and hands the request to
+Route the user to `admiral`, which runs intake and hands the request to
 `skill-maker`.
 
 ## Modes
@@ -334,9 +335,12 @@ The core workflow is identical everywhere. What differs is tool availability.
   running evals.
 - **`references/description-opt.md`** — description optimization loop mechanics: query
   generation, train/test split, overfitting prevention. Read before Phase 5.
-- **`references/schemas.md`** — JSON schemas for `evals.json`, `eval_metadata.json`,
-  `grading.json`, `benchmark.json`, `feedback.json`. Read before writing or
-  validating any of those files.
+- **`references/schemas.md`** — JSON schemas for `evals.json`, `history.json`,
+  `grading.json`, `metrics.json`, `timing.json`, `benchmark.json`,
+  `comparison.json`, and `analysis.json`. Read before writing or validating any of
+  those files. `eval_metadata.json` and `feedback.json` are not here: their shapes
+  are defined in `references/real-evals.md`, alongside the viewer flow that
+  produces them.
 - **`references/examples.md`** — worked deliverables from each mode: a drafted
   SKILL.md, an `evals.json`, an improve-mode change summary, an optimize-mode
   before/after, and a package result. Read for output shape before a first run

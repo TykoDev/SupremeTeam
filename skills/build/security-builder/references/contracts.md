@@ -101,8 +101,17 @@ never as a clean scan.
 
 ## Vendoring Detection
 
-Detect generated, vendored, or third-party imported content and treat it with
-tighter review rules than first-party changes. These surfaces carry code nobody
+**`build/build-management` owns the classification rule; this section owns the
+treatment.** Classify with
+`../../build-management/references/contracts.md` § The Contracts → *Vendoring
+detection*: a changed path is non-first-party when it sits under a vendor or
+generated root, when its name or header marks it machine-produced, or when it
+entered the diff through a package manager or codegen step rather than an
+authored edit. Classifying by a local rule instead is how the same path ends up
+first-party in the build record and vendored in the security record.
+
+Having classified it, detect generated, vendored, or third-party imported content
+and treat it with tighter review rules than first-party changes. These surfaces carry code nobody
 on the team wrote, are regenerated or replaced wholesale, and are where a
 transitive advisory lands without any first-party diff to notice it. Mark them
 explicitly in the record and narrow the security claim to the boundaries

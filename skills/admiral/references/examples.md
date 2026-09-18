@@ -42,7 +42,7 @@ route each.
 **User request:** resume from the approved design package and get me through review
 
 **Output:**
-- Mode: resume. The save startup check classifies `skillset-saves/`; `_latest.md` is stale, so `runs/` is scanned, the directory is classified `orphaned` rather than `missing`, and the pointer is rebuilt with `LATEST_POINTER_REBUILT` instead of a second run being forked.
+- Mode: resume. The save startup check classifies `skillset-saves/`; `_latest.md` is stale, so `runs/` is scanned, the directory is classified `orphaned` rather than `missing`, and the pointer is rebuilt by the sanctioned writer — `save_run.py recover --run-id <run> --owner admiral --reason "stale-latest-pointer"`, the lock having gone stale — with `LATEST_POINTER_REBUILT` appended to the agent trail to record it, instead of a second run being forked.
 - Validation: the design package must still carry matching approval lineage and an unchanged revision. `check_readiness.py` runs with `--require-active-run` because this is a resume.
 - Boundary rule: skip design only if the package revision is unchanged; otherwise rewind and re-gate from the earliest incomplete approved boundary, never from the newest artifact on disk.
 

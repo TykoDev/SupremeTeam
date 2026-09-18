@@ -87,11 +87,9 @@ framework), `ui_evidence` (no user-facing surface), `taste_snapshot` (no saved
 Taste profile available) — each only as a typed applicability record naming
 reason, scope, and decided_by. The other six accept no fallback.
 
-**At `redesign-review`**, eleven of the fourteen are artifact-backed:
-`design_inventory`, `taste_grilling`, `taste_snapshot`, `design_directions`,
-`mock_set`, `mock_parity`, `mock_rendering`, `selection`, `selected_variant`,
-`parity_evidence`, and `rendered_verification`. Only `taste_snapshot` is
-waivable. `../../gates.yaml` lists `mock_rendering` under this boundary's
+**At `redesign-review`**, eleven of the fourteen keys in the table above are
+artifact-backed — every one except the last three, `accessibility_evidence`,
+`recommendation`, and `residual_risk`. Only `taste_snapshot` is waivable. `../../gates.yaml` lists `mock_rendering` under this boundary's
 `no_fallback`: there it accepts neither the sanctioned fallback string nor an
 applicability record, even though a global fallback exists for it elsewhere. The
 four mocks are always built, so "no visible surface changed" can never be true of
@@ -187,9 +185,7 @@ and `../../design-doctrine.md` contracts.
 `../../gates.yaml`:
 
 ```bash
-python ../../harness/gatekeeper/check.py --boundary <design-to-build|redesign-review> \
-  --package <phase>/manifest.json [--prior <prior-verdict-file>] \
-  --verdict-out <phase>/verdict_<boundary>.json
+python ../../harness/gatekeeper/check.py --boundary <design-to-build|redesign-review> --package <phase>/manifest.json [--prior <prior-verdict-file>] --verdict-out <phase>/verdict_<boundary>.json
 ```
 
 At `redesign-review` it mechanizes the four-mock `mock_set` record and the
@@ -211,43 +207,16 @@ on a `probe`, so the validator does not require it. See
 The shape keys are declared by the two scripts; the evidence keys are declared by
 `../../gates.yaml`. Nine names appear in both spaces meaning different things,
 and reading a `PASS` on the left as satisfaction of the right is how a package
-advances with a file present and its evidence key empty.
+advances with a file present and its evidence key empty. Several evidence keys
+have no shape counterpart, and four shape keys have no evidence counterpart;
+neither absence is a defect, and it is why both validators run.
 
-| Name | As a shape key (script) | As an evidence key (`../../gates.yaml`) |
-| --- | --- | --- |
-| `plan` | `check.py`: a `*plan*.md` file exists in the package directory | required at `design-to-build`, artifact-backed — a path in `artifact_hashes` |
-| `architecture` | `check.py`: an `*architect*.md` or `*adr*.md` file exists | required at `design-to-build`, artifact-backed |
-| `taste_snapshot` | `check.py`: a `*taste*snapshot*` file carrying digest/source markers | required at both boundaries, artifact-backed, waivable |
-| `stack_locks` / `stack_lock` | `check.py` `stack_locks`: any `*stack*.md`, `*lock*.md`, or `*tech*.md` file | spec `stack_lock`: a typed record `{slug, versions, overlay_sha256}` validated against `../../tech-stacks/registry.yaml` |
-| `design_inventory` | `check_redesign.py`: a `*design-inventory*` file exists | required at `redesign-review`, artifact-backed |
-| `taste_grilling` | `check_redesign.py`: a grilling log file exists | required at `redesign-review`, artifact-backed |
-| `design_directions` | `check_redesign.py`: `*direction*.md` files exist | required at `redesign-review`, artifact-backed |
-| `parity_evidence` | `check_redesign.py`: a `*parity*.json` file exists | the full-level `probe` record for the selected variant, bound by `inputs` to the inventory and prototype files; conditional on `selection.decision` |
-| `rendered_verification` | `check_redesign.py`: conditional — a `*render*` or `*capture*` file, absence reported `UNCHECKED` | a `render` record for the selected variant with hashed captures, breakpoints, themes, and bound `inputs`; conditional on `selection.decision` |
+`references/key-spaces.md` carries the full name-by-name table and the
+capture-key requirement discrepancy behind it. Two rules decide the cases that
+actually arise, and both are there in full:
 
-A shape key and an evidence key of the same name answer different questions, and
-several evidence keys have no shape counterpart at all — `decisions`,
-`interfaces`, `acceptance`, `security_seed`, `ui_evidence`, `mock_set`,
-`mock_parity`, `mock_rendering`, `selection`, `selected_variant`,
-`accessibility_evidence`, `recommendation`, `residual_risk` — while the shape
-keys `research`, `impl_spec`, `api_contracts`, and `ui_handoff` have no evidence
-counterpart. Read `scripts/check_redesign.py` for the current shape manifest
-rather than this table's memory of it. Neither absence is a defect in the other
-validator; it is why both run.
-
-### The capture-key requirement discrepancy
-
-`scripts/check_redesign.py` declares the capture keys with
-`requirement="conditional"`, so their absence from the redesign phase directory is
-reported `UNCHECKED` rather than `FAIL`. `../../gates.yaml` lists `mock_rendering`
-under `redesign-review`'s `no_fallback`, where it is neither waivable nor
-optional. The two are answering different questions, and the discrepancy is
-recorded here rather than repaired in the script:
-
-- The script asks whether a capture file is present, and cannot know which filenames a given redesign produced; marking it `required` would fail honest packages on a naming mismatch.
-- The spec asks whether the evidence key carries a hashed `render` record, which the boundary validator can answer exactly.
-- Therefore: treat the script's `UNCHECKED` on `mock_rendering` as **unresolved, never as a waiver**. The boundary validator is the authority, and it fails the key outright.
-- On `rendered_verification` the same `UNCHECKED` is resolved against the selection: when a variant was selected the key owes a `render` record and the boundary validator fails it outright; when the decision was a merge or a deferral no prototype exists, and the key legitimately carries its sanctioned wording as the `reason` of an applicability record.
+- **A shape `PASS` is never evidence satisfaction.** Read the boundary validator for that.
+- **`UNCHECKED` on a capture key is unresolved, never a waiver.** On `mock_rendering` the boundary validator fails the key outright; on `rendered_verification` the `selection` decision resolves it.
 
 ## Execution Contract
 
@@ -255,7 +224,7 @@ Canonical source: `../../execution-contract.md`. Stated locally because that fil
 requires every orchestrator and gatekeeper to carry the clauses verbatim; a
 paraphrase is drift.
 
-1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under the Tier 0 fast path in routing-doctrine.md; Tier 1 for bounded read-only work beyond Tier 0; Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for destructive, security-sensitive, production, or irreversible work. Record the tier and rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline ceremony and full security audits, but retains focused verification and applicable guardrails; escalate when its eligibility no longer holds.
+1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under the Tier 0 fast path in `skills/routing-doctrine.md`; Tier 1 for bounded read-only work beyond Tier 0; Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for destructive, security-sensitive, production, or irreversible work. Record the tier and rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline ceremony and full security audits, but retains focused verification and applicable guardrails; escalate when its eligibility no longer holds.
 2. Trigger proactively when the task matches the skill's declared scope, even when the request uses different words; decline adjacent work and route end-to-end or specialist ownership explicitly. Offer a next safe action only after the current step, scope, and approval lineage are resolved; suppress that offer while any is unresolved.
 3. Use Critical | Major | Minor | Info for findings. Block on Critical, resolve Major before a gate, record Minor, and preserve Info as context. Use APPROVED | REVISE | ESCALATE for gate verdicts.
 4. Validate paths, inputs, revisions, and handoff fields before acting. Keep file operations inside the workspace, use read-only or dry-run probes first, and require explicit owner intent for destructive or externally visible actions.
@@ -284,7 +253,7 @@ before invoking and return `ESCALATE` naming the rejected path.
 
 1. Classify the boundary from the submitted manifest's `boundary` and `owner` — `design-to-build` (submitter `commander`) or `redesign-review` (submitter `redesign`) — and read that row's required-evidence list from `../../gates.yaml` rather than from memory. The two sets share only `taste_snapshot`.
 2. Run the package-shape validator for that boundary: `scripts/check.py` at `design-to-build`, `scripts/check_redesign.py` at `redesign-review`. Treat its `UNCHECKED` findings as unresolved questions, not as passes.
-3. Run the boundary validator for that boundary. At `design-to-build`, confirm `decisions`, `architecture`, `interfaces`, `plan`, `acceptance`, `security_seed`, `stack_lock`, `taste_snapshot`, and `ui_evidence` are present and non-falsy, that `decisions`, `architecture`, `plan`, and `taste_snapshot` resolve to hashed artifacts, and that `stack_lock` validates against `../../tech-stacks/registry.yaml`. At `redesign-review`, confirm `design_inventory`, `taste_grilling`, `taste_snapshot`, `design_directions`, `mock_set`, `mock_parity`, `mock_rendering`, `selection`, `selected_variant`, `parity_evidence`, `rendered_verification`, `accessibility_evidence`, `recommendation`, and `residual_risk`, with only the last three unbacked. Read `selection` before judging the last six: its `decision` decides whether `selected_variant`, `parity_evidence`, `rendered_verification`, and `accessibility_evidence` owe evidence or carry their sanctioned wording, and whether `selected_variant.variants[0].id` must equal `selection.chosen`. Accept a waiver only as a typed applicability record carrying a sanctioned reason, and never for `mock_rendering` at `redesign-review`.
+3. Run the boundary validator for that boundary. At `design-to-build`, confirm `decisions`, `architecture`, `interfaces`, `plan`, `acceptance`, `security_seed`, `stack_lock`, `taste_snapshot`, and `ui_evidence` are present and non-falsy, that `decisions`, `architecture`, `plan`, and `taste_snapshot` resolve to hashed artifacts, and that `stack_lock` validates against `../../tech-stacks/registry.yaml`. At `redesign-review`, confirm all fourteen keys in the Boundary Contract table, with only the last three unbacked. Read `selection` before judging the last six: its `decision` decides whether `selected_variant`, `parity_evidence`, `rendered_verification`, and `accessibility_evidence` owe evidence or carry their sanctioned wording, and whether `selected_variant.variants[0].id` must equal `selection.chosen`. Accept a waiver only as a typed applicability record carrying a sanctioned reason, and never for `mock_rendering` at `redesign-review`.
 4. Judge what neither validator can. At `design-to-build`: whether stakeholder goals, system structure, frontend and backend decisions, deployment assumptions, YAGNI deferrals, and unresolved questions contradict each other. At `redesign-review`: whether the four directions are genuinely differentiated (`../../design-doctrine.md` §9), whether each of the four drafts actually stayed a mock rather than becoming an implementation the user had not yet asked for, whether the comparison is honest, whether the recommendation follows from it, and whether `selection.md` records a decision a person actually made rather than the recommendation restated.
 5. Check that migration/deprecation, proof-first testing, frontend state/API handoff, and threat-model surfaces are present when the design scope requires them.
 6. Decide the narrowest justified verdict and return only the mandatory changes the design owner must make, grouped by the owner each failing key belongs to.
@@ -354,13 +323,9 @@ same class; a single boundary never produces two:
 Each record is produced by the boundary validator against `../../gates.yaml`:
 
 ```bash
-python ../../harness/gatekeeper/check.py --boundary design-to-build \
-  --package skillset-saves/runs/{run-id}/design/manifest.json \
-  --verdict-out skillset-saves/runs/{run-id}/design/verdict_design-to-build.json
+python ../../harness/gatekeeper/check.py --boundary design-to-build --package skillset-saves/runs/{run-id}/design/manifest.json --verdict-out skillset-saves/runs/{run-id}/design/verdict_design-to-build.json
 
-python ../../harness/gatekeeper/check.py --boundary redesign-review \
-  --package skillset-saves/runs/{run-id}/redesign/manifest.json \
-  --verdict-out skillset-saves/runs/{run-id}/redesign/verdict_redesign-review.json
+python ../../harness/gatekeeper/check.py --boundary redesign-review --package skillset-saves/runs/{run-id}/redesign/manifest.json --verdict-out skillset-saves/runs/{run-id}/redesign/verdict_redesign-review.json
 ```
 
 It never modifies the submission, its evidence, or the run record. The boundary's
@@ -377,6 +342,7 @@ revision.
 - `scripts/check.py` for the `design-to-build` package-shape manifest, and `scripts/check_redesign.py` for the `redesign-review` one.
 - `references/boundary-evidence.md` for what each evidence key must be: record type, artifact-backing, and the exact sanctioned waiver text.
 - `../../harness/gatekeeper/README.md` for the engine, the deterministic-vs-judgment split, and the fail-loud posture.
+- `references/key-spaces.md` for the shape-key/evidence-key collision table and the capture-key requirement discrepancy.
 - `references/workflow.md` for the detailed validation sequence and verdict rules.
 - `references/examples.md` for worked submissions at both boundaries.
 - `../architect/references/api-endpoint-design.md` for the required API endpoint design contract.
@@ -384,4 +350,4 @@ revision.
 
 ## Packaging Notes
 
-Package `SKILL.md`, `scripts/check.py`, `scripts/check_redesign.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. Both scripts depend on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which they locate by walking up to the repo root — ship the `harness/gatekeeper/` directory alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.
+Package `SKILL.md`, `scripts/check.py`, `scripts/check_redesign.py`, `references/workflow.md`, `references/boundary-evidence.md`, `references/key-spaces.md`, and `references/examples.md` together. Both scripts depend on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which they locate by walking up to the repo root — ship the `harness/gatekeeper/` directory alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.

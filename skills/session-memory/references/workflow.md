@@ -33,9 +33,20 @@ mechanics — flags, results, exit codes, reclaim, rollback — live in
 
 A lookup searches the learning reports already written under the run's phase
 directories. Grep them by subject, then by `layer:` or `failure-category:` when
-the caller is routing a fix rather than recalling a fact. Return the entry
-verbatim with its evidence line; a paraphrase drops the file reference that makes
-the learning checkable.
+the caller is routing a fix rather than recalling a fact:
+
+```bash
+grep -rn --include='report_learnings*.md' -i -B2 -A6 '<subject>' skillset-saves/runs/<run-id>/
+```
+
+Narrow a routing lookup by tag instead — `grep -rn 'failure-category: <cat>'` or
+`grep -rn 'layer: <layer>'` over the same path. When several entries match, order
+them newest phase first (the run's phase directories are written in pipeline
+order), and within a phase by descending confidence; return every match rather
+than the first, since a later entry usually revises an earlier one rather than
+repeating it, and the caller needs to see both. Return each entry verbatim with
+its evidence line; a paraphrase drops the file reference that makes the learning
+checkable.
 
 ## Decision Rules
 

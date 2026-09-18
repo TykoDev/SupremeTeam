@@ -202,9 +202,15 @@
         "taste_review_record"
       ],
       "fallback_values": {
-        "before_revision": ["new store - no prior revision"],
-        "consumer_handoff": ["preference management only - no downstream consumer"],
-        "residual_uncertainty": ["none observed"]
+        "before_revision": [
+          "new store - no prior revision"
+        ],
+        "consumer_handoff": [
+          "preference management only - no downstream consumer"
+        ],
+        "residual_uncertainty": [
+          "none observed"
+        ]
       }
     },
     "skill-maker-to-delivery": {
@@ -268,7 +274,7 @@
     ]
   },
   "spec_revision": 4,
-  "unchecked_fields": "Fields of this spec that a comparator does not read, so a wrong value here fails nothing. `guards` is no longer one of them. `scripts/validate_manifests.py` check_gates and `harness/gatekeeper/test_gate_manifests.py` GateSpecContractTests.test_gate_spec_shape still check only that the string is non-empty, but validation/test_orchestration.py GuardedTransitionTests reads what it says: it parses the `## States and transitions` table in contracts/workflow-protocol.md and requires every ALL-CAPS token in a `guards` string to be a state that table declares - or the name of the pipeline that closes this boundary, standing at the origin of the chain, which is how REDESIGN and TASTE are admitted - and every adjacent pair in a chain to be an allowed transition out of the state it leaves. Lowercase prose origins (security pipeline, investigation) and trailing commentary (with the chosen variant, or consuming pipeline) are not read, and neither is the Guards column of that document, which stays a deliberate paraphrase the drift test skips. `evidence_type_params.mock_set.required_count` gained a second reader for the same reason: validation/test_orchestration.py StageConditionTests pairs the counted evidence keys a stage owner holds at this boundary, in required_evidence order, with that owner's artifact-bearing stages in pipeline order, and requires each stage's `fan_out` - one when the stage declares none - to equal the required_count of the key it produces. So `mock-build` must fan out four ways for `mock_set` and `selected-build` must not fan out at all for `selected_variant`, and the fan-out and the count the gate enforces can no longer drift apart. Still unread: `purpose`, this note, `evidence_rules`, `evidence_type_rules`, `spec_revision`, and `finding_policy.statement` - all prose that describes behaviour check.py implements in code rather than reads from here. What IS read per boundary: `guards` (against the state machine, as above), `submitter`, `required_evidence`, `artifact_evidence`, `fallback_values`, `no_fallback`, `evidence_types`, `evidence_type_params`, `evidence_owners`, `verdicts`, and `revise_policy.cycle_cap`.",
+  "unchecked_fields": "Fields of this spec that a comparator does not read, so a wrong value here fails nothing. `guards` is no longer one of them. `scripts/validate_manifests.py` check_gates and `harness/gatekeeper/test_gate_manifests.py` GateSpecContractTests.test_gate_spec_shape still check only that the string is non-empty, but validation/test_orchestration.py GuardedTransitionTests reads what it says: it parses the `## States and transitions` table in contracts/workflow-protocol.md and requires every ALL-CAPS token in a `guards` string to be a state that table declares - or the name of the pipeline that closes this boundary, standing at the origin of the chain, which is how REDESIGN and TASTE are admitted - and every adjacent pair in a chain to be an allowed transition out of the state it leaves. Lowercase prose origins (security pipeline, investigation) and trailing commentary (with the chosen variant, or consuming pipeline) are not read, and neither is the Guards column of that document, which stays a deliberate paraphrase the drift test skips. `evidence_type_params.mock_set.required_count` gained a second reader for the same reason: validation/test_orchestration.py StageConditionTests pairs the counted evidence keys a stage owner holds at this boundary, in required_evidence order, with that owner's artifact-bearing stages in pipeline order, and requires each stage's `fan_out` - one when the stage declares none - to equal the required_count of the key it produces. So `mock-build` must fan out four ways for `mock_set` and `selected-build` must not fan out at all for `selected_variant`, and the fan-out and the count the gate enforces can no longer drift apart. Still unread: `purpose`, this note, `evidence_owners_note`, `evidence_rules`, `evidence_type_rules`, `spec_revision`, and `finding_policy.statement` - all prose that describes behaviour check.py implements in code rather than reads from here. What IS read per boundary: `guards` (against the state machine, as above), `submitter`, `required_evidence`, `artifact_evidence`, `fallback_values`, `no_fallback`, `evidence_types`, `evidence_type_params`, `evidence_owners`, `verdicts`, and `revise_policy.cycle_cap`.",
   "evidence_types": {
     "tests": "probe",
     "runtime": "probe",
@@ -322,19 +328,38 @@
     "mock_set": {
       "required_count": 4,
       "list_field": "mocks",
-      "file_fields": ["spec", "tokens", "components", "mock"]
+      "file_fields": [
+        "spec",
+        "tokens",
+        "components",
+        "mock"
+      ]
     },
     "selected_variant": {
       "required_count": 1,
       "list_field": "variants",
-      "file_fields": ["spec", "tokens", "components", "app"]
+      "file_fields": [
+        "spec",
+        "tokens",
+        "components",
+        "app"
+      ]
     },
     "selection": {
-      "decision_values": ["variant", "merge", "deferred"],
+      "decision_values": [
+        "variant",
+        "merge",
+        "deferred"
+      ],
       "variant_decision": "variant",
       "option_key": "mock_set",
       "built_key": "selected_variant",
-      "dependent_keys": ["selected_variant", "parity_evidence", "rendered_verification", "accessibility_evidence"],
+      "dependent_keys": [
+        "selected_variant",
+        "parity_evidence",
+        "rendered_verification",
+        "accessibility_evidence"
+      ],
       "fallback_by_decision": {
         "deferred": "selection deferred - no variant built",
         "merge": "merge brief recorded - implemented as a fifth direction in the design pipeline"
@@ -342,17 +367,103 @@
     }
   },
   "evidence_owners": {
-    "design-to-build": {"decisions": "admiral", "architecture": "architect", "interfaces": "architect", "plan": "planner", "acceptance": "planner", "security_seed": "security-builder", "stack_lock": "commander", "taste_snapshot": "taste", "ui_evidence": "architect"},
-    "redesign-review": {"design_inventory": "design-mapper", "taste_grilling": "taste", "taste_snapshot": "taste", "design_directions": "architect", "mock_set": "prototyper", "mock_parity": "design-mapper", "mock_rendering": "design-qa", "selection": "redesign", "selected_variant": "prototyper", "parity_evidence": "design-mapper", "rendered_verification": "design-qa", "accessibility_evidence": "frontier", "recommendation": "redesign", "residual_risk": "redesign"},
-    "build-to-review": {"approved_design_revision": "build-management", "implementation": "bob-the-builder", "tests": "test-builder", "runtime": "health-check", "traceability": "build-management", "security_evidence": "security-builder"},
-    "review-to-delivery": {"review_verdict": "code-chief", "findings": "code-chief", "executed_probes": "code-chief", "rendered_verification": "design-qa", "residual_risk": "code-chief", "revision_lineage": "code-chief"},
-    "security-review": {"scope": "cso", "threat_model": "cso", "findings": "cso", "vulnerability_scan": "security-review", "denial_path_evidence": "mr-robot", "remediation_plan": "cso", "residual_risk": "cso"},
-    "investigation-review": {"scope": "investigate", "reproduction": "investigate", "mechanism": "investigate", "evidence_chain": "investigate", "fix_path": "investigate", "residual_uncertainty": "investigate"},
-    "qa-review": {"scope": "qa", "test_matrix": "qa", "executed_probes": "qa", "defects": "qa", "fixes_applied": "qa", "residual_risk": "qa"},
-    "taste-review": {"scope": "taste", "intent": "taste", "before_revision": "taste", "preference_diff": "taste", "confirmation": "taste", "conflict_analysis": "taste", "policy_check": "taste", "persistence_result": "taste", "effective_profile": "taste", "consumer_handoff": "taste", "taste_review_record": "taste-review", "residual_uncertainty": "taste"},
-    "skill-maker-to-delivery": {"skills": "skill-maker", "team_manifest": "skill-maker", "link_report": "skill-reviewer", "validation_report": "skill-creator"},
-    "deploy-readiness": {"approved_delivery": "ship", "deploy_config": "setup-deploy", "verification_plan": "ship", "rollback_plan": "setup-deploy", "human_go_required": "ship"}
+    "design-to-build": {
+      "decisions": "admiral",
+      "architecture": "architect",
+      "interfaces": "architect",
+      "plan": "planner",
+      "acceptance": "planner",
+      "security_seed": "security-builder",
+      "stack_lock": "commander",
+      "taste_snapshot": "taste",
+      "ui_evidence": "architect"
+    },
+    "redesign-review": {
+      "design_inventory": "design-mapper",
+      "taste_grilling": "taste",
+      "taste_snapshot": "taste",
+      "design_directions": "architect",
+      "mock_set": "prototyper",
+      "mock_parity": "design-mapper",
+      "mock_rendering": "design-qa",
+      "selection": "redesign",
+      "selected_variant": "prototyper",
+      "parity_evidence": "design-mapper",
+      "rendered_verification": "design-qa",
+      "accessibility_evidence": "frontier",
+      "recommendation": "redesign",
+      "residual_risk": "redesign"
+    },
+    "build-to-review": {
+      "approved_design_revision": "build-management",
+      "implementation": "bob-the-builder",
+      "tests": "test-builder",
+      "runtime": "health-check",
+      "traceability": "build-management",
+      "security_evidence": "security-builder"
+    },
+    "review-to-delivery": {
+      "review_verdict": "code-chief",
+      "findings": "code-chief",
+      "executed_probes": "code-chief",
+      "rendered_verification": "design-qa",
+      "residual_risk": "code-chief",
+      "revision_lineage": "code-chief"
+    },
+    "security-review": {
+      "scope": "cso",
+      "threat_model": "cso",
+      "findings": "cso",
+      "vulnerability_scan": "security-review",
+      "denial_path_evidence": "mr-robot",
+      "remediation_plan": "cso",
+      "residual_risk": "cso"
+    },
+    "investigation-review": {
+      "scope": "investigate",
+      "reproduction": "investigate",
+      "mechanism": "investigate",
+      "evidence_chain": "investigate",
+      "fix_path": "investigate",
+      "residual_uncertainty": "investigate"
+    },
+    "qa-review": {
+      "scope": "qa",
+      "test_matrix": "qa",
+      "executed_probes": "qa",
+      "defects": "qa",
+      "fixes_applied": "qa",
+      "residual_risk": "qa"
+    },
+    "taste-review": {
+      "scope": "taste",
+      "intent": "taste",
+      "before_revision": "taste",
+      "preference_diff": "taste",
+      "confirmation": "taste",
+      "conflict_analysis": "taste",
+      "policy_check": "taste",
+      "persistence_result": "taste",
+      "effective_profile": "taste",
+      "consumer_handoff": "taste",
+      "taste_review_record": "taste-review",
+      "residual_uncertainty": "taste"
+    },
+    "skill-maker-to-delivery": {
+      "skills": "skill-maker",
+      "team_manifest": "skill-maker",
+      "link_report": "skill-reviewer",
+      "validation_report": "skill-creator"
+    },
+    "deploy-readiness": {
+      "approved_delivery": "ship",
+      "deploy_config": "setup-deploy",
+      "verification_plan": "ship",
+      "rollback_plan": "setup-deploy",
+      "human_go_required": "ship"
+    }
   },
+  "evidence_owners_note": "evidence_owners is keyed by (boundary, evidence key), not by key alone: the same key name at two boundaries is two different artifacts with two different writers. `findings` belongs to code-chief at review-to-delivery and to cso at security-review; `executed_probes` to qa at qa-review and to code-chief at review-to-delivery. ownership.yaml carries each as its own artifact id (findings / security-findings, executed-probes / review-executed-probes) because one id with two owners would break its single-writer rule, so artifact ids there and evidence keys here are deliberately separate namespaces and need not match by name. scripts/validate_manifests.py check_gates pairs the two files on the owner name, the only field both namespaces share - it checks that every submitter and every evidence_owners value resolves to an owner declared in ownership.yaml, and nothing about the key name.",
   "revise_policy": {
     "self_check": "The submitter runs check.py on its manifest (without --verdict-out) before submitting; a package that fails mechanically is never submitted, so a gatekeeper only spends judgment on packages that already pass the machine.",
     "one_packet": "A REVISE carries every mechanical failure and every judgment finding found in the pass, grouped by owner in revise_packet.by_owner; a gatekeeper never returns the first defect alone.",

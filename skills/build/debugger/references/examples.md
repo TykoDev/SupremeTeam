@@ -22,7 +22,7 @@ that contradicts itself.
 **Output:**
 - Symptom boundary: the worker crashes only when one optional webhook payload includes an empty `events` array, which never appears in the passing fixtures. The payload is quoted by field name and shape only; the customer identifiers and signing header in the same body are replaced with typed placeholders before the excerpt is attached.
 - Root cause: the new parser assumes at least one event before checking payload shape.
-- Next move: add the guard, reproduce against the real failing payload, and rerun the adjacent worker tests.
+- Next move: add the guard as a candidate fix, reproduce against the real failing payload, and rerun the adjacent worker tests — enough to prove the mechanism. The fix path returns to `build/build-management`, which routes the landing to `build/bob-the-builder`; `implementation` is under this skill's `does_not_write`.
 
 ## Example 2 — Find the root cause
 

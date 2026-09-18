@@ -42,7 +42,7 @@ delegating owner.
 
 Reached cold — "inventory this design" with no handoff — inventory nothing.
 A parity score computed against an inventory from outside the run compares two
-unrelated things and reports a number for it. Route the user to `fabled`, which
+unrelated things and reports a number for it. Route the user to `admiral`, which
 runs intake and persistence before any specialist is delegated.
 
 ## Use This Skill When
@@ -74,11 +74,16 @@ Route elsewhere to propose directions (`design/architect`) or draw a mock and bu
 
 `../../gates.yaml` `evidence_owners` assigns three keys to design-mapper; `design/redesign` packages them under the manifest's top-level `evidence` object at `redesign-review`.
 
-| Key | Boundary | Must contain | Artifact-backed | Fallback |
-| --- | --- | --- | --- | --- |
-| `design_inventory` | `redesign-review` | Stable-id routes, states, components, interactions, and flows with their sources; the tokens in use and the off-scale values with their locations; baseline captures across the six tiers and both themes, or an INFERRED record stating its limitation | Yes — the value references the hashed inventory files in `artifact_hashes` | None sanctioned; the inventory is never waived in a redesign run |
-| `mock_parity` | `redesign-review` | One aggregated `check_parity.py --level mock` probe record whose `artifacts` list names the four per-mock records, `result.status` pass, full coverage of routes and components across every mock, and the exact missing ids when coverage is short; interactions, flows, and states appear as informational counts and never fail the level | Yes — the aggregated record and the four per-mock records are hashed artifacts in the package | None sanctioned; a short coverage report is a `REVISE` to the builder, not a waiver |
-| `parity_evidence` | `redesign-review` | The `check_parity.py --level full` probe record for the selected variant, `result.status` pass, `inputs` bound by sha256 to the inventory and the prototype files, coverage per list, and the exact missing ids when coverage is short | Yes — the probe record is a hashed artifact in the package | Only the sanctioned strings `selection deferred - no variant built` and `merge brief recorded - implemented as a fifth direction in the design pipeline`, carried at schema 2 as the `reason` of an applicability record `{applicable: false, reason, scope, decided_by}` and written by `design/redesign` when no variant was selected and therefore no prototype exists to check. This skill never writes one |
+| Key | Must contain, in one line | Fallback |
+| --- | --- | --- |
+| `design_inventory` | The stable-id inventory plus the six-tier, two-theme baseline (or an INFERRED record naming its limitation) | None sanctioned |
+| `mock_parity` | The aggregated `--level mock` probe record naming the four per-mock records, at full route and component coverage | None sanctioned |
+| `parity_evidence` | The `--level full` probe record for the selected variant, bound by sha256 to the inventory and the prototype | Two sanctioned strings, and `design/redesign` writes them — never this skill |
+
+`references/workflow.md` §9 carries the full cell-by-cell requirement for all
+three, including exactly what a short-coverage report must name and the typed
+applicability-record shape a fallback takes at schema 2. Read it before packaging
+or judging any of the three; do not work from the summary above.
 
 ## Workflow
 
@@ -89,6 +94,13 @@ Route elsewhere to propose directions (`design/architect`) or draw a mock and bu
 5. Record interactions and flows: keyboard paths, focus management, confirmations, undo and retry, and the ordered steps (route, state, interaction) of each parity-defining flow.
 6. Record the accessibility baseline with the shared severities: contrast failures, missing focus indicators, missing accessible names, reduced-motion gaps.
 7. Capture the baseline through `browse` when a running surface is available: every route at 320, 375, 640, 1024, 1440, and 1920 px in light and dark themes, saved under `redesign/evidence/baseline/`. Without a browser, write an INFERRED baseline record with the limitation stated.
+
+   Every route × six tiers × two themes is twelve captures per route, so past roughly 25 routes (300 captures) the exhaustive sweep stops being affordable. Above that ceiling, sample instead of skipping, and record the sampling rule in the baseline record so the parity check is judged against what was actually captured:
+
+   - **Every route keeps two captures** — the narrowest tier (320) and the widest (1920), in the default theme. Route coverage never drops below 1.0; it is the *tier* grid that thins.
+   - **The full twelve go to a named subset**: every route the delegation lists as parity-defining, every route with a layout breakpoint of its own, and one representative per repeated template (a list, a detail, a form, an empty state).
+   - **Both themes stay mandatory** wherever a route resolves a theme-dependent token, since a theme bug is invisible in a single-theme capture.
+   - Name the ceiling used, the sampled route ids, and the rule that selected them in the baseline record. A sampled baseline is a stated scope, not a short one; an unrecorded sample is a coverage gap wearing a full baseline's label.
 8. Write `design-inventory.json` and `design-inventory.md`, return their paths and sha256 digests, and stop; the mapper never proposes a new design.
 9. When delegated **mock parity**, run `python skills/scripts/check_parity.py --level mock --inventory <inventory.json> --app <mock.html> --components <components.html> --out redesign/evidence/mock-parity-<id>.json --project-root .` once per mock. Mock level scores routes and components only; interactions, flows, and states come back as informational counts and never fail the level. Then write one aggregated probe record — the same shape as a full-level record — whose `artifacts` list names the four per-mock records, and return it with each mock's coverage and its exact missing ids.
 10. When delegated **full parity verification**, confirm the `selection` record names `decision: variant` and take its `chosen` id, then run `python skills/scripts/check_parity.py --level full --inventory <inventory.json> --app <app.html> --components <components.html> --out redesign/evidence/parity-<variant>.json --project-root .` for that one variant, return the record path, coverage, and the exact missing ids, and never edit the prototype. This stage runs only when a variant was selected; with no selection, or with a decision of `merge` or `deferred`, there is no prototype to check and the key is `design/redesign`'s sanctioned string, not a record this skill writes.

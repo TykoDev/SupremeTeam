@@ -4,11 +4,10 @@ description: >-
   Orchestrates a controlled release: readiness, launch sequencing, a named
   owner's go decision, verification, and follow-up. Use for "ship this release",
   "prepare the launch", "run the release flow", or "coordinate the rollout" —
-  even when the request is only "let's launch". Owns the `deploy-readiness`
-  gate; defers the merge-and-rollout to
-  `land-and-deploy`, deploy config to
-  `setup-deploy`, and notes to
-  `document-release`.
+  even when the request is only "let's launch" — meaning a software deploy, not a
+  marketing, comms, or product-announcement launch. Owns the `deploy-readiness`
+  gate; defers the merge-and-rollout to `land-and-deploy`, deploy config to
+  `setup-deploy`, and notes to `document-release`.
 version: 1.0.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
@@ -31,7 +30,7 @@ A release is the one step in the lifecycle that cannot be undone by rerunning it
 
 Canonical source: `../execution-contract.md`. Stated locally because that file requires every orchestrator and gatekeeper to carry the clauses verbatim; a paraphrase is drift.
 
-1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under the Tier 0 fast path in routing-doctrine.md; Tier 1 for bounded read-only work beyond Tier 0; Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for destructive, security-sensitive, production, or irreversible work. Record the tier and rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline ceremony and full security audits, but retains focused verification and applicable guardrails; escalate when its eligibility no longer holds.
+1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under the Tier 0 fast path in `skills/routing-doctrine.md`; Tier 1 for bounded read-only work beyond Tier 0; Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for destructive, security-sensitive, production, or irreversible work. Record the tier and rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline ceremony and full security audits, but retains focused verification and applicable guardrails; escalate when its eligibility no longer holds.
 2. Trigger proactively when the task matches the skill's declared scope, even when the request uses different words; decline adjacent work and route end-to-end or specialist ownership explicitly. Offer a next safe action only after the current step, scope, and approval lineage are resolved; suppress that offer while any is unresolved.
 3. Use Critical | Major | Minor | Info for findings. Block on Critical, resolve Major before a gate, record Minor, and preserve Info as context. Use APPROVED | REVISE | ESCALATE for gate verdicts.
 4. Validate paths, inputs, revisions, and handoff fields before acting. Keep file operations inside the workspace, use read-only or dry-run probes first, and require explicit owner intent for destructive or externally visible actions.
@@ -49,7 +48,7 @@ Use this skill to **orchestrate a full, multi-step release** — readiness, sequ
 - "coordinate the rollout" — manage verification and post-launch actions across the release
 - "let's launch" — the bare go-ahead, with the release flow still to be assembled
 
-Route elsewhere for a single merge-and-deploy of one change (`land-and-deploy`), first-time deploy configuration (`setup-deploy`), or release documentation (`document-release`).
+Route elsewhere for a single merge-and-deploy of one change (`land-and-deploy`), first-time deploy configuration (`setup-deploy`), or release documentation (`document-release`). "Launch" here always means putting software into an environment. A go-to-market launch, an announcement, a campaign, or a launch event is not this skill's surface, however the request is phrased.
 
 ## Inputs
 
@@ -117,7 +116,13 @@ In standalone mode the boundary is not submitted, so the five keys above are not
 
 ## Collaboration Surface
 
-- None required beyond the active task surface.
+Coordination is what this skill is, so the surface is three specialists and the
+four keys it consumes from them:
+
+- `setup-deploy` — owns `deploy_config` and `rollback_plan`, both required at `deploy-readiness` and neither carrying a sanctioned fallback. Reopened as the `setup` stage when a repeat release finds either drifted from the target environment; this skill never asserts either key on its behalf.
+- `land-and-deploy` — executes the merge-to-environment step once the go decision is recorded, and returns the rollout evidence the verification plan is judged against.
+- `document-release` — drafts the release notes and operational follow-up from what actually shipped, and holds publication for its own named approver. Delegated after verification, never before: notes written against the plan rather than the outcome describe a release that did not happen.
+- The **named release owner** is not a skill and not substitutable by one. The go decision at `human_go_required` is theirs, and no amount of passing evidence stands in for it.
 
 ## Review Expectations
 
@@ -140,6 +145,7 @@ Skip only when the requested surface, tool, or environment does not exist and a 
 | A required approval or external coordination step has not happened yet | Keep the deploy-readiness package in no-go state until the dependency is resolved instead of launching optimistically. |
 | A repeat release finds the carried-forward deployment settings or rollback procedure no longer matching the target environment | Treat the mismatch as drift on a `setup-deploy`-owned key, reopen the `setup` stage for this release, and hold the gate; `deploy_config` and `rollback_plan` have no sanctioned fallback, so neither can be asserted from here. |
 | The returned rollout evidence contradicts the verification plan submitted at the gate | Preserve both, grade the contradiction as a finding against its owner, and decide rollback or controlled hold before any follow-up describes the release as complete. |
+| Verification passes, but the rollback plan's decision deadline expires mid-rollout — the canary window closes, a migration passes the point of reversibility, or a stated "rollback available until" time lapses | Treat it as **rollback-unavailable** from that moment, and say so before the next step rather than after. A green verification proves the release works; it does not restore the option to undo it, and the two are separately load-bearing — `rollback_plan` is a required key precisely because passing checks are not a substitute for a way back. Stop at the current step, record that the deadline lapsed and which steps are now irreversible, and get an explicit owner decision to continue without a rollback path. That decision is the same named-owner go the gate requires, taken again against materially different terms; it is not carried over from the original go. Where the deadline is foreseeable, size it to the whole rollout at `setup-deploy` time, the way `benchmark` sizes a grant expiry to the whole operation. |
 | The rollout partially succeeds but leaves uncertainty about user impact | Record the partial state, define the rollback trigger, and keep follow-up actions explicit rather than implying a full ship. |
 | The deploy-readiness package comes back `REVISE` a second time, or the gate returns `ESCALATE` | Stop resubmitting and hold the release. `../gates.yaml` `revise_policy` sets `cycle_cap: 2`, so a second `REVISE` ends the cycle rather than starting a third: return `ESCALATE` with both packets, the `changed_evidence` and `unchanged_evidence` from the `--prior` comparison, and the owner of each key that did not converge — the configuration and rollback keys belong to `setup-deploy`, the rest to `ship`. An `ESCALATE` from the gate is handled the same way. Neither verdict is a slow approval, so no rollout is delegated while one stands. |
 | The release candidate, configuration, or verification expectations arrive missing, empty, or contradicting each other | Refuse to sequence the launch and name the specific conflict. A launch order built on an ambiguous candidate sequences the wrong revision, and every later check then verifies the wrong thing convincingly. |

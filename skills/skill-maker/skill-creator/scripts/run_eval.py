@@ -33,6 +33,38 @@ def find_project_root() -> Path:
     return current
 
 
+EVAL_COMMAND_PREFIX = "zz-skilleval-"
+
+
+def _sweep_stale_eval_commands(commands_dir: Path, older_than: float | None = None) -> None:
+    """Delete eval command files a previous run failed to clean up.
+
+    Call this once from the parent process before any worker starts. It must
+    never run inside a worker: the command files are named per query, but they
+    all share EVAL_COMMAND_PREFIX, so a sweep running concurrently would unlink
+    the files sibling workers are mid-test on and silently flip their trigger
+    results.
+
+    ``older_than`` is a defence in depth for that mistake. When given, only files
+    last modified before that timestamp are removed, so a sweep that somehow runs
+    alongside live workers still cannot touch a file written after the run began.
+
+    Only files carrying EVAL_COMMAND_PREFIX are touched, so a real project
+    command is never at risk. Failures are ignored: a sweep that cannot run is
+    not a reason to fail the eval.
+    """
+    try:
+        for stale in commands_dir.glob(f"{EVAL_COMMAND_PREFIX}*.md"):
+            try:
+                if older_than is not None and stale.stat().st_mtime >= older_than:
+                    continue
+                stale.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
 def run_single_query(
     query: str,
     skill_name: str,
@@ -50,12 +82,19 @@ def run_single_query(
     full assistant message, which only arrives after tool execution.
     """
     unique_id = uuid.uuid4().hex[:8]
-    clean_name = f"{skill_name}-skill-{unique_id}"
+    clean_name = f"{EVAL_COMMAND_PREFIX}{skill_name}-skill-{unique_id}"
     project_commands_dir = Path(project_root) / ".claude" / "commands"
     command_file = project_commands_dir / f"{clean_name}.md"
 
     try:
         project_commands_dir.mkdir(parents=True, exist_ok=True)
+        # No sweep here. A hard crash (SIGKILL, power loss) skips the finally
+        # below and leaves a phantom command registered in the user's project,
+        # and the file has to live here for the CLI to list it - so it is
+        # name-marked and swept once by run_eval() before the worker pool starts.
+        # Sweeping from inside a worker would delete the command files its
+        # siblings are mid-test on, which at the default --num-workers 10 is the
+        # normal path, not an edge case.
         # Use YAML block scalar to avoid breaking on quotes in description
         indented_desc = "\n  ".join(skill_description.split("\n"))
         command_content = (
@@ -184,8 +223,10 @@ def run_single_query(
 
         return triggered
     finally:
-        if command_file.exists():
-            command_file.unlink()
+        try:
+            command_file.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def run_eval(
@@ -201,6 +242,13 @@ def run_eval(
 ) -> dict:
     """Run the full eval set and return results."""
     results = []
+
+    # Sweep exactly once, here, before any worker exists: the command files are
+    # all prefixed alike, so this cannot run concurrently with the workers that
+    # write them. The cutoff makes the guarantee explicit as well as structural.
+    sweep_started = time.time()
+    _sweep_stale_eval_commands(Path(project_root) / ".claude" / "commands",
+                               older_than=sweep_started)
 
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
         future_to_info = {}

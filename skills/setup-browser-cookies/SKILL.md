@@ -65,10 +65,17 @@ Route elsewhere to launch the workspace (`open-browser`), drive page interaction
    ```
 
    ```powershell
-   try { <# import #> } finally { Remove-Item -Force -ErrorAction SilentlyContinue "$Bundle" }
+   try { <# import #> } finally {
+     try { Remove-Item -Force -ErrorAction Stop "$Bundle" } catch { }
+     if (Test-Path "$Bundle") { throw "CREDENTIAL NOT DELETED: $Bundle still exists. Remove it manually before continuing." }
+   }
    ```
 
-   Wire the deletion to run on every exit path before the import begins, so an early return, an exception, or a verification failure cannot skip it.
+   Wire the deletion to run on every exit path before the import begins, so an early return, an exception, or a verification failure cannot skip it. **Confirm the file is actually gone, and fail loudly when it is not.** `-ErrorAction SilentlyContinue` on its own swallows the failure — a bundle held open by the browser, or locked by an antivirus scanner, leaves a live credential on disk while the cleanup reports success. The existence check after the delete is what turns a silent miss into a visible one, and the failure-mode row below requires exactly that confirmation. The POSIX form needs the same treatment where `shred` and `rm` can both fail:
+
+   ```bash
+   trap 'shred -u "$BUNDLE" 2>/dev/null || rm -f "$BUNDLE"; [ -e "$BUNDLE" ] && echo "CREDENTIAL NOT DELETED: $BUNDLE" >&2' EXIT
+   ```
 7. Verify the authenticated landing state by checking redirects, visible account identity, tenant context, and whether the protected page is actually reachable.
 8. Return a session bootstrap record with the loaded state boundary, verification result, expiry caveats, and the next browser task that can safely reuse the session — confirming the bundle was deleted and no raw cookie value reached any saved output.
 
@@ -104,6 +111,7 @@ Skip only when the requested surface, tool, or environment does not exist and a 
 | Imported cookies load successfully but the browser still redirects back to login | Treat the auth setup as unverified, capture the redirect chain, and check for missing companion state such as local storage, CSRF tokens, or wrong environment cookies. |
 | The authenticated surface opens under the wrong account, tenant, or role | Stop immediately, record the mismatched identity, and do not let later browser tasks reuse that session state. |
 | The cookie bundle belongs to a different domain, environment, or subdomain than the requested protected surface | Reject the import as out of scope for the target page and require the correct state source before proceeding. |
+| The bundle carries state for several tenants or several origins at once — a whole-profile export, a storage-state file spanning multiple domains, cookies for both staging and production | Reject it. Import exactly the origin and tenant the task needs, and nothing else. A multi-tenant bundle loads a credential for every tenant in it into one browser context, so any later navigation — a redirect, an embedded frame, a mis-typed URL — carries an authenticated identity the task never scoped and the user never considered. Ask for a per-origin export instead, or have the user narrow the existing one before it is supplied; do not narrow it by hand after import, because the wider credential has already been on disk and in the profile by then. The same applies to a bundle that mixes environments: staging and production are different tenants for this purpose, and an export holding both is the one most likely to be offered. |
 | Session state is technically valid but expires too quickly to support the next browser task | Record the narrow expiry window and refresh or replace the state before handing it to browsing or pairing work. |
 | The protected page requires an MFA challenge even after cookies are imported | Treat the session as requiring an interactive authentication step; pause, surface the MFA requirement explicitly, and do not attempt to proceed past the challenge automatically. |
 | The session appears authenticated but expires within seconds or minutes of import | Record the short-lived state, do not pass it to downstream tasks as stable, and prompt the user to refresh or re-export the session bundle before continuing. |

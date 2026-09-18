@@ -24,11 +24,7 @@ string — a block whose two tags read alike has collapsed one axis into the oth
 **Command:**
 
 ```bash
-python skills/harness/hooks/save_run.py checkpoint \
-    --run-id 2026-04-23_dashboard-redesign_a3f9k2 \
-    --expect-revision 6 \
-    --evidence skillset-saves/runs/2026-04-23_dashboard-redesign_a3f9k2/review/reports/review-packet.md \
-    --next-action "regenerate the adversarial review packet for revision 7, then resubmit at review-to-delivery"
+python skills/harness/hooks/save_run.py checkpoint --run-id 2026-04-23_dashboard-redesign_a3f9k2 --expect-revision 6 --evidence skillset-saves/runs/2026-04-23_dashboard-redesign_a3f9k2/review/reports/review-packet.md --next-action "regenerate the adversarial review packet for revision 7, then resubmit at review-to-delivery"
 ```
 
 **Result:** `result: ok`, revision 7 published, pointer rewritten.

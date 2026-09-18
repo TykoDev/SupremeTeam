@@ -276,9 +276,9 @@ judgement, including the field table. Three facts bound that:
   [handoff-templates](handoff-templates.md)'s Save Context block is compared by
   `SaveContextParityTests`, but only across the copies that comparator
   recognizes — a file carrying the block's `Run ID` anchor line, which is 10 of
-  the 89 files under `skills/` that contain the words "Save Context". It checks
-  that the field name is present, never that a value was filled in, and this
-  template is one of the 79 it skips.
+  the 91 Markdown files under `skills/` that contain the words "Save Context". It
+  checks that the field name is present, never that a value was filled in, and
+  this template is one of the 81 it skips.
 - `Changed artifacts` digests, `Gate verdicts`, and the claims, gaps, and proof
   collections restate records that are enforced at the gate by
   [`check.py`](../harness/gatekeeper/check.py) — artifact hashes, verdict

@@ -76,14 +76,14 @@ inferred clean result.
 - `persistence_result.requested_destinations` covers every scope the diff touches, and `committed_revisions` and `hashes` match the files on disk.
 - `atomicity_status` is `committed`; a partial write with `rollback_result` other than `not-required` is a Major finding even when the surviving state looks correct.
 - Global state stayed outside the checkout.
-- `before_revision` equals the store's prior revision and agrees with `preference_diff.before_digest`. As a schema-2 waiver it arrives as the `reason` of an applicability record `{applicable: false, reason, scope, decided_by}`. The sanctioned "new store - no prior revision" is admissible only when the scope genuinely had none — verify against `taste_prefs.py status`, not against the package's own claim.
+- `before_revision` equals the store's prior revision and agrees with `preference_diff.before_digest`. Its sanctioned reason, "new store - no prior revision", is admissible only when the scope genuinely had none — verify against `taste_prefs.py status`, not against the package's own claim. (The record shape every waiver takes is stated once in `../SKILL.md`.)
 
 ### Step 7 — digest integrity and handoff
 
 - Recompute `effective_profile.digest` against its `entries` and confirm they match.
 - Confirm every entry carries `source_scope` and `source_id`.
 - Confirm `consumer_handoff.effective_profile_digest` is that same digest. A mismatch means the consuming pipeline would apply a profile nobody approved.
-- As a schema-2 waiver it arrives as the `reason` of an applicability record `{applicable: false, reason, scope, decided_by}`. The sanctioned "preference management only - no downstream consumer" is admissible only when the run has no consuming pipeline; a package whose intent names a consumer cannot carry it.
+- Its sanctioned reason, "preference management only - no downstream consumer", is admissible only when the run has no consuming pipeline; a package whose intent names a consumer cannot carry it.
 
 ### Step 8 — record and return
 

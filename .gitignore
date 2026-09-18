@@ -2,6 +2,7 @@
 skillset-saves/
 .harness-state/
 harness-test-work/
+.playwright-mcp/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -15,3 +16,6 @@ __pycache__/
 .coverage/
 htmlcov/
 .nyc_output/
+GLM-SCORE.html
+GLM-SCORE-2.html
+GLM-SCORE-3.html

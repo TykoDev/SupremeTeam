@@ -26,7 +26,9 @@ loud**. A hook that errors lets the action proceed; a gate that cannot prove a
 package is clean must NOT silently approve it. So an internal error becomes an
 ``UNCHECKED`` finding and a non-zero exit, never a hidden PASS.
 
-Stdlib only — runs on any host Python 3.8+, no ``pip install``.
+Stdlib only — no ``pip install``. The supported floor is Python 3.13, declared
+once in ``skills/runtime-manifest.yaml`` (``runtime.python.minimum``) and checked by
+``scripts/check_runtime.py``; this module states no floor of its own.
 """
 
 from __future__ import annotations

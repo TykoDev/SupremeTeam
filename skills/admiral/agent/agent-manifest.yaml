@@ -5,7 +5,7 @@
 
 name: admiral-agent
 type: orchestrator
-version: 2.0.0
+version: 2.1.0
 
 purpose: |
   Autonomous orchestrator for the complete delivery lifecycle. Manages pipeline state

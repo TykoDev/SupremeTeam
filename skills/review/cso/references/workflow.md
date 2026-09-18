@@ -29,9 +29,11 @@ different boundary (`review-to-delivery`); its conditional `security-review` and
 
 ## Stage-By-Stage Gate Procedure
 
-Which stage fills which evidence key is mapped once, in the `Gate Submission`
-table of `../SKILL.md` (its `Produced by` column). This section is the procedure
-for running each stage, and deliberately does not restate that mapping.
+Which stage fills which evidence key is mapped once, in
+`gate-submission.md` — the single stage-to-key map, which also carries each key's
+artifact-backing, its sanctioned fallbacks, and the phase-lead save protocol.
+This section is the procedure for running each stage, and deliberately does not
+restate that mapping.
 
 **1. scope-and-threat-model.** Name the surface, the protected assets, the actors,
 and the trust boundaries, then enumerate abuse cases with severity. Record who

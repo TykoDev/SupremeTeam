@@ -111,8 +111,7 @@ repaired in the same cycle instead of one per round trip.
 Resubmit once, with the prior verdict record:
 
 ```bash
-python skills/harness/gatekeeper/check.py --boundary qa-review --package <manifest.json> \
-    --prior <verdict.json>
+python skills/harness/gatekeeper/check.py --boundary qa-review --package <manifest.json> --prior <verdict.json>
 ```
 
 `--prior` reports `changed_evidence` and `unchanged_evidence` from per-key digests, so the
@@ -148,3 +147,17 @@ verdict. The evidence is still collected and reported inline with the same rigou
 the probes, the before-and-after state per fix — and the result says explicitly that no package
 was assembled and no `qa-review` verdict was sought, so nobody downstream reads an inline record
 as an approved one.
+
+## Evidence Keys
+
+The six required keys at `qa-review`, in full. `../SKILL.md` summarizes the three
+shapes that fail mechanically; this table is the authoritative one.
+
+| Key | Content | Backing |
+|-----|---------|---------|
+| `scope` | The surface under test, the flows in and out of scope, and the environment. | Narrative |
+| `test_matrix` | Flow × environment × outcome, one row per exercised path. | Artifact-backed, typed `probe` — a record naming a hashed file, not a count |
+| `executed_probes` | The probes actually run, with commands, targets, and results. | Artifact-backed, typed `probe` — a record naming a hashed file |
+| `defects` | Each defect with severity on the shared four-tier model and reproduction steps. | Typed `findings` record — `{items: [{id, severity, status}]}`, not prose. A narrative value fails with `defects must be a findings record with an items list at schema 2` |
+| `fixes_applied` | Fixes made and their verification. A report-only run records `report-only run - no fixes applied` as the `reason` of an applicability record `{applicable: false, reason, scope, decided_by}`; schema 2 refuses the bare string. | Narrative |
+| `residual_risk` | What remains unverified, and why it was acceptable to stop. | Narrative |

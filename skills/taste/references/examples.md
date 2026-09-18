@@ -60,8 +60,7 @@ and copies the confirmed project entry to global while leaving the project recor
 in place:
 
 ```bash
-python skills/taste/taste_prefs.py promote --scope both \
-  --expect-revision project=6 --expect-revision global=2 --id tables.density
+python skills/taste/taste_prefs.py promote --scope both --expect-revision project=6 --expect-revision global=2 --id tables.density
 ```
 
 “I don't love this screen” is never interpreted as promotion, global reset, bulk

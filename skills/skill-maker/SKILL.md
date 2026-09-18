@@ -2,12 +2,12 @@
 name: skill-maker
 description: >
   End-to-end orchestrator for creating, reviewing, improving, optimizing, and packaging Claude
-  skills and coordinated skill teams. Use when the user says "create a skill", "run the skill
-  pipeline", "review this skill", "harden this skill", "take this skill to 100", "optimize the
-  description", "fix triggering", or describes a desired skill behavior without naming one —
-  and when `admiral` delegates skill or team creation. Routes drafting, evals, fixes, scoring,
-  and packaging to specialists; not for general code review, architecture, or non-skill
-  authoring.
+  skills and skill teams. Use when the user says "create a skill", "run the skill pipeline",
+  "review this skill", "improve this skill", "fix these findings", "take this skill to 100",
+  "optimize the description", "fix triggering", "package this skill", or describes a desired
+  skill behavior without naming one — and when `admiral` delegates skill or team creation.
+  Routes drafting, evals, fixes, scoring, and packaging to specialists; not for general code
+  review, architecture, or non-skill authoring.
 version: 1.0.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
@@ -38,7 +38,7 @@ Use this orchestrator to **run the authoring loop** — draft, score, fix, re-sc
 - "harden this skill" / "take this skill to 100" — iterate the loop until the rubric stops moving
 - "optimize the description" / "fix triggering" — tune the trigger surface through the eval-and-fix cycle
 
-Route elsewhere for the score itself (`skill-maker/skill-reviewer`) or the file edits (`skill-maker/skill-creator`); both are reached through this orchestrator and neither is entered directly. A cold lifecycle request enters `admiral` first, which owns the bare "create a skill" phrasing and delegates here.
+Route elsewhere for the score itself (`skill-maker/skill-reviewer`, which owns "score this skill" and "audit my skill") or the file edits (`skill-maker/skill-creator`); both are reached through this orchestrator and neither is entered directly. Review-only here means running the review stage of the pipeline and returning its findings, which is why "review this skill" and "audit this" enter at Stage 2 while a request for the score alone goes straight to the reviewer. A cold lifecycle request enters `admiral` first, which owns the bare "create a skill" phrasing and delegates here.
 
 ## Entry Routing
 
@@ -63,7 +63,7 @@ Canonical source: `../execution-contract.md`. Stated locally because that file
 requires every orchestrator and gatekeeper to carry the clauses verbatim; a paraphrase
 is drift, and `skills/validation/test_catalog_contracts.py` compares them exactly.
 
-1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under the Tier 0 fast path in routing-doctrine.md; Tier 1 for bounded read-only work beyond Tier 0; Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for destructive, security-sensitive, production, or irreversible work. Record the tier and rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline ceremony and full security audits, but retains focused verification and applicable guardrails; escalate when its eligibility no longer holds.
+1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under the Tier 0 fast path in `skills/routing-doctrine.md`; Tier 1 for bounded read-only work beyond Tier 0; Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for destructive, security-sensitive, production, or irreversible work. Record the tier and rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline ceremony and full security audits, but retains focused verification and applicable guardrails; escalate when its eligibility no longer holds.
 2. Trigger proactively when the task matches the skill's declared scope, even when the request uses different words; decline adjacent work and route end-to-end or specialist ownership explicitly. Offer a next safe action only after the current step, scope, and approval lineage are resolved; suppress that offer while any is unresolved.
 3. Use Critical | Major | Minor | Info for findings. Block on Critical, resolve Major before a gate, record Minor, and preserve Info as context. Use APPROVED | REVISE | ESCALATE for gate verdicts.
 4. Validate paths, inputs, revisions, and handoff fields before acting. Keep file operations inside the workspace, use read-only or dry-run probes first, and require explicit owner intent for destructive or externally visible actions.
@@ -137,13 +137,14 @@ Classify the user's request into one of four entry modes:
 | Mode | Entry condition | Starts at |
 |------|----------------|-----------|
 | **Full pipeline** | "Create a skill", "make a skill", "take this to 100" | Stage 1 |
-| **Review-only** | "Review this skill", "score my skill", "audit this" | Stage 2 (skip 1) |
+| **Review-only** | "Review this skill", "run the review stage" | Stage 2 (skip 1) |
 | **Improve-only** | "Fix these findings", "improve this skill" | Stage 3 (skip 1-2) |
 | **Optimize-only** | "Optimize the description", "fix triggering" | Stage 4 (skip 1-3) |
 
-For **full pipeline** and **improve-only**, confirm the user's intent and constraints
-before proceeding. For **review-only**, just need the skill path. For
-**optimize-only**, need the skill path and optionally existing eval queries.
+For **full pipeline** and **improve-only**, confirm the user's intent and
+constraints before proceeding. For **review-only**, get the skill path and start
+there. For **optimize-only**, get the skill path and ask for any existing eval
+queries before tuning the description.
 
 If the user provides an existing skill path, validate it before proceeding, the
 same way skill-reviewer does at its own Phase 1.1: resolve the path, confirm it
@@ -259,7 +260,7 @@ Delegate to **skill-creator** in Package mode.
 
 **Handoff includes:**
 - Skill directory path
-- Output directory: the active run's `skillset-saves/runs/{run-id}/skill-creation/packages/` (resolved with `python skills/scripts/output_paths.py --kind packages`), or `.harness-state/packages/` outside a run; never the skill directory or the project root
+- Output directory: the active run's `skillset-saves/runs/{run-id}/skill-creation/packages/` (resolved with `python skills/scripts/output_paths.py --run-id <run-id> --phase skill-creation --kind packages --name <skill>.skill` — all four are required; the resolver rejects an empty `--run-id`, `--phase`, or `--name`), or `.harness-state/packages/` outside a run; never the skill directory or the project root
 
 **Expected return:**
 - `.skill` file path
@@ -290,26 +291,16 @@ Run the self-check before submitting, so the boundary is judged deterministicall
 python skills/harness/gatekeeper/check.py --boundary skill-maker-to-delivery --package <manifest.json>
 ```
 
-`link_report` and `validation_report` must reference hashed files in the package's
-`artifact_hashes` map. A bare claim that validation passed is not evidence. A
-single-skill run carries the sanctioned `team_manifest` wording byte-for-byte as
-the `reason` of an applicability record
-`{applicable: false, reason, scope, decided_by}`, never as the key's own value:
-the manifest is `schema_version: 2`, where `check.py` refuses a bare fallback
-string outright. A paraphrase such as "no team was created" is not the sanctioned
-wording and fails the mechanical check before any judgment is applied, and so
-does the sanctioned wording written as a bare string.
+Two rules decide most submissions, and `references/gate-submission.md` carries the
+rest — the artifact-backing requirement in full, the exact applicability-record
+shape, and the failure-to-owner routing table for when the self-check fails:
 
-**When the self-check fails**, do not submit. The checker groups every failure by
-the evidence key it names and by that key's owner, so read the failure list as a
-routing table:
+- **A described artifact is not a shipped one.** `link_report` and `validation_report` must reference paths present in `artifact_hashes`.
+- **A sanctioned fallback is never a bare string at schema 2.** A single-skill run carries `single skill - no team manifest produced` byte-for-byte as the `reason` of an applicability record, never as the key's value, and never paraphrased.
 
-| Failure | Response |
-| --- | --- |
-| A key is missing or falsy | Re-delegate to that key's owner: `link_report` to skill-reviewer, `validation_report` to skill-creator, `skills` and `team_manifest` to this orchestrator's own packaging step. Never fill another owner's key to make the check pass. |
-| `link_report` or `validation_report` names a path absent from `artifact_hashes` | The file was described rather than shipped. Get the file written and hashed, then rebuild the manifest; hand-adding the hash of a file nobody produced is a fabricated artifact. |
-| `team_manifest` carries a paraphrase, or a bare string — even the sanctioned one | Put the exact wording `single skill - no team manifest produced` in the `reason` field of an applicability record `{applicable: false, reason, scope, decided_by}`, or produce the real manifest for a team run. At schema 2 a bare string is rejected with `bare fallback string not accepted at schema 2: team_manifest (use an applicability record)`, so re-spelling the value is not the fix; re-shaping it is. `references/examples.md` shows the record. |
-| The checker itself errors, or the boundary spec cannot be loaded | Treat gate-engine failure as `ESCALATE`, never as approval. Report the error and the unjudged package rather than submitting on a machine that did not run. |
+**When the self-check fails**, do not submit, and do not fill another owner's key
+to make it pass. `references/gate-submission.md` maps each failure class to the
+owner it re-delegates to; a gate-engine error is an `ESCALATE`, never an approval.
 
 Fix every mechanical failure and re-run the self-check before submitting, so the
 gatekeeper spends judgment only on a package that already passes the machine.
@@ -437,6 +428,7 @@ deliver output inline as usual.
 | `../grill-me-doctrine.md` | Binding intake interview protocol | At Stage 0, before classifying the request |
 | `references/workflow-protocol.md` | State machine, transitions, resume protocol | Before starting any pipeline run |
 | `references/handoff-templates.md` | Delegation templates for all 5 handoff types | Before each delegation |
+| `references/gate-submission.md` | Artifact backing, the applicability-record shape, and the failure-to-owner routing table | At Stage 5, when assembling or repairing the gate package |
 | `references/delivery-template.md` | Blank delivery report format to fill in | At Stage 5 |
 | `references/examples.md` | Worked runs: a filled delivery report, a gate manifest, a plateau escalation, a REVISE round | At Stage 5, and whenever an output shape is unclear |
 | `references/skill-guide.md` | Canonical skill authoring guide (shared) | When user asks about skill structure |

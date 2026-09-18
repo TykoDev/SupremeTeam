@@ -67,7 +67,7 @@ requires every orchestrator and gatekeeper to carry the clauses verbatim; a
 paraphrase is drift.
 
 1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under
-   the Tier 0 fast path in routing-doctrine.md; Tier 1 for bounded read-only work beyond Tier
+   the Tier 0 fast path in `skills/routing-doctrine.md`; Tier 1 for bounded read-only work beyond Tier
    0; Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3
    for destructive, security-sensitive, production, or irreversible work. Record the tier and
    rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline
@@ -134,17 +134,20 @@ manifest at package time, unchanged. `references/gate-submission.md`
 § Ownership Split is the single copy of that division and of why a delegate's
 key is never re-authored here.
 
-Artifact-backing and waivability are two different lists, and only one key sits
-on both. `../../gates.yaml` `artifact_evidence` at this boundary names
-`threat_model` and `denial_path_evidence`; each must reference a path present in
-`artifact_hashes`, so the evidence is a shipped, hashed file rather than a bare
-claim. `fallback_values` is the only source of waivable keys
+Artifact-backing and waivability are two different lists drawn from two different
+places in `../../gates.yaml`, and only one key sits on both:
+
+| Key | Artifact-backed? (`artifact_evidence`) | Waivable? (`fallback_values`) |
+| --- | --- | --- |
+| `threat_model` | Yes — must name a path in `artifact_hashes` | **No** |
+| `denial_path_evidence` | Yes — must name a path in `artifact_hashes` | Yes |
+| `vulnerability_scan` | No | Yes |
+
+`fallback_values` is the *only* source of waivability
 (`evidence_rules.applicability_records`: "Only keys listed in fallback_values are
-waivable"), and for this boundary it names `vulnerability_scan` and
-`denial_path_evidence`. `threat_model` therefore appears on the artifact list and
-not on the waiver list: it is **unwaivable**, and a package without a hashed
-threat model does not close this boundary by any route. At schema 2 a waiver is
-an applicability record `{applicable: false, reason, scope, decided_by}`, never a
+waivable"). So `threat_model` is **unwaivable**: a package without a hashed threat
+model does not close this boundary by any route. At schema 2 a waiver is an
+applicability record `{applicable: false, reason, scope, decided_by}`, never a
 bare fallback string.
 
 `references/gate-submission.md` holds the per-key table with its backing and
@@ -170,12 +173,7 @@ typed `scan` record, so a clean scan stays distinguishable from every way a scan
 can fail to happen.
 
 ```bash
-python skills/scripts/scan_record.py \
-    --project-root . \
-    --out skillset-saves/runs/<run-id>/security/evidence/scan-pip-audit.json \
-    --input requirements.txt \
-    --version-command "pip-audit --version" \
-    -- pip-audit -r requirements.txt --strict
+python skills/scripts/scan_record.py --project-root . --out skillset-saves/runs/<run-id>/security/evidence/scan-pip-audit.json --input requirements.txt --version-command "pip-audit --version" -- pip-audit -r requirements.txt --strict
 ```
 
 The scanner command follows `--`; `--out` names the JSON record and the raw

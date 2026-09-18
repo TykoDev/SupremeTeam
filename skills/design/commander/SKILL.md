@@ -93,7 +93,7 @@ requires every orchestrator and gatekeeper to carry the clauses verbatim; a
 paraphrase is drift.
 
 1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under
-   the Tier 0 fast path in routing-doctrine.md; Tier 1 for bounded read-only work beyond Tier 0;
+   the Tier 0 fast path in `skills/routing-doctrine.md`; Tier 1 for bounded read-only work beyond Tier 0;
    Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for
    destructive, security-sensitive, production, or irreversible work. Record the tier and
    rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline

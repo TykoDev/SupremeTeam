@@ -42,3 +42,19 @@
 - Trigger fired 11 minutes after rollout; the rollback restored the previous artifact but left one queue consumer on the new message schema.
 - Response: the rollback is **not** declared complete. Forward progress is frozen, the named approver is escalated to immediately, and the environment is held until a human-verified recovery path is confirmed.
 - Record: the inconsistent state, its exact boundary, the timestamps of trigger and attempted rollback, and the compensating action named in the rollback plan's data considerations.
+
+## Example 5 — the go decision is current, the review approval is stale
+
+Example 2 fails both preconditions at once, which makes them look like one check.
+They are two, and either can fail alone. Here the owner's decision is in order and
+the review is not.
+
+**User request:** (delegated with a Save Context block, run `2026-05-06-api`) land and deploy this
+
+**Output:**
+- Mode: pipeline — `ship`'s approved deploy-readiness package for run `2026-05-06-api`.
+- Go decision: **present and current.** `human_go_required` names approver `release-owner`, reference `GO-2026-05-06-02`, revision `rev-3c91b7d`, decided at `2026-05-06T15:40:00Z` — the exact revision about to merge. Nothing is wrong with this half.
+- Review approval: **stale.** Reviewer `api-lead` approved `PR-4501` at `rev-2a17f4e`. The branch has since been rebased onto a changed base; `rev-3c91b7d` is a different revision with a different tree, and the approval does not carry across it. The review platform still displays the PR as approved, which is the trap: the approval is current for a revision that is no longer what merges.
+- Action: stop before merge, and repair **only** the half that failed. Re-request review against `rev-3c91b7d`; do not re-request the go decision, which named the correct revision and remains valid — asking for it again would train the owner to re-approve on request and dilute the one signal the gate depends on.
+- Evidence: both revision identifiers, the rebase that separated them, the review reference and the revision it actually covers, and the go decision left standing untouched.
+- Why the two checks stay separate: the go decision answers *does the owner want this live now*, the review answers *is this change sound*. A rebase invalidates the second without touching the first. Merging on the strength of a displayed "approved" badge would ship a tree no reviewer read, with a genuine owner approval sitting beside it as apparent cover.

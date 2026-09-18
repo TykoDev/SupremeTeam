@@ -5,9 +5,10 @@ description: >-
   grades what the build implements against them (`security_evidence`), and
   applies authorized security fixes. Internal specialist reached through
   `design/commander`, `build/build-management`, or `review/cso`, not directly,
-  even when security is only implied by secrets or untrusted input. Defers
-  feature code to `build/bob-the-builder` and the independent audit to
-  `review/security-review`.
+  even when security is only implied by secrets or untrusted input. Covers
+  security inside a build; a dedicated engagement — a standalone audit or scoped
+  remediation campaign — is `review/cso` and `review/security-review`, which
+  delegate here. Defers feature code to `build/bob-the-builder`.
 version: 1.0.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---

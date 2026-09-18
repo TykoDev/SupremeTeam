@@ -41,7 +41,7 @@ and may run in parallel once each mock is hashed.
 
 Stage 8 is the hinge. Everything before it is drawing and measuring; everything
 after it is implementation. Stages 9 through 12 run only when a variant was
-selected — that is the stage condition `../../pipelines.yaml` declares for each of
+selected — that is the stage condition `../../../pipelines.yaml` declares for each of
 them. When the decision is a merge or a deferral, none of the four runs and their
 keys carry the sanctioned fallback wording instead:
 `merge brief recorded - implemented as a fifth direction in the design pipeline`

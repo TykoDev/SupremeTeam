@@ -1,14 +1,15 @@
 # Example Invocations
 
-Three delegations and the actual artifacts returned: inventory rows, a report
-excerpt, and a parity record. The schema and marker rules behind them are in
-`workflow.md`.
+Four delegations and the actual artifacts returned: inventory rows, a report
+excerpt, and a parity record at each level. The schema and marker rules behind
+them are in `workflow.md`.
 
 ## Contents
 
 1. Example 1 — "map the current UI of the admin app"
 2. Example 2 — "document what the interface does today, we have no dev server"
-3. Example 3 — "check that variant three reproduces the existing app"
+3. Example 3 — "check the four mocks against the inventory"
+4. Example 4 — "check that the selected variant reproduces the existing app"
 
 ## Example 1 — "map the current UI of the admin app"
 
@@ -63,7 +64,8 @@ The report's limitations and inconsistencies sections, verbatim:
   otherwise complete from source.
 - **Reachability of `route.orders:permission-denied` is `inferred`.** The state is
   rendered by `src/app/orders/page.tsx:214` behind a role guard that source alone
-  cannot exercise. It is in the inventory and the prototype must still render it.
+  cannot exercise. It is in the inventory and the selected variant must still
+  render it.
 
 ## Inconsistencies
 
@@ -83,19 +85,83 @@ The report's limitations and inconsistencies sections, verbatim:
 The inventory is returned as complete-with-limitations, not as blocked: the
 redesign proceeds, and the limitation travels with it.
 
-## Example 3 — "check that variant three reproduces the existing app"
+## Example 3 — "check the four mocks against the inventory"
 
-Command run, exactly as the workflow specifies it. `--project-root .` is not
-optional dressing: it makes the record's `inputs[].path` values project-relative,
-which is what the gate binds by sha256.
+The `mock-parity` stage, run once per mock at mock level. Two of the four
+abridged, then the aggregate.
 
 ```bash
-python skills/scripts/check_parity.py \
-  --inventory redesign/artifacts/inventory/design-inventory.json \
-  --app redesign/artifacts/variants/v3/app.html \
-  --components redesign/artifacts/variants/v3/components.html \
-  --out redesign/evidence/parity-v3.json \
-  --project-root .
+python skills/scripts/check_parity.py --level mock --inventory redesign/artifacts/inventory/design-inventory.json --app redesign/artifacts/mocks/v1/mock.html --components redesign/artifacts/mocks/v1/components.html --out redesign/evidence/mock-parity-v1.json --project-root .
+```
+
+`v1` — exit 0. The record, abridged:
+
+```json
+{
+  "kind": "probe",
+  "tool": "check_parity.py",
+  "level": "mock",
+  "artifacts": ["redesign/evidence/mock-parity-v1.json"],
+  "inputs": [
+    {"path": "redesign/artifacts/inventory/design-inventory.json", "sha256": "9f2c…"},
+    {"path": "redesign/artifacts/mocks/v1/mock.html", "sha256": "b104…"},
+    {"path": "redesign/artifacts/mocks/v1/components.html", "sha256": "55de…"}
+  ],
+  "min_coverage": 1.0,
+  "coverage": 1.0,
+  "scored": ["routes", "components"],
+  "lists": {
+    "routes": {"expected": 9, "found": 9, "missing": []},
+    "components": {"expected": 27, "found": 27, "missing": []},
+    "states": {"expected": 36, "found": 2, "informational": true},
+    "interactions": {"expected": 12, "found": 0, "informational": true},
+    "flows": {"expected": 4, "found": 0, "informational": true}
+  },
+  "result": {"status": "pass", "summary": "36/36 scored ids present"}
+}
+```
+
+Read the three informational lines the way they are meant: `v1` wires nothing and
+draws two route states, which is exactly what a mock is. None of those counts can
+fail the level, and returning a mock because it scored 0 of 12 interactions would
+ask its builder to implement before the user has chosen.
+
+`v3` — exit 1, missing `component.badge` and `component.breadcrumb`. Those are
+scored, so `v3` goes back to `design/prototyper` with those two ids and stays out
+of the comparison until it comes back.
+
+The aggregate, once all four pass, is one probe record of the same shape whose
+`artifacts` list names the four per-mock records:
+
+```json
+{
+  "kind": "probe",
+  "tool": "check_parity.py",
+  "level": "mock",
+  "artifacts": [
+    "redesign/evidence/mock-parity-v1.json",
+    "redesign/evidence/mock-parity-v2.json",
+    "redesign/evidence/mock-parity-v3.json",
+    "redesign/evidence/mock-parity-v4.json"
+  ],
+  "min_coverage": 1.0,
+  "coverage": 1.0,
+  "result": {"status": "pass", "summary": "4 mocks at full route and component coverage"}
+}
+```
+
+That aggregate is what `design/redesign` packages as `mock_parity`.
+
+## Example 4 — "check that the selected variant reproduces the existing app"
+
+The `parity-verification` stage. It runs only when a variant was selected, so the
+first move is to read the `selection` record: `{decision: "variant", chosen:
+"v3"}`. Command run, exactly as the workflow specifies it. `--project-root .` is
+not optional dressing: it makes the record's `inputs[].path` values
+project-relative, which is what the gate binds by sha256.
+
+```bash
+python skills/scripts/check_parity.py --level full --inventory redesign/artifacts/inventory/design-inventory.json --app redesign/artifacts/variants/v3/app.html --components redesign/artifacts/variants/v3/components.html --out redesign/evidence/parity-v3.json --project-root .
 ```
 
 Exit 1 — missing ids. The record it wrote, abridged to the failing lists:
@@ -104,6 +170,7 @@ Exit 1 — missing ids. The record it wrote, abridged to the failing lists:
 {
   "kind": "probe",
   "tool": "check_parity.py",
+  "level": "full",
   "artifacts": ["redesign/evidence/parity-v3.json"],
   "inputs": [
     {"path": "redesign/artifacts/inventory/design-inventory.json", "sha256": "9f2c…"},
@@ -128,3 +195,8 @@ Exit 1 — missing ids. The record it wrote, abridged to the failing lists:
 Returned to `design/redesign`: the record path, `status: fail`, and the two exact
 missing ids for one batched revision by `design/prototyper`. The threshold is not
 lowered and the prototype is not edited here.
+
+Note which list failed. `route.orders:empty` and `route.orders:error` were
+informational when `v3` was a mock and are scored now that it is the one built
+variant — the same two ids, a defect only at the level where the surface is
+supposed to behave.

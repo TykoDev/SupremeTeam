@@ -66,6 +66,10 @@ while the credential stays valid in history and in whatever already read it.
 
 ## Migration Execution Boundary
 
+**This section is the canonical statement of the migration rule.** `../SKILL.md`
+Failure Modes and `workflow.md` both point here rather than restating it; when
+any of the three appear to differ, this text governs.
+
 A change set containing a migration is proven by executing it, and proving the
 rollback path means executing the down-migration too. Run both directions only
 against a disposable local schema that can be dropped and rebuilt from scratch.

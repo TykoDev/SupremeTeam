@@ -267,6 +267,220 @@ class PostToolUseTests(unittest.TestCase):
         self.assertIn("oscillating", result.stdout)
 
 
+def _drop_residue(project: Path) -> None:
+    """Reproduce the observed explosion in miniature: parallel-mode fragments, a
+    `.coverage/` tree with nested files, and an HTML report at the project root."""
+    for index in range(12):
+        (project / f".coverage.host.4242.{index:03d}x").write_text(f"fragment-{index}", encoding="utf-8")
+    nested = project / ".coverage" / "nested"
+    nested.mkdir(parents=True, exist_ok=True)
+    (nested / "a.json").write_text("{}", encoding="utf-8")
+    (project / ".coverage" / "top.json").write_text("{}", encoding="utf-8")
+    html = project / "htmlcov"
+    html.mkdir(exist_ok=True)
+    (html / "index.html").write_text("<html></html>", encoding="utf-8")
+    nyc = project / ".nyc_output"
+    nyc.mkdir(exist_ok=True)
+    (nyc / "out.json").write_text("{}", encoding="utf-8")
+
+
+def _residue_names(project: Path) -> list:
+    return sorted(p.name for p in project.iterdir() if p.name == ".coverage"
+                  or p.name.startswith(".coverage.") or p.name in ("htmlcov", ".nyc_output"))
+
+
+def _bash(command: str = "python -m pytest --cov") -> dict:
+    return {"session_id": "sweep", "tool_name": "Bash", "tool_input": {"command": command},
+            "tool_response": {"stdout": "ok", "exit_code": 0}}
+
+
+class CoverageResidueSweepTests(unittest.TestCase):
+    """Coverage data is run evidence; the project root is never where it lives.
+
+    The observed failure was a `.coverage` tree of over 3000 files appearing at a
+    target project's root in under two minutes — parallel/per-process coverage
+    with nothing combining or relocating the fragments. The prose rule stops it
+    being created; this sweep is the mechanical backstop that repairs it on the
+    next tool call.
+    """
+
+    def _context(self, result) -> str:
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(result.stdout.strip(), "sweep produced no envelope")
+        return json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+
+    def test_residue_moves_into_the_active_run_keeping_relative_structure(self):
+        with _project_dir() as project:
+            _write_run_state(project, "2026-09-17_sweep_a1b2c3", "state: BUILD_ACTIVE\n")
+            _drop_residue(project)
+            result = _run_hook("post_tool_use.py", _bash(), project)
+            context = self._context(result)
+            dest = project / "skillset-saves" / "runs" / "2026-09-17_sweep_a1b2c3" / "build" / "evidence" / "coverage"
+            self.assertEqual(_residue_names(project), [], "project root still holds coverage residue")
+            self.assertTrue(dest.is_dir(), context)
+            self.assertEqual(len(list(dest.glob(".coverage.host.4242.*"))), 12)
+            # Relative structure survives the move.
+            self.assertEqual((dest / ".coverage" / "nested" / "a.json").read_text(encoding="utf-8"), "{}")
+            self.assertEqual((dest / "htmlcov" / "index.html").read_text(encoding="utf-8"), "<html></html>")
+            self.assertEqual((dest / ".nyc_output" / "out.json").read_text(encoding="utf-8"), "{}")
+            # Nothing is deleted: every fragment's bytes are still readable.
+            self.assertEqual((dest / ".coverage.host.4242.000x").read_text(encoding="utf-8"), "fragment-0")
+        self.assertIn("build/evidence/coverage", context)
+        self.assertIn("Nothing was deleted", context)
+        self.assertIn("COVERAGE_FILE", context)
+        self.assertIn("never run coverage in parallel", context.lower())
+
+    def test_the_sweep_is_bounded_per_call(self):
+        """Bounded work is a doctrine requirement, not an optimisation: the hook
+        runs on every command action and must never walk an unbounded tree."""
+        import post_tool_use
+
+        self.assertEqual(post_tool_use._RESIDUE_CAP, 5000)
+
+    def test_recorded_phase_state_selects_the_run_phase(self):
+        with _project_dir() as project:
+            _write_run_state(project, "phase-run", "state: QA_ACTIVE\n")
+            state = project / "skillset-saves" / "runs" / "phase-run" / "_state.md"
+            state.write_text(state.read_text(encoding="utf-8") + "phase_state: QA_GATE_PENDING\n", encoding="utf-8")
+            _drop_residue(project)
+            context = self._context(_run_hook("post_tool_use.py", _bash(), project))
+            self.assertTrue((project / "skillset-saves" / "runs" / "phase-run" / "qa" / "evidence" / "coverage").is_dir())
+        self.assertIn("qa/evidence/coverage", context)
+
+    def test_unrecognised_phase_state_falls_back_to_build(self):
+        with _project_dir() as project:
+            _write_run_state(project, "dispute-run", "state: DESIGN_ACTIVE\n")
+            state = project / "skillset-saves" / "runs" / "dispute-run" / "_state.md"
+            state.write_text(state.read_text(encoding="utf-8") + "phase_state: DISPUTED_AWAITING_USER\n", encoding="utf-8")
+            _drop_residue(project)
+            self._context(_run_hook("post_tool_use.py", _bash(), project))
+            self.assertTrue((project / "skillset-saves" / "runs" / "dispute-run" / "build" / "evidence" / "coverage").is_dir())
+
+    def test_without_an_active_run_residue_goes_to_the_declared_scratch_class(self):
+        with _project_dir() as project:
+            _drop_residue(project)
+            context = self._context(_run_hook("post_tool_use.py", _bash(), project))
+            scratch = project / ".harness-state" / "test-work" / "coverage-residue"
+            self.assertEqual(_residue_names(project), [])
+            stamps = list(scratch.iterdir())
+            self.assertEqual(len(stamps), 1, stamps)
+            self.assertEqual(len(list(stamps[0].glob(".coverage.host.4242.*"))), 12)
+        self.assertIn("coverage-residue", context)
+        self.assertIn("No active run", context)
+
+    def test_frozen_boundary_entries_are_never_moved(self):
+        with _project_dir() as project:
+            _write_guard(project, {"frozen_globs": ["htmlcov/**"], "blocked_globs": [".nyc_output/**"]})
+            _write_run_state(project, "frozen-run", "state: BUILD_ACTIVE\n")
+            _drop_residue(project)
+            context = self._context(_run_hook("post_tool_use.py", _bash(), project))
+            dest = project / "skillset-saves" / "runs" / "frozen-run" / "build" / "evidence" / "coverage"
+            self.assertEqual(_residue_names(project), [".nyc_output", "htmlcov"])
+            self.assertTrue((project / "htmlcov" / "index.html").is_file())
+            self.assertFalse((dest / "htmlcov").exists())
+            self.assertFalse((dest / ".nyc_output").exists())
+            self.assertEqual(len(list(dest.glob(".coverage.host.4242.*"))), 12)
+        self.assertIn("frozen or blocked boundary", context)
+
+    def test_non_command_tools_sweep_nothing(self):
+        with _project_dir() as project:
+            _write_run_state(project, "edit-run", "state: BUILD_ACTIVE\n")
+            _drop_residue(project)
+            before = _residue_names(project)
+            result = _run_hook(
+                "post_tool_use.py",
+                {"session_id": "edit", "tool_name": "Edit",
+                 "tool_input": {"file_path": "src/app.py", "new_string": "x"},
+                 "tool_response": {"stdout": "ok", "exit_code": 0}},
+                project,
+            )
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(_residue_names(project), before)
+
+    def test_clean_root_stays_silent(self):
+        with _project_dir() as project:
+            _write_run_state(project, "clean-run", "state: BUILD_ACTIVE\n")
+            result = _run_hook("post_tool_use.py", _bash("python -m unittest discover"), project)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+
+    def test_generated_roots_are_the_destination_not_the_residue(self):
+        with _project_dir() as project:
+            _write_run_state(project, "roots-run", "state: BUILD_ACTIVE\n")
+            _drop_residue(project)
+            _run_hook("post_tool_use.py", _bash(), project)
+            self.assertTrue((project / "skillset-saves" / "_latest.md").is_file())
+            self.assertTrue((project / "skillset-saves" / "runs" / "roots-run" / "_state.md").is_file())
+            self.assertTrue((project / ".harness-state").is_dir())
+
+    def test_a_trajectory_hint_carries_the_sweep_report_rather_than_hiding_it(self):
+        with _project_dir() as project:
+            _write_run_state(project, "both-run", "state: BUILD_ACTIVE\n")
+            payload = {"session_id": "both", "tool_name": "Bash",
+                       "tool_input": {"command": "coverage run -p -m pytest"},
+                       "tool_response": {"stderr": "No such file or directory"}}
+            _run_hook("post_tool_use.py", payload, project)
+            _run_hook("post_tool_use.py", payload, project)
+            _drop_residue(project)
+            context = self._context(_run_hook("post_tool_use.py", payload, project))
+        self.assertIn("same input", context)
+        self.assertIn("[harness:coverage-residue]", context)
+
+
+class PreToolCoverageAdvisoryTests(unittest.TestCase):
+    """Advisory context, never a deny: running coverage is legitimate; leaving its
+    output at the project root is the defect, and it is still correctable here."""
+
+    def _advice(self, command: str, project: Path) -> str:
+        result = _run_hook("pre_tool_use.py", {"tool_name": "Bash", "tool_input": {"command": command}}, project)
+        self.assertEqual(result.returncode, 0)
+        if not result.stdout.strip():
+            return ""
+        payload = json.loads(result.stdout)["hookSpecificOutput"]
+        self.assertNotIn("permissionDecision", payload, "the advisory must never deny")
+        return payload["additionalContext"]
+
+    def test_parallel_and_unrouted_coverage_commands_are_advised(self):
+        cases = (
+            "coverage run -p -m pytest tests/",
+            "coverage run --parallel-mode -m unittest discover",
+            "python -m pytest --cov=app tests/",
+            "npx nyc mocha",
+            "npx c8 node --test",
+            "npx vitest run --coverage",
+        )
+        with _project_dir() as project:
+            for command in cases:
+                with self.subTest(command=command):
+                    advice = self._advice(command, project)
+                    self.assertIn("output_paths.py", advice)
+                    self.assertIn("evidence/coverage", advice)
+
+    def test_commands_that_name_a_destination_stay_silent(self):
+        cases = (
+            "coverage run -p -m pytest && coverage combine --data-file=skillset-saves/runs/r/build/evidence/coverage/.coverage",
+            "python -m pytest --cov=app --cov-report=xml:skillset-saves/runs/r/build/evidence/coverage/cov.xml",
+            "npx nyc --report-dir=skillset-saves/runs/r/qa/evidence/coverage --temp-dir=skillset-saves/runs/r/qa/evidence/coverage/tmp mocha",
+            "npx vitest run --coverage --coverage.reportsDirectory=skillset-saves/runs/r/qa/evidence/coverage",
+            "coverage run -m pytest tests/",
+            "python -m unittest discover -s tests",
+            "git status --porcelain",
+        )
+        with _project_dir() as project:
+            for command in cases:
+                with self.subTest(command=command):
+                    self.assertEqual(self._advice(command, project), "")
+
+    def test_a_denied_command_is_still_denied_not_advised(self):
+        with _project_dir() as project:
+            result = _run_hook(
+                "pre_tool_use.py",
+                {"tool_name": "Bash", "tool_input": {"command": "rm -rf / && coverage run -p -m pytest"}},
+                project,
+            )
+        self.assertIn('"permissionDecision": "deny"', result.stdout)
+
+
 class UserPromptSubmitTests(unittest.TestCase):
     def _ctx(self, result) -> str:
         self.assertEqual(result.returncode, 0)

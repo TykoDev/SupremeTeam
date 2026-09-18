@@ -7,6 +7,17 @@ source_of_truth: >-
   two files must agree (validation/test_save_contracts.py). Stage artifacts named
   in pipelines.yaml must appear here as an artifact id
   (validation/test_pipeline_contracts.py).
+  Artifact ids here and evidence keys in gates.yaml are two different namespaces,
+  and the ids do not have to match the keys. An evidence key is scoped to one
+  boundary, so the same key name at two boundaries is two different artifacts with
+  two different writers - findings belongs to code-chief at review-to-delivery and
+  to cso at security-review, and executed_probes to qa at qa-review and to
+  code-chief at review-to-delivery. Each of those is a separate id here
+  (findings / security-findings, executed-probes / review-executed-probes),
+  because one id with two owners would break the single-writer rule this file
+  exists to state. Read gates.yaml evidence_owners as keyed by (boundary, key) and
+  this file as keyed by artifact id; check_gates pairs them on the owner name,
+  which is the only field both namespaces share.
 enforcement:
   machine_checked: >-
     scripts/validate_manifests.py check_ownership is the comparator for the
@@ -80,14 +91,18 @@ owners:
       - build-package
       - gate-verdict
   redesign:
-    role: redesign phase lead; owns the comparison, recommendation, and recorded decision
+    role: redesign phase lead; owns the comparison, the recorded selection, and the recommendation
     writes:
+      - redesign-selection
       - redesign-package
     consumes:
       - grilling-log
       - design-inventory
       - taste-grilling-log
       - design-directions
+      - design-mock
+      - mock-parity-evidence
+      - mock-rendering
       - design-system-variant
       - parity-evidence
     does_not_write:
@@ -95,21 +110,24 @@ owners:
       - design-system-variant
       - gate-verdict
   design-mapper:
-    role: records the current design as a stable-id inventory with baseline captures and verifies variant parity
+    role: records the current design as a stable-id inventory with baseline captures and verifies mock and variant parity
     writes:
       - design-inventory
+      - mock-parity-evidence
       - parity-evidence
     does_not_write:
       - design-directions
       - design-system-variant
       - implementation
   prototyper:
-    role: builds one design-system variant with a living prototype and component library per direction
+    role: builds one static mock per direction, and the living prototype for the one direction that is selected
     writes:
+      - design-mock
       - design-system-variant
     consumes:
       - design-inventory
       - design-directions
+      - redesign-selection
     does_not_write:
       - design-inventory
       - parity-evidence
@@ -131,6 +149,7 @@ owners:
       - review-package
       - review-verdict
       - findings
+      - review-executed-probes
     consumes:
       - build-package
       - design-package
@@ -261,6 +280,7 @@ owners:
     writes:
       - threat-model
       - remediation-plan
+      - security-findings
       - security-review-package
     consumes:
       - vulnerability-scan
@@ -284,9 +304,11 @@ owners:
   design-qa:
     role: visual quality assurance and rendered evidence for a changed surface
     writes:
+      - mock-rendering
       - rendered-verification
     consumes:
       - design-system
+      - design-mock
     does_not_write:
       - design-system
       - implementation
@@ -319,6 +341,7 @@ owners:
       - taste-package
       - preference-profile
       - taste-grilling-log
+      - taste-snapshot
     does_not_write:
       - gate-verdict
   taste-review:
@@ -525,28 +548,53 @@ artifacts:
       - candidate entries with strength, anti-preferences, and confirmation status
   - id: design-directions
     owner: architect
-    before: variant build
+    before: mock build
     evidence:
       - four directions differentiated across at least three Taste categories
       - per-direction token strategy, component approach, and Taste traceability rows
+  - id: design-mock
+    owner: prototyper
+    before: mock parity
+    evidence:
+      - variant.md, tokens.css, components.css, components.html, mock.html with hashes
+      - one static screen per inventory route and every inventory component present, light and dark
+      - mock scope note naming the routes drawn and the states shown; no router, no state, no wired interactions
+  - id: mock-parity-evidence
+    owner: design-mapper
+    before: selection
+    evidence:
+      - check_parity.py --level mock probe record per mock bound to the inventory and mock hashes
+      - routes and components scored at full coverage; interactions, flows, and states informational
+  - id: mock-rendering
+    owner: design-qa
+    before: selection
+    evidence:
+      - captures of every mock screen across the six tiers and both themes, or an INFERRED record with its limitation
+  - id: redesign-selection
+    owner: redesign
+    before: selected build
+    evidence:
+      - the user's decision recorded verbatim, with the chosen mock id or the merge brief or the deferral
+      - recommended mock, basis, decider, and decision time
   - id: design-system-variant
     owner: prototyper
     before: parity verification
     evidence:
       - variant.md, tokens.css, components.css, components.js, components.html, app.html with hashes
-      - every inventory id carried as a parity marker; opens offline with no framework
+      - built for the selected mock id only; every inventory id carried as a parity marker; opens offline with no framework
   - id: parity-evidence
     owner: design-mapper
     before: redesign-review
     evidence:
-      - check_parity.py probe record per variant bound to the inventory and prototype hashes
+      - check_parity.py probe record for the selected variant bound to the inventory and prototype hashes
       - coverage per list and the exact missing ids
   - id: redesign-package
     owner: redesign
     before: redesign-review
     evidence:
-      - comparison matrix across the four variants
+      - comparison matrix across the four mocks
       - recommendation with rationale and the recorded user decision or deferral
+      - the selected variant's parity, rendering, and accessibility results, or the sanctioned fallback for a merge or deferral
       - handoff brief naming the chosen variant's design-system inputs
   - id: plan
     owner: planner
@@ -641,6 +689,12 @@ artifacts:
     evidence:
       - scope and residual uncertainty
       - reproduction and evidence chain paths
+  - id: review-executed-probes
+    owner: code-chief
+    before: review-to-delivery
+    evidence:
+      - probe log as a hashed file, executed against the reviewed revision
+      - the lens that ran each probe, so a finding traces to the run behind it
   - id: findings
     owner: code-chief
     before: review-to-delivery
@@ -683,6 +737,12 @@ artifacts:
     evidence:
       - executed probe log for unauthorized, malformed, replayed, expired, and over-broad requests
       - observed denial at the boundary, or the sanctioned fallback value
+  - id: security-findings
+    owner: cso
+    before: security-review
+    evidence:
+      - graded items with id, severity, status
+      - deferral owner and reopen trigger for any Major not verified
   - id: remediation-plan
     owner: cso
     before: security-review
@@ -810,6 +870,12 @@ artifacts:
     evidence:
       - environment settings and target
       - secrets handling policy
+  - id: taste-snapshot
+    owner: taste
+    before: design-to-build
+    evidence:
+      - the resolved effective profile as a hashed file, or the sanctioned fallback value
+      - the store revision the snapshot was taken at
   - id: taste-intake
     owner: taste
     before: taste-review

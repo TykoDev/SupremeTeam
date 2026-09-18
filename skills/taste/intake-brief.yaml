@@ -20,8 +20,10 @@ outputs:
   - effective merged profile
   - consumer handoff
   - taste-review gate package
-acceptance:
-  rubric_score: 100/100
-  blocked_phrase_scan: zero hits
-  cross_cutting_contracts_embedded: true
-  package_ready: true
+# Authoring-time checklist, not a shipped grade. Re-derived on every run; never
+# read as a recorded result.
+acceptance_checklist:
+  - blocked-phrase scan returns zero hits
+  - cross-cutting contracts embedded verbatim
+  - every bundled file referenced from SKILL.md
+  - package builds from the resolved output directory

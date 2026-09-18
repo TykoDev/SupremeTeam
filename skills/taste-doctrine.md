@@ -344,7 +344,11 @@ design-system owner, or a session-memory namespace.
 The design phase consumes Taste as an immutable snapshot rather than as a live
 store read: [design-doctrine.md](design-doctrine.md) §0 fixes the snapshot's
 fields and §8 makes `taste_snapshot` a required, hashed evidence key at
-`design-to-build`. That is the mechanism by which a design is reviewed against
+`design-to-build` — required, but **waivable**: [gates.yaml](gates.yaml)
+`fallback_values` sanctions the single reason `no saved Taste profile available`,
+carried at schema 2 as a typed applicability record, for a project that has no
+saved profile to snapshot. A run with no Taste history is not blocked at this
+key; a run that *has* a profile and skips the snapshot is. That is the mechanism by which a design is reviewed against
 the profile approved with it rather than against a later store revision.
 
 The redesign pipeline's taste grilling ([grill-me-doctrine.md](grill-me-doctrine.md)

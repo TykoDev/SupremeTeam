@@ -11,10 +11,11 @@ order; this file states the procedure.
 2. Runner discovery
 3. Layer selection
 4. Evidence assembly
-5. REVISE handling
-6. Decision rules
-7. Acceptance checklist
-8. Collaboration notes
+5. Coverage destination
+6. REVISE handling
+7. Decision rules
+8. Acceptance checklist
+9. Collaboration notes
 
 ## Test-Design Sequence
 
@@ -96,6 +97,50 @@ A failing or aborted run produces no `tests` evidence. `result.status` accepts
 only `pass` at this boundary; a record carrying any other status is a data gap,
 and the honest return is the gap plus the log that shows it.
 
+## Coverage Destination
+
+Coverage data files and coverage reports are run evidence, exactly like the
+runner log. They are never project-root residue. Anything named `.coverage`,
+`.coverage.*`, `.coverage/`, `htmlcov/`, `.nyc_output/`, or a `coverage/`
+directory this step created is residue if it is still at the project root when
+the step ends — one observed run left a `.coverage` tree of over three thousand
+files there in under two minutes.
+
+1. Resolve the destination before the runner starts, the same way the log
+   destination is resolved:
+   `python skills/scripts/output_paths.py --run-id <run-id> --phase build --kind coverage --name .coverage --mkdir`,
+   which is `skillset-saves/runs/<run-id>/build/evidence/coverage/`.
+2. Name that destination in the command instead of relocating files afterwards:
+
+| Runner | How the destination is named |
+| --- | --- |
+| Python `coverage` | `COVERAGE_FILE=<dest>/.coverage`, or `--data-file=<dest>/.coverage` |
+| `pytest --cov` | `--cov-report=<fmt>:<dest>/<name>` for every format requested |
+| `vitest --coverage` | `--coverage.reportsDirectory=<dest>` |
+| `nyc` / `c8` | `--report-dir=<dest> --temp-dir=<dest>/tmp` |
+| `go test` | `-coverprofile=<dest>/coverage.out` |
+| `dotnet test` | `--results-directory <dest>` |
+
+3. Never run coverage in parallel or per-process mode — `-p`,
+   `--parallel-mode`, `parallel = True` in the tool's config — unless the same
+   command finishes with `coverage combine` into that destination. Per-process
+   mode writes one `.coverage.<host>.<pid>.<rand>` file per worker; with nothing
+   combining them the file count grows with every process the suite spawns, which
+   is the failure above.
+4. Never loop a coverage run per test file. One run over the selected tests
+   produces one data file; a loop produces one per iteration and a root full of
+   fragments.
+5. When the step ends, the project root holds none of those names. The hashed
+   data file or report under `evidence/coverage/` is the evidence; a coverage
+   percentage in prose is a claim about evidence, not evidence, the same rule
+   `evidence_type_rules.probe` applies to the runner log.
+
+`harness/hooks/pre_tool_use.py` advises on a coverage command that names no
+destination, and `post_tool_use.py` relocates whatever residue a step still
+leaves — combining the fragments where the `coverage` module is available. A
+sweep that has to run is a defect the step should not have created, not a
+sanctioned workflow.
+
 ## REVISE Handling
 
 A `REVISE` arrives through `build/build-management` as one packet, already
@@ -115,6 +160,7 @@ key means the finding is not a coverage defect.
 - Prefer coverage at the boundary where failure would matter most.
 - Treat missing reproduction paths as missing evidence, not a documentation nicety.
 - Keep out-of-scope coverage explicit whenever environment limits prevent a full run.
+- Send coverage data to the run's `evidence/coverage/` before the runner starts, and never use per-process mode without a `coverage combine` in the same command.
 - Escalate when the right test surface requires design or infrastructure decisions outside the assigned build scope.
 - Capture the runner's output to a file first and describe it second, so the description can never outrun the log.
 - Quarantine only with recorded owner approval and a reopen trigger; otherwise return the instability as an open Major finding.
@@ -125,6 +171,7 @@ key means the finding is not a coverage defect.
 - Coverage includes critical failure paths, not just success cases.
 - The runner came from a named discovery rung rather than from habit.
 - The executed log exists as a file, is hashed, and its path is registered.
+- Coverage data and reports landed in the run's `evidence/coverage/`, and the project root holds no `.coverage`, `.coverage.*`, `.coverage/`, `htmlcov/`, or `.nyc_output/`.
 - The probe record carries `result.status: pass`, the command, and `inputs` bound to the exercised source.
 - Every quarantined test has an owner, a reopen trigger, and a stated coverage loss.
 - Remaining risk is narrow and honest.

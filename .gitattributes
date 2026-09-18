@@ -1,5 +1,7 @@
-# Registry overlay digests and gate artifact hashes are computed over LF
-# content; keep text files LF in every checkout regardless of core.autocrlf.
+# Every sha256 the catalog records or checks (registry overlay digests, gate
+# artifact hashes, typed-record inputs, save evidence) folds CRLF to LF before
+# hashing (skills/scripts/data_formats.py content_sha256), so either line ending
+# verifies. Keep text LF in the repository anyway so diffs stay clean.
 * text=auto eol=lf
 *.jpg binary
 *.png binary

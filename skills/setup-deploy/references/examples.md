@@ -1,5 +1,19 @@
 # Example Invocations
 
+Five passes. Examples 1-4 run inside an Admiral run, where the save path makes
+the destination unambiguous. Example 5 is the standalone mode `../SKILL.md`
+describes and the other four never render: no package, no gate key, no verdict,
+and a destination that has to be resolved and recorded rather than derived from a
+run id.
+
+## Contents
+
+1. Example 1 — the approved diff, and the file it produces
+2. Example 2 — the rollback plan as a file, and what makes it incomplete
+3. Example 3 — an unparseable file already at the canonical path
+4. Example 4 — manual step that makes the setup non-replayable
+5. Example 5 — standalone mode, and the resolved destination it has to record
+
 ## Example 1 — the approved diff, and the file it produces
 
 **User request:** set up deployment config
@@ -81,3 +95,16 @@ Decision deadline: 60 minutes after rollout start; after that, repair forward
 - Manual-step note: one database allowlist change still requires operator action and is called out as a release blocker.
 - Unverified setting: the production secrets manager could not be reached during setup, so the production `DB_URL` reference is recorded as unverified rather than persisted as proven.
 - Boundary note: the setup is not yet replay-safe until the manual step is automated or formally documented, and the unverified reference is confirmed.
+
+## Example 5 — standalone mode, and the resolved destination it has to record
+
+**User request:** set up the deploy config for this project (no run, no handoff, no `admiral`)
+
+**Output:**
+- Mode: **standalone**. `../routing-doctrine.md` classes this skill as directly invokable, and nothing about this invocation is inside a run — there is no run id, no package, no `deploy_config` or `rollback_plan` gate key, and **no verdict**. Said plainly up front, because the artifacts this produces are indistinguishable from the in-run ones once written, and a later reader must not mistake an unjudged file for a gated one.
+- Destination, resolved and recorded: the project's deployment surface resolved to **`/srv/projects/notify-web/deploy/deploy-config.yaml`** — recorded as that absolute path, not as "the project's deployment surface". The resolution was bounded by the same rule that applies in a run: a canonical path inside the workspace, reached without traversal and without following a link. Recording it absolute is not a breach of the Canonical-config-path contract's rejection of absolute paths — that rejection governs a destination *offered to* the skill and a reference written *into a gate manifest*. Here the skill resolved the destination itself and there is no manifest, so the absolute form is the record, not an accepted input. `deploy/` was already a real directory in the tree, so no path component was created to make the write land, and the resolved path is itself the evidence that the boundary held.
+- Why the absolute path is the deliverable and not a detail: in a run, `output_paths.py` and the run id make the destination re-derivable by anyone. Standalone there is nothing to re-derive it from, so a package that records only the filename leaves the next release guessing which of the project's several plausible config locations this one actually wrote — which is the exact ambiguity the durable-artifact contract exists to remove.
+- Proposed diff: four added keys against the file already present — image tag policy, health-check URL, environment variables, and secret references, every secret rendered as a reference and never an inline value.
+- Approval: the platform owner approved that exact diff before the write. The owner-approved diff is required here too; it is a property of writing production configuration, not of being inside a run, and standalone mode removes the gate, not the approval.
+- Artifacts written: `deploy-config.yaml` → `sha256:5f1c8ae0…`; `rollback-plan.md` → `sha256:b307d24f…`, both at the resolved destination above, both hashes recorded beside the absolute path.
+- What judged this: nothing. No gatekeeper read these files and no boundary closed over them. If this project later needs the gate's assurance over the configuration, rollback path, and verification plan, that is a `ship` run under `admiral`, and these artifacts are the durable input it carries forward — not a substitute for it.

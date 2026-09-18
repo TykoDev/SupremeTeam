@@ -15,7 +15,7 @@ Six submissions, three at each boundary.
 1. `design-to-build` — `REVISE` on an unbacked architecture
 2. `design-to-build` — `APPROVED` with two sanctioned waivers
 3. `design-to-build` — `ESCALATE` on a compliance contradiction
-4. `redesign-review` — `REVISE` on three variants and an unbound parity probe
+4. `redesign-review` — `REVISE` on three mocks and an unbound parity probe
 5. `redesign-review` — `REVISE` on a refused `rendered_verification` waiver
 6. `redesign-review` — `APPROVED` with the chosen variant
 
@@ -73,23 +73,24 @@ revision 1, owner `commander`.
 - Next action: the user or the product owner resolves the compliance-versus-analytics tradeoff. A `REVISE` would be the wrong verdict: no design owner can fix this by editing the packet.
 - Revision: 1.
 
-## Example 4 — `redesign-review`, `REVISE` on three variants and an unbound parity probe
+## Example 4 — `redesign-review`, `REVISE` on three mocks and an unbound parity probe
 
 **Submission:** `design/redesign` submits the redesign package. Save Context: run
 `r-3210`, phase `redesign`, submission `r-3210-rd1`, revision 1, owner `redesign`,
 return boundary `redesign-review`.
 
 **Validators:**
-- `../scripts/check_redesign.py skillset-saves/runs/r-3210/redesign`: `NEEDS_JUDGMENT`. Inventory, grilling log, directions, three `variant.md` files, the redesign package, and one `parity.json` present; `rendered_verification` reported `UNCHECKED`.
-- Boundary validator `--boundary redesign-review`: exit 1 on `variant_set` alone — three variants against a required count of four. `parity_evidence` is a single probe record with no `inputs`, which the validator accepts (`inputs` is required only for `scan` and `render` records), so that one arrives as judgment rather than as a mechanical failure.
+- `../scripts/check_redesign.py skillset-saves/runs/r-3210/redesign`: `NEEDS_JUDGMENT`. Inventory, grilling log, directions, three `variant.md` files, the selection record, the redesign package, and the parity output present; the capture keys reported `UNCHECKED`.
+- Boundary validator `--boundary redesign-review`: exit 1 on `mock_set` alone — three mocks against a required count of four. `mock_parity` is a single probe record with no `inputs`, which the validator accepts (`inputs` is required only for `scan` and `render` records), so that one arrives as judgment rather than as a mechanical failure.
 
 **Output:**
 - Verdict: `REVISE`.
 - Boundary: `redesign-review`, submitted by `redesign`, revision 1.
 - Evidence, grouped by owner:
-  - `prototyper` — `variant_set` holds three variants. `../../../gates.yaml` `evidence_type_params` fixes the required count at four, and a field of three that already includes the recommendation is a comparison with a predetermined winner.
-  - `design-mapper` — the single `parity_evidence` probe carries hashed artifacts and a passing status but no `inputs`, so nothing binds it to `design_inventory`. It proves that a probe ran, not that any variant matches the surface it claims parity with. The validator lets this through; the binding is what this verdict requires, added as `inputs` entries on that same record, which stays one mapping covering all four variants.
-  - `design-qa` — the shape check's `UNCHECKED` on `rendered_verification` is unresolved, and the evidence key is absent. See Example 5 for the case where it is present but waived.
+  - `prototyper` — `mock_set` holds three mocks. `../../../gates.yaml` `evidence_type_params` fixes the required count at four, and a field of three that already includes the recommendation is a comparison with a predetermined winner.
+  - `design-mapper` — the single `mock_parity` probe carries hashed artifacts and a passing status but no `inputs`, so nothing binds it to `design_inventory`. It proves that a probe ran, not that any mock covers the surface it claims parity with. The validator lets this through; the binding is what this verdict requires, added as `inputs` entries on that same record, which stays one mapping covering all four mocks.
+  - `design-qa` — the shape check's `UNCHECKED` on `mock_rendering` is unresolved, and the evidence key is absent. See Example 5 for the case where it is present but waived.
+- Judgment recorded separately: the three mocks that were submitted are genuinely static — no router, no store, no `components.js` — so the sequencing is right even though the count is wrong.
 - Next action: three owners fix in parallel; `redesign` resubmits once at revision 2.
 - Revision: 1.
 
@@ -99,21 +100,23 @@ return boundary `redesign-review`.
 `r-3210`, submission `r-3210-rd2`, owner `redesign`; `--prior redesign/verdict_redesign-review.json`.
 
 **Validators:**
-- `../scripts/check_redesign.py`: `STRUCTURE_OK` on everything except `rendered_verification`, still `UNCHECKED` — no capture file was written.
-- Boundary validator: exit 1. `rendered_verification` carries `{applicable: false, reason: "no visible surface changed - rendered verification not applicable", scope: "redesign", decided_by: "redesign"}`.
+- `../scripts/check_redesign.py`: `STRUCTURE_OK` on everything except the capture keys, still `UNCHECKED` — no capture file was written.
+- Boundary validator: exit 1. `mock_rendering` carries `{applicable: false, reason: "no visible surface changed - rendered verification not applicable", scope: "redesign", decided_by: "redesign"}`.
 
 **Output:**
 - Verdict: `REVISE`.
 - Boundary: `redesign-review`, submitted by `redesign`, revision 2.
-- Evidence: the waiver is rejected, and the reason is not that the record is malformed. `../../../gates.yaml` lists `rendered_verification` under this boundary's `no_fallback`, where the key accepts neither the sanctioned string nor an applicability record. A boundary-level `no_fallback` beats the global fallback, because a redesign always has a visible surface and the waiver's own reason therefore cannot be true here.
-- The `UNCHECKED` from the shape check is recorded as an unresolved question, never as agreement with the waiver. The two validators ask different things about this key.
-- Next action: route to `design-qa` for hashed captures across the required breakpoints and themes, with `inputs` bound by sha256 to the rendered variant. `variant_set` and `parity_evidence` are in `unchanged_evidence` and carry their revision-1 judgment; only this key is re-judged.
+- Evidence: the waiver is rejected, and the reason is not that the record is malformed. `../../../gates.yaml` lists `mock_rendering` under this boundary's `no_fallback`, where the key accepts neither the sanctioned string nor an applicability record. A boundary-level `no_fallback` beats the global fallback, because the four mocks were built and can therefore be captured, so the waiver's own reason cannot be true here.
+- What is *not* refused: `rendered_verification` on the same package carries `selection deferred - no variant built` as the `reason` of its applicability record, matching `selection.decision`. That is not a waiver at all — it states that no prototype was commissioned — and it stands.
+- The `UNCHECKED` from the shape check is recorded as an unresolved question, never as agreement with the waiver. The two validators ask different things about these keys.
+- Next action: route to `design-qa` for hashed captures of the mocks across the required breakpoints and themes, with `inputs` bound by sha256 to each `mock.html`. `mock_set` and `mock_parity` are in `unchanged_evidence` and carry their revision-1 judgment; only this key is re-judged.
 - Revision: 2.
 
 ## Example 6 — `redesign-review`, `APPROVED` with the chosen variant
 
-**Submission:** `design/redesign` resubmits at revision 3. Save Context: run
-`r-3210`, submission `r-3210-rd3`, owner `redesign`; `--prior` from revision 2.
+**Submission:** `design/redesign` resubmits at revision 3, now with a decision
+recorded and one variant built. Save Context: run `r-3210`, submission
+`r-3210-rd3`, owner `redesign`; `--prior` from revision 2.
 
 **Validators:**
 - `../scripts/check_redesign.py`: `STRUCTURE_OK`.
@@ -122,8 +125,8 @@ return boundary `redesign-review`.
 **Output:**
 - Verdict: `APPROVED`.
 - Boundary: `redesign-review`, submitted by `redesign`, revision 3.
-- Evidence: `variant_set` holds four variants with unique ids, each with `spec`, `tokens`, `components`, and `app` correctly hashed; four `parity_evidence` probes, one per variant, each bound by `inputs` to `design_inventory` and the prototype files; `rendered_verification` carries hashed captures at all six responsive tiers in both themes, `inputs` bound to the rendered variant. `design_inventory`, `taste_grilling`, `taste_snapshot`, and `design_directions` all resolve to hashed paths.
-- Judgment: the four directions are differentiated on more than palette — layout density, navigation model, and disclosure pattern each differ (`../../../design-doctrine.md` §9) — and `recommendation` names variant `v3` for a reason the comparison matrix actually supports.
-- Open risks: `residual_risk` records one deferred Major owned by `frontier` with a reopen trigger on any change to the table component.
+- Evidence: `mock_set` holds four mocks with unique ids, each with `spec`, `tokens`, `components`, and `mock` correctly hashed; `mock_parity` is one aggregated probe at full route and component coverage, bound by `inputs` to `design_inventory` and the four mock files; `mock_rendering` carries hashed captures of every mock screen at all six responsive tiers in both themes. `selection` records `{decision: "variant", chosen: "v3", recommended: "v3", decided_by: "head of product"}` behind a hashed `reports/selection.md`. `selected_variant` holds exactly one variant, id `v3`, matching `selection.chosen`, with `spec`, `tokens`, `components`, and `app` hashed; `parity_evidence` is its full-level probe at full coverage; `rendered_verification` carries its captures. `design_inventory`, `taste_grilling`, `taste_snapshot`, and `design_directions` all resolve to hashed paths.
+- Judgment: the four directions are differentiated on more than palette — layout density, navigation model, and disclosure pattern each differ (`../../../design-doctrine.md` §9); all four drafts stayed mocks, so the one `app.html` in the package is the one the selection authorised; and `recommendation` names `v3` for a reason the comparison matrix actually supports.
+- Open risks: `residual_risk` records one deferred Major owned by `frontier` with a reopen trigger on any change to the table component, and the standing note that three directions were judged from drawings alone.
 - Next action: DESIGN resumes with variant `v3`.
-- Revision: 3. Any change to a variant artifact or capture requires a new submission id before this verdict is reused.
+- Revision: 3. Any change to a mock, the selection, a variant artifact, or a capture requires a new submission id before this verdict is reused.

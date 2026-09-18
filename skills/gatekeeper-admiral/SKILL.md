@@ -77,7 +77,7 @@ the spec first — a boundary judged under the wrong row checks the wrong facts.
 | Boundary | Guards | Submitter | Required evidence |
 | --- | --- | --- | --- |
 | `design-to-build` | DESIGN to BUILD | commander | `decisions` `architecture` `interfaces` `plan` `acceptance` `security_seed` `stack_lock` `taste_snapshot` `ui_evidence` |
-| `redesign-review` | REDESIGN (design-shaped) to GATE to DESIGN with the chosen variant, or COMPLETE | redesign | `design_inventory` `taste_grilling` `taste_snapshot` `design_directions` `variant_set` `parity_evidence` `rendered_verification` `accessibility_evidence` `recommendation` `residual_risk` |
+| `redesign-review` | REDESIGN (design-shaped) to GATE to DESIGN with the chosen variant, or COMPLETE | redesign | `design_inventory` `taste_grilling` `taste_snapshot` `design_directions` `mock_set` `mock_parity` `mock_rendering` `selection` `selected_variant` `parity_evidence` `rendered_verification` `accessibility_evidence` `recommendation` `residual_risk` |
 | `build-to-review` | BUILD to REVIEW | build-management | `approved_design_revision` `implementation` `tests` `runtime` `traceability` `security_evidence` |
 | `review-to-delivery` | REVIEW to GATE to COMPLETE | code-chief | `review_verdict` `findings` `executed_probes` `rendered_verification` `residual_risk` `revision_lineage` |
 | `security-review` | security pipeline to GATE to COMPLETE | cso | `scope` `threat_model` `findings` `vulnerability_scan` `denial_path_evidence` `remediation_plan` `residual_risk` |
@@ -102,11 +102,23 @@ record each key must be, and the exact sanctioned waiver text:
   three of its own — `before_revision`, `consumer_handoff`, and
   `residual_uncertainty`. Every other key accepts no fallback, so a bare
   explanatory string in its place fails mechanically.
-- **A boundary-level `no_fallback` beats a global fallback.** `redesign-review`
-  lists `rendered_verification` under `no_fallback`, so there it accepts neither
-  the sanctioned string nor an applicability record: a redesign always has a
-  visible surface, so the global waiver reason cannot be true at that boundary.
-  Never grant a waiver the boundary refuses.
+- **A boundary's own list beats the global one — by replacing it, not extending
+  it.** Two boundary-level overrides exist, and they move in opposite directions.
+  `redesign-review` lists `mock_rendering` under `no_fallback`, so there it
+  accepts neither a sanctioned string nor an applicability record: the direction
+  set is rendered by definition, so no waiver reason can be true of it. The same
+  boundary declares its own `fallback_values` for `rendered_verification`,
+  `selected_variant`, `parity_evidence`, and `accessibility_evidence` — and a
+  boundary list **shadows** the global entry for that key rather than adding to
+  it (engine `../harness/gatekeeper/check.py:361-362` resolves the boundary list
+  *or* the global one, never their union). So at `redesign-review` the two
+  redesign-only reasons covering a `merge` or `deferred` selection are the
+  **exhaustive** set for all four keys, and the global
+  `rendered_verification` reason — `no visible surface changed - rendered
+  verification not applicable` — is **not sanctioned there**: a package asserting
+  it is a `REVISE`, not a waiver. Read the effective list off `../gates.yaml` per
+  boundary, boundary entry first: never grant a waiver the boundary refuses, and
+  never refuse one it sanctions.
 
 ### Owner routing
 
@@ -118,7 +130,7 @@ boundary's submitter.
 | Boundary | Keys whose owner is not the submitter |
 | --- | --- |
 | `design-to-build` | `decisions` admiral · `architecture` `interfaces` `ui_evidence` architect · `plan` `acceptance` planner · `security_seed` security-builder · `taste_snapshot` taste |
-| `redesign-review` | `design_inventory` `parity_evidence` design-mapper · `taste_grilling` `taste_snapshot` taste · `design_directions` architect · `variant_set` prototyper · `rendered_verification` design-qa · `accessibility_evidence` frontier |
+| `redesign-review` | `design_inventory` `mock_parity` `parity_evidence` design-mapper · `taste_grilling` `taste_snapshot` taste · `design_directions` architect · `mock_set` `selected_variant` prototyper · `mock_rendering` `rendered_verification` design-qa · `accessibility_evidence` frontier |
 | `build-to-review` | `implementation` bob-the-builder · `tests` test-builder · `runtime` health-check · `security_evidence` security-builder |
 | `review-to-delivery` | `rendered_verification` design-qa |
 | `security-review` | `vulnerability_scan` security-review · `denial_path_evidence` mr-robot |
@@ -137,17 +149,13 @@ canonical gate spec `../gates.yaml` and checks the submission's evidence
 contract:
 
 ```bash
-python ../harness/gatekeeper/check.py \
-  --boundary <design-to-build|redesign-review|build-to-review|review-to-delivery|security-review|investigation-review|qa-review|taste-review|skill-maker-to-delivery|deploy-readiness> \
-  --package <phase>/manifest.json \
-  [--prior <phase>/verdict_<boundary>.json] \
-  --verdict-out <phase>/verdict_<boundary>.cross-stage.json
+python ../harness/gatekeeper/check.py --boundary <design-to-build|redesign-review|build-to-review|review-to-delivery|security-review|investigation-review|qa-review|taste-review|skill-maker-to-delivery|deploy-readiness> --package <phase>/manifest.json [--prior <phase>/verdict_<boundary>.json] --verdict-out <phase>/verdict_<boundary>.cross-stage.json
 ```
 
 It verifies, for the named boundary only:
 
 - every required key is present and non-falsy, and artifact-backed keys point at hashed files
-- typed records (`scan`, `render`, `probe`, `audit`, `findings`, `verdict`, `stack_lock`, `revision_ref`, and the Taste records `preference_diff`, `confirmation`, `conflict_analysis`, `persistence_result`, `effective_profile`, `consumer_handoff`) are shaped correctly and bound to their source by sha256
+- typed records are shaped correctly and bound to their source by sha256 — `scan`, `render`, `probe`, `findings`, `verdict`, `stack_lock`, `revision_ref`, `variant_set`, `selection`, and the Taste records `preference_diff`, `confirmation`, `conflict_analysis`, `persistence_result`, `effective_profile`, `consumer_handoff`. `references/boundary-evidence.md` § 2 is the roster; read it there rather than from this line, and note that `audit` is a kind the engine implements but no key in `../gates.yaml` `evidence_types` currently carries
 - the revision lineage holds one value, and the declared `owner` is the boundary's only permitted submitter
 - no blocked phrase and no broken local link is present
 
@@ -165,8 +173,15 @@ python scripts/check.py skillset-saves/runs/<run>/delivery [--prior <prior-verdi
 
 Pass admiral's `delivery/` phase directory as `<package-dir>`: it holds the
 cross-stage handoff record (`reports/handoff_<boundary>.md`) for every boundary,
-and the originating phase directory was already shape-checked by the phase
-gatekeeper's own `scripts/check.py`. The script declares this gate's
+and, at the four boundaries that have a phase gatekeeper, the originating phase
+directory was already shape-checked by that gatekeeper's own `scripts/check.py`.
+Only `design`, `redesign`, `build`, and `review` model the gate as a stage
+(`../pipelines.yaml` `gate_model`); at `security-review`, `investigation-review`,
+`qa-review`, `taste-review`, `skill-maker-to-delivery`, and `deploy-readiness`
+there is no phase gatekeeper and no prior shape check — the submitter's own
+self-check under `../gates.yaml` `revise_policy.self_check` is all that ran
+before this one. Judge those six knowing this gate is the first independent
+reader of the package, not the second. The script declares this gate's
 required-artifact manifest and calls the shared engine at
 `../harness/gatekeeper/_gatecheck.py`, which mechanizes:
 
@@ -197,7 +212,7 @@ Canonical source: `../execution-contract.md`. Stated locally because that file
 requires every orchestrator and gatekeeper to carry the clauses verbatim; a
 paraphrase is drift.
 
-1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under the Tier 0 fast path in routing-doctrine.md; Tier 1 for bounded read-only work beyond Tier 0; Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for destructive, security-sensitive, production, or irreversible work. Record the tier and rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline ceremony and full security audits, but retains focused verification and applicable guardrails; escalate when its eligibility no longer holds.
+1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under the Tier 0 fast path in `skills/routing-doctrine.md`; Tier 1 for bounded read-only work beyond Tier 0; Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for destructive, security-sensitive, production, or irreversible work. Record the tier and rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline ceremony and full security audits, but retains focused verification and applicable guardrails; escalate when its eligibility no longer holds.
 2. Trigger proactively when the task matches the skill's declared scope, even when the request uses different words; decline adjacent work and route end-to-end or specialist ownership explicitly. Offer a next safe action only after the current step, scope, and approval lineage are resolved; suppress that offer while any is unresolved.
 3. Use Critical | Major | Minor | Info for findings. Block on Critical, resolve Major before a gate, record Minor, and preserve Info as context. Use APPROVED | REVISE | ESCALATE for gate verdicts.
 4. Validate paths, inputs, revisions, and handoff fields before acting. Keep file operations inside the workspace, use read-only or dry-run probes first, and require explicit owner intent for destructive or externally visible actions.

@@ -2,12 +2,13 @@
 name: taste
 description: >-
   Owns the SupremeTeam preference lifecycle: normalize, confirm, persist, and resolve
-  Taste preferences through the taste_prefs.py writer, and run the redesign
-  taste-grilling stage when delegated. Use when a user explicitly asks to remember,
-  inspect, specialize, promote, revoke, reset, import, export, or show effective
-  preferences — “remember that I prefer,” “save this globally,” “only in this project”
-  — even phrased casually. Consuming a resolved profile opens no mutation pipeline;
-  ordinary design feedback is not a preference change.
+  Taste preferences through taste_prefs.py, and runs the redesign taste-grilling
+  stage when delegated. Preferences are design and product taste only — visual,
+  interaction, tone, product shape — not coding or tool settings. Use when a user
+  explicitly asks to remember, inspect, specialize, promote, revoke, reset, import,
+  export, or show effective preferences — “remember that I prefer,” “save this
+  globally,” “only in this project” — even phrased casually. Ordinary design
+  feedback is not a preference change.
 version: 1.0.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
@@ -54,7 +55,7 @@ Canonical source: `../execution-contract.md`. Stated locally because that file
 requires every orchestrator and gatekeeper to carry the clauses verbatim; a paraphrase
 is drift, and `skills/validation/test_catalog_contracts.py` compares them exactly.
 
-1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under the Tier 0 fast path in routing-doctrine.md; Tier 1 for bounded read-only work beyond Tier 0; Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for destructive, security-sensitive, production, or irreversible work. Record the tier and rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline ceremony and full security audits, but retains focused verification and applicable guardrails; escalate when its eligibility no longer holds.
+1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under the Tier 0 fast path in `skills/routing-doctrine.md`; Tier 1 for bounded read-only work beyond Tier 0; Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for destructive, security-sensitive, production, or irreversible work. Record the tier and rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline ceremony and full security audits, but retains focused verification and applicable guardrails; escalate when its eligibility no longer holds.
 2. Trigger proactively when the task matches the skill's declared scope, even when the request uses different words; decline adjacent work and route end-to-end or specialist ownership explicitly. Offer a next safe action only after the current step, scope, and approval lineage are resolved; suppress that offer while any is unresolved.
 3. Use Critical | Major | Minor | Info for findings. Block on Critical, resolve Major before a gate, record Minor, and preserve Info as context. Use APPROVED | REVISE | ESCALATE for gate verdicts.
 4. Validate paths, inputs, revisions, and handoff fields before acting. Keep file operations inside the workspace, use read-only or dry-run probes first, and require explicit owner intent for destructive or externally visible actions.
@@ -102,6 +103,11 @@ no-profile fallback; the answers remain current-run instructions for
 Taste is the declared owner of three evidence keys in `../gates.yaml`, at two
 boundaries it does not itself submit. Each is produced here and handed to the
 submitting pipeline, so naming them is what makes them assemblable:
+
+`references/workflow.md` § Gate package and handoff is authoritative for the full
+`taste-review` evidence set; the three rows below are the keys this skill authors
+at the two *design* boundaries, summarized so the submitting pipeline can name
+them.
 
 | Key | Boundary | Content | Artifact-backed | Fallback |
 |-----|----------|---------|-----------------|----------|

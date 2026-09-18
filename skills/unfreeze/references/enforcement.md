@@ -35,7 +35,7 @@ difference is load-bearing:
 | --- | --- | --- |
 | `frozen_globs` | `release --glob <g> --requester <r> --reason "<why>"` | the record's `owner`, or any name in its `approvers` (recorded from `--approver` at freeze time) |
 | `blocked_globs` | the same `release` call — it scans both keys for active records matching the glob | same as above, per matching record; **every** match must authorize the requester or the whole call is refused |
-| `read_only` | `release-read-only --run-id <run> --requester <r>` | the record's `owner`, or a name in its `approvers`; the writer's `read-only` subcommand takes no `--approver`, so in practice this is the owner |
+| `read_only` | `release-read-only --run-id <run> --requester <r>` | the record's `owner` **only** — `cmd_read_only` writes no `approvers` field at all, so unlike a frozen glob there is no delegate to name and `_authorized`'s approver branch can never match for this key |
 | `allow_dangerous` | `revoke-dangerous --requester <r>` | the grant's `owner` **only** — the writer records no `approvers` on a grant, so there is no delegate and no fallback |
 
 Two legacy shapes defeat the check entirely and have to be re-recorded through

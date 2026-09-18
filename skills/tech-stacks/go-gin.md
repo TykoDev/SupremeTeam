@@ -34,6 +34,7 @@
 - Use the built-in testing package with table-driven cases and subtests for validation and domain behavior.
 - Use `httptest` and an HTTP client for handler behavior, then use interface-based mocks only at external seams.
 - Exercise database migrations and repository queries against the production dialect when practical, and record coverage with the repository's chosen tool.
+- Send coverage output to the run, never the project root: resolve the destination with `scripts/output_paths.py --kind coverage` and write the profile there with `go test -coverprofile=<dest>/coverage.out`, rendering `go tool cover -html` into the same directory. One profile per package set, not one per test file.
 - Run `govulncheck` and `gosec` alongside ordinary tests for dependency and source-level findings.
 
 ## Known uncertainty

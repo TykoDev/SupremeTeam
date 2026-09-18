@@ -142,7 +142,14 @@ classes:
     writer: phase-lead-or-delegated-specialist
     patterns:
       - skillset-saves/runs/*/*/evidence/*
-    rule: Command logs, scan records (scan_record.py), captures, DOM dumps. Immutable per revision.
+      - skillset-saves/runs/*/*/evidence/coverage/*
+    rule: >-
+      Command logs, scan records (scan_record.py), captures, DOM dumps. Immutable per revision.
+      Coverage data files and reports belong to this class under evidence/coverage/, resolved as
+      scripts/output_paths.py --kind coverage; a test step points COVERAGE_FILE, --data-file,
+      --cov-report, --report-dir/--temp-dir, or --coverage.reportsDirectory there instead of
+      leaving .coverage, .coverage.*, htmlcov/, or .nyc_output/ at the project root, and
+      harness/hooks/post_tool_use.py relocates that residue here when a step leaves it behind.
   - id: phase-packages
     writer: phase-lead
     patterns:

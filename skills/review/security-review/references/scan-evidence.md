@@ -41,21 +41,16 @@ record `{applicable: false, reason, scope, decided_by}`.
 ## `scan_record.py` Options
 
 ```bash
-python skills/scripts/scan_record.py \
-  --project-root . \
-  --out <phase>/evidence/vulnerability-scan.json \
-  --input requirements.txt \
-  --input requirements.lock \
-  --version-command "pip-audit --version" \
-  --fail-exit-codes 1 \
-  --limitation "transitive dev dependencies not resolved in this environment" \
-  --timeout 300 \
-  -- pip-audit -r requirements.txt --strict
+# Resolve the destination first; --out is never composed by hand.
+python skills/scripts/output_paths.py --run-id <run-id> --phase security --kind evidence --name vulnerability-scan.json
+# -> skillset-saves/runs/<run-id>/security/evidence/vulnerability-scan.json
+
+python skills/scripts/scan_record.py --project-root . --out skillset-saves/runs/<run-id>/security/evidence/vulnerability-scan.json --input requirements.txt --input requirements.lock --version-command "pip-audit --version" --fail-exit-codes 1 --limitation "transitive dev dependencies not resolved in this environment" --timeout 300 -- pip-audit -r requirements.txt --strict
 ```
 
 | Option | Purpose |
 | --- | --- |
-| `--out` | Path of the JSON record; the raw scanner output is retained beside it |
+| `--out` | Path of the JSON record; the raw scanner output is retained beside it as `<stem>.stdout.txt` / `<stem>.stderr.txt`. Resolved against the process working directory, **not** `--project-root` — a bare relative value writes the one artifact this lens owns outside the run it belongs to (`../SKILL.md` Scan Evidence). |
 | `--input` | Repeatable; binds an inspected manifest or lockfile by sha256 |
 | `--tool` | Tool name override; defaults to the first token of the command |
 | `--version-command` | Command that prints the scanner version, recorded on the result |
@@ -63,7 +58,7 @@ python skills/scripts/scan_record.py \
 | `--limitation` | Repeatable; records a known coverage gap on the record itself |
 | `--timeout` | Bounds the scanner run |
 | `--no-run` | Records the request as `not-run` without executing the scanner |
-| `--project-root` | Root the inputs and output resolve against |
+| `--project-root` | Root that `--input` paths resolve against (and that each must stay inside), and the working directory the scanner subprocess runs in. It does **not** govern `--out`: `scan_record.py` resolves the record destination against the *process* working directory, so a relative `--out` lands beside wherever you invoked the wrapper, not under this root. Pass `--out` the path `output_paths.py` resolved. |
 
 The scanner command follows `--`. The wrapper exits 0 whenever the record was
 written and 2 on wrapper error, so the wrapper's own exit code says whether

@@ -5,9 +5,10 @@ description: >-
   confidence-tiered requirements brief. Use when asked to research this problem
   space, gather requirement evidence, analyze stakeholder needs, map the domain
   context, or turn a fuzzy request into evidence the design team can build from —
-  even when the input is only a vague idea. Feeds `design/architect`, the next
-  design stage; defers architecture to it and the delivery plan to
-  `design/planner`.
+  even when the input is only a vague idea. Reached without a delegation from
+  `design/commander`, writes no brief and returns there for intake first. Feeds
+  `design/architect`, the next design stage; defers architecture to it and the
+  delivery plan to `design/planner`.
 version: 1.0.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---

@@ -85,12 +85,7 @@ the seeded boundary it belongs to, so the two checkpoints read as one contract.
 **Scan, recorded as a typed record rather than narrated:**
 
 ```bash
-python skills/scripts/scan_record.py \
-  --out skillset-saves/runs/2026-04-19-notify/build/evidence/security-scan.json \
-  --input requirements.lock \
-  --tool pip-audit --version-command "pip-audit --version" \
-  --fail-exit-codes 1 \
-  -- pip-audit -r requirements.lock
+python skills/scripts/scan_record.py --out skillset-saves/runs/2026-04-19-notify/build/evidence/security-scan.json --input requirements.lock --tool pip-audit --version-command "pip-audit --version" --fail-exit-codes 1 -- pip-audit -r requirements.lock
 ```
 
 The raw scanner output is stored beside the record, and `--input` binds it by
@@ -104,15 +99,15 @@ record, one item per graded control:
 "security_evidence": {
   "items": [
     { "id": "SEC-04", "severity": "Critical", "status": "verified",
-      "note": "signature verification runs before body parse; constant-time compare; rerun proves an unsigned request is rejected" },
+      "reason": "signature verification runs before body parse; constant-time compare; rerun proves an unsigned request is rejected" },
     { "id": "SEC-07", "severity": "Major", "status": "verified",
-      "note": "schema validation rejects unknown fields; rerun covers the unknown-field case" },
+      "reason": "schema validation rejects unknown fields; rerun covers the unknown-field case" },
     { "id": "SEC-09", "severity": "Major", "status": "deferred",
       "owner": "build-management",
       "reopen_trigger": "the renderer gains any filesystem or network capability, or a template function is added to the allowlist",
-      "note": "template sandbox has no network or filesystem access; the function allowlist is present but not yet enforced at load time" },
+      "reason": "template sandbox has no network or filesystem access; the function allowlist is present but not yet enforced at load time" },
     { "id": "SEC-11", "severity": "Minor", "status": "verified",
-      "note": "per-channel output escaping applied; size ceiling set at 64KB" },
+      "reason": "per-channel output escaping applied; size ceiling set at 64KB" },
     { "id": "SEC-12", "severity": "Info", "status": "not-applicable",
       "reason": "secrets boundary unchanged this revision; restated from the seed so the baseline stays complete" }
   ]

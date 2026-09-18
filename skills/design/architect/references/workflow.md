@@ -145,7 +145,7 @@ variation is one direction wearing four coats of paint, and the gate reads it as
 **Token strategy**: palette basis, type scale, spacing unit, radius, elevation,
 motion budget — as values, not adjectives.
 **Component approach**: which shadcn primitives carry the identity, which are left
-plain, and what the variant names itself.
+plain, and what the direction names itself.
 **Differentiators**: the three things only this direction does.
 **Taste traceability**:
 
@@ -239,4 +239,4 @@ The contracts this workflow runs under are stated in `../SKILL.md` § Required C
 The skills this workflow hands to and receives from are named in `../SKILL.md` § Collaboration Surface. What this workflow adds:
 
 - `design/planner` sequences delivery against these boundaries; `design/engineer` slices against the same contracts.
-- `design/prototyper` builds one variant per direction from the directions produced here.
+- `design/prototyper` draws one static mock per direction from the directions produced here, and later builds the living prototype for the one direction the user selects.

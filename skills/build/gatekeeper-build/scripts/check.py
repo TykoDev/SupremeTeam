@@ -142,7 +142,22 @@ MANIFEST = gc.Manifest(
 
 if __name__ == "__main__":
     _args = sys.argv[1:]
-    _pkg_idx = next((i for i, a in enumerate(_args) if not a.startswith("-")), None)
+    # Options that consume the following argument. Without this, the value of
+    # such a flag is the first non-dash token, so `--prior <file> <pkg>` would
+    # validate <file> as the package directory and check the wrong tree.
+    _VALUE_OPTS = ("--prior", "--blocked-phrases")
+    _pkg_idx, _skip = None, False
+    for _i, _a in enumerate(_args):
+        if _skip:
+            _skip = False
+            continue
+        if _a in _VALUE_OPTS:
+            _skip = True
+            continue
+        if _a.startswith("-"):
+            continue
+        _pkg_idx = _i
+        break
     if _pkg_idx is None:
         sys.stderr.write(
             "ERROR: <package-dir> is required. "

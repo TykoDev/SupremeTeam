@@ -21,11 +21,11 @@ SKILLS = Path(__file__).resolve().parents[2]
 CHECK = SKILLS / "harness" / "gatekeeper" / "check.py"
 GATE_SPEC = SKILLS / "gates.yaml"
 sys.path.insert(0, str(SKILLS / "scripts"))
-from data_formats import load_data  # noqa: E402
+from data_formats import content_sha256, load_data  # noqa: E402
 
 
 def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return content_sha256(path)
 
 
 def registry_entry() -> dict:
@@ -497,6 +497,59 @@ class OverlayDigestPortabilityTests(unittest.TestCase):
                 "overlays": [{**entry, "sha256": data["evidence"]["stack_lock"]["overlay_sha256"]}]}), encoding="utf-8")
             out = result(run_cli("design-to-build", fx.write_manifest("design", data), "--registry", str(registry)))
             self.assertTrue(any("overlay file digest does not match" in f for f in out["failures"]), out)
+
+
+class ArtifactHashPortabilityTests(unittest.TestCase):
+    """artifact_hashes are line-ending agnostic: a hash taken from LF text verifies a
+    CRLF file and vice versa, so a checkout conversion never reads as drift."""
+
+    BODY = "# Plan\n\nThree increments.\n"
+
+    def _package(self, fx, hashes):
+        entry = registry_entry()
+        return {
+            "schema_version": 2, "run_id": fx.run_id, "boundary": "design-to-build", "owner": "commander",
+            "submission_id": "design-eol", "revision": "r1", "revisions": ["r1"],
+            "evidence": {
+                "decisions": "../intake/report_grilling.md", "architecture": "reports/architecture.md",
+                "interfaces": "REST", "plan": "reports/plan.md", "acceptance": "smoke + contract tests",
+                "security_seed": "no external trust boundary",
+                "stack_lock": {"slug": entry["slug"], "versions": entry["versions"], "overlay_sha256": entry["sha256"]},
+                "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
+                "ui_evidence": {"applicable": False, "reason": "no user-facing surface", "scope": "whole run", "decided_by": "architect"},
+            },
+            "artifact_hashes": hashes,
+        }
+
+    def _run(self, on_disk: str, recorded: str) -> dict:
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = RunLayoutFixture(Path(tmp).resolve())
+            architecture = fx.proof("design", "reports/architecture.md", "# Architecture\n\nHexagonal service.\n")
+            plan = fx.proof("design", "reports/plan.md", self.BODY)
+            plan.write_bytes(self.BODY.replace("\n", on_disk).encode("utf-8"))
+            hashes = {"../intake/report_grilling.md": sha256(fx.grilling),
+                      "reports/architecture.md": sha256(architecture), "reports/plan.md": recorded}
+            return result(run_cli("design-to-build", fx.write_manifest("design", self._package(fx, hashes))))
+
+    def test_lf_hash_verifies_crlf_artifact_and_the_reverse(self):
+        lf_hash = hashlib.sha256(self.BODY.encode("utf-8")).hexdigest()
+        for on_disk in ("\r\n", "\n"):
+            with self.subTest(on_disk=repr(on_disk)):
+                out = self._run(on_disk, lf_hash)
+                self.assertTrue(out["pass"], out)
+
+    def test_a_raw_crlf_hash_is_not_the_canonical_value(self):
+        crlf_hash = hashlib.sha256(self.BODY.replace("\n", "\r\n").encode("utf-8")).hexdigest()
+        out = self._run("\r\n", crlf_hash)
+        self.assertFalse(out["pass"], out)
+        self.assertTrue(any("reports/plan.md" in f for f in out["failures"]), out)
+
+    def test_binary_artifacts_hash_byte_for_byte(self):
+        payload = b"\x89PNG\r\n\x1a\n\x00\x00\r\n\x00IHDR"
+        with tempfile.TemporaryDirectory() as tmp:
+            capture = Path(tmp) / "capture.png"
+            capture.write_bytes(payload)
+            self.assertEqual(content_sha256(capture), hashlib.sha256(payload).hexdigest())
 
 
 if __name__ == "__main__":

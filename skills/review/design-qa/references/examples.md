@@ -1,12 +1,14 @@
 # Example Invocations
 
-Four passes, each rendered in the full packet shape `../SKILL.md` mandates:
+Five passes, each rendered in the full packet shape `../SKILL.md` mandates:
 Outcome, Evidence, Findings, Open risks, Next action, Revision, in that order and
 with no verdict, because this lens owns no gate (`../../../execution-contract.md`,
 clause 6). The graded passes carry the shape too, not just the clean one — the
 digest and the capture paths are what make a deviation attributable, and an
 example that states them only when nothing was found teaches the packet as
-decoration. Severities are the shared four tiers —
+decoration. Example 5 is a REVISE delta round rather than a fresh pass, because
+the delta protocol — carried ids, re-hashed captures, the `r2 <- r1` line, the
+baseline held from round one — is where a re-review most often goes wrong. Severities are the shared four tiers —
 `Critical | Major | Minor | Info` — and nothing else.
 
 ## Example 1
@@ -62,3 +64,20 @@ decoration. Severities are the shared four tiers —
 - Open risks: the permission-denied state has no fixture, so it was not captured and is not covered by this result.
 - Next action: none from this lens. The `rendered_verification` record is attached for `review/code-chief` to carry into the gate manifest.
 - Revision: r2.
+
+## Example 5 — REVISE delta round
+
+**User request:** (routed, not asked) `../../gates.yaml` `revise_policy.parallel_fix`
+delegates the design-qa group of the `review-to-delivery` REVISE packet to this
+lens; `changed_evidence` names the destructive-action modal at the small-mobile
+and mobile tiers. Continues Example 3.
+
+**Output:**
+- Outcome: design-qa delta, r5 <- r4, digest `sha256:9ae1…` (unchanged — the baseline is the approved design, and a REVISE round re-checks the implementation, never the design), 2 findings carried: 1 verified, 1 unresolved.
+- Evidence: only the four captures the packet named were re-taken — `evidence/capture-375-dark.png`, `evidence/capture-375-light.png`, `evidence/capture-414-dark.png`, `evidence/capture-414-light.png` — each re-hashed and the `rendered_verification` record updated to the new digests. The stale r4 hashes were replaced rather than left standing: a correct-looking capture under a prior hash fails the artifact-backing check exactly as a wrong capture would. The confirmation toast and the settings sidebar keep their r4 judgment and were not re-captured; no view's layout depends on the modal, so nothing else was pulled in.
+- Findings:
+  - `DQ-05` | Critical | destructive-action modal, small mobile and mobile tiers, both themes | **verified** — the declared stacked layout now applies below the tablet tier; confirm and cancel render on separate rows with the declared spacing, shown in the four re-taken captures. Same id, same severity, status `verified`.
+  - `DQ-06` | Minor | confirmation toast, all tiers | **unresolved** — the corner radius is still one step off the token scale. Returns under its original id and severity, not renumbered and not downgraded because the round's Critical cleared.
+- Open risks: unchanged from r4 — the modal's pending and failed states still have no fixture and were not captured, so the fix is verified only in the confirm state it was reported in.
+- Next action: the Critical is cleared, so this group no longer blocks. `review/code-chief` rules on `DQ-06`; cycle 1 of a `cycle_cap` of 2 is spent, and at the cap an unresolved Minor does not convert into a blocker.
+- Revision: r5 <- r4.

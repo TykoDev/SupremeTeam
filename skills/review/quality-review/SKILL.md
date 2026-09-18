@@ -121,14 +121,14 @@ A clean pass asserts the boundaries were assessed and hold. When there is no str
 1. Re-assess only the modules and keys named in `changed_evidence` for this group, plus any boundary whose drift judgment depended on them. Unchanged evidence keeps its prior judgment, mirroring how the gatekeeper re-judges under `delta_review`.
 2. Carry prior finding ids forward. A resolved item returns with status `verified` and the structural evidence that verifies it; an unresolved one returns under its original id and severity, never renumbered, and a Major that has since acquired an owner and reopen trigger returns as deferred rather than as resolved.
 3. State the round in the `Revision` line as a delta, for example `r2 <- r1`.
-4. Report drift found outside `changed_evidence` as a new item marked out-of-delta rather than widening the round silently. `review/code-chief` decides whether it enters this cycle or the next.
+4. Report drift that falls outside the round as a new item marked out-of-delta rather than widening the round silently — either outside `changed_evidence` entirely, or inside it by path but unrelated to the findings this round was opened for. Both are the same call: the round answers the questions it was opened with. `review/code-chief` decides whether it enters this cycle or the next.
 
 At the cycle cap, an unresolved Critical or Major returns unchanged with its blocking status intact; the cap is never a reason to re-grade a finding downward.
 
 ## Required Contracts
 
 - **Read-only over the reviewed surface**: This lens reports and never edits the modules, configuration, or documentation it assesses. `allowed-tools` withholds `Edit` so the posture is enforced rather than promised, and `Write` covers the packet and its evidence under the save path only. A refactor this lens can see is written into the finding as a remediation direction and routed through `review/code-chief` to the owning build skill; a structural change applied here would be the largest unreviewed edit in the run, made by the one lens with no one checking it.
-- **Before/After Evidence**: Capture observable state before and after each intervention so improvements can be verified instead of asserted.
+- **Before/After Evidence**: This lens intervenes in nothing, so the contract is a baseline rule: the "before" is the boundary map built at step 1, which is what a later claim of reduced coupling is measured against. `references/workflow.md` states where in the sequence it is taken.
 - **Shared severity**: Grade every finding Critical | Major | Minor | Info, the four-tier model clause 3 of `../../execution-contract.md` defines, so upstream and downstream packages interpret risk consistently.
 - **Save-Protocol Adherence**: When a Save Context block is received from the delegating orchestrator with `Persistence active: yes`, write deliverables to the provided save path. Saving is mandatory when persistence is active.
 

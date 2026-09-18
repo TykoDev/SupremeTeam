@@ -13,7 +13,7 @@ The turn-by-turn procedure for running a cross-pipeline delivery: how intake pic
 
 ## Intake And Mode Selection
 
-1. Run the save startup check before new state is created: inspect `skillset-saves/_latest.md`, classify the directory as active/inactive/orphaned/missing/unreadable/conflict, resume active reclaimable runs, or activate persistence for a new run.
+1. Run the save startup check before new state is created: inspect `skillset-saves/_latest.md`, classify the directory with `save_run.py status --run-id <id>` into one of the ten values of `../../save-protocol.md` §2 Startup — active, inactive, complete, stale, orphaned, conflicting, corrupt, interrupted, missing, unreadable — resume active reclaimable runs (`active` and `orphaned` only), or activate persistence for a new run. `stale` takes `recover --reason`, `interrupted` takes `recover --rollback`, `conflicting` and `corrupt` stop and escalate.
 2. If persistence activation fails, warn once, attempt read-only resume from any readable latest artifacts, and continue transiently only when no coherent resume boundary can be proven.
 3. Run `harness/hooks/check_readiness.py --host auto` on a fresh intake, or with `--require-active-run` on a resume, so Python version, hook registration, and save state are visible in one place; a fresh intake has no run until `save_run.py create` publishes it. Record `RUNTIME_READINESS_CHECK`; warn and continue in degraded mode when hooks or Python are missing, and on a resume rerun the save startup check if no active save run is present.
 4. Normalize the user request with `intake-brief.yaml` so scope, constraints, upstream artifacts, and requested endpoint are visible in one place.
@@ -36,7 +36,9 @@ The path policy is `../../save-ownership.yaml`; admiral never writes a core run
 file by hand and never creates a path outside its declared classes.
 
 **On delegation** to any sub-orchestrator:
-1. Checkpoint through `session-memory` (`python skills/harness/hooks/save_run.py checkpoint --run-id {run-id} --owner <lead> --expect-revision <n> --set phase_state=<PHASE>_ACTIVE`). The active owner follows `--owner`; it is a reserved field, so `--set active_owner=` is refused. The checkpoint publishes `_state.md`, `_lock.md`, and `_latest.md` atomically and appends a `checkpoint` event to `_audit-trail.md`.
+1. Checkpoint through `session-memory` (`python skills/harness/hooks/save_run.py checkpoint --run-id {run-id} --owner admiral --expect-revision <n> --set phase_state=<PHASE>_ACTIVE --set delegated_to=<lead>`).
+   **`--owner` is the lock holder, not the delegate.** `save_run.py` refuses any operation whose `--owner` differs from the lock's owner (`lock is owned by 'admiral', not '<lead>'`), and admiral holds the lock from `create` onward — so at the first delegation, and at every later one, `--owner <lead>` is refused every time. Delegation does not transfer the lock: admiral keeps it for the whole run, which is what makes the session pin and the rewind boundary coherent. Record the delegate as ordinary state with `--set` instead. `active_owner` is reserved and always reflects the lock holder, so `--set active_owner=` is refused too.
+   The checkpoint publishes `_state.md`, `_lock.md`, and `_latest.md` atomically and appends a `checkpoint` event to `_audit-trail.md`.
 2. Include the canonical `### Save Context` block (below) in the delegation prompt.
 
 **On package return** from a sub-orchestrator:

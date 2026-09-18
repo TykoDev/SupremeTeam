@@ -93,13 +93,13 @@ def _validate_package_dir(raw):
 
 
 def _load_engine():
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        candidate = parent / "harness" / "gatekeeper" / "_gatecheck.py"
-        if candidate.exists():
-            sys.path.insert(0, str(candidate.parent))
-            import _gatecheck  # type: ignore
-            return _gatecheck
+    # Reuse the catalog root already located. _REPO_ROOT is deliberately wider
+    # (it may be a parent of the catalog, so packages under skillset-saves/
+    # validate); the engine lives under the catalog, so resolve against that.
+    if _CATALOG_ROOT is not None:
+        sys.path.insert(0, str(_CATALOG_ROOT / "harness" / "gatekeeper"))
+        import _gatecheck  # type: ignore
+        return _gatecheck
     sys.stderr.write(
         "ERROR: could not locate harness/gatekeeper/_gatecheck.py above "
         f"{Path(__file__).resolve()}. Gate cannot run; validate by hand.\n")
@@ -171,7 +171,22 @@ MANIFEST = gc.Manifest(
 
 if __name__ == "__main__":
     _args = sys.argv[1:]
-    _pkg_idx = next((i for i, a in enumerate(_args) if not a.startswith("-")), None)
+    # Options that consume the following argument. Without this, the value of
+    # such a flag is the first non-dash token, so `--prior <file> <pkg>` would
+    # validate <file> as the package directory and check the wrong tree.
+    _VALUE_OPTS = ("--prior", "--blocked-phrases")
+    _pkg_idx, _skip = None, False
+    for _i, _a in enumerate(_args):
+        if _skip:
+            _skip = False
+            continue
+        if _a in _VALUE_OPTS:
+            _skip = True
+            continue
+        if _a.startswith("-"):
+            continue
+        _pkg_idx = _i
+        break
     if _pkg_idx is None:
         sys.stderr.write(
             "ERROR: <package-dir> is required. "

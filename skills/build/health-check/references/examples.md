@@ -62,7 +62,7 @@ timeout      window exceeded => not ready
 | Probe | Command | Log | Result |
 | --- | --- | --- | --- |
 | Startup | `<start command> > evidence/runtime-startup.log 2>&1` | `evidence/runtime-startup.log` | boot at t+0, no restart loop |
-| Readiness poll | `curl -sS -o body.json -w "%{http_code} %{time_total}\n" --max-time 5 https://notify.staging.internal/readyz` at 2s intervals | `evidence/runtime-readiness.log` | first satisfying response t+38s, stability reached t+42s, inside the 90s window |
+| Readiness poll | `curl -sS -o evidence/runtime-readiness-body.json -w "%{http_code} %{time_total}\n" --max-time 5 https://notify.staging.internal/readyz` at 2s intervals | `evidence/runtime-readiness.log` | first satisfying response t+38s, stability reached t+42s, inside the 90s window |
 | HTTP dependency | `curl -sS -o /dev/null -w "%{http_code} %{time_total}\n" --max-time 5 https://templates.staging.internal/health` | `evidence/runtime-dependencies.log` | 200 |
 | TCP dependency | `python -c "import socket,sys; s=socket.create_connection((sys.argv[1],int(sys.argv[2])),5); s.close(); print('open')" pg.staging.internal 5432` | appended to the same log | open |
 | Environment references | reference resolution, names only | `evidence/runtime-environment.log` | 7 present, 0 empty |
@@ -86,11 +86,22 @@ record, with `artifacts` manifest-relative:
 }
 ```
 
+**Response-body disposition (workflow step, the readiness body):** the readiness
+poll wrote `evidence/runtime-readiness-body.json`. It was scrubbed on the same
+pass as the logs, the predicate was evaluated against it, and because the body
+reports a degraded dependency it is **hashed into the package** rather than
+deleted — a later reader needs the reason the dependency was degraded, not just
+the verdict that it was. Had the body been an unremarkable `{"status":"ok"}`, it
+would have been deleted on the same pass instead. Either way it does not survive
+as a stray unhashed file.
+
 **Artifact hashes registered into the manifest's `artifact_hashes` map:**
 `evidence/runtime-smoke.log` →
 `ff1dd65d59241d578651b6ff7647e7a41ba9f2476e94020807c7f33b35c2bf0d`;
 `evidence/runtime-startup.log` →
-`c47b690fdf551281faf70c8e4b93bfe8876bae32728b00209f39a6a01cbbe52f`.
+`c47b690fdf551281faf70c8e4b93bfe8876bae32728b00209f39a6a01cbbe52f`;
+`evidence/runtime-readiness-body.json` →
+`9e0c4a13f7b258de41c0a9e8b6f7213dc5a48ff0316be7d9c2054e81a7f3cb64`.
 
 **Environment dependency status returned beside the record:**
 

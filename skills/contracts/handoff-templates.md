@@ -73,9 +73,9 @@ candidate, parses field names from either a bulleted list or a table, and counts
 a file as a real copy when it carries the anchor field naming the run. A
 hardcoded list of copies was tried first and missed one — a normative field
 table that dropped a field on the line after asserting that none may be dropped
-— which is why discovery is by scan. At this revision 89 files under `skills/`
-contain the words that title this block and the scan parses 10 of them: this one
-and nine copies. The other 79 name the block in prose without carrying it, do not
+— which is why discovery is by scan. At this revision 91 Markdown files under
+`skills/` contain the words that title this block and the scan parses 10 of them:
+this one and nine copies. The other 81 name the block in prose without carrying it, do not
 reach the anchor, and are skipped — a real copy added without a `Run ID` line
 would be skipped the same way. The canonical set is seventeen fields plus the
 anchor.
@@ -114,7 +114,7 @@ request:
 response:
   outcome: [completed, revised, blocked, or escalated]
   artifacts: [workspace-relative paths]
-  artifact_hashes: [path=sha256 digest]
+  artifact_hashes: [path=sha256 digest]  # from `python skills/scripts/content_hash.py <path>`: text folded to LF, binary byte-for-byte, so LF and CRLF checkouts agree
   evidence_paths: [workspace-relative paths]
   risks: [known residual risks]
   disputes: [unresolved decisions or none]
@@ -145,7 +145,7 @@ artifact_hashes:
 Typed records (`scan`, `render`, `probe`, `audit`, `findings`, `verdict`,
 `stack_lock`, `revision_ref`, and the Taste records `preference_diff`,
 `confirmation`, `conflict_analysis`, `persistence_result`, `effective_profile`,
-`consumer_handoff`, and `variant_set`) and the finding policy are defined in
+`consumer_handoff`, `variant_set`, and `selection`) and the finding policy are defined in
 [`../gates.yaml`](../gates.yaml); destinations for reports, artifacts, evidence,
 and packages in [`../save-ownership.yaml`](../save-ownership.yaml). Resolve every
 destination with `python skills/scripts/output_paths.py` rather than composing
@@ -224,7 +224,7 @@ revision.
 
 | Part of this contract | Backing |
 |-----------------------|---------|
-| The canonical block's field set, and its presence in every *recognized* copy | Machine-checked by `SaveContextParityTests` in `../validation/test_catalog_contracts.py`. Names only, in both list and table form, and only for a file carrying the `Run ID` anchor: 89 files under `skills/` contain the words "Save Context" and 10 are parsed — this one and nine copies. The other 79 are skipped. |
+| The canonical block's field set, and its presence in every *recognized* copy | Machine-checked by `SaveContextParityTests` in `../validation/test_catalog_contracts.py`. Names only, in both list and table form, and only for a file carrying the `Run ID` anchor: 91 Markdown files under `skills/` contain the words "Save Context" and 10 are parsed — this one and nine copies. The other 81 are skipped. |
 | The run anchor field and the blast-radius tier field exist in the canonical block | Machine-checked: the same test asserts both by name. |
 | A submission satisfies its boundary | Machine-checked by [`../harness/gatekeeper/check.py`](../harness/gatekeeper/check.py) against `../gates.yaml`, not by this file. |
 | The boundary named in a submission matches the boundary being checked, and the owner is that boundary's submitter | Machine-checked by `check.py`: `boundary mismatch`, `submitter mismatch`, and at schema 2 `missing boundary` and `missing owner`. |

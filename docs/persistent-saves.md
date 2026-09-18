@@ -28,6 +28,7 @@ skillset-saves/
       reports/                     #   reports, plans, summaries
       artifacts/                   #   tokens, components, snapshots
       evidence/                    #   command logs, scans, captures
+        coverage/                  #     coverage data files and reports
       packages/                    #   exported archives
       verdict_design-to-build.json #   the phase gatekeeper's durable verdict
       verdict_design-to-build.cross-stage.json  # gatekeeper-admiral's, beside it
@@ -37,7 +38,9 @@ skillset-saves/
 
 Your application source keeps its own layout. Evidence that depends on it binds by
 `path` plus `sha256`, so a changed source file fails the gate as `input hash
-drift` instead of silently going stale.
+drift` instead of silently going stale. Hashes fold CRLF to LF for text and leave
+binary untouched, so the same value verifies on either line-ending convention;
+`python skills/scripts/content_hash.py <path>` prints it.
 
 ## One writer per path
 
@@ -124,3 +127,18 @@ stay there.
 
 Keep it to resume or audit a run. Delete it when you actually mean to throw that
 history away.
+
+Coverage output is part of that runtime state, not part of your repository.
+Anything named `.coverage`, `.coverage.*`, `.coverage/`, `htmlcov/`, or
+`.nyc_output/` at the project root is residue a test step left behind; the data
+belongs in the run at `evidence/coverage/`, resolved with
+`skills/scripts/output_paths.py --kind coverage`. Point `COVERAGE_FILE`,
+`--data-file`, `--cov-report`, `--coverage.reportsDirectory`, or `--report-dir`
+plus `--temp-dir` there before the runner starts, and never use parallel or
+per-process mode without a `coverage combine` into that destination — one
+observed run wrote a `.coverage` tree of over three thousand files in under two
+minutes that way. After a command action `post_tool_use.py` moves whatever is
+left into the run's `evidence/coverage/` (or, with no active run, into
+`.harness-state/test-work/coverage-residue/<timestamp>/`), combining the
+fragments where it can and deleting nothing. Those names are in `.gitignore` and
+should stay there.

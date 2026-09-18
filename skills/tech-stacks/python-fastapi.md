@@ -35,6 +35,7 @@
 - Use httpx AsyncClient or FastAPI TestClient for HTTP behavior, with database fixtures and a test-client factory under `conftest.py`.
 - Test Pydantic rejection, dependency overrides, transaction boundaries, and Alembic migrations separately.
 - Run Ruff and strict mypy checks with the test suite, and use coverage to identify unexercised domain and error paths.
+- Send coverage output to the run, never the project root: resolve the destination with `scripts/output_paths.py --kind coverage` and set `COVERAGE_FILE=<dest>/.coverage` (or `--data-file`), with `--cov-report=<fmt>:<dest>/<name>` for every requested report format. Never use `-p`, `--parallel-mode`, or `parallel = True` unless the same command ends with `coverage combine` into that destination; per-process mode with nothing combining it leaves one `.coverage.<host>.<pid>.<rand>` file per worker at the root.
 
 ## Known uncertainty
 - The source offers Uvicorn for development and a multi-worker ASGI arrangement for production; worker count and shared state need host-specific decisions.

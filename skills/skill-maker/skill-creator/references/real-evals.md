@@ -29,7 +29,9 @@ After drafting the skill, come up with 2–3 realistic test prompts — the kind
 a real user would actually say. Share them with the user: "Here are a few test cases
 I'd like to try. Do these look right, or do you want to add more?" Then run them.
 
-Save to `evals/evals.json` at the repo root (sibling to the skill directory). Don't
+Save to `evals/evals.json` **inside the skill directory**, the location
+`schemas.md` declares — `<skill-dir>/evals/evals.json`, so the evals travel with
+the skill they test rather than with whatever repository it was drafted in. Don't
 write assertions yet — just the prompts. Assertions get drafted while runs are
 in progress.
 
@@ -154,7 +156,7 @@ Good assertions are:
 Subjective skills (writing style, design quality) are better evaluated qualitatively —
 don't force assertions onto things that need human judgment.
 
-Update `eval_metadata.json` and `evals/evals.json` with assertions once drafted.
+Update `eval_metadata.json` and `evals/evals.json` with the `expectations` list once drafted — `expectations` is the field name in every schema and example (`schemas.md` § `evals.json`); "assertions" is not a field.
 Explain to the user what the viewer will show — both qualitative outputs and
 quantitative benchmark.
 

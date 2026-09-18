@@ -64,7 +64,7 @@ Read `package.json` (or ask if unavailable) and determine:
 |---|---|
 | Fresh project, shadcn not initialised | `npx shadcn@latest init` (substitute the project's runner) |
 | `components.json` already present | Do **not** re-init. Run `npx shadcn@latest info --json` to list installed components and the configured registry |
-| shadcn CLI unreachable / network blocked | Stop. Do not hand-roll components from memory (the registry drifts faster than training data). Ask the user to enable network, point to a mirror via `--registry`, or clone from <https://ui.shadcn.com/docs/components> |
+| shadcn CLI unreachable / network blocked | Stop. Do not hand-roll components from memory (the registry drifts faster than training data). Ask the user to enable network, or point the CLI at a reachable mirror with `npx shadcn@latest add <component> --registry <url>`. If the component source must be fetched by hand, the registry lives in the `shadcn-ui/ui` repository under `apps/v4/registry/` — clone that, not the docs site, which renders components rather than serving them |
 
 After init, confirm: `components.json` exists, CSS variables are injected into the
 global stylesheet, and the Tailwind entry (`tailwind.config` for v3, or

@@ -1,6 +1,7 @@
 # Example Invocations
 
-Four passes, each rendered in the full packet shape `../SKILL.md` mandates:
+Five passes — four fresh and one REVISE delta — each rendered in the full
+packet shape `../SKILL.md` mandates:
 Outcome, Evidence, Findings, Open risks, Next action, Revision, in that order and
 with no verdict, because this lens owns no gate (`../../../execution-contract.md`,
 clause 6). The graded passes carry the shape too, not just the clean one — a pass
@@ -62,3 +63,22 @@ as decoration. Severities are the shared four tiers —
 - Open risks: no load evidence accompanies the new timeout, so the change is judged safe to merge but not proven to improve the symptom that prompted it.
 - Next action: none from this lens.
 - Revision: r2.
+
+## Example 5 — a REVISE delta pass
+
+The round after Example 1. `review/code-chief` sub-delegates the part of the
+`review-to-delivery` REVISE group this lens owns; `changed_evidence` names
+`flags/evaluate.ts` and `flags/tests/test_evaluate.ts`.
+
+**User request:** re-review the flag rollout diff against the REVISE packet
+
+**Output:**
+- Outcome: code-review delta, r2 <- r1, merge recommendation: go, 2 findings verified (`CR-01`, `CR-02`), 1 new out-of-delta (`CR-03`).
+- Evidence: only the two paths in `changed_evidence`, plus the two call sites `CR-01` named because the finding's resolution is a claim about them. The rest of `main...flags/rollout` keeps its r1 judgment and was not re-read; the lockfile stays excluded.
+- Findings:
+  - `CR-01` | Critical | `flags/evaluate.ts:57` | **verified** — both call sites now take the new default, and the added table test covers the two semantics against one expectation. Same id, same severity, status `verified`.
+  - `CR-02` | Minor | `flags/evaluate.ts:71` | **verified** — the predicate was extracted in the same change, as the r1 finding directed.
+  - `CR-03` | Minor | `flags/tests/test_evaluate.ts:40` | **out-of-delta** — the new table test asserts on the evaluation result but not on the fallback branch it also exercises, so a regression there would pass. Inside `changed_evidence` by path, outside the two findings the round was opened for; reported as out-of-delta rather than treated as a new blocker. `review/code-chief` decides the cycle.
+- Open risks: unchanged from r1 — the rollout plan is still absent, so coexistence in production remains outside what the diff can answer.
+- Next action: merge is unblocked from this lens's side. `review/code-chief` rules on `CR-03`; cycle 1 of a `cycle_cap` of 2 is spent.
+- Revision: r2 <- r1.

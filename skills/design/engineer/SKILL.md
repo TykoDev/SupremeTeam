@@ -5,7 +5,8 @@ description: >-
   slices with migrations, contract tests, and rollback. Use when asked to prepare
   the implementation spec, translate design into delivery slices, write the
   engineering plan, or sequence implementation details — even when the ask is just
-  "how do we build this?". Returns to `design/commander`; defers architecture to
+  "cut this into slices". Milestone order is `design/planner`'s; this skill writes
+  the per-slice spec inside it. Returns to `design/commander`; defers architecture to
   `design/architect`, milestones to `design/planner`, code to
   `build/bob-the-builder`.
 version: 1.0.0

@@ -65,8 +65,11 @@ and need no confirmation.
 - **import:** `import` (`--input <file>`) — validate and merge external entries;
   always a confirmed bulk action, and an unknown `schema_version` or an invalid id
   is rejected rather than coerced.
-- **export:** `export` (`--output <file>`, optional `--redact`) — serialize a
-  source or effective record without mutation.
+- **export:** `export` (`--output <file>`) — serialize a source or effective
+  record without mutation. **Redaction is always on.** The `--redact` flag exists
+  but is declared `default=True`, so passing it changes nothing and there is no
+  way to export unredacted; treat an export as redacted whether or not the flag
+  appears in the command.
 
 A mutating subcommand against an existing store requires `--expect-revision` to
 guard against a concurrent write, and refuses with `revision_required` without it.
@@ -78,7 +81,9 @@ before retrying.
 
 ## Gate package and handoff
 
-The Taste owner submits the `taste-review` evidence set declared in
+`../SKILL.md` § Gate evidence summarizes the three keys this skill authors at the
+two design boundaries; this section is the authoritative one for the full
+`taste-review` set. The Taste owner submits the evidence set declared in
 `../../gates.yaml`: `scope`, `intent`, `before_revision`, `preference_diff`,
 `confirmation`, `conflict_analysis`, `policy_check`, `persistence_result`,
 `effective_profile`, `consumer_handoff`, `taste_review_record` (written by

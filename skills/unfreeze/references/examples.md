@@ -50,10 +50,7 @@ will accept the release.
 **Lift:**
 
 ```bash
-python skills/harness/hooks/guard_state.py release \
-  --glob "services/payments/**" \
-  --requester release-owner \
-  --reason "charge-bug hotfix validated: rollback verified, canary green"
+python skills/harness/hooks/guard_state.py release --glob "services/payments/**" --requester release-owner --reason "charge-bug hotfix validated: rollback verified, canary green"
 ```
 
 ```json
@@ -79,10 +76,7 @@ requester is `finance-eng-lead`.
 **Lift the glob:**
 
 ```bash
-python skills/harness/hooks/guard_state.py release \
-  --glob "config/billing/**" \
-  --requester finance-eng-lead \
-  --reason "checksum refresh complete for the local config set"
+python skills/harness/hooks/guard_state.py release --glob "config/billing/**" --requester finance-eng-lead --reason "checksum refresh complete for the local config set"
 ```
 
 ```json

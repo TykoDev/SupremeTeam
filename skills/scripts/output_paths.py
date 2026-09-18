@@ -15,6 +15,7 @@ Kinds and destinations (relative to the project root):
     reports     skillset-saves/runs/<run>/<phase>/reports/<name>                   writer: phase lead or delegated specialist
     artifacts   skillset-saves/runs/<run>/<phase>/artifacts/<name>                 normalized data, HTML, generated assets
     evidence    skillset-saves/runs/<run>/<phase>/evidence/<name>                  command logs, scan records, captures
+    coverage    skillset-saves/runs/<run>/<phase>/evidence/coverage/<name>         coverage data files and reports (phase-evidence, one directory below evidence/)
     packages    skillset-saves/runs/<run>/<phase>/packages/<name>                  exported archives
     verdict     skillset-saves/runs/<run>/<phase>/verdict_<boundary>.json          writer: gatekeeper
     project_preferences skillset-saves/preferences/{taste.json,taste.md}           writer: taste via skills/taste/taste_prefs.py
@@ -30,6 +31,12 @@ Kinds and destinations (relative to the project root):
 Every kind except product resolves under skillset-saves/ or .harness-state/
 (GENERATED_ROOTS); a durable design specification is the run's
 <phase>/reports/design-system.md, not a file at the project root.
+
+`coverage` is the one destination a test runner is told about through its own
+environment rather than written to directly: point COVERAGE_FILE, --data-file,
+--cov-report=<fmt>:<dest>/..., --report-dir/--temp-dir, or
+--coverage.reportsDirectory at the resolved directory so coverage data lands in
+the run instead of accumulating as `.coverage*` residue at the project root.
 
 Project paths are validated for project containment; global preferences are
 validated separately to remain outside the checkout. Exit 0 with a JSON object;
@@ -47,7 +54,7 @@ from pathlib import Path
 # Every generated kind resolves under one of these project-relative roots; the
 # only exception is `product`, which is the application's own source layout.
 GENERATED_ROOTS = ("skillset-saves", ".harness-state")
-KINDS = {"core", "manifest", "reports", "artifacts", "evidence", "packages", "verdict", "project_preferences", "global_preferences", "trajectory", "guards", "test_work", "eval_reports", "eval_workspace", "standalone_packages", "product"}
+KINDS = {"core", "manifest", "reports", "artifacts", "evidence", "coverage", "packages", "verdict", "project_preferences", "global_preferences", "trajectory", "guards", "test_work", "eval_reports", "eval_workspace", "standalone_packages", "product"}
 PHASES = {"intake", "design", "architecture", "design-system", "build", "frontend", "security", "investigation", "qa", "review", "delivery", "release", "preferences", "skill-creation", "taste", "redesign", "explore", "improve", "documentation"}
 SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -119,6 +126,11 @@ def resolve(project_root: Path, kind: str, *, run_id: str = "", phase: str = "",
                 target = phase_dir / "manifest.json"
             elif kind == "verdict":
                 target = phase_dir / f"verdict_{seg(boundary, 'boundary')}.json"
+            elif kind == "coverage":
+                # Coverage data files and reports are phase evidence held one
+                # directory below evidence/ so a sweep can relocate a whole
+                # residue tree without colliding with hashed evidence files.
+                target = phase_dir / "evidence" / "coverage" / rel_name(name)
             else:
                 target = phase_dir / kind / rel_name(name)
     if kind in {"project_preferences", "global_preferences"}:

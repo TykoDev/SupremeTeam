@@ -4,9 +4,9 @@ description: >-
   Turns the approved architecture into the build plan, before any code is written:
   milestones, workstream order and dependencies, decision gates, per-slice acceptance,
   and risk handling. Use when asked to plan this project, sequence the implementation
-  work, define build milestones, or decide what gets built in what order — even when
-  the ask is only "what's our plan here?". Planning the work is this skill; performing
-  the release itself belongs to `ship`. Defers requirements to
+  work, define build milestones, or decide what gets built in what order. A bare
+  "what's our plan here?" with no approved architecture is a cold path back to
+  `design/commander`. Planning the work is this skill; releasing is `ship`. Defers requirements to
   `design/researcher`, architecture to `design/architect`, and the spec to
   `design/engineer`.
 version: 1.0.0
@@ -140,6 +140,7 @@ Skip only when the requested scope proves a delivery plan is genuinely out of sc
 | `design/gatekeeper-design` returns a `REVISE` naming `plan` or `acceptance` | Take the whole owner group in `revise_packet.by_owner` as one batch, fix every finding in a single revision, and return the changed artifact with its new sha256 so the gate re-judges only `changed_evidence`. Fixing the first finding alone burns a cycle against `revise_policy.cycle_cap`. |
 | A tool or host capability the plan depends on is unavailable — no host planning prompt for the decision interview, no access to the issue tracker or the consumer inventory a deprecation needs | Ask the same decision as a concise plain-text question when the planning primitive is missing, and for missing data record the affected rows as unverified with the source named. A consumer list nobody could enumerate makes a deprecation advisory, never compulsory. |
 | The milestone plan depends on a vendor approval, migration, or environment setup that lands after the proposed release date | Mark the rollout sequence as non-credible, surface the dependency explicitly, and require re-sequencing before downstream phases rely on the plan. |
+| At revise time the `acceptance` rows regress to intentions — an observable condition restated as "the API is finished", a check that reads "review it", or an acceptor left as a team name rather than a person or role | Reject the row and rewrite it against the three-column shape in `references/workflow.md`. `acceptance` is Narrative-backed with no sanctioned fallback, so a row the build phase cannot execute passes the gate's presence test and fails the slice it was supposed to close. Re-derive from the slice, not from the previous wording. |
 | The plan hides major decisions behind generic buckets like "phase two" or "future optimization" without saying what must be chosen first | Replace the vague placeholder with an explicit decision gate so later phases do not mistake ambiguity for approval. |
 | The plan assumes a design or configuration choice without a Decision Register entry | Reopen planning mode, prompt the user or record the codebase-derived answer, and do not advance until the decision source is explicit. |
 | The rollout path assumes team capacity, support coverage, or operational readiness that the current constraints do not support | Narrow the plan to a defendable release slice and call out the missing capability instead of endorsing an impossible schedule. |

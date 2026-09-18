@@ -103,15 +103,15 @@ scoped surface has no dependency or source to scan.
 At `schema_version: 2` that string is not written as the key's value: `../../gates.yaml` `evidence_rules.applicability_records` accepts only a typed record — `{applicable: false, reason: "<the sanctioned string>", scope, decided_by}` — and rejects any bare string. The sanctioned wording goes in `reason`.
 
 ```bash
-python skills/scripts/scan_record.py \
-  --out security/evidence/vulnerability-scan.json \
-  --input requirements.txt \
-  --version-command "pip-audit --version" \
-  -- pip-audit --strict
+python skills/scripts/scan_record.py --project-root . --out <the run's security evidence destination>/vulnerability-scan.json --input requirements.txt --version-command "pip-audit --version" -- pip-audit --strict
 ```
 
 The scanner command follows `--`. `--out` names the JSON record and the raw
-scanner output is retained beside it. `--input` is repeatable and binds each
+scanner output is retained beside it — resolve that destination with
+`python skills/scripts/output_paths.py --run-id <run-id> --phase security --kind evidence --name vulnerability-scan.json`
+and pass the result, as `references/examples.md` does. A bare relative `--out` is
+resolved against the current working directory, which writes the one artifact
+this lens owns outside the run it belongs to. `--input` is repeatable and binds each
 inspected manifest or lockfile by sha256. Run
 `python skills/scripts/scan_record.py --help` for the full option set, and read
 `references/scan-evidence.md` before interpreting any non-`pass` result.

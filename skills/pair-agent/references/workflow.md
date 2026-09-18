@@ -22,29 +22,76 @@
 Issue-and-revoke procedure per form. Which form fits which exposure is decided in
 `../SKILL.md` § Credential Forms; this section is what to run once that choice is made.
 
-### One-time CDP / session handle
+### CDP / session handle (standing until teardown)
 
 **Issue.** Launch a dedicated browser with an isolated profile and a debug port bound to
 loopback:
 
 ```bash
-chrome --user-data-dir="$(mktemp -d)" --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 about:blank
+USER_DATA_DIR="$(mktemp -d)"
+chrome --user-data-dir="$USER_DATA_DIR" --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 about:blank &
+BROWSER_PID=$!
 ```
 
-Read the one-time `webSocketDebuggerUrl` from `http://127.0.0.1:9222/json/version` and hand
+```powershell
+$UserDataDir = Join-Path $env:TEMP ([guid]::NewGuid().Guid)
+New-Item -ItemType Directory -Path $UserDataDir | Out-Null
+$Browser = Start-Process chrome -PassThru -ArgumentList "--user-data-dir=$UserDataDir", "--remote-debugging-port=9222", "--remote-debugging-address=127.0.0.1", "about:blank"
+$BrowserPid = $Browser.Id
+```
+
+**Capture both the profile path and the process id here, and keep them for the
+teardown below — they are the only two handles that can revoke this pairing.**
+`--user-data-dir="$(mktemp -d)"` discards the path the moment the browser starts, and
+the revoke step then has nothing to delete: `rm -rf "$USER_DATA_DIR"` on an unset
+variable expands to `rm -rf ""`, which **exits 0**. The teardown reports success while
+the profile — holding this pairing's cookies and storage — survives on disk. Losing the
+path is losing the ability to revoke.
+
+Read the `webSocketDebuggerUrl` from `http://127.0.0.1:9222/json/version` and hand
 **that** to the collaborator, over an SSH-forwarded port or a tunnel bound to their identity — not
 a broad network-exposed port. Never bind the debug port to `0.0.0.0`.
+
+This handle is **not single-use**, and nothing about reading it consumes it. `/json/version`
+answers again on every request, so the same URL can be re-read and re-connected by anyone who
+reaches the port, for as long as the process lives. The tunnel is what limits *who* reaches it;
+teardown is what ends it. Do not describe a CDP handle as one-time or as consumed on first
+use — that is the single-use access token below, a different form with a different revocation.
+
+**The whole HTTP endpoint is reachable, not just `/json/version`.** Anyone who can
+reach the forwarded port can also read:
+
+- `/json/list` (and `/json`) — every open target's **full URL, including query parameters**, plus its title and its own debugger URL. Session ids, one-time tokens, and reset links routinely live in query strings, so this list leaks them for as long as the port is reachable, and it keeps leaking as the collaborator navigates.
+- `/json/new` and `/json/close` — open and close targets, so the endpoint is not read-only even before the WebSocket is used.
+- `/json/protocol` and `/json/version` — the browser build and protocol surface.
+
+Two consequences. The tunnel must be bound to the collaborator's identity alone —
+this is the whole reason a broad port is refused, not merely a hardening
+preference — and the isolated profile matters for what is *visible* here as much
+as for what is attackable: a dedicated empty-profile browser means `/json/list`
+shows only the pairing's own targets, while the user's own browser would expose
+every tab they have open. The leak lasts until teardown, so the revoke below is
+what ends it.
 
 **Revoke.** Terminate the browser process — closing the endpoint is closing the browser — and
 delete the temporary profile directory:
 
 ```bash
-rm -rf "$USER_DATA_DIR"
+kill "$BROWSER_PID"
+rm -rf "${USER_DATA_DIR:?profile path was not captured at issue time - find and delete it by hand}"
+test -d "$USER_DATA_DIR" && echo "TEARDOWN FAILED: profile still present" || echo "profile deleted"
 ```
 
 ```powershell
+Stop-Process -Id $BrowserPid
 Remove-Item -Recurse -Force $UserDataDir
+if (Test-Path $UserDataDir) { Write-Error "TEARDOWN FAILED: profile still present" }
 ```
+
+Both forms use the `$USER_DATA_DIR` / `$UserDataDir` assigned at issue time. The
+`${VAR:?...}` guard makes an unset path fail loudly instead of deleting nothing and
+returning 0, and the trailing check confirms the directory is actually gone — a
+revoke that was not verified is not a revoke.
 
 There is no per-session revoke short of ending the process, which is the other reason a CDP
 handle never runs against a shared profile.

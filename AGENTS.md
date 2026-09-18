@@ -66,7 +66,7 @@ Declared in `skills/pipelines.yaml`, gated by `skills/gates.yaml`.
 | **architect** | `skills/design/architect/SKILL.md` | System architecture, interface contracts, and the frontend design system |
 | **engineer** | `skills/design/engineer/SKILL.md` | Implementation spec: delivery slices, dependency order, operational constraints |
 | **gatekeeper-design** | `skills/design/gatekeeper-design/SKILL.md` | Design phase-exit validator; also gates `redesign-review` |
-| **redesign** | `skills/design/redesign/SKILL.md` | Redesign pipeline owner: inventory, taste grilling, four living design-system variants, comparison and decision |
+| **redesign** | `skills/design/redesign/SKILL.md` | Redesign pipeline owner: inventory, taste grilling, four design-system mocks, comparison, the user's decision, then one living prototype for the selected direction |
 | **design-mapper** | `skills/design/design-mapper/SKILL.md` | Records the current design as a stable-id inventory with baseline captures; verifies variant parity |
 | **prototyper** | `skills/design/prototyper/SKILL.md` | Builds one design-system variant: tokens, framework-free component library, living single-page prototype |
 

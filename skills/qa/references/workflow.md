@@ -3,9 +3,10 @@
 ## Contents
 
 1. QA execution sequence
-2. Decision rules
-3. Acceptance checklist
-4. Collaboration notes
+2. Coverage destination
+3. Decision rules
+4. Acceptance checklist
+5. Collaboration notes
 
 ## QA Execution Sequence
 
@@ -22,9 +23,29 @@
 |---|------|--------|----------|-------------|----------|--------|-------------|-----------------|
 | 1 | Checkout | Submit button disabled after payment error | Major | 1. Add item. 2. Enter invalid card. 3. Dismiss error. | Button re-enables | Button stays disabled | Reset button state on error dismissal (commit abc123) | Pass — 3 consecutive clean runs |
 
+## Coverage Destination
+
+Any targeted check run through the project's test tooling sends its coverage data
+and reports to the run, not the project root. Resolve the destination first —
+`python skills/scripts/output_paths.py --run-id <run-id> --phase qa --kind coverage --name .coverage --mkdir`,
+which is `skillset-saves/runs/<run-id>/qa/evidence/coverage/` — then point
+`COVERAGE_FILE` / `--data-file`, `--cov-report=<fmt>:<dest>/...`,
+`--coverage.reportsDirectory`, or `--report-dir` + `--temp-dir` at it. Never run
+coverage in parallel or per-process mode (`-p`, `--parallel-mode`,
+`parallel = True`) unless the same command finishes with `coverage combine` into
+that destination, and never loop a coverage run per test file: per-process mode
+with nothing combining it is what produced an observed `.coverage` tree of over
+three thousand files in under two minutes. When the step ends the project root
+holds no `.coverage`, `.coverage.*`, `.coverage/`, `htmlcov/`, or `.nyc_output/`,
+and in standalone mode — which persists nothing — that means the surface ends as
+it started. A coverage percentage is not evidence; the hashed data file or report
+under `evidence/coverage/` is. The per-runner flags are in
+`../../build/test-builder/references/workflow.md` § Coverage destination.
+
 ## Decision Rules
 
 - Prefer honest coverage over inflated claims that skip missing environments or test accounts.
+- Send coverage data and reports to the run's `qa/evidence/coverage/` destination before the runner starts; the project root is never where coverage output lives.
 - Keep each fix atomic so rollback and blame remain clear.
 - Treat intermittent failures as evidence gaps until the triggering condition is narrow enough to verify.
 - Preserve residual risks explicitly when the surface improves but is not fully stable.

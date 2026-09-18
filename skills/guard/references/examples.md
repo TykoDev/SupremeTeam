@@ -87,11 +87,7 @@ python skills/harness/hooks/guard_state.py status
 **Command:**
 
 ```bash
-python skills/harness/hooks/guard_state.py read-only \
-  --run-id 2026-09-16-queue-incident \
-  --owner incident-lead \
-  --allow "skillset-saves/runs/2026-09-16-queue-incident/**" \
-  --scope "incident investigation"
+python skills/harness/hooks/guard_state.py read-only --run-id 2026-09-16-queue-incident --owner incident-lead --allow "skillset-saves/runs/2026-09-16-queue-incident/**" --scope "incident investigation"
 ```
 
 **Output:**

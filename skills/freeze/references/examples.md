@@ -20,12 +20,7 @@ described it.
 **Command:**
 
 ```bash
-python skills/harness/hooks/guard_state.py freeze \
-  --glob "services/payments/**" \
-  --owner payments-lead \
-  --scope "charge-bug hotfix window" \
-  --run-id 2026-09-16-charge-bug \
-  --approver release-owner
+python skills/harness/hooks/guard_state.py freeze --glob "services/payments/**" --owner payments-lead --scope "charge-bug hotfix window" --run-id 2026-09-16-charge-bug --approver release-owner
 ```
 
 ```json

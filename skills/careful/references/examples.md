@@ -10,6 +10,7 @@ without knowing whether anything still stands behind it.
 2. Example 2 — deploy: canary go, full rollout blocked
 3. Example 3 — cleanup while a stray `allow_dangerous` grant is live
 4. Example 4 — the boundary cannot be read
+5. Example 5 — escalate: the authority to decide sits with someone else
 
 
 ## Example 1
@@ -93,3 +94,44 @@ refused: D:\proj\.harness-state\guard-state.json is not valid JSON (Expecting va
 - Guard state: unreadable. Every boundary in the record is unusable, and the hook falls back to its built-in destructive-pattern guard alone — which itself fails open on a malformed record.
 - Decision: no-go. An unreadable boundary tightens the verdict rather than excusing it; a corrupt record is never evidence that nothing was protected.
 - Next safe action: the record's owner repairs or removes the file directly — `guard_state.py` refuses to overwrite corrupt bytes and the hook denies an agent write to that path, so the repair happens outside the tool loop — then re-records the boundary through the writer and the check re-runs.
+
+## Example 5 — escalate: the authority to decide sits with someone else
+
+The verdict the other four do not reach. A no-go says *this must not happen*;
+an escalate says *this may well be right, and deciding it is not mine to do*.
+Reach for it when the evidence is sufficient but the authority is not.
+
+**User request:** drop the `legacy_sessions` table, the migration replaced it last week
+
+**Boundary read:**
+
+```bash
+python skills/harness/hooks/guard_state.py status --json
+```
+
+```json
+{
+  "allow_dangerous": false,
+  "blocked_globs": [],
+  "exists": true,
+  "frozen_globs": ["db/migrations/**"],
+  "path": ".harness-state/guard-state.json",
+  "read_only_runs": [],
+  "unowned_entries": []
+}
+```
+
+`--json` is what produces that object. Plain `status` prints the human-readable
+form instead — `record:`, `frozen:`, `blocked:`, `read-only runs:`,
+`allow_dangerous:`, and a `WARNING unowned` line when any active entry has no
+owner. Read either, but do not expect JSON from the bare command.
+
+(exit 0, and re-read immediately before any go — see workflow step 4)
+
+**Output:**
+- Risky boundary: an irreversible drop of a production table. The freeze on `db/migrations/**` does not cover it — the drop is a statement against the database, not an edit to a tracked path — so nothing mechanical stands in the way.
+- Evidence gathered: the replacement migration is present and applied; no application code references `legacy_sessions`; the table is 4.2 GB and the last backup predates the migration by two days.
+- Why not a go: every technical precondition holds, and one non-technical one does not. Whether two days of pre-migration session rows may be destroyed is a data-retention decision with an owner, and that owner is not in this conversation. A careful verdict can establish that a thing is *safe to do*; it cannot establish that it is *permitted*, and reading a clean boundary as permission is the specific error this verdict exists to prevent.
+- Why not a no-go: nothing here is unsafe. Returning no-go would misreport a governance question as a technical defect, and send the requester to fix a problem that does not exist.
+- Decision: **escalate**, to the data-retention owner, with one question: may the pre-migration rows be destroyed, or must they be exported first?
+- Next safe action: take a fresh backup of `legacy_sessions` now, while the decision is pending — it costs nothing, and it is the only step that stays useful whichever way the answer goes. Hold the drop. If the answer is "export first", the drop becomes a go only after the export is verified and the boundary is re-read.

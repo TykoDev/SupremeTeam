@@ -82,7 +82,6 @@ source the suite exercised:
   "tool": "python -m unittest",
   "command": "python -m unittest discover -s tests -p \"test_*.py\" -k notif",
   "observed_at": "2026-04-19T14:02:11Z",
-  "input_revision": 3,
   "inputs": [
     { "path": "notifications/dispatcher.py", "sha256": "1ae141ad1dd336f29462b4b8aa0ace76f5dd3bf51c79e03c0fe0edf0de64fa20" },
     { "path": "notifications/templates.py",  "sha256": "f787e8159a70f7adc7b94d67c8a80ab66e6617cd8de90d35da4966863e45da5f" },

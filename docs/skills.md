@@ -33,7 +33,7 @@ forty questions.
 | **architect** | System architecture, API contracts, and the frontend design system |
 | **engineer** | The implementation spec: delivery slices, dependency order, operational constraints |
 | **gatekeeper-design** | Design phase-exit validator; also gates `redesign-review` |
-| **redesign** | Runs the redesign pipeline: inventory, taste grilling, four living design-system variants, comparison, decision |
+| **redesign** | Runs the redesign pipeline: inventory, taste grilling, four design-system mocks, comparison, the user's decision, then one living prototype for the selected direction |
 | **design-mapper** | Records the current design as a stable-id inventory with baseline captures, then verifies variant parity |
 | **prototyper** | Builds one variant: tokens, a framework-free shadcn-shaped component library, and a living single-page prototype |
 

@@ -46,7 +46,8 @@ Route elsewhere to lock a path from any edits (`freeze`), combine intent checks 
 1. Read the live boundary with `python skills/harness/hooks/guard_state.py status` (step 0 of Deterministic Enforcement below), then identify the risky action, affected boundary, and the evidence required before any destructive, irreversible, or hard-to-undo step is allowed.
 2. Check that the current environment, target surface, and requested intent all match; if any one is ambiguous, stop before execution.
 3. Record a go, no-go, or escalate decision with the exact evidence used — including the guard state read in step 1 and any live `allow_dangerous` grant — the remaining uncertainty, and the safest next action available.
-4. Return a careful record that states what can proceed now, what stays blocked, and what proof would unlock the next step safely.
+4. **Re-read the boundary immediately before a go.** The `status` read at step 1 is a snapshot, and every step between it and execution is time in which another session can freeze a path, open a read-only run, or let an `allow_dangerous` grant expire. A go is therefore issued against a `status` read taken *after* the decision is made and immediately before the action runs, not against the step-1 read the record quotes. If the two disagree in any way that touches the action, withdraw the go and restart the check: a verdict issued against a boundary that has since changed is a verdict about a system that no longer exists. A no-go or escalate needs no re-read, because neither authorizes anything.
+5. Return a careful record that states what can proceed now, what stays blocked, what proof would unlock the next step safely, and both `status` reads — the one the reasoning rests on and the one the go was issued against.
 
 ## Required Contracts
 
@@ -94,6 +95,19 @@ Skip only when the requested surface, tool, or environment does not exist and a 
 | `guard_state.py status` exits 1 because the record is corrupt or not a JSON object | Treat every boundary in the file as unreadable and the deterministic layer as absent. Refuse destructive work and route the repair to the record's owner — the hook denies an agent write to that path, so it is fixed outside the tool loop. |
 | The hook is never registered with the host, so no tool call is ever denied | Name the gap in the record and treat the careful verdict as the only control in place; do not cite the boundary as protection that is not running. |
 | A live `allow_dangerous` grant is present that the requested action does not need | Withhold the go, record the grant's owner, scope, and `expires_at`, and require `guard_state.py revoke-dangerous --requester <owner>` — only the grant's owner may revoke it — before re-running the check. |
+
+### What `--requester` proves
+
+Every authority check in `guard_state.py` compares `--requester` against the
+`owner` and `approvers` recorded on the entry. That string is **self-asserted**:
+the writer authenticates nobody, and anyone who can run the command can pass any
+name. The check is an *attribution and accident control*, not an access control.
+It stops a delegate from lifting a boundary they were never named on by mistake,
+and it puts a name in `released_by` for the audit trail; it stops nobody who
+decides to type someone else's name. Never cite it as proof that only the named
+owner could have acted. Where a boundary must hold against a deliberate actor,
+back it with version-control protections or filesystem permissions — the same
+caveat `freeze` states about the hook itself.
 
 ## Save Protocol
 

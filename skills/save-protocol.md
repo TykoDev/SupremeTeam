@@ -76,11 +76,34 @@ Each phase directory has four governed subdirectories:
 | `reports/` | reports, plans, summaries | `report_plan.md`, `architecture.md`, `review-packet.md` |
 | `artifacts/` | normalized data, generated tokens and components, snapshots | `tokens.css`, `component-template.md` |
 | `evidence/` | command logs, scan records, captures | `tests.log`, `scan-pip-audit.json`, `capture-1280-dark.png` |
+| `evidence/coverage/` | coverage data files and reports | `.coverage`, `coverage.xml`, `html/index.html` |
 | `packages/` | exported archives | `my-skill.skill`, `release-bundle.zip` |
+
+Coverage output is run evidence, never project-root residue. Resolve its
+destination with `scripts/output_paths.py --kind coverage`
+(`skillset-saves/runs/<run>/<phase>/evidence/coverage/<name>`) and point the
+runner at it before it starts — `COVERAGE_FILE` / `--data-file`,
+`--cov-report=<fmt>:<dest>/...`, `--coverage.reportsDirectory`, or
+`--report-dir` plus `--temp-dir`. Never run coverage in parallel or per-process
+mode (`-p`, `--parallel-mode`, `parallel = True`) unless the same command
+finishes with `coverage combine` into that destination, and never loop a
+coverage run per test file: per-process mode with nothing combining it is how an
+observed run produced a `.coverage` tree of over three thousand files at a
+project root in under two minutes. When a step ends, nothing named `.coverage`,
+`.coverage.*`, `.coverage/`, `htmlcov/`, or `.nyc_output/` remains at the project
+root. `harness/hooks/post_tool_use.py` relocates what is left after a command
+action — into the active run's `evidence/coverage/`, or, with no active run,
+into `.harness-state/test-work/coverage-residue/<timestamp>/` — and never
+deletes anything; a sweep that had to run means the destination was never named.
 
 Application source stays in the application's own layout; it is never copied
 wholesale into a run. Evidence that depends on it binds to it through typed
-record `inputs` (`path` + `sha256`) so stale evidence fails the gate.
+record `inputs` (`path` + `sha256`) so stale evidence fails the gate. Every
+sha256 the protocol records is line-ending agnostic: text is folded to LF before
+hashing and binary is hashed byte-for-byte (`scripts/data_formats.py`
+`content_sha256`, printed by `python skills/scripts/content_hash.py <path>`), so
+a CRLF checkout and an LF checkout agree and `sha256sum` on a CRLF file is the
+wrong value.
 `scripts/output_paths.py` resolves every kind to its destination and rejects
 escapes.
 
@@ -141,6 +164,32 @@ prompt-submit hook, and the gate checker's run-root verification.
    first, because a second held run beside a stale one leaves both
    `conflicting` and neither pinnable), and publishes revision 1 with the
    pointer.
+4b. **Manual write-capability probe (agent mode).** `create`'s internal probe
+   runs *inside* `create`, so it reports a read-only workspace only by failing the
+   run's first write. An agent host that must know before it commits to a run —
+   and that re-checks at every heartbeat — runs this probe instead, at a path
+   deliberately outside the core-run-record class so no sanctioned writer is
+   bypassed:
+
+   - Path: `skillset-saves/_probe-{run-id}.tmp`, one per run, never under
+     `runs/`. `pre_tool_use.py` Rule C covers `_latest.md` and `runs/*/` core
+     files; this path is neither, so an ordinary edit tool may write it.
+   - Steps: write a short ASCII payload, read it back and verify byte equality,
+     then delete it. Any step failing is a probe failure.
+   - Recording: the result is state, not a trail line — carry it as
+     `--set persistence_active=<true|false> --set persistence_probe_result=<ok|failed|skipped>`
+     on the next `save_run.py checkpoint`. There is no audit operation that
+     accepts a probe event.
+   - Cadence: before the first save, and again at every heartbeat refresh.
+   - On failure: set `Persistence active: no`, warn once, attempt read-only
+     resume from any readable latest artifacts, and continue transiently only
+     when no coherent boundary can be proven.
+
+   The two probes are complementary, not alternatives: this one is a pre-flight
+   check the agent controls, `create`'s is the writer proving its own first
+   write. Neither substitutes for the other, and the temp file is deleted in
+   both the pass and the fail path — a `_probe-*.tmp` left behind is a defect.
+
 5. Mark persistence active only after `create` returns `result: ok`. A
    `degraded` result (exit 2) means the write failed and nothing coherent was
    published: warn once, keep readable evidence, and use transient mode only

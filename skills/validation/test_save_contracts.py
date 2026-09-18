@@ -208,6 +208,7 @@ class GeneratedRootPolicyTests(unittest.TestCase):
         "reports": dict(run_id="r1", phase="design", name="report_plan.md"),
         "artifacts": dict(run_id="r1", phase="redesign", name="variants/v1/app.html"),
         "evidence": dict(run_id="r1", phase="redesign", name="parity-v1.json"),
+        "coverage": dict(run_id="r1", phase="build", name=".coverage"),
         "packages": dict(run_id="r1", phase="skill-creation", name="my-skill.skill"),
         "verdict": dict(run_id="r1", phase="redesign", boundary="redesign-review"),
         "core": dict(run_id="r1", name="_state.md"),

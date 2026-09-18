@@ -71,7 +71,7 @@ Canonical source: `../execution-contract.md`. Stated locally because that file
 requires every orchestrator and gatekeeper to carry the clauses verbatim; a paraphrase
 is drift, and `skills/validation/test_catalog_contracts.py` compares them exactly.
 
-1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under the Tier 0 fast path in routing-doctrine.md; Tier 1 for bounded read-only work beyond Tier 0; Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for destructive, security-sensitive, production, or irreversible work. Record the tier and rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline ceremony and full security audits, but retains focused verification and applicable guardrails; escalate when its eligibility no longer holds.
+1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under the Tier 0 fast path in `skills/routing-doctrine.md`; Tier 1 for bounded read-only work beyond Tier 0; Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for destructive, security-sensitive, production, or irreversible work. Record the tier and rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline ceremony and full security audits, but retains focused verification and applicable guardrails; escalate when its eligibility no longer holds.
 2. Trigger proactively when the task matches the skill's declared scope, even when the request uses different words; decline adjacent work and route end-to-end or specialist ownership explicitly. Offer a next safe action only after the current step, scope, and approval lineage are resolved; suppress that offer while any is unresolved.
 3. Use Critical | Major | Minor | Info for findings. Block on Critical, resolve Major before a gate, record Minor, and preserve Info as context. Use APPROVED | REVISE | ESCALATE for gate verdicts.
 4. Validate paths, inputs, revisions, and handoff fields before acting. Keep file operations inside the workspace, use read-only or dry-run probes first, and require explicit owner intent for destructive or externally visible actions.
@@ -96,14 +96,15 @@ In pipeline mode this skill submits the `qa-review` boundary and owns every one 
 required evidence keys, so each one is produced here or the gate cannot close
 (`../gates.yaml`):
 
-| Key | Content | Backing |
-|-----|---------|---------|
-| `scope` | The surface under test, the flows in and out of scope, and the environment. | Narrative |
-| `test_matrix` | Flow × environment × outcome, one row per exercised path. | Artifact-backed, typed `probe` — a record naming a hashed file, not a count |
-| `executed_probes` | The probes actually run, with commands, targets, and results. | Artifact-backed, typed `probe` — a record naming a hashed file |
-| `defects` | Each defect with severity on the shared four-tier model and reproduction steps. | Typed `findings` record — `{items: [{id, severity, status}]}`, not prose. A narrative value fails with `defects must be a findings record with an items list at schema 2` |
-| `fixes_applied` | Fixes made and their verification. A report-only run records `report-only run - no fixes applied` as the `reason` of an applicability record `{applicable: false, reason, scope, decided_by}`; schema 2 refuses the bare string. | Narrative |
-| `residual_risk` | What remains unverified, and why it was acceptable to stop. | Narrative |
+`references/gate-package.md` § Evidence keys is authoritative for what each key
+must contain. Three shapes cause almost every mechanical failure:
+
+- `test_matrix` and `executed_probes` are typed `probe` records naming **hashed files** under the run's `evidence/` destination. A pass rate or a count is a claim about evidence, not evidence.
+- `defects` is a typed `findings` record — `{items: [{id, severity, status}]}` — never prose.
+- `fixes_applied` on a report-only run carries `report-only run - no fixes applied` as the `reason` of an applicability record, never as a bare string.
+
+`scope` and `residual_risk` are narrative and have no sanctioned fallback.
+
 
 Self-check before submitting, so the package is judged deterministically rather than by
 claim:
@@ -143,6 +144,8 @@ one of them closes a gate.
 - **Shared severity**: Grade every finding Critical | Major | Minor | Info, the four-tier model clause 3 of `../execution-contract.md` defines, so upstream and downstream packages interpret risk consistently.
 - **Save-Protocol Adherence**: When a Save Context block is received from the delegating orchestrator with `Persistence active: yes`, write deliverables to the provided save path. Saving is mandatory when persistence is active.
 
+- **Product-data side effects are recorded, not avoided**: Exercising a real workflow creates real data — an account, an invite, an order, a webhook delivery. That is expected and is not a violation of anything; what is required is that each one is recorded in the sweep with what it created and where, so a later reader can tell a test artifact from a user's. Two limits bound it: a flow whose side effects are **not acceptable to the owner** — a live payment, an email to a real address, a write to shared production state — is stopped and reported rather than walked, and nothing created by the sweep is cleaned up by guessing. Where teardown is needed, name what was created and hand the teardown to the surface's owner. This is the same contract `qa-only` states, and it holds identically here: applying fixes changes what this skill may write to the *code*, never what it may do to *product data*.
+
 ## Collaboration Surface
 
 - None required beyond the active task surface.
@@ -167,6 +170,7 @@ Skip only when the requested surface, tool, or environment does not exist and a 
 | `check.py` returns `REVISE` twice on the same package | Stop resubmitting. `../gates.yaml` `revise_policy` sets `cycle_cap: 2`, so the second `REVISE` escalates: return `ESCALATE` carrying both packets, the `changed_evidence` and `unchanged_evidence` from the `--prior` comparison, and the specific keys that did not converge, and hand the decision to the delegating owner rather than opening a third cycle. |
 | A defect reproduces intermittently and cannot yet be tied to one trigger | Record the unstable reproduction boundary, preserve the evidence gathered so far, and avoid claiming the fix is verified. |
 | Several failing tests appear to share one root cause | Collapse them into one blocker and rerun the dependent paths after the first credible fix instead of applying scattered changes. |
+| A scoped fix lands on a path an active `freeze` or `blocked_globs` record covers, and the hook denies the write | Do not work around it, and do not hand-edit the guard record — the hook denies that too. The defect stays recorded with its reproduction and its fix direction; only the *landing* is blocked. Two routes are open, and the boundary's owner chooses: have them lift the boundary with `unfreeze` and re-run the fix inside the reopened area, or hand the fix direction to the owner of the frozen surface and record the defect as `open` with the blocking boundary named. Either way `fixes_applied` reports what was actually applied, never what would have been; a defect whose fix the guard refused is not a fixed defect. |
 | A scoped fix destabilizes a neighboring path during retest | Keep the atomic fix boundary explicit, record the regression, and decide whether to continue or escalate before more changes stack up. |
 
 ## Save Protocol

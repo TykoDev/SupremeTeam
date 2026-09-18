@@ -144,9 +144,7 @@ non-directory, or out-of-tree path.
 `../../gates.yaml`:
 
 ```bash
-python ../../harness/gatekeeper/check.py --boundary build-to-review \
-  --package <phase>/manifest.json [--prior <prior-verdict-file>] \
-  --verdict-out <phase>/verdict_build-to-review.json
+python ../../harness/gatekeeper/check.py --boundary build-to-review --package <phase>/manifest.json [--prior <prior-verdict-file>] --verdict-out <phase>/verdict_build-to-review.json
 ```
 
 At every schema version it confirms that the six required keys are present and
@@ -193,7 +191,7 @@ Canonical source: `../../execution-contract.md`. Stated locally because that fil
 requires every orchestrator and gatekeeper to carry the clauses verbatim; a
 paraphrase is drift.
 
-1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under the Tier 0 fast path in routing-doctrine.md; Tier 1 for bounded read-only work beyond Tier 0; Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for destructive, security-sensitive, production, or irreversible work. Record the tier and rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline ceremony and full security audits, but retains focused verification and applicable guardrails; escalate when its eligibility no longer holds.
+1. Select the preamble tier before acting: Tier 0 for minor, understood, reversible tasks under the Tier 0 fast path in `skills/routing-doctrine.md`; Tier 1 for bounded read-only work beyond Tier 0; Tier 2 for multi-step edits, delegation, or external coordination beyond Tier 0; Tier 3 for destructive, security-sensitive, production, or irreversible work. Record the tier and rationale in the handoff, or the brief completion note for Tier 0. Tier 0 skips pipeline ceremony and full security audits, but retains focused verification and applicable guardrails; escalate when its eligibility no longer holds.
 2. Trigger proactively when the task matches the skill's declared scope, even when the request uses different words; decline adjacent work and route end-to-end or specialist ownership explicitly. Offer a next safe action only after the current step, scope, and approval lineage are resolved; suppress that offer while any is unresolved.
 3. Use Critical | Major | Minor | Info for findings. Block on Critical, resolve Major before a gate, record Minor, and preserve Info as context. Use APPROVED | REVISE | ESCALATE for gate verdicts.
 4. Validate paths, inputs, revisions, and handoff fields before acting. Keep file operations inside the workspace, use read-only or dry-run probes first, and require explicit owner intent for destructive or externally visible actions.
@@ -272,9 +270,7 @@ A gatekeeper writes exactly one path class: the durable verdict record at
 validator against `../../gates.yaml`:
 
 ```bash
-python ../../harness/gatekeeper/check.py --boundary build-to-review \
-  --package skillset-saves/runs/{run-id}/build/manifest.json \
-  --verdict-out skillset-saves/runs/{run-id}/build/verdict_build-to-review.json
+python ../../harness/gatekeeper/check.py --boundary build-to-review --package skillset-saves/runs/{run-id}/build/manifest.json --verdict-out skillset-saves/runs/{run-id}/build/verdict_build-to-review.json
 ```
 
 It never modifies the submission, its evidence, or the run record;

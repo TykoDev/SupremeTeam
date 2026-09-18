@@ -1,13 +1,16 @@
 # Example Invocations
 
-Four passes, each rendered in the full packet shape `../SKILL.md` mandates:
+Five passes, each rendered in the full packet shape `../SKILL.md` mandates:
 Outcome, Evidence, Findings, Open risks, Next action, Revision, in that order and
 with no verdict, because this lens owns no gate (`../../../execution-contract.md`,
 clause 6). The graded passes carry the shape too, not just the clean one — every
 claim this lens makes rests on an observed run, so the Evidence line that names
 the runs is load-bearing on a pass with findings exactly as it is on one without.
 Severities are the shared four tiers — `Critical | Major | Minor | Info` — and
-nothing else.
+nothing else. Example 5 is a REVISE delta round rather than a fresh review,
+because the rule that decides whether a re-review is worth anything here —
+re-measure, never re-reason — only becomes visible on a round that verifies a
+previous finding.
 
 ## Example 1
 
@@ -63,3 +66,19 @@ nothing else.
 - Open risks: the reported jank was not reproduced on any exercised device profile, so a device-specific cause outside this matrix stays possible; touch input on a physical low-end handset was not available to this pass.
 - Next action: none from this lens.
 - Revision: r3.
+
+## Example 5 — REVISE delta round
+
+**User request:** (routed, not asked) `review/code-chief` sub-delegates the
+frontier portion of its `review-to-delivery` REVISE group; `changed_evidence`
+names the filter panel and the chart region. Continues Example 2.
+
+**Output:**
+- Outcome: frontier delta, r4 <- r3, 2 findings carried: 1 verified, 1 unresolved.
+- Evidence: only the two named surfaces were re-exercised, plus the chart-loading state, whose behavior depends on the filter. **Re-measured, not re-read**: a fresh interaction trace at `evidence/trace-filter-keystroke-r4.json` and a fresh NVDA pass, both taken at the same tier and input mode as the r3 observations — desktop tier, keyboard input, the same seeded 200-row dataset — because a fix to a runtime claim is verified by a new run under the original conditions, and a diff that plainly shows the state was moved is still not a measurement. The dashboard landing page keeps its r3 judgment and was not re-exercised. Both new captures are hashed into the manifest; the r3 trace stays as lineage rather than being overwritten.
+- Findings:
+  - `FR-04` | Major | filter panel, desktop tier, keyboard | **verified** — the filter value was moved out of the grid's parent; the new trace measures interaction latency at 96 ms against the same 200 ms budget, on the same dataset as the 480 ms baseline. Same id, same severity, status `verified`.
+  - `FR-03` | Major | chart region, all tiers, screen reader | **unresolved** — `aria-busy` is now set on the region, but the NVDA re-run still announces nothing when a filter is applied, because no live region carries the transition. A partial fix that does not change what the assistive technology announces is not a fix of this finding; it returns under its original id and severity, not downgraded.
+- Open risks: unchanged from r3 — 96 ms is measured on the seeded dataset and remains a floor for production-scale accounts, so the verified fix is verified at that scale and no further.
+- Next action: `FR-03` still blocks from this lens; `review/code-chief` returns it to its fix owner with the re-run evidence attached. Cycle 1 of a `cycle_cap` of 2 is spent, and at the cap an unresolved Major returns unchanged with its blocking status intact.
+- Revision: r4 <- r3.

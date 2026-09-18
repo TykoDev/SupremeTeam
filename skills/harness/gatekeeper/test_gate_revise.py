@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Batched-REVISE mechanics and the redesign-review contract.
+"""Batched-REVISE mechanics and the mock-first redesign-review contract.
 
-Covers the variant_set record, keys that accept no fallback, per-key evidence
-digests with changed/unchanged reporting against a prior verdict, and the
-owner-grouped revise packet (gates.yaml revise_policy).
+Covers the two variant_set records (four mocks, one built variant), the typed
+selection record and the cross-key rule it drives, keys that accept no fallback,
+per-key evidence digests with changed/unchanged reporting against a prior
+verdict, and the owner-grouped revise packet (gates.yaml revise_policy).
 """
 from __future__ import annotations
 
@@ -17,28 +18,45 @@ from pathlib import Path
 
 SKILLS = Path(__file__).resolve().parents[2]
 CHECK = SKILLS / "harness" / "gatekeeper" / "check.py"
+sys.path.insert(0, str(SKILLS / "scripts"))
+from data_formats import content_sha256  # noqa: E402
+
+DEFERRED = "selection deferred - no variant built"
+MERGED = "merge brief recorded - implemented as a fifth direction in the design pipeline"
 
 
 def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return content_sha256(path)
 
 
 class RedesignPackage:
-    """A flat schema-2 redesign-review package with four hashed variants."""
+    """A flat schema-2 redesign-review package: four hashed mocks, one build.
+
+    The shape the mock-first pipeline produces. `m2` is both the recommended and
+    the chosen mock, so the selected variant is built for `m2` alone; the other
+    three directions are never implemented.
+    """
 
     def __init__(self, root: Path) -> None:
         self.root = root
         self.hashes: dict[str, str] = {}
         self.proof = self.file("evidence/proof.md", "# Proof\n\nObserved: parity 100%.\n")
         for name in ("inventory/design-inventory.json", "reports/taste-grilling.md", "artifacts/taste-snapshot.json",
-                     "reports/design-directions.md", "evidence/render.md"):
+                     "reports/design-directions.md", "reports/selection.md",
+                     "evidence/mock-parity.json", "evidence/mock-render.md", "evidence/render.md"):
             self.file(name, f"# {name}\n\nObserved.\n")
-        self.variants = []
+        self.mocks = []
         for i in range(1, 5):
-            variant = {"id": f"v{i}", "name": f"Variant {i}", "direction": f"direction-{i}"}
-            for field, ext in (("spec", "variant.md"), ("tokens", "tokens.css"), ("components", "components.html"), ("app", "app.html")):
-                variant[field] = self.file(f"artifacts/variants/v{i}/{ext}", f"/* {ext} v{i} */\n")
-            self.variants.append(variant)
+            mock = {"id": f"m{i}", "name": f"Direction {i}", "direction": f"direction-{i}"}
+            for field, ext in (("spec", "variant.md"), ("tokens", "tokens.css"),
+                               ("components", "components.html"), ("mock", "mock.html")):
+                mock[field] = self.file(f"artifacts/mocks/m{i}/{ext}", f"/* {ext} m{i} */\n")
+            self.mocks.append(mock)
+        self.chosen = "m2"
+        self.variants = [{"id": self.chosen, "name": "Direction 2", "direction": "direction-2"}]
+        for field, ext in (("spec", "variant.md"), ("tokens", "tokens.css"),
+                           ("components", "components.html"), ("app", "app.html")):
+            self.variants[0][field] = self.file(f"artifacts/variants/{self.chosen}/{ext}", f"/* {ext} built */\n")
 
     def file(self, rel: str, text: str) -> str:
         path = self.root / rel
@@ -56,18 +74,39 @@ class RedesignPackage:
                 "taste_grilling": "reports/taste-grilling.md",
                 "taste_snapshot": "artifacts/taste-snapshot.json",
                 "design_directions": "reports/design-directions.md",
-                "variant_set": {"artifacts": [v["spec"] for v in self.variants], "variants": self.variants, "count": 4},
+                "mock_set": {"artifacts": [m["spec"] for m in self.mocks], "mocks": self.mocks, "count": 4},
+                "mock_parity": {"artifacts": ["evidence/mock-parity.json"], "result": {"status": "pass"},
+                                "inputs": [{"path": "inventory/design-inventory.json", "sha256": self.hashes["inventory/design-inventory.json"]}]},
+                "mock_rendering": {"artifacts": ["evidence/mock-render.md"], "breakpoints": ["320", "1440"],
+                                   "themes": ["light", "dark"],
+                                   "inputs": [{"path": "artifacts/mocks/m1/mock.html", "sha256": self.hashes["artifacts/mocks/m1/mock.html"]}],
+                                   "result": {"status": "pass"}},
+                "selection": self.selection(),
+                "selected_variant": {"artifacts": [self.variants[0]["spec"]], "variants": self.variants, "count": 1},
                 "parity_evidence": {"artifacts": ["evidence/proof.md"], "result": {"status": "pass"},
                                     "inputs": [{"path": "inventory/design-inventory.json", "sha256": self.hashes["inventory/design-inventory.json"]}]},
                 "rendered_verification": {"artifacts": ["evidence/render.md"], "breakpoints": ["320", "1440"], "themes": ["light", "dark"],
-                                          "inputs": [{"path": "artifacts/variants/v1/app.html", "sha256": self.hashes["artifacts/variants/v1/app.html"]}],
+                                          "inputs": [{"path": f"artifacts/variants/{self.chosen}/app.html", "sha256": self.hashes[f"artifacts/variants/{self.chosen}/app.html"]}],
                                           "result": {"status": "pass"}},
                 "accessibility_evidence": {"items": [{"id": "a11y-1", "severity": "Minor", "status": "open"}]},
-                "recommendation": "v2, because it satisfies the density and typography preferences within the contrast floor",
+                "recommendation": "m2, because it satisfies the density and typography preferences within the contrast floor",
                 "residual_risk": "none observed",
             },
             "artifact_hashes": dict(self.hashes),
         }
+
+    def selection(self, decision: str = "variant", chosen: str | None = "m2") -> dict:
+        return {"schema_version": 2, "artifacts": ["reports/selection.md"], "decision": decision,
+                "chosen": chosen, "recommended": "m2", "decided_by": "user",
+                "decided_at": "2026-09-17T00:00:00Z",
+                "basis": "density and typography preferences within the contrast floor"}
+
+    def stood_down(self, data: dict, wording: str) -> None:
+        """Put the four dependent keys where a non-variant decision leaves them."""
+        for key in ("selected_variant", "parity_evidence", "rendered_verification",
+                    "accessibility_evidence"):
+            data["evidence"][key] = {"applicable": False, "reason": wording,
+                                     "scope": "whole run", "decided_by": "redesign"}
 
     def write(self, data: dict, name: str = "manifest.json") -> Path:
         path = self.root / name
@@ -92,36 +131,127 @@ class VariantSetTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, out)
         self.assertTrue(out["pass"])
         self.assertEqual(out["revise_packet"]["by_owner"], {})
-        self.assertIn("variant_set", out["evidence_digests"])
+        for key in ("mock_set", "selection", "selected_variant"):
+            self.assertIn(key, out["evidence_digests"])
 
-    def test_three_variants_duplicate_ids_and_unhashed_files_fail(self):
+    def test_three_mocks_duplicate_ids_and_unhashed_files_fail(self):
         data = self.pkg.manifest()
-        data["evidence"]["variant_set"]["variants"] = data["evidence"]["variant_set"]["variants"][:3]
-        data["evidence"]["variant_set"]["count"] = 3
+        data["evidence"]["mock_set"]["mocks"] = data["evidence"]["mock_set"]["mocks"][:3]
+        data["evidence"]["mock_set"]["count"] = 3
         _, out = run(self.pkg.write(data))
-        self.assertTrue(any("requires exactly 4 variants, found 3" in f for f in out["failures"]), out["failures"])
+        self.assertTrue(any("requires exactly 4 mocks, found 3" in f for f in out["failures"]), out["failures"])
         data = self.pkg.manifest()
-        data["evidence"]["variant_set"]["variants"][1]["id"] = "v1"
-        data["evidence"]["variant_set"]["variants"][2]["app"] = "artifacts/variants/v3/missing.html"
+        data["evidence"]["mock_set"]["mocks"][1]["id"] = "m1"
+        data["evidence"]["mock_set"]["mocks"][2]["mock"] = "artifacts/mocks/m3/missing.html"
         _, out = run(self.pkg.write(data))
-        self.assertTrue(any("duplicate id v1" in f for f in out["failures"]), out["failures"])
-        self.assertTrue(any("app is not a hashed artifact" in f for f in out["failures"]), out["failures"])
+        self.assertTrue(any("duplicate id m1" in f for f in out["failures"]), out["failures"])
+        self.assertTrue(any("mock is not a hashed artifact" in f for f in out["failures"]), out["failures"])
 
-    def test_rendered_verification_accepts_no_fallback_at_redesign_review(self):
+    def test_the_selected_variant_is_counted_separately_and_must_be_one(self):
         data = self.pkg.manifest()
-        data["evidence"]["rendered_verification"] = {"applicable": False, "reason": "no visible surface changed - rendered verification not applicable",
-                                                     "scope": "whole run", "decided_by": "redesign"}
+        data["evidence"]["selected_variant"]["variants"] = data["evidence"]["selected_variant"]["variants"] * 2
+        data["evidence"]["selected_variant"]["count"] = 2
         _, out = run(self.pkg.write(data))
-        self.assertIn("evidence not waivable: rendered_verification", out["failures"])
-        data["evidence"]["rendered_verification"] = "no visible surface changed - rendered verification not applicable"
+        self.assertTrue(any("selected_variant requires exactly 1 variants, found 2" in f
+                            for f in out["failures"]), out["failures"])
+
+    def test_mock_rendering_accepts_no_fallback_at_redesign_review(self):
+        data = self.pkg.manifest()
+        data["evidence"]["mock_rendering"] = {"applicable": False, "reason": "no browser available",
+                                              "scope": "whole run", "decided_by": "design-qa"}
         _, out = run(self.pkg.write(data))
-        self.assertTrue(any("rendered_verification" in f for f in out["failures"]), out["failures"])
-        self.assertFalse(out["pass"])
-        # The same fallback still works where the spec allows it.
-        data["evidence"]["taste_snapshot"] = {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "taste"}
-        data["evidence"]["rendered_verification"] = self.pkg.manifest()["evidence"]["rendered_verification"]
+        self.assertIn("evidence not waivable: mock_rendering", out["failures"])
+        # rendered_verification, by contrast, is waivable here - a merge or a
+        # deferral legitimately has no living prototype to render.
+        data = self.pkg.manifest()
+        data["evidence"]["selection"] = self.pkg.selection("deferred", None)
+        self.pkg.stood_down(data, DEFERRED)
         proc, out = run(self.pkg.write(data))
-        self.assertEqual(proc.returncode, 0, out)
+        self.assertEqual(proc.returncode, 0, out["failures"])
+
+
+class SelectionContractTests(unittest.TestCase):
+    """The decision is the hinge: it decides what four other keys may carry."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.pkg = RedesignPackage(Path(tmp.name).resolve())
+
+    def test_a_deferral_stands_the_four_dependent_keys_down(self):
+        data = self.pkg.manifest()
+        data["evidence"]["selection"] = self.pkg.selection("deferred", None)
+        self.pkg.stood_down(data, DEFERRED)
+        proc, out = run(self.pkg.write(data))
+        self.assertEqual(proc.returncode, 0, out["failures"])
+
+    def test_a_merge_stands_them_down_on_the_merge_wording(self):
+        data = self.pkg.manifest()
+        data["evidence"]["selection"] = self.pkg.selection("merge", None)
+        self.pkg.stood_down(data, MERGED)
+        proc, out = run(self.pkg.write(data))
+        self.assertEqual(proc.returncode, 0, out["failures"])
+
+    def test_the_wrong_sanctioned_wording_for_the_decision_is_refused(self):
+        data = self.pkg.manifest()
+        data["evidence"]["selection"] = self.pkg.selection("merge", None)
+        self.pkg.stood_down(data, DEFERRED)
+        proc, out = run(self.pkg.write(data))
+        self.assertEqual(proc.returncode, 1)
+        self.assertTrue(any(f.startswith("selected_variant must stand down on") for f in out["failures"]),
+                        out["failures"])
+
+    def test_a_deferral_that_still_claims_a_built_variant_is_refused(self):
+        """Standing down is not optional once the decision names no variant."""
+        data = self.pkg.manifest()
+        data["evidence"]["selection"] = self.pkg.selection("deferred", None)
+        proc, out = run(self.pkg.write(data))
+        self.assertEqual(proc.returncode, 1)
+        self.assertTrue(any("selected_variant must stand down on" in f for f in out["failures"]),
+                        out["failures"])
+
+    def test_a_variant_decision_may_not_stand_any_dependent_key_down(self):
+        data = self.pkg.manifest()
+        data["evidence"]["parity_evidence"] = {"applicable": False, "reason": DEFERRED,
+                                               "scope": "whole run", "decided_by": "redesign"}
+        proc, out = run(self.pkg.write(data))
+        self.assertEqual(proc.returncode, 1)
+        self.assertTrue(any(f.startswith("parity_evidence stands down on") for f in out["failures"]),
+                        out["failures"])
+
+    def test_the_built_variant_must_be_the_chosen_one(self):
+        data = self.pkg.manifest()
+        data["evidence"]["selection"] = self.pkg.selection("variant", "m3")
+        proc, out = run(self.pkg.write(data))
+        self.assertEqual(proc.returncode, 1)
+        self.assertTrue(any("was built for 'm2' but selection chose 'm3'" in f for f in out["failures"]),
+                        out["failures"])
+
+    def test_chosen_and_recommended_must_name_a_mock_in_the_set(self):
+        data = self.pkg.manifest()
+        data["evidence"]["selection"] = self.pkg.selection("variant", "m9")
+        data["evidence"]["selection"]["recommended"] = "m8"
+        _, out = run(self.pkg.write(data))
+        self.assertTrue(any("selection chosen 'm9' is not one of the mock_set ids" in f
+                            for f in out["failures"]), out["failures"])
+        self.assertTrue(any("selection recommended 'm8' is not one of the mock_set ids" in f
+                            for f in out["failures"]), out["failures"])
+
+    def test_a_non_variant_decision_may_not_name_a_chosen_mock(self):
+        data = self.pkg.manifest()
+        data["evidence"]["selection"] = self.pkg.selection("merge", "m2")
+        self.pkg.stood_down(data, MERGED)
+        _, out = run(self.pkg.write(data))
+        self.assertIn("selection decision 'merge' requires chosen: null", out["failures"])
+
+    def test_an_incomplete_selection_record_is_refused(self):
+        data = self.pkg.manifest()
+        data["evidence"]["selection"] = {"artifacts": ["reports/selection.md"], "decision": "sideways",
+                                         "chosen": None, "recommended": "m2"}
+        _, out = run(self.pkg.write(data))
+        self.assertTrue(any("selection decision must be one of" in f for f in out["failures"]), out["failures"])
+        for field in ("decided_by", "decided_at", "basis"):
+            self.assertIn(f"selection record requires {field}", out["failures"])
 
 
 class RevisePacketTests(unittest.TestCase):
@@ -132,19 +262,21 @@ class RevisePacketTests(unittest.TestCase):
 
     def test_failures_are_grouped_by_owner_and_key(self):
         data = self.pkg.manifest()
-        data["evidence"].pop("design_inventory")                       # design-mapper
-        data["evidence"]["variant_set"]["variants"][0]["tokens"] = ""  # prototyper
+        data["evidence"].pop("design_inventory")                   # design-mapper
+        data["evidence"]["mock_set"]["mocks"][0]["tokens"] = ""    # prototyper
+        data["evidence"]["selection"] = self.pkg.selection("variant", "m4")  # redesign
         data["evidence"]["accessibility_evidence"] = {"items": [{"id": "a", "severity": "Critical", "status": "open"}]}  # frontier
-        data["artifact_hashes"]["evidence/proof.md"] = "0" * 64        # submitter (hash mismatch)
+        data["artifact_hashes"]["evidence/proof.md"] = "0" * 64    # submitter (hash mismatch)
         proc, out = run(self.pkg.write(data))
         self.assertEqual(proc.returncode, 1)
         packet = out["revise_packet"]
         self.assertIn("missing evidence: design_inventory", packet["by_owner"]["design-mapper"])
-        self.assertTrue(any("variant_set.variants[0] requires tokens" in f for f in packet["by_owner"]["prototyper"]))
+        self.assertTrue(any("mock_set.mocks[0] requires tokens" in f for f in packet["by_owner"]["prototyper"]))
+        self.assertTrue(any("selected_variant was built for" in f for f in packet["by_owner"]["prototyper"]))
         self.assertTrue(any("accessibility_evidence[0]" in f for f in packet["by_owner"]["frontier"]))
         self.assertTrue(any("artifact hash mismatch" in f for f in packet["by_owner"]["redesign"]))
-        self.assertEqual(set(packet["by_key"]) & {"design_inventory", "variant_set", "accessibility_evidence"},
-                         {"design_inventory", "variant_set", "accessibility_evidence"})
+        self.assertEqual(set(packet["by_key"]) & {"design_inventory", "mock_set", "selected_variant", "accessibility_evidence"},
+                         {"design_inventory", "mock_set", "selected_variant", "accessibility_evidence"})
         self.assertTrue(any("artifact hash mismatch" in f for f in packet["unassigned"]))
 
     def test_prior_verdict_reports_changed_and_unchanged_keys(self):
@@ -155,13 +287,13 @@ class RevisePacketTests(unittest.TestCase):
         data = self.pkg.manifest()
         # A resubmission is a new revision; reusing r1 with different content is idempotency drift.
         data.update({"submission_id": "redesign-2", "revision": "r2", "revisions": ["r2"]})
-        data["evidence"]["recommendation"] = "v3, after the user chose density over typography"
-        self.pkg.file("artifacts/variants/v2/app.html", "/* app.html v2 revised */\n")
+        data["evidence"]["recommendation"] = "m2, after the user chose density over typography"
+        self.pkg.file("artifacts/mocks/m3/mock.html", "/* mock.html m3 revised */\n")
         data["artifact_hashes"] = dict(self.pkg.hashes)
         second = self.pkg.write(data, "manifest-2.json")
         proc, out = run(second, "--prior", str(self.pkg.root / "verdict.json"))
         self.assertEqual(proc.returncode, 0, out)
-        self.assertEqual(out["changed_evidence"], ["recommendation", "variant_set"])
+        self.assertEqual(out["changed_evidence"], ["mock_set", "recommendation"])
         self.assertIn("design_inventory", out["unchanged_evidence"])
         self.assertIn("parity_evidence", out["unchanged_evidence"])
         self.assertFalse(out["prior_reusable"])
@@ -172,7 +304,12 @@ class RevisePacketTests(unittest.TestCase):
             with self.subTest(boundary=name):
                 self.assertEqual(set(spec["evidence_owners"][name]), set(boundary["required_evidence"]))
         self.assertEqual(spec["revise_policy"]["cycle_cap"], 2)
-        self.assertEqual(spec["evidence_type_params"]["variant_set"]["required_count"], 4)
+        params = spec["evidence_type_params"]
+        self.assertEqual(params["mock_set"]["required_count"], 4)
+        self.assertEqual(params["selected_variant"]["required_count"], 1)
+        self.assertEqual(sorted(params["selection"]["dependent_keys"]),
+                         ["accessibility_evidence", "parity_evidence", "rendered_verification",
+                          "selected_variant"])
 
 
 if __name__ == "__main__":

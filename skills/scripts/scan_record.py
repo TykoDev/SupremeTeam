@@ -42,9 +42,16 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from data_formats import content_sha256  # noqa: E402
+
 
 def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """Canonical digest: text folded to LF, binary byte-for-byte (data_formats.content_sha256)."""
+    return content_sha256(path)
 
 
 def discard(path: Path) -> None:

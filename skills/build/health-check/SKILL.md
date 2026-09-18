@@ -77,7 +77,8 @@ the hash reaches the manifest.
 2. Define the runtime health contract for that surface — boot behavior, the readiness window and its predicate, dependency readiness, and the critical user path. `references/workflow.md` fixes what a readiness window means so "ready" is not decided after the fact.
 3. Discover the start command without running it (`check_runtime.py --detect-start-command`), then execute the probe matrix in `references/workflow.md` — startup, readiness poll, dependency reachability, smoke flow — capturing each to its own log under the phase `evidence/` directory.
 4. Separate transient noise from structural health failures using repeatability, not intuition, so the report does not confuse a warm-up blip with a reliable runtime posture.
-5. Return the hashed smoke log, its typed probe record, the dependency status, every side effect the pass created, and the next remediation or release action.
+5. Tear down the pass: stop the process the startup probe left running and confirm it stopped, then dispose of or hash every response body the polls wrote. Neither is a data side effect, so neither is covered by the ledger above — `references/workflow.md` § Probe Matrix states both.
+6. Return the hashed smoke log, its typed probe record, the dependency status, every side effect the pass created, the teardown result, and the next remediation or release action.
 
 ## Required Contracts
 

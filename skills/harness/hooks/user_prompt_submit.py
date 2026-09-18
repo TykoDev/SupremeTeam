@@ -33,7 +33,7 @@ from _saves import has_active_run
 _ROUTE_REMINDER = (
     "Supreme Team entry routing: no active run detected. `admiral` is the "
     "primary entry orchestrator and front door for the delivery lifecycle. First "
-    "assess the Tier 0 fast path in routing-doctrine.md: minor, understood, "
+    "assess the Tier 0 fast path in skills/routing-doctrine.md: minor, understood, "
     "reversible tasks run directly with focused verification, without a pipeline "
     "or full security audit. Security-sensitive work is excluded. Route other "
     "delivery-lifecycle requests -- design, redesign of an existing UI, build, "

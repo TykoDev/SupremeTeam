@@ -25,7 +25,7 @@ Use this skill for **a specific, reproducible failure** — isolate the cause, t
 
 - "debug this failure" / "isolate the defect" — narrow to the smallest reproduction
 - "prove the fix changed the failure mode" — separate a real repair from a symptom that merely moved
-- "repair the broken path" — apply a bounded fix and show the before/after behavior change
+- "repair the broken path" — apply a bounded *candidate* fix to prove the mechanism and show the before/after behavior change; `build/bob-the-builder` lands it as the product change
 - "check that no temporary probe survived" — confirm no instrumentation was left behind in the tree
 
 Route elsewhere when the task is building new feature code (`build/bob-the-builder`), adding the test surface (`build/test-builder`), or untangling an incident whose mechanism is still unknown (`investigate`), which owns "find the root cause" — this skill starts from a failure already reproduced.

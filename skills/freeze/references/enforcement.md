@@ -31,12 +31,7 @@ attributable, and the audit trail intact.
 ## Recording a freeze
 
 ```bash
-python skills/harness/hooks/guard_state.py freeze \
-  --glob "src/payments/**" \
-  --owner payments-lead \
-  --scope "charge-bug hotfix window" \
-  --run-id 2026-09-16-charge-bug \
-  --approver release-owner
+python skills/harness/hooks/guard_state.py freeze --glob "src/payments/**" --owner payments-lead --scope "charge-bug hotfix window" --run-id 2026-09-16-charge-bug --approver release-owner
 python skills/harness/hooks/guard_state.py status
 ```
 
@@ -109,9 +104,17 @@ beside it. When a freeze appears not to take effect, compare the `record:` path 
 | 2 | usage error — a missing or malformed flag | fix the command; nothing was written |
 | other non-zero | the command never completed — no interpreter on `PATH`, the harness not installed, or the state directory cannot be created or written | treat the freeze as **not recorded**, say so explicitly, and hold the boundary socially until the writer can run |
 
-The duplicate check compares the glob exactly. A narrower glob under an
-already-frozen path is recorded as a second boundary rather than refused, so keep
-one glob per boundary.
+The duplicate check compares the glob **exactly, as a string** — no path
+normalisation of any kind runs first. Two consequences, and both produce stacked
+records rather than a refusal:
+
+- A *narrower* glob under an already-frozen path is a second boundary: `src/payments/**` and `src/payments/api/**` coexist.
+- So is the *same* boundary spelled differently. `./src/payments/**` and `src/payments/**` are different strings, so the second call is accepted and the path now carries two independent records, each needing its own release before the area is actually open.
+
+Keep one glob per boundary, and spell it the way `status` prints it. A boundary
+reported as released while a differently-spelled duplicate is still active is the
+failure this note exists to prevent — `status` is what shows it, so read it after
+every release rather than trusting the release call's own output.
 
 ## Release, not deletion
 

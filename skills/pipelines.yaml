@@ -8,10 +8,10 @@
     "step": "Required. Stage id, unique within the pipeline.",
     "owner": "Required. Must be a team-manifest.yaml member. When the stage declares an artifact, the owner must equal that artifact's writer in ownership.yaml; test_pipeline_contracts.py StageArtifactOwnershipTests enforces it.",
     "artifact": "Optional. Must be an ownership.yaml artifact id. The stage owner keeps the write even when the work is delegated.",
-    "when": "Optional. A prose condition selecting the stage. No comparator evaluates the condition against a live run - that stays judgement, and failure_paths.when_condition_ambiguous governs it. What is checked is that the condition is stated somewhere on the handoff: validation/test_orchestration.py StageConditionTests requires the condition, minus any parenthetical gloss, to appear verbatim in the SKILL.md of the stage owner or of the pipeline owner, within a sentence of a word that frames it as a condition. Seventeen stages carry a `when`; twelve are documented by the stage owner itself and five only by the orchestrator that invokes the stage, so either end satisfies the rule and a floor keeps the specialist-side share from eroding.",
+    "when": "Optional. A prose condition selecting the stage. No comparator evaluates the condition against a live run - that stays judgement, and failure_paths.when_condition_ambiguous governs it. What is checked is that the condition is stated somewhere on the handoff: validation/test_orchestration.py StageConditionTests requires the condition, minus any parenthetical gloss, to appear verbatim in the SKILL.md of the stage owner or of the pipeline owner, within a sentence of a word that frames it as a condition. Twenty-one stages carry a `when`; the four added when redesign became mock-first all state the same condition, `a variant was selected`. Sixteen are documented by the stage owner itself and five only by the orchestrator that invokes the stage, so either end satisfies the rule and a floor keeps the specialist-side share from eroding.",
     "delegate": "Optional. The skill the stage owner hands the work to while keeping the write. Declared by qa/evidence-capture (browse), qa/defect-record (qa-only, on a report-only run, which routing-doctrine.md and qa-only/SKILL.md both describe; qa remains the only qa-review submitter), and skill-creation/package (skill-creator, whose Package mode skill-maker Stage 5 calls). validation/test_orchestration.py PipelineOwnerRoleTests resolves the name: a delegate must be a skill on the team-manifest.yaml roster. Whether it is reachable from that stage is still judgement.",
     "then": "Optional. The pipeline or sub-pipeline the stage output continues into. Judgement.",
-    "fan_out": "Optional. Parallel instances of the stage. redesign/variant-build declares 4, matching variant_set.required_count in gates.yaml, which check.py does enforce on the submitted record. The numbers are compared: validation/test_orchestration.py StageConditionTests requires a stage's `fan_out` to equal the required_count of the one evidence key that gates.yaml evidence_owners assigns to that stage's owner at the pipeline's boundary, and it holds design/redesign/agent/agent-manifest.yaml to the same number for the same delegate. A fan-out that stops producing the number the gate counts is a pipeline that cannot close."
+    "fan_out": "Optional. Parallel instances of the stage; a stage that declares none runs once. redesign/mock-build declares 4, matching mock_set.required_count in gates.yaml, which check.py does enforce on the submitted record. The numbers are compared: validation/test_orchestration.py StageConditionTests pairs the counted evidence keys gates.yaml evidence_owners assigns to a stage owner at the pipeline's boundary, in required_evidence order, with that owner's artifact-bearing stages in pipeline order, and requires each stage's fan-out to equal the required_count of the key it produces. prototyper owns two of them at redesign-review, so mock-build must fan out four ways for mock_set and selected-build must not fan out at all for selected_variant. design/redesign/agent/agent-manifest.yaml states the fanned-out number a third time for the same delegate and is compared too. A fan-out that stops producing the number the gate counts is a pipeline that cannot close."
   },
   "enforcement": {
     "scripts/validate_manifests.py": "check_pipeline_mirrors: every pipeline owner and stage owner is a team member; an artifact-bearing stage matches ownership.yaml's writer; every declared script exists under skills/; the boundary set equals gates.yaml's; exactly one pipeline owns each boundary; every pipeline name is a declared phase directory in save-ownership.yaml.",
@@ -106,25 +106,50 @@
           "artifact": "design-directions"
         },
         {
-          "step": "variant-build",
+          "step": "mock-build",
+          "owner": "prototyper",
+          "artifact": "design-mock",
+          "fan_out": 4
+        },
+        {
+          "step": "mock-parity",
+          "owner": "design-mapper",
+          "artifact": "mock-parity-evidence"
+        },
+        {
+          "step": "mock-review",
+          "owner": "design-qa",
+          "artifact": "mock-rendering"
+        },
+        {
+          "step": "selection",
+          "owner": "redesign",
+          "artifact": "redesign-selection",
+          "then": "selected-build when the decision names one variant; otherwise the package records the merge brief or deferral and stages 9-12 carry the sanctioned fallback"
+        },
+        {
+          "step": "selected-build",
           "owner": "prototyper",
           "artifact": "design-system-variant",
-          "fan_out": 4
+          "when": "a variant was selected"
         },
         {
           "step": "parity-verification",
           "owner": "design-mapper",
-          "artifact": "parity-evidence"
+          "artifact": "parity-evidence",
+          "when": "a variant was selected"
         },
         {
           "step": "visual-qa",
           "owner": "design-qa",
-          "artifact": "rendered-verification"
+          "artifact": "rendered-verification",
+          "when": "a variant was selected"
         },
         {
           "step": "frontend-review",
           "owner": "frontier",
-          "artifact": "frontend-review-report"
+          "artifact": "frontend-review-report",
+          "when": "a variant was selected"
         },
         {
           "step": "recommendation",

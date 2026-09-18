@@ -117,12 +117,7 @@ check in periodically."
 Save the eval set to the workspace, then run in the background:
 
 ```bash
-python -m scripts.run_loop \
-  --eval-set <path-to-trigger-eval.json> \
-  --skill-path <path-to-skill> \
-  --model <model-id-powering-this-session> \
-  --max-iterations 5 \
-  --verbose
+python -m scripts.run_loop --eval-set <path-to-trigger-eval.json> --skill-path <path-to-skill> --model <model-id-powering-this-session> --max-iterations 5 --verbose
 ```
 
 Use the model ID from the running session's system prompt so

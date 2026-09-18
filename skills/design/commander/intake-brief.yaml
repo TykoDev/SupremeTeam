@@ -57,9 +57,12 @@ authoring_rules:
   - First-principles wording only
   - No provenance or comparison language
   - No references to planning-note filenames inside generated artifacts
-  - Supporting files must be one level deep and directly referenced
-acceptance:
-  rubric_score: 100/100
-  blocked_phrase_scan: zero hits
-  cross_cutting_contracts_embedded: true
-  package_ready: true
+  - Supporting files live under references/ or agent/ and are directly referenced
+    from SKILL.md; nothing is bundled that SKILL.md does not point to
+# Authoring-time checklist, not a shipped grade. These are conditions the author
+# verifies before packaging; they are re-derived by the gate on every run and
+# must never be read as a recorded result.
+acceptance_checklist:
+  - blocked-phrase scan returns zero hits
+  - cross-cutting contracts embedded verbatim
+  - every bundled file referenced from SKILL.md

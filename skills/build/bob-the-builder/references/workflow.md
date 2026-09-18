@@ -67,7 +67,7 @@ losing it to the terminal.
 | First-party module or function | Targeted unit tests over the changed module | `python -m unittest discover -s <test-root> -p "test_*.py" -k <selector> > <log> 2>&1` | `evidence/impl-unit-<slice>.log` |
 | Public interface or API contract | Contract or integration test exercising the declared contract end to end | `python -m unittest discover -s <test-root> -p "test_*.py" -k <contract-selector> > <log> 2>&1` | `evidence/impl-contract-<slice>.log` |
 | Typed or compiled source | The project's declared type-check or build command, from discovery rung 3 | `<declared type or build command> > <log> 2>&1` | `evidence/impl-typecheck.log` |
-| Dependency manifest or lockfile | Resolution plus a typed scan record bound to the lockfile | `python skills/scripts/scan_record.py --out <evidence>/impl-deps.json --input <lockfile> -- <scanner command>` | `evidence/impl-deps.json` plus the raw output stored beside it |
+| Dependency manifest or lockfile | Resolution plus a typed scan record bound to the lockfile | `python skills/scripts/scan_record.py --out <evidence>/impl-deps.json --input <lockfile> --tool <scanner name> --version-command "<scanner> --version" -- <scanner command>` — the same four-flag form `build/security-builder` uses, so the two records are comparable | `evidence/impl-deps.json` plus the raw output stored beside it |
 | Migration | Up then down against a disposable local schema, per the migration contract | `<project migration command up> > <log> 2>&1` then the down command appended to the same log | `evidence/impl-migration.log` |
 | Configuration or environment sample | Key-name parity between the sample and the settings module, values excluded | `git diff --stat -- <config paths> > <log> 2>&1` plus the key-name list | `evidence/impl-config.log` |
 | Generated or vendored surface | Re-run the generator and confirm the output is unchanged, then mark the surface non-first-party | `<generator command> && git diff --stat -- <generated paths> > <log> 2>&1` | `evidence/impl-generated.log` |
@@ -95,6 +95,23 @@ are hashed byte-for-byte, so a log is never reformatted, re-indented, or
 re-encoded after its hash is taken; do that and the gate reports hash drift on
 evidence that was never actually changed.
 
+A validation command that produces coverage sends it to the run, not the project
+root. Resolve the destination with
+`python skills/scripts/output_paths.py --run-id <run-id> --phase build --kind coverage --name .coverage --mkdir`
+and point `COVERAGE_FILE` / `--data-file`, `--cov-report=<fmt>:<dest>/...`,
+`--coverage.reportsDirectory`, or `--report-dir` + `--temp-dir` at it. Never use
+parallel or per-process mode (`-p`, `--parallel-mode`, `parallel = True`) unless
+the same command finishes with `coverage combine` into that destination, and
+never loop a coverage run per test file. When the step ends nothing named
+`.coverage`, `.coverage.*`, `.coverage/`, `htmlcov/`, or `.nyc_output/` is left
+at the project root. In short: resolve the destination with
+`output_paths.py --kind coverage`, point the runner's data file and report output
+at it, combine into it once at the end of the step, and leave nothing at the
+root. `../../test-builder/references/workflow.md` § Coverage destination carries
+the per-runner flags and is canonical — a sibling dependency this skill does not
+bundle, so in a package that ships bob-the-builder alone, ship test-builder's
+workflow reference with it or accept the summary above as the whole rule.
+
 ## REVISE Handling
 
 A `REVISE` arrives through `build/build-management` as one packet, already
@@ -117,7 +134,7 @@ means the finding is not an implementation defect.
 - Prefer one clean implementation slice over several entangled fixes.
 - Escalate when proving the change would require unauthorized scope growth.
 - Resolve every write against the repository root and keep it inside the approved change list; escalate any destination the list does not name.
-- Execute a migration, in either direction, only against a disposable local schema unless the owner has approved the non-local target.
+- Execute a migration, in either direction, only against a disposable local schema unless the owner has approved the non-local target (`contracts.md` § Migration Execution Boundary is canonical).
 - Report an unrunnable check as a gap; never let a check that did not execute read as a check that passed.
 
 ## Acceptance Checklist

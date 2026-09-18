@@ -7,7 +7,7 @@ the save lifecycle writer and the registration diagnostics.
 | File | Event | Layer | Behavior |
 |------|-------|-------|----------|
 | `pre_tool_use.py` | `PreToolUse` | 3 | Blocks dangerous shell commands (Rule A), writes into a frozen or guarded boundary (B), writes outside a read-only run (D), and direct writes to the single-writer records — core run files, Taste state, and the guard boundary record itself (C). Rule A is the one family an owner can lift: an `allow_dangerous` grant in `guard-state.json` suspends it globally while the grant is live. A legacy bare `true` lifts it with no bound; the owned grant `guard_state.py` writes lifts it only until `expires_at`. An expired, unparseable, or absent `expires_at` leaves the block in force, so a malformed grant never opens the guard. Rules B, C, and D are not liftable this way. |
-| `post_tool_use.py` | `PostToolUse` | 4 | Records trajectory observations (repeated failures, empty-output streaks, oscillation). All three hooks refresh the pinned run's heartbeat and record observations; see Heartbeat refresh below. |
+| `post_tool_use.py` | `PostToolUse` | 4 | Records trajectory observations (repeated failures, empty-output streaks, oscillation), and after a command action sweeps project-root coverage residue into the run; see Coverage residue sweep below. All three hooks refresh the pinned run's heartbeat and record observations; see Heartbeat refresh below. |
 | `user_prompt_submit.py` | `UserPromptSubmit` | entry routing | Advises routing lifecycle work through `admiral`; reinforces the session pin when a run is active. |
 | `save_run.py` | CLI | persistence | The only writer of `_state.md`, `_lock.md`, `_audit-trail.md`, `_journal.json`, and `_history/`. |
 | `guard_state.py` | CLI | 3 | The only writer of `.harness-state/guard-state.json`: records owned freeze/block boundaries, releases them by `released_at`, grants and revokes `allow_dangerous`, and opens or closes a read-only run. |
@@ -24,9 +24,10 @@ the save lifecycle writer and the registration diagnostics.
 3. Registration
 4. Matcher scope
 5. Guard and freeze integration
-6. Heartbeat refresh
-7. Manual smoke test
-8. Regression tests
+6. Coverage residue sweep
+7. Heartbeat refresh
+8. Manual smoke test
+9. Regression tests
 
 ## Design guarantees
 
@@ -124,6 +125,12 @@ supported tool names where the host exposes a post-tool event.
 `UserPromptSubmit` has no matcher in hosts that model it as a prompt-lifecycle
 event.
 
+The coverage-residue sweep narrows itself further inside `post_tool_use.py`: it
+runs only for `Bash`, `PowerShell`, and `shell` (matched case-insensitively),
+because only a command action starts a process that writes a coverage data file.
+An `Edit`, `Write`, or `Read` post-tool event sweeps nothing, even where the host
+routes it to this hook.
+
 ## Guard and freeze integration
 
 `pre_tool_use.py` enforces boundaries recorded by `guard` and `freeze` at
@@ -182,6 +189,58 @@ Field notes:
 When the file is absent or empty, boundary rules are inert and only the built-in
 destructive-pattern guard applies.
 
+## Coverage residue sweep
+
+Coverage data is run evidence at `<phase>/evidence/coverage/`
+(`scripts/output_paths.py --kind coverage`), never project-root residue. A run in
+a target project produced a `.coverage` tree of over 3000 files in under two
+minutes — the signature of per-process coverage (`coverage run -p`,
+`pytest --cov` across workers, `nyc`/`c8`/`vitest` per-worker temp files) with
+nothing combining or relocating the fragments.
+
+Two hooks enforce it. Before the command, `pre_tool_use.py` Rule E emits advisory
+`additionalContext` — **never a deny**, and only after every deny rule has
+declined — for a command that writes coverage with no destination named:
+`coverage run` in parallel mode with no `coverage combine` in the same command,
+`pytest --cov` with no `--cov-report`, `nyc`/`c8` with no `--report-dir` or
+`--temp-dir`, `vitest --coverage` with no `reportsDirectory`. A command that names
+its destination is silent.
+
+After the command, `post_tool_use.py` relocates what is left at the project root
+— `.coverage` (file or directory), `.coverage.*` fragments, `htmlcov/`,
+`.nyc_output/` — into the active run's `<phase>/evidence/coverage/`. The run comes
+from `skillset-saves/_latest.md` and the phase from that run's `_state.md`
+`phase_state`, mapped onto a `save-ownership.yaml` `phase_directories` entry, with
+`build` as the default. With no active run the residue goes to the declared
+scratch class `.harness-state/test-work/coverage-residue/<timestamp>/` instead.
+
+Guarantees, all of which have a regression test in `test_hooks.py`:
+
+- **Silent and inert on a clean root.** No residue, no output, exit 0.
+- **Command actions only.** `Bash`, `PowerShell`, `shell`; see Matcher scope.
+- **Never deletes.** Moves are `shutil.move`. Where the `coverage` module is
+  importable and two or more fragments were relocated, `coverage combine --keep`
+  runs *inside the destination* on the moved copies, so the fragments survive the
+  combine and nothing at the project root is consumed. A failed or unavailable
+  combine still leaves the fragments relocated.
+- **Structure preserved.** A moved tree keeps its relative layout under
+  `evidence/coverage/`, and a name that already exists there is never overwritten.
+- **Boundaries respected.** An entry inside a `frozen_globs` or `blocked_globs`
+  glob is left untouched and counted in the hint, using the same glob expansion
+  `pre_tool_use.py` blocks with.
+- **Generated roots are the destination, not the residue.** `skillset-saves/` and
+  `.harness-state/` are never swept.
+- **Bounded.** At most 5000 project-root entries per call, and a truncated sweep
+  says so in the hint rather than implying a clean root.
+- **Fail open.** Any error returns silently; the host loop never sees it.
+
+The hint states what moved, where it landed, the file count, whether the fragments
+were combined, and the rule: resolve the destination with `output_paths.py --kind
+coverage`, set `COVERAGE_FILE` / `--data-file` / `--cov-report` / `--report-dir` +
+`--temp-dir` / `--coverage.reportsDirectory` to it, and never use parallel mode
+without a combine. When a trajectory pattern also fires, the sweep report rides
+along with that hint rather than being lost behind it.
+
 ## Heartbeat refresh
 
 With the hooks registered, all three hooks (`pre_tool_use.py`,
@@ -196,8 +255,18 @@ lock owner. It never revives a stale lock. Without hooks, a run goes stale after
 
 ```bash
 echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | python pre_tool_use.py
+echo '{"tool_name":"Bash","tool_input":{"command":"coverage run -p -m pytest"}}' | python pre_tool_use.py
 echo '{"prompt":"design this system"}' | python user_prompt_submit.py
 python verify_registration.py --host auto
+```
+
+The coverage sweep, against a scratch project (it moves files, so never point it
+at a project you have not finished with):
+
+```bash
+export SUPREMETEAM_PROJECT_DIR=/tmp/scratch-project
+touch "$SUPREMETEAM_PROJECT_DIR/.coverage.host.1.abc"
+echo '{"tool_name":"Bash","tool_input":{"command":"pytest --cov"},"tool_response":{"exit_code":0,"stdout":"ok"}}' | python post_tool_use.py
 ```
 
 ## Regression tests
@@ -206,8 +275,8 @@ python verify_registration.py --host auto
 python -m unittest discover -s skills/harness/hooks -p "test_*.py"
 ```
 
-`test_hooks.py` covers the three lifecycle hooks, registration verification, and
-readiness. `test_hooks_hardening.py` covers path and payload hardening,
+`test_hooks.py` covers the three lifecycle hooks, the coverage-residue sweep and
+its pre-tool advisory, registration verification, and readiness. `test_hooks_hardening.py` covers path and payload hardening,
 `test_hooks_lifecycle.py` the save lifecycle writer and the read-only run
 boundary, `test_hooks_observed.py` the observed-versus-configured distinction,
 `test_registration_contract.py` the host registration contract, and

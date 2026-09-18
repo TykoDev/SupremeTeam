@@ -59,7 +59,7 @@ it is torn down is in `references/workflow.md` § Credential Forms.
 | --- | --- | --- |
 | Single-use access token | One bootstrap connection, consumed on first use | The collaborator attaches once and the issuer can mint single-use material |
 | Scoped WebSocket / session token | One browser context or session id, and nothing else | The collaborator needs one session for the handoff window — the preferred form |
-| CDP / session handle | The whole browser: every tab, and every origin's cookies and storage in the profile | Nothing narrower can do the work — and then only against a browser launched for this pairing with an empty, isolated profile |
+| CDP / session handle | The whole browser: every tab, and every origin's cookies and storage in the profile — and it is **not** single-use: the `webSocketDebuggerUrl` stays re-readable from `/json/version` for as long as the port is reachable | Nothing narrower can do the work — and then only against a browser launched for this pairing with an empty, isolated profile |
 
 A CDP endpoint cannot be narrowed after the fact, and there is no per-session revoke short of
 ending the process. That is why it is never issued against the user's own browser or any profile
@@ -73,8 +73,8 @@ unrevoked endpoint or token is live until it is actually closed.
 
 - **Credential form fits the exposure**: Pick the least-exposing form that still works (single-use or scoped token over a whole-browser CDP handle), and mint it by that form's procedure in `references/workflow.md` § Credential Forms.
 - **CDP requires an isolated-profile browser**: A CDP endpoint controls the whole browser and every origin's cookies and storage, so it is issued only against a dedicated browser launched for the pairing with an empty profile — never the user's own browser (Workflow step 2, § Credential Forms).
-- **Setup keys (one-time)**: Use short-lived one-time pairing keys for remote session bootstrap before issuing longer-lived tokens.
-- **Session tokens**: Use scoped time-bounded session credentials for remote browser or host interactions.
+- **One-time credentials over standing ones**: Where the form supports it, issue a credential that is consumed on first use, and prefer that form over one that stands until teardown. **A CDP handle is not that form.** Its `webSocketDebuggerUrl` is read from `/json/version`, and that whole HTTP endpoint stays reachable for as long as the port is — `/json/list` keeps leaking every open target's full URL as the collaborator navigates — so the URL can be re-read and re-used by anyone who reaches the port. Treat it as a standing credential whose only revocation is teardown: ending the browser process and deleting the isolated profile (`references/workflow.md` § Credential Forms). That is precisely why the CDP form is last on the ladder, why its port stays on loopback behind an identity-bound tunnel, and why it is never pointed at a profile holding state outside the pairing.
+- **Session tokens are scoped and time-bounded**: Where a one-time form does not fit, the credential carries an explicit scope and an expiry sized to the pairing window, and is revoked at completion rather than left to lapse.
 - **Credential delivery (out-of-band)**: Deliver scoped pairing credentials out-of-band over a direct secure channel — never in shared chat, logs, screenshots, or the pairing record — as detailed in Workflow step 3.
 - **Revocation on completion**: Revoke the pairing credential by its form's teardown at handoff completion or expiry (Workflow step 5; the teardown per form is in `references/workflow.md` § Credential Forms); leave no open endpoint, token, or isolated-profile browser after the window closes.
 - **Shared severity**: Grade every finding Critical | Major | Minor | Info, the four-tier model clause 3 of `../execution-contract.md` defines, so upstream and downstream packages read risk identically.

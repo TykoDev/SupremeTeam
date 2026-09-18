@@ -49,11 +49,18 @@ authoring_rules:
   - First-principles wording only
   - No provenance or comparison language
   - No references to planning-note filenames inside generated artifacts
-  - Supporting files must be one level deep and directly referenced
+  - >-
+      Supporting files sit one level deep (references/, agent/) and are directly
+      referenced from SKILL.md. Two exceptions, each of which must still be directly
+      referenced - a named sub-group under a bundled directory (agent/adapters/), and
+      a nested skill shipped with its own SKILL.md and supporting tree
+      (skill-maker/skill-creator/). Anything deeper that is neither is a packaging defect.
   - Destinations resolved through scripts/output_paths.py, never composed by hand
-acceptance:
-  rubric_score: 100/100
-  blocked_phrase_scan: zero hits
-  cross_cutting_contracts_embedded: true
-  gate_self_check_documented: true
-  package_ready: true
+# Authoring-time checklist, not a shipped grade. Re-derived on every run; never
+# read as a recorded result.
+acceptance_checklist:
+  - blocked-phrase scan returns zero hits
+  - cross-cutting contracts embedded verbatim
+  - every bundled file referenced from SKILL.md
+  - gate self-check documented for investigation-review
+  - package builds from the resolved output directory

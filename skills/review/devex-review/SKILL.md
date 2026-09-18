@@ -104,7 +104,20 @@ Grade findings `Critical | Major | Minor | Info` and nothing else (`../../execut
 
 The `journey` field is load-bearing. A finding drawn from an executed step carries different weight from one inferred by reading, so an unexecuted or partially executed journey is declared in the Outcome line rather than implied by the wording of individual findings.
 
-The first two items of the Evidence line are a precondition rather than a description, and this is the only thing standing between the first `Bash` call and an unguarded one. Nothing mechanical stops a pass from running a command before the sandbox exists or before the read-only record is taken — `pre_tool_use.py` enforces the boundary once it has been recorded, and enforces nothing while it has not. So the packet is where the check lands: a packet that cannot name the sandbox identifier it ran in and the read-only boundary record it held over the reviewed tree is reporting a journey that began before its own safety contract existed, and `review/code-chief` treats it as unexecuted whatever the Outcome line claims. Print the identifier and record the boundary in workflow step 1, before the first command, so both are available to carry here.
+**The packet must name its sandbox and its boundary record.** A packet that
+cannot name the sandbox identifier it ran in and the read-only boundary record it
+held over the reviewed tree is treated as unexecuted by `review/code-chief`,
+whatever the Outcome line claims. Print the identifier and record the boundary in
+workflow step 1, before the first command, so both are available to carry here.
+
+The reason that rule sits in the packet rather than in the harness: the first two
+items of the Evidence line are a precondition, not a description, and they are the
+only thing standing between the first `Bash` call and an unguarded one. Nothing
+mechanical stops a pass from running a command before the sandbox exists or before
+the read-only record is taken — `pre_tool_use.py` enforces the boundary once it
+has been recorded, and enforces nothing while it has not. So the packet is where
+the check lands: a packet that cannot name both is reporting a journey that began
+before its own safety contract existed.
 
 ### Clean pass
 
@@ -181,6 +194,7 @@ Skip only when the surface required by the review lens does not exist, such as a
 | Tooling behavior depends on OS, shell, or language-runtime details that are not specified | Name the missing environment boundary and avoid claiming the issue reproduces across every supported setup. |
 | The docs and shipped behavior appear out of sync but the version or release target is unclear | Treat the mismatch as a documentation-version gap until the intended release boundary is confirmed. |
 | A setup or integration failure depends on external credentials or services that are not supplied | Preserve the reproduction gap, note the missing secret or service boundary, and stop short of inventing a full failure narrative. |
+| The journey requires a paid external service — a billed API, a licensed runtime, a metered third-party dependency | Never purchase, sign up, or enter payment details; that is the owner's to do, not this lens's. Walk the journey to the boundary where the service is first required, then take one of three paths and name which in `journey`. **A sandbox stub or the vendor's own free tier counts as *partially executed*, never as executed**: the onboarding path a paying developer walks is not the path that was walked, and a stub cannot surface the friction that lives in the real credential issue, quota, or first-call latency. **An owner-supplied scoped test credential counts as executed**, on the same per-command approval as any other privileged step. **No stub and no credential** means the journey stops there: mark every later step unexecuted, report what was reached, and ask `review/code-chief` for the credential rather than reasoning about steps nobody ran. In all three, findings drawn from a stubbed step say so in the finding itself, not only in the Outcome line. |
 | An install or bootstrap step fails midway, or mutates something outside the sandbox — a global package, a shell profile, a system service, a shared cache | Stop the journey at that step. Destroy and rebuild the sandbox rather than repairing it in place, because a half-applied install makes every later finding unattributable to the surface under review. Record what the step changed and how far it reached, report the escape itself as a finding in its own right, and re-run the journey from a clean environment before any onboarding claim is made. If the mutation reached the host, report it to the owner with the exact commands run instead of attempting an undo that guesses at the prior state. |
 | A documented step fetches and executes remote code, demands host-level privilege, or asks for a real production credential | Do not run it as written. Quote the exact command to the owner with what it would do and where it would reach, and execute it only on explicit approval, inside the sandbox, with scoped test credentials. If approval is withheld, mark the step unexecuted, report the onboarding risk it represents as a finding, and resume the journey at the next step that can be walked safely. |
 | The journey completes with nothing to report | Return the clean-pass packet above with the executed commands named. An absent devex packet is indistinguishable from a stage that never ran, and this lens has no artifact slot to make the difference visible. |

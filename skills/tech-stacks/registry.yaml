@@ -18,7 +18,7 @@ overlays:
     framework: Bun + TypeScript
     versions: [1.2]
     source: _refs/global/tech-stacks/bun-typescript.md
-    sha256: 1793c0b435c6662a6664fa25c90d85f035a8b635ebf317b0566c0260a6d0d9f6
+    sha256: 98cdfe6a10807e5e99222da3c94ca34f8d4b76095ac32c61ae74e27c0cc0bde1
   - slug: deno-typescript
     path: tech-stacks/deno-typescript.md
     framework: Deno + TypeScript
@@ -36,7 +36,7 @@ overlays:
     framework: Go / Gin
     versions: [1.23]
     source: _refs/global/tech-stacks/go-gin.md
-    sha256: ac3663a2fa56e51c03beeed9a251ff7f74b250b7445b8b82b0f129fdcba50410
+    sha256: 7d11c966ce45d86b703bcf0d6f254808316191f92da7bf7234313fdc5e58b277
   - slug: node-typescript
     path: tech-stacks/node-typescript.md
     framework: Node.js + TypeScript
@@ -48,7 +48,7 @@ overlays:
     framework: Python + FastAPI
     versions: [3.12, 0.115]
     source: _refs/global/tech-stacks/python-fastapi.md
-    sha256: 5a346dbaf15ba9890032aa6ca9cd95d85152c2663583584f546add80c66c611d
+    sha256: 0c722204b021901fc496223b268a7193b2fc8c324c7c15b89b118ea9a472c606
   - slug: react-nextjs
     path: tech-stacks/react-nextjs.md
     framework: React + Next.js

@@ -180,10 +180,13 @@ def check_gates(gates: dict[str, Any], owners: set[str], errors: list[str]) -> N
         for key, owner in mapping.items():
             if str(owner) not in owners:
                 errors.append(f"gates.yaml: evidence_owners {name}.{key} names unknown owner {owner!r}")
+    # check.py reads evidence_type_params by evidence key first and by record
+    # type second, so an entry may be named either way; an entry that is neither
+    # is a parameter nothing will ever load.
     type_names = set(map(str, (gates.get("evidence_types", {}) or {}).values()))
     for kind in (gates.get("evidence_type_params", {}) or {}):
-        if kind not in type_names:
-            errors.append(f"gates.yaml: evidence_type_params for unknown record type {kind!r}")
+        if kind not in type_names and kind not in declared:
+            errors.append(f"gates.yaml: evidence_type_params for unknown record type or evidence key {kind!r}")
     policy = gates.get("revise_policy")
     if not isinstance(policy, dict) or policy.get("cycle_cap") != 2 or not all(
             str(policy.get(k, "")).strip() for k in ("self_check", "one_packet", "parallel_fix", "delta_review")):

@@ -69,7 +69,7 @@ The `merge-readiness-report` artifact `../../ownership.yaml` assigns to this len
 ## Workflow
 
 1. Bound the review to the actual diff, touched interfaces, and merge context before commenting on readiness.
-2. Review the test evidence first, then inspect correctness signals, readability/simplicity, architecture fit, security exposure, and performance risk in that order.
+2. Review the test evidence first, then inspect correctness signals, readability/simplicity, architecture fit, security exposure, and performance risk in that order. Security exposure here is *flag, do not review*: name what looks exposed and route it to `review/security-review`, which owns the assessment. A merge-readiness packet that adjudicates a security finding has done another lens's job without its evidence.
 3. Apply YAGNI and dependency discipline: flag speculative abstractions, pass-through wrappers, future-proofing with no current use, unnecessary new dependencies, and refactors that relocate complexity instead of reducing it.
 4. Separate merge blockers from optional cleanup, then explain how each major issue affects safety, maintainability, reviewer comprehension, or verification confidence.
 5. Deliver a merge-readiness packet to `review/code-chief` with blockers, optional cleanups, rejected nits, and any follow-up lenses that should inspect the same surface.
@@ -111,14 +111,14 @@ A clean pass asserts the diff was judged and is merge-ready. When there is no co
 1. Re-review only the hunks and keys named in `changed_evidence` for this group, plus any interface or test whose readiness judgment depended on them. Unchanged evidence keeps its prior judgment, mirroring how the gatekeeper re-judges under `delta_review`.
 2. Carry prior finding ids forward. A resolved blocker returns with status `verified` and the evidence that verifies it; an unresolved one returns under its original id and severity, never renumbered.
 3. State the round in the `Revision` line as a delta, for example `r2 <- r1`, and restate the merge recommendation for the revised diff rather than leaving the prior one standing.
-4. Report an issue found outside `changed_evidence` as a new item marked out-of-delta rather than widening the round silently. `review/code-chief` decides whether it enters this cycle or the next.
+4. Report an issue that falls outside the round as a new item marked out-of-delta rather than widening the round silently — either outside `changed_evidence` entirely, or inside it by path but unrelated to the findings this round was opened for. Both are the same call: the round answers the questions it was opened with, and anything else is named and handed on rather than folded in. `review/code-chief` decides whether it enters this cycle or the next.
 
 At the cycle cap, an unresolved Critical or Major returns unchanged with its blocking status intact, and the recommendation stays no-go; the cap never converts an unfixed blocker into an accepted one.
 
 ## Required Contracts
 
 - **Read-only over the reviewed surface**: This lens reports and never edits the diff, tests, configuration, or documentation it judges. `allowed-tools` withholds `Edit` so the posture is enforced rather than promised, and `Write` covers the packet and its evidence under the save path only. A cleanup this lens can see is written into the finding as a fix direction and routed through `review/code-chief` to the owning build skill; editing the diff under review would change the artifact the merge decision rests on and invalidate the evidence already gathered against it.
-- **Before/After Evidence**: Capture observable state before and after each intervention so improvements can be verified instead of asserted.
+- **Before/After Evidence**: This lens intervenes in nothing, so the contract is a baseline rule: the "before" is the submitted diff and the test output read at step 2, recorded so a later claim that the revision improved something can be checked instead of believed. `references/workflow.md` states where in the sequence it is taken.
 - **Shared severity**: Grade every finding Critical | Major | Minor | Info, the four-tier model clause 3 of `../../execution-contract.md` defines, so upstream and downstream packages interpret risk consistently.
 - **Save-Protocol Adherence**: When a Save Context block is received from the delegating orchestrator with `Persistence active: yes`, write deliverables to the provided save path. Saving is mandatory when persistence is active.
 

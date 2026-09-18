@@ -9,11 +9,11 @@ inferring one.
 
 | Dimension | Result |
 |---|---|
-| Skill quality, 52 skills | mean **98.8** / 100, lowest 95, 17 at 100 |
+| Skill quality, 52 skills | mean **99.4** / 100, lowest 97, 31 at 100 |
 | Spec, harness and doctrine, 21 artifacts | mean **97.5** / 100, lowest 95 |
 | Routing accuracy, paraphrased requests | **94.8%** (294/310) |
 | Skills the host registers | all **21** entry skills; the 31 internal specialists deliberately not |
-| Automated tests | **359**, all passing |
+| Automated tests | **405**, all passing (2 skipped as designed) |
 | Gate boundaries | 10, all proven satisfiable against the real validator |
 
 ## Skills
@@ -25,8 +25,8 @@ security, structure, documentation — 10 points each.
 
 | Band | Skills |
 |---|---|
-| 100 | 17 |
-| 95–99 | 35 |
+| 100 | 31 |
+| 95–99 | 21 |
 | below 95 | 0 |
 
 <details>
@@ -36,56 +36,87 @@ security, structure, documentation — 10 points each.
 |---|---|
 | `benchmark` | 100 |
 | `browse` | 100 |
+| `build/bob-the-builder` | 100 |
 | `build/build-management` | 100 |
+| `build/cross-check-build-confirm` | 100 |
+| `build/debugger` | 100 |
+| `build/health-check` | 100 |
+| `build/security-builder` | 100 |
+| `build/test-builder` | 100 |
 | `careful` | 100 |
-| `design/commander` | 100 |
+| `design/gatekeeper-design` | 100 |
+| `design/planner` | 100 |
 | `document-release` | 100 |
 | `freeze` | 100 |
+| `gatekeeper-admiral` | 100 |
 | `guard` | 100 |
 | `land-and-deploy` | 100 |
+| `open-browser` | 100 |
+| `pair-agent` | 100 |
 | `review/bug-review` | 100 |
+| `review/code-chief` | 100 |
 | `review/code-review` | 100 |
+| `review/cso` | 100 |
+| `review/design-qa` | 100 |
 | `review/devex-review` | 100 |
-| `review/frontier` | 100 |
 | `review/gatekeeper-code` | 100 |
-| `review/security-review` | 100 |
+| `review/mr-robot` | 100 |
+| `review/quality-review` | 100 |
+| `setup-browser-cookies` | 100 |
 | `setup-deploy` | 100 |
 | `ship` | 100 |
-| `build/bob-the-builder` | 99 |
-| `build/debugger` | 99 |
 | `build/gatekeeper-build` | 99 |
-| `build/security-builder` | 99 |
-| `build/test-builder` | 99 |
-| `design/redesign` | 99 |
-| `gatekeeper-admiral` | 99 |
-| `investigate` | 99 |
-| `open-browser` | 99 |
-| `pair-agent` | 99 |
-| `review/code-chief` | 99 |
-| `review/design-qa` | 99 |
-| `review/quality-review` | 99 |
-| `setup-browser-cookies` | 99 |
+| `design/architect` | 99 |
+| `design/commander` | 99 |
+| `design/design-mapper` | 99 |
+| `design/researcher` | 99 |
+| `qa` | 99 |
+| `review/frontier` | 99 |
+| `session-memory` | 99 |
+| `skill-maker/skill-creator` | 99 |
 | `skill-maker/skill-reviewer` | 99 |
+| `taste/taste-review` | 99 |
 | `unfreeze` | 99 |
 | `admiral` | 98 |
-| `design/architect` | 98 |
-| `design/design-mapper` | 98 |
-| `design/engineer` | 98 |
-| `design/planner` | 98 |
 | `design/prototyper` | 98 |
-| `design/researcher` | 98 |
-| `qa` | 98 |
-| `review/cso` | 98 |
-| `review/mr-robot` | 98 |
-| `session-memory` | 98 |
-| `skill-maker/skill-creator` | 98 |
+| `design/redesign` | 98 |
+| `investigate` | 98 |
+| `qa-only` | 98 |
+| `review/security-review` | 98 |
+| `ship` | 98 |
 | `taste` | 98 |
-| `taste/taste-review` | 98 |
-| `build/health-check` | 97 |
-| `skill-maker` | 97 |
-| `design/gatekeeper-design` | 96 |
-| `qa-only` | 96 |
-| `build/cross-check-build-confirm` | 95 |
+| `design/engineer` | 97 |
+
+</details>
+
+<details>
+<summary>Deductions cited in the 2026-09-18 round — 26 findings across 21 skills</summary>
+
+Every line was checked against the cited source before it cost a point; 31 skills scored clean.
+
+| Skill | Finding |
+|---|---|
+| `design/engineer` | D3 −3: step 1 requires a `stack-lock` that the `pipelines.yaml` stage order never permits to exist at spec time — a literal reading deadlocks (SKILL.md:23-24,103; references/workflow.md:22-31 vs pipelines.yaml:62-72) |
+| `admiral` | D3 −2: three Required Contracts order audit-trail appends `save_run.py` never emits; the documented `--set` state-field path is the sanctioned mechanism (references/contracts.md:26-35 vs harness/hooks/save_run.py) |
+| `taste` | D3 −2: failure-modes claims import validates `schema_version` and named exit codes; `taste_prefs.py` checks none of it (SKILL.md:165; references/workflow.md:66-67 vs taste_prefs.py:294-307) |
+| `ship` | D3 −2: gate-submission reference claims schema 2 requires `submission_id` and a checker message that do not exist (references/gate-submission.md:56-58 vs gates.yaml, _gatecheck.py) |
+| `build/gatekeeper-build` | D3 −1: worked example asserts traversal detection the skill's own workflow reference disclaims (references/examples.md:108 vs references/workflow.md:18) |
+| `design/commander` | D10 −1: `intake-brief.yaml` `required_contracts` do not mirror SKILL.md § Required Contracts (intake-brief.yaml:51-55 vs SKILL.md:126-136) |
+| `design/redesign` | D6 −1 + D10 −1: no worked merge-decision example; the mirror comment cites the wrong section (references/examples.md; intake-brief.yaml:74) |
+| `design/architect` | D2 −1: claims an `implementation` deliverable `ownership.yaml` assigns to bob-the-builder (SKILL.md:82 vs ownership.yaml:176) |
+| `design/design-mapper` | D3 −1: parity-marker contract contradicts `check_parity.py`'s union rule (references/workflow.md:95 vs check_parity.py:183) |
+| `design/prototyper` | D3 −1 + D10 −1: the same implementation-ownership collision; self-check scratch pointed at a path class owned by `harness-tests` (references/workflow.md:208; SKILL.md:222 vs save-ownership.yaml) |
+| `design/researcher` | D3 −1: claims the first design stage; `intake-grilling` precedes it (SKILL.md:20-21 vs pipelines.yaml:37-45) |
+| `investigate` | D9 −2 (two findings): examples.md Contents omits Example 0; the write-trigger table names a verdict file no phase gatekeeper writes (references/examples.md:8-15; references/workflow.md:170) |
+| `qa` | D5 −1: gate-package.md Contents omits the Evidence Keys section SKILL.md calls authoritative (references/gate-package.md:8-15 vs SKILL.md:99) |
+| `qa-only` | D8 −1 + D9 −1: standalone evidence writes into a skill-maker-owned path class; the bundle shape disagrees between SKILL.md and read-only-boundary.md (SKILL.md:54 vs save-ownership.yaml:222-231, output_paths.py:113-114) |
+| `session-memory` | D3 −1: cites a proper noun ("LIFE-HARNESS") that appears nowhere else in the repo (SKILL.md:123 vs harness-doctrine.md:87) |
+| `skill-maker/skill-creator` | D9 −1: the trigger list omits the Optimize mode the description names as a trigger (SKILL.md:3-11 vs 69-75) |
+| `skill-maker/skill-reviewer` | D3 −1: says skill-maker owns the `review` stage; `pipelines.yaml` assigns it to skill-reviewer (SKILL.md:54-55 vs pipelines.yaml:410-413) |
+| `taste/taste-review` | D3 −1: overstates what check.py rejects for an omitted or filled `policy_check` (SKILL.md:100 vs check.py:340-366) |
+| `unfreeze` | D3 −1: claims approver release for records `guard_state.py` writes without an approvers field (SKILL.md:49 vs guard_state.py:231-238) |
+| `review/security-review` | D5 −1 + D8 −1: a 103-line examples.md without a TOC; the read-only execution-boundary contract every sibling lens carries is absent (references/examples.md; SKILL.md:174-180) |
+| `review/frontier` | D9 −1: the workflow Contents mis-numbers its last three entries (references/workflow.md:12-15) |
 
 </details>
 
@@ -210,11 +241,11 @@ values against the skills and gate parameters they depend on.
 
 | Suite | Tests |
 |---|---|
-| `skills/harness/gatekeeper` | 72 |
-| `skills/harness/hooks` | 115 |
-| `skills/scripts` | 13 |
+| `skills/harness/gatekeeper` | 93 (1 skipped) |
+| `skills/harness/hooks` | 128 |
+| `skills/scripts` | 24 |
 | `skills/taste` | 3 |
-| `skills/validation` | 151 |
+| `skills/validation` | 152 (1 skipped) |
 | `skills/skill-maker/skill-creator/scripts` | 5 |
 
 | Validation module | Tests |
@@ -222,7 +253,7 @@ values against the skills and gate parameters they depend on.
 | `test_catalog_contracts.py` | 30 |
 | `test_orchestration.py` | 44 |
 | `test_pipeline_contracts.py` | 10 |
-| `test_pipeline_workflows.py` | 15 |
+| `test_pipeline_workflows.py` | 16 (1 skipped) |
 | `test_save_contracts.py` | 17 |
 | `test_trigger_routing.py` | 35 |
 
@@ -252,6 +283,11 @@ it invites deleting test-enforced content.
 Scores are therefore reproducible in method but not deterministic in value. They
 are useful as a relative signal and a defect-finding instrument, not as a
 precision metric.
+
+The 2026-09-18 refresh re-scored all 52 skills with ten independent parallel
+scorers working from this rubric. It produced 26 deductions across 21 skills,
+each cited in the Skills section above; the citations, not the totals, are the
+output that matters.
 
 ### Routing measurement
 

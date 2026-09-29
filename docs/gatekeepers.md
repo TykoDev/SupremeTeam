@@ -95,14 +95,14 @@ records rather than prose.
 | `render` | `rendered_verification`, `mock_rendering` | Hashed captures, the breakpoints and themes covered, `inputs` bound to the rendered source, and pass or `inferred` with a stated limitation. |
 | `findings` | `findings`, `security_evidence`, `defects`, `accessibility_evidence` | Items with id, severity, status. Critical must be verified or not-applicable with a reason. Major must be verified, not-applicable with a reason, or deferred with a named owner and reopen trigger. |
 | `verdict` | `review_verdict` | APPROVED, or REVISE/ESCALATE with a challenge record naming `by` and `reason`. |
-| `stack_lock` | `stack_lock` | Registry slug, versions, and overlay sha256, checked against `skills/tech-stacks/registry.yaml`. |
+| `stack_lock` | `stack_lock` | Registry slug, versions, and overlay sha256, checked against `skills/tech-stacks/registry.yaml` and the overlay file: the file must exist, its digest must match, and every declared version must be one the registry offers. |
 | `revision_ref` | `approved_design_revision`, `approved_delivery` | A non-empty approved upstream revision identifier. |
 | `preference_diff` | `preference_diff` | Added, updated, deprecated, revoked, and unchanged ids, plus before/after SHA-256 digests. |
 | `confirmation` | `confirmation` | Actor, timestamp, confirmed scope, exact candidate ids, and source run. |
 | `conflict_analysis` | `conflict_analysis` | Conflicting ids, precedence decision, unresolved conflicts, and accessibility/policy collisions. |
 | `persistence_result` | `persistence_result` | Requested destinations, committed revisions, SHA-256 hashes, atomicity status, and rollback result. |
 | `effective_profile` | `effective_profile` | Every effective entry's id, source scope, and source id, plus the profile digest. |
-| `consumer_handoff` | `consumer_handoff` | Consuming pipeline, immutable effective-profile digest, and applicability summary. |
+| `consumer_handoff` | `consumer_handoff` | Consuming pipeline, immutable effective-profile digest (which must equal the `effective_profile` record's digest), and applicability summary. |
 | `variant_set` | `mock_set`, `selected_variant` | A list of entries with unique ids, each declaring hashed files. The list name, the file fields, and the count all come from `evidence_type_params`, read by evidence key: `mock_set` holds exactly four `mocks` with `spec`, `tokens`, `components`, and `mock`; `selected_variant` holds the one `variants` entry with `spec`, `tokens`, `components`, and `app`. |
 | `selection` | `selection` | The hashed selection report, a `decision` of `variant`, `merge`, or `deferred`, a `chosen` mock id (null unless the decision is `variant`), a `recommended` mock id, and `decided_by`, `decided_at`, `basis`. On `variant` the built variant's id must equal `chosen`. |
 

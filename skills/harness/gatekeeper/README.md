@@ -45,7 +45,9 @@ cannot waive a gate, security evidence, or active-run ownership.
 
 Its boundary table is not hardcoded. It loads `skills/gates.yaml`, the canonical
 gate spec, and a missing or malformed spec is an engine error (exit 2), never a
-pass. Against that spec it verifies required boundary evidence, artifact-backed
+pass. That includes a spec naming an evidence type the engine has no validator
+for: an unknown kind would otherwise switch its key's typed checks off and still
+print a pass. Against that spec it verifies required boundary evidence, artifact-backed
 evidence (keys listed under `artifact_evidence` must reference a hashed file in
 the package unless the value is a sanctioned fallback), submission and revision
 identity, single-revision lineage, artifact existence and SHA-256 hashes, blocked

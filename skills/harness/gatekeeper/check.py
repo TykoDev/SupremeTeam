@@ -98,6 +98,13 @@ FINDING_SEVERITIES = {"Critical", "Major", "Minor", "Info"}
 FINDING_STATUSES = {"open", "in-progress", "resolved", "verified", "deferred", "not-applicable"}
 #: Default file fields of a variant_set record when the gate spec names none.
 VARIANT_FILES = ("spec", "tokens", "components", "app")
+#: Every evidence type check_typed dispatches. A spec that names another kind is
+#: an engine error: an unknown kind would switch its key's typed validation off
+#: and still print a pass.
+EVIDENCE_KINDS = frozenset({
+    "scan", "render", "probe", "audit", "findings", "verdict", "stack_lock", "revision_ref",
+    "preference_diff", "confirmation", "conflict_analysis", "persistence_result", "effective_profile",
+    "consumer_handoff", "variant_set", "selection"})
 
 
 class Engine(ValueError):
@@ -175,6 +182,9 @@ def load_gate_spec(path: Path) -> dict:
     types = spec.get("evidence_types", {})
     if not isinstance(types, dict) or not all(isinstance(v, str) for v in types.values()):
         raise Engine("gate spec evidence_types must map evidence keys to type names")
+    unknown_kinds = sorted({v for v in types.values() if v not in EVIDENCE_KINDS})
+    if unknown_kinds:
+        raise Engine(f"gate spec evidence_types names unknown kinds {unknown_kinds} (known: {sorted(EVIDENCE_KINDS)})")
     policy = spec.get("finding_policy", {})
     if not isinstance(policy, dict):
         raise Engine("gate spec finding_policy must be a JSON object")
@@ -514,6 +524,8 @@ class Package:
             self.check_variant_set(key, value)
         elif kind == "selection":
             self.check_selection(key, value)
+        else:
+            raise Engine(f"evidence type {kind!r} for {key} has no validator")
 
     def type_params(self, key: str, kind: str) -> dict:
         """Typed-record parameters, read by evidence key first and kind second.
@@ -721,6 +733,16 @@ class Package:
         for field in digest_fields:
             if not is_sha256(value.get(field)):
                 self.failures.append(f"{key} record requires sha256 {field}")
+        if kind == "consumer_handoff":
+            # gates.yaml calls this "the immutable effective-profile sha256", and
+            # both records sit in the same manifest, so the comparison is mechanical.
+            profile_key = next((k for k, t in self.spec.get("evidence_types", {}).items() if t == "effective_profile"), "")
+            evidence = self.data.get("evidence")
+            profile = evidence.get(profile_key) if isinstance(evidence, dict) else None
+            handed = value.get("effective_profile_digest")
+            if isinstance(profile, dict) and is_sha256(profile.get("digest")) and is_sha256(handed):
+                if handed.lower() != profile["digest"].lower():
+                    self.failures.append(f"{key} effective_profile_digest does not match the {profile_key} digest")
         if kind == "persistence_result":
             hashes = value.get("hashes")
             if not isinstance(hashes, dict) or not hashes or any(
@@ -864,11 +886,16 @@ class Package:
         if str(entry.get("sha256", "")).lower() != overlay:
             self.failures.append(f"{key} overlay_sha256 does not match registry entry for {slug}")
         overlay_file = registry_path.parent.parent / str(entry.get("path", ""))
-        if overlay_file.is_file() and overlay_digest(overlay_file) != overlay:
+        if not overlay_file.is_file():
+            # Without the file only the registry's own string was compared, which
+            # verifies one side of "matches registry and file".
+            self.failures.append(f"{key} overlay file for {slug} is missing: {entry.get('path')}")
+        elif overlay_digest(overlay_file) != overlay:
             self.failures.append(f"{key} overlay file digest does not match declared overlay_sha256")
-        registry_versions = {str(v) for v in (entry.get("versions") or [])}
-        if registry_versions and not ({str(v) for v in versions} & registry_versions):
-            self.failures.append(f"{key} versions {versions} not offered by registry entry {slug}")
+        offered = {str(v) for v in (entry.get("versions") or [])}
+        unoffered = [v for v in versions if str(v) not in offered]
+        if unoffered:
+            self.failures.append(f"{key} versions {unoffered} not offered by registry entry {slug}")
 
     # ------------------------------------------------------------- lineage
     def check_identity(self) -> tuple[bool, set[str]]:

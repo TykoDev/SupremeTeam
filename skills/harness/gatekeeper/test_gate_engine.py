@@ -312,6 +312,134 @@ class ResultRecordConsistencyTests(EngineCase):
                 self.assertEqual(package.warnings, [])
 
 
+class StackLockTests(EngineCase):
+    """A stack lock names an overlay the registry offers, at versions it offers, with the file present."""
+
+    def registry(self, *, overlay_file: bool = True, versions: object = (19, 15)) -> str:
+        """A one-overlay registry under the scratch directory; returns the overlay's real digest."""
+        tech_stacks = self.root / "catalog" / "tech-stacks"
+        tech_stacks.mkdir(parents=True)
+        overlay = tech_stacks / "demo.md"
+        overlay.write_text("# Demo overlay\n\nPinned guidance.\n", encoding="utf-8")
+        digest = content_sha256(overlay)
+        if not overlay_file:
+            overlay.unlink()
+        entry = {"slug": "demo", "path": "tech-stacks/demo.md", "framework": "Demo", "sha256": digest}
+        if versions is not None:
+            entry["versions"] = list(versions)
+        registry = tech_stacks / "registry.yaml"
+        registry.write_text(json.dumps({"schema_version": 1, "kind": "supremeteam-tech-stack-registry",
+                                        "overlays": [entry]}), encoding="utf-8")
+        self.spec["_registry_path"] = str(registry)
+        return digest
+
+    def failures(self, record: dict) -> list[str]:
+        package = self.package("design-to-build")
+        package.check_stack_lock("stack_lock", record)
+        return package.failures
+
+    def test_a_lock_on_an_offered_overlay_and_versions_passes(self):
+        digest = self.registry()
+        for versions in ([19], [19, 15], ["19"], [15, "19"]):
+            with self.subTest(versions=versions):
+                self.assertEqual(self.failures({"slug": "demo", "versions": versions, "overlay_sha256": digest}), [])
+
+    def test_every_declared_version_must_be_offered_not_just_one(self):
+        digest = self.registry()
+        for versions, unoffered in (([19, 99], [99]), ([99, 19], [99]), (["18", 19, "17"], ["18", "17"]), ([99], [99])):
+            with self.subTest(versions=versions):
+                self.assertEqual(
+                    self.failures({"slug": "demo", "versions": versions, "overlay_sha256": digest}),
+                    [f"stack_lock versions {unoffered} not offered by registry entry demo"])
+
+    def test_a_registry_entry_that_offers_no_versions_cannot_vouch_for_any(self):
+        digest = self.registry(versions=None)
+        self.assertEqual(self.failures({"slug": "demo", "versions": [19], "overlay_sha256": digest}),
+                         ["stack_lock versions [19] not offered by registry entry demo"])
+
+    def test_a_missing_overlay_file_fails_instead_of_verifying_only_the_registry_string(self):
+        digest = self.registry(overlay_file=False)
+        self.assertEqual(self.failures({"slug": "demo", "versions": [19], "overlay_sha256": digest}),
+                         ["stack_lock overlay file for demo is missing: tech-stacks/demo.md"])
+
+    def test_an_overlay_file_changed_since_the_registry_recorded_it_still_fails(self):
+        digest = self.registry()
+        (self.root / "catalog" / "tech-stacks" / "demo.md").write_text("# Edited\n", encoding="utf-8")
+        self.assertEqual(self.failures({"slug": "demo", "versions": [19], "overlay_sha256": digest}),
+                         ["stack_lock overlay file digest does not match declared overlay_sha256"])
+
+
+class ConsumerHandoffBindingTests(EngineCase):
+    """gates.yaml calls the handoff digest "the immutable effective-profile sha256"; compare them."""
+
+    PROFILE = "a" * 64
+    HANDOFF = {"consuming_pipeline": "design", "applicability_summary": "UI choices"}
+
+    def failures(self, handed: object, evidence: dict | None) -> list[str]:
+        package = self.package("taste-review", evidence)
+        package.check_taste_record("consumer_handoff", "consumer_handoff",
+                                   {**self.HANDOFF, "effective_profile_digest": handed})
+        return package.failures
+
+    def profile(self, digest: object = PROFILE) -> dict:
+        return {"effective_profile": {"entries": [], "digest": digest}}
+
+    def test_the_handoff_must_carry_the_effective_profile_digest(self):
+        self.assertEqual(self.failures("b" * 64, self.profile()),
+                         ["consumer_handoff effective_profile_digest does not match the effective_profile digest"])
+
+    def test_an_equal_digest_passes_whatever_its_hex_case(self):
+        for handed in (self.PROFILE, self.PROFILE.upper()):
+            self.assertEqual(self.failures(handed, self.profile()), [])
+        self.assertEqual(self.failures(self.PROFILE, self.profile(self.PROFILE.upper())), [])
+
+    def test_nothing_is_compared_when_either_side_is_not_a_digest(self):
+        """Malformed values keep their own failure; the mismatch is reported only for two real digests."""
+        self.assertEqual(self.failures("not-a-digest", self.profile()),
+                         ["consumer_handoff record requires sha256 effective_profile_digest"])
+        for evidence in (None, {}, self.profile("not-a-digest"), {"effective_profile": "text"}):
+            self.assertEqual(self.failures(self.PROFILE, evidence), [], evidence)
+
+
+class EvidenceKindTests(EngineCase):
+    """A kind the engine cannot validate is an engine error: it must never switch a key's checks off."""
+
+    def test_every_kind_the_shipped_spec_declares_is_one_the_engine_dispatches(self):
+        self.assertLessEqual(set(self.spec["evidence_types"].values()), engine.EVIDENCE_KINDS)
+
+    def test_every_known_kind_reaches_a_validator(self):
+        for kind in sorted(engine.EVIDENCE_KINDS):
+            with self.subTest(kind=kind):
+                self.package("build-to-review").check_typed("tests", kind, "not a record")
+
+    def test_a_kind_with_no_validator_is_an_engine_error_not_a_silent_pass(self):
+        with self.assertRaisesRegex(engine.Engine, "evidence type 'scann' for tests has no validator"):
+            self.package("build-to-review").check_typed("tests", "scann", {"artifacts": ["log.txt"]})
+
+    def test_the_loader_refuses_a_spec_that_names_an_unknown_kind(self):
+        spec = json.loads(GATE_SPEC.read_text(encoding="utf-8"))
+        spec["evidence_types"]["tests"] = "scann"
+        path = self.root / "gates.yaml"
+        path.write_text(json.dumps(spec), encoding="utf-8")
+        with self.assertRaisesRegex(engine.Engine, r"unknown kinds \['scann'\]"):
+            engine.load_gate_spec(path)
+
+    def test_the_command_line_exits_two_and_prints_no_result_for_such_a_spec(self):
+        spec = json.loads(GATE_SPEC.read_text(encoding="utf-8"))
+        spec["evidence_types"]["vulnerability_scan"] = "scann"
+        gates = self.root / "gates.yaml"
+        gates.write_text(json.dumps(spec), encoding="utf-8")
+        manifest = self.root / "manifest.json"
+        manifest.write_text(json.dumps({"schema_version": 2, "boundary": "security-review", "owner": "cso",
+                                        "submission_id": "s1", "revision": "r1", "revisions": ["r1"],
+                                        "artifact_hashes": {}, "evidence": {}}), encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(CHECK), "--boundary", "security-review", "--package", str(manifest),
+                               "--gates", str(gates)], capture_output=True, text=True, check=False)
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertEqual(proc.stdout, "")
+        self.assertIn("unknown kinds ['scann']", json.loads(proc.stderr)["engine_error"])
+
+
 class UnhashableValueTests(EngineCase):
     """A list or object where a word belongs is a finding, not a crash."""
 

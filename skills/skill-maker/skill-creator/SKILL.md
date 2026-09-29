@@ -142,8 +142,9 @@ chart is ugly", "it missed the deadline column"). Full workflow details in
    baseline (no skill for new skills; old snapshot for hardening existing ones).
 3. While runs happen, draft assertions and explain them to the user.
 4. Capture timing data from task notifications as they arrive.
-5. Grade via subagent or inline, aggregate with `scripts/aggregate_benchmark.py`, and
-   launch the eval-viewer so the user can review outputs and leave feedback.
+5. Grade via subagent or inline, aggregate with `scripts/aggregate_benchmark.py` (it reads
+   the workspace layout in `references/real-evals.md` and exits non-zero when it finds no
+   graded run), and launch the eval-viewer so the user can review outputs and leave feedback.
 6. Read `feedback.json` when the user says they are done.
 
 ### Metrics to capture

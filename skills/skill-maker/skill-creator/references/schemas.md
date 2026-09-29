@@ -301,16 +301,16 @@ Output from Benchmark mode. Located at `benchmarks/<timestamp>/benchmark.json`.
   - `skill_name`: Name of the skill
   - `timestamp`: When the benchmark was run
   - `evals_run`: List of eval names or IDs
-  - `runs_per_configuration`: Number of runs per config (e.g. 3)
+  - `runs_per_configuration`: Most runs any configuration has for one eval (e.g. 3); `aggregate_benchmark.py` counts it from the run directories
 - `runs[]`: Individual run results
   - `eval_id`: Numeric eval identifier
-  - `eval_name`: Human-readable eval name (used as section header in the viewer)
+  - `eval_name`: Human-readable eval name (used as section header in the viewer); `eval_metadata.json`'s `eval_name`, else the eval directory's name
   - `configuration`: Must be `"with_skill"` or `"without_skill"` (the viewer uses this exact string for grouping and color coding)
   - `run_number`: Integer run number (1, 2, 3...)
-  - `result`: Nested object with `pass_rate`, `passed`, `total`, `time_seconds`, `tokens`, `errors`
+  - `result`: Nested object with `pass_rate`, `passed`, `total`, `time_seconds`, `tokens`, `errors`; `time_seconds` and `tokens` are `null` when the run recorded none (`timing.json` is where they come from)
 - `run_summary`: Statistical aggregates per configuration
-  - `with_skill` / `without_skill`: Each contains `pass_rate`, `time_seconds`, `tokens` objects with `mean` and `stddev` fields
-  - `delta`: Difference strings like `"+0.50"`, `"+13.0"`, `"+1700"`
+  - `with_skill` / `without_skill`: Each contains `pass_rate`, `time_seconds`, `tokens` objects with `mean` and `stddev` fields. The whole entry is `null` for a configuration with no graded run, and `time_seconds` or `tokens` is `null` when no run of it recorded that metric
+  - `delta`: Difference strings like `"+0.50"`, `"+13.0"`, `"+1700"`; each is `null` when either side has no data for it
 - `notes`: Freeform observations from the analyzer
 
 **Important:** The viewer reads these field names exactly. Using `config` instead of `configuration`, or putting `pass_rate` at the top level of a run instead of nested under `result`, will cause the viewer to show empty/zero values. Always reference this schema when generating benchmark.json manually.

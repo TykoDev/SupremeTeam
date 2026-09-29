@@ -1768,15 +1768,23 @@ def _detect_stacks(
 ) -> list[dict[str, Any]]:
     if packages is not None:
         merged: dict[str, dict[str, Any]] = {}
-        for package_path, package_value in packages:
-            package_root = package_path.parent
-            scoped_files = []
-            for path in files:
-                try:
-                    path.relative_to(package_root)
-                except ValueError:
-                    continue
-                scoped_files.append(path)
+        package_roots = {package_path.parent for package_path, _ in packages}
+        scopes = [(package_path.parent, package_value) for package_path, package_value in packages]
+        if root not in package_roots:
+            # Root-level evidence (go.mod, Cargo.toml, main.py, a csproj) belongs to the
+            # project even when only nested packages carry a package.json, so the
+            # files no package claims are detected as a scope of their own.
+            scopes.append((root, {}))
+        for package_root, package_value in scopes:
+            scoped_files = [
+                path
+                for path in files
+                if path.is_relative_to(package_root)
+                and (
+                    package_root in package_roots
+                    or not any(path.is_relative_to(claimed) for claimed in package_roots)
+                )
+            ]
             for stack in _detect_stacks(
                 registry,
                 scoped_files,

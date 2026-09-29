@@ -171,6 +171,7 @@ FRONTEND_PACKAGE_NAMES = frozenset(
     }
 )
 FRONTEND_TOOL_PACKAGE_NAMES = frozenset({"parcel", "vite", "webpack"})
+TANSTACK_START_PACKAGES = frozenset({"@tanstack/react-start", "@tanstack/start"})
 SSR_PACKAGE_NAMES = frozenset(
     {
         "@remix-run/node",
@@ -1875,8 +1876,12 @@ def _detect_stacks(
         add("vue-nuxt", _stack_evidence(package_relative or nuxt_configs[0], "package.json or Nuxt configuration contains Nuxt evidence"))
 
     if package_relative:
-        if "@tanstack/start" in dependencies:
+        if dependencies & TANSTACK_START_PACKAGES:
             add("react-tanstack", _stack_evidence(package_relative, "package.json contains TanStack Start evidence"))
+            if "react-tanstack" in matches:
+                # TanStack Start is the Vite application and its overlay pins Vite, so a
+                # separate Vite SPA lock would name the wrong framework.
+                matches.pop("vite-spa", None)
 
         if (
             root_named("tsconfig.json")

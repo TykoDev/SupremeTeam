@@ -259,6 +259,7 @@ PYTHON_WEB_MODULES = frozenset(
     {"fastapi", "flask", "django", "starlette", "quart", "sanic", "http.server", "uvicorn"}
 )
 PYTHON_FASTAPI_MODULES = frozenset({"fastapi", "starlette"})
+SPRING_BOOT_RE = re.compile(r"(?i)spring[-.]?boot|org\.springframework\.boot")
 
 MARKER_PATTERN = re.compile(
     r"(?i)\b(TODO|FIXME|HACK|XXX|PLACEHOLDER|STUB|NOT\s+IMPLEMENTED|COMING\s+SOON|"
@@ -1734,11 +1735,18 @@ def _start_commands(
     cargo_command = _cargo_start_command(files, root, text_cache, errors)
     if cargo_command:
         defaults.append(("Cargo.toml:default", "Cargo.toml", cargo_command))
-    if "pom.xml" in root_files:
-        defaults.append(("pom.xml:default", "pom.xml", "mvn spring-boot:run"))
-    if "build.gradle" in root_files or "build.gradle.kts" in root_files:
-        filename = "build.gradle" if "build.gradle" in root_files else "build.gradle.kts"
-        defaults.append((f"{filename}:default", filename, "./gradlew bootRun"))
+    # Both commands are Spring Boot's, so a Java manifest without Spring Boot
+    # evidence gets no candidate rather than an invocation that cannot work.
+    for filename, command in (
+        ("pom.xml", "mvn spring-boot:run"),
+        ("build.gradle", "./gradlew bootRun"),
+        ("build.gradle.kts", "./gradlew bootRun"),
+    ):
+        if filename not in root_files:
+            continue
+        text = _read_cached_text(root_files[filename], root, errors, text_cache, required=True)
+        if text and SPRING_BOOT_RE.search(text):
+            defaults.append((f"{filename}:default", filename, command))
     return [
         {"source": source, "path": path, "command": _redact(command)}
         for source, path, command in defaults[:1]

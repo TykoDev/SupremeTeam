@@ -171,7 +171,8 @@ class OutputPathTests(unittest.TestCase):
         cases = {
             "manifest": dict(run_id="r1", phase="design"),
             "reports": dict(run_id="r1", phase="design", name="report_plan.md"),
-            "artifacts": dict(run_id="r1", phase="design-system", name="tokens.css"),
+            "artifacts": dict(run_id="r1", phase="design", name="tokens.css"),
+            "phase_report": dict(run_id="r1", phase="intake", name="report_grilling.md"),
             "evidence": dict(run_id="r1", phase="security", name="scan-pip-audit.json"),
             "packages": dict(run_id="r1", phase="skill-creation", name="my-skill.skill"),
             "verdict": dict(run_id="r1", phase="review", boundary="review-to-delivery"),
@@ -205,6 +206,7 @@ class GeneratedRootPolicyTests(unittest.TestCase):
 
     CASES = {
         "manifest": dict(run_id="r1", phase="redesign"),
+        "phase_report": dict(run_id="r1", phase="review", name="review-packet.md"),
         "reports": dict(run_id="r1", phase="design", name="report_plan.md"),
         "artifacts": dict(run_id="r1", phase="redesign", name="variants/v1/app.html"),
         "evidence": dict(run_id="r1", phase="redesign", name="parity-v1.json"),

@@ -40,7 +40,8 @@ creates carries a `.supremeteam-managed` marker. On an upgrade:
 - `mcp-tools.md` is the tool registry your assistant fills in, so an existing copy
   is never replaced. Delete it and re-run to get the blank template back.
 - `--destination` refuses the filesystem root, your home directory or one of its
-  parents, and any folder that overlaps the checkout.
+  parents, any folder that overlaps the checkout, and `.` unless the current
+  directory already holds an install (a full path to it is always accepted).
 
 Common flags (full list in [QUICK-START.md](QUICK-START.md)):
 
@@ -204,7 +205,7 @@ write a plugin package). Skip the hook line to leave routing and guards advisory
 | Remote install fails | Ran local scripts from a raw URL | Download and extract the archive first |
 | Download stops with an HTTP error | `<ref>` is not an existing release tag or full commit SHA | Use a real tag or the full 40-character SHA, not a branch or a short SHA |
 | A skill of mine stopped working | Its folder shared a name with an installed item and was moved aside | It is unchanged in `<target>.supremeteam-backup/<timestamp>/`; move it back under a name the catalog does not use |
-| `Refusing to install into ...` | `--destination` is the filesystem root, your home directory or a parent of it, or overlaps the checkout | Pass the skills folder itself |
+| `Refusing to install into ...` | `--destination` is the filesystem root, your home directory or a parent of it, overlaps the checkout, or is `.` in a folder with no install | Pass the skills folder's full path |
 | Python commands fail | Python missing or below the manifest floor | Install a supported Python, re-check |
 | Gatekeepers can't find `_gatecheck.py` | `harness/` was skipped | Use the installer or copy every core component |
 | Resume and saves broken | `save-protocol.md` was skipped | Copy the root doctrine files |

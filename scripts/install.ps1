@@ -50,6 +50,7 @@ $script:allTeamNames = @()
 $script:managedItems = @()
 $script:oldItems = @()
 $script:backupDirs = @()
+$script:manifestForeign = $false
 $script:stage = ""
 $script:stageRoot = ""
 $script:stageCommitted = $false
@@ -227,8 +228,9 @@ function Test-PathWithin {
 }
 
 # An install root is a skills folder, so a drive root, the profile directory and
-# its parents, and anything overlapping this checkout are refused before
-# anything is written.
+# its parents, anything overlapping this checkout, and the current directory
+# spelled as a relative path (unless it already holds an install) are refused
+# before anything is written. A full path to the current directory is deliberate.
 function Assert-SafeRoot {
     param(
         [string]$Label,
@@ -261,6 +263,10 @@ function Assert-SafeRoot {
     if (Test-PathWithin -Child $resolved -Parent (Resolve-FullPath -Path $sourceRoot)) {
         throw "Refusing to install into '$resolved' ($Label destination): it is inside the skills source directory."
     }
+
+    if (-not [System.IO.Path]::IsPathRooted($Path) -and ($resolved -eq (Resolve-FullPath -Path (Get-Location).ProviderPath)) -and -not (Test-SupremeTeamInstallPresent -TargetRoot $resolved)) {
+        throw "Refusing to install into '$resolved' ($Label destination): it is the current directory and holds no Supreme Team install. Pass the skills folder's full path instead."
+    }
 }
 
 function Test-ReparsePoint {
@@ -287,20 +293,29 @@ function Get-EntryInfo {
     return $found[0]
 }
 
+# Reads the record of the last run. Something at its path that is not a record
+# (another file, a link, a directory) is not the installer's to overwrite.
 function Read-Manifest {
     param([string]$Root)
 
     $script:oldItems = @()
+    $script:manifestForeign = $false
     $file = Join-Path $Root $manifestName
 
     $info = Get-EntryInfo -Root $Root -Name $manifestName
-    if ($null -eq $info -or $info.PSIsContainer -or (Test-ReparsePoint -Item $info)) {
+    if ($null -eq $info) {
+        return
+    }
+
+    if ($info.PSIsContainer -or (Test-ReparsePoint -Item $info)) {
+        $script:manifestForeign = $true
         return
     }
 
     $lines = @(Get-Content -LiteralPath $file)
     if ($lines.Count -eq 0 -or $lines[0].Trim() -ne $manifestHeader) {
         Write-Warning "Ignoring $file, which is not a Supreme Team install record."
+        $script:manifestForeign = $true
         return
     }
 
@@ -618,7 +633,7 @@ function Install-SupremeTeam {
     $keptItems = @()
     $foreignItems = @()
     $staleItems = @()
-    $legacyHits = @()
+    $asideItems = @()
 
     foreach ($item in $Items) {
         $state = Get-ItemState -Root $root -Name $item
@@ -644,10 +659,16 @@ function Install-SupremeTeam {
         }
     }
 
+    # Moved aside without being replaced: a recognised old-layout directory, and
+    # a file, link or directory sitting where the record belongs.
     foreach ($dir in $script:legacyItems.Keys) {
         if (Test-LegacyDirectory -Root $root -Name $dir) {
-            $legacyHits += $dir
+            $asideItems += $dir
         }
+    }
+
+    if ($script:manifestForeign) {
+        $asideItems += $manifestName
     }
 
     if ($DryRun) {
@@ -655,7 +676,7 @@ function Install-SupremeTeam {
         Write-ItemList -Label "would replace" -Items $replaceItems
         Write-ItemList -Label "would keep, yours" -Items $keptItems
         Write-ItemList -Label "would remove, no longer shipped" -Items $staleItems
-        Write-ItemList -Label "would move aside to ${root}.supremeteam-backup, not installed by Supreme Team" -Items @($foreignItems + $legacyHits)
+        Write-ItemList -Label "would move aside to ${root}.supremeteam-backup, not installed by Supreme Team" -Items @($foreignItems + $asideItems)
         return
     }
 
@@ -676,7 +697,7 @@ function Install-SupremeTeam {
     }
 
     $script:backupDir = ""
-    if (($foreignItems.Count + $legacyHits.Count) -gt 0) {
+    if (($foreignItems.Count + $asideItems.Count) -gt 0) {
         New-BackupDirectory -TargetRoot $root
     }
 
@@ -692,7 +713,7 @@ function Install-SupremeTeam {
     foreach ($item in $staleItems) {
         Move-Item -LiteralPath (Join-Path $root $item) -Destination (Join-Path (Join-Path $script:stage "old") $item)
     }
-    foreach ($item in $legacyHits) {
+    foreach ($item in $asideItems) {
         Move-Item -LiteralPath (Join-Path $root $item) -Destination (Join-Path $script:backupDir $item)
     }
 
@@ -708,7 +729,7 @@ function Install-SupremeTeam {
     Write-ItemList -Label "removed, no longer shipped" -Items $staleItems
     if ($script:backupDir -ne "") {
         Write-Host "  moved aside, not installed by Supreme Team and unchanged, to $($script:backupDir):"
-        foreach ($item in @($foreignItems + $legacyHits)) {
+        foreach ($item in @($foreignItems + $asideItems)) {
             Write-Host "    $item"
         }
 

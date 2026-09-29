@@ -45,6 +45,7 @@ managed_items=()
 install_items=()
 old_items=()
 backup_dirs=()
+manifest_foreign=0
 stage=""
 stage_root=""
 stage_committed=0
@@ -297,14 +298,16 @@ resolve_path() {
 }
 
 # An install root is a skills folder, so the filesystem root, the home directory
-# and its parents, and anything overlapping this checkout are refused before
-# anything is written.
+# and its parents, anything overlapping this checkout, and the current directory
+# spelled as a relative path (unless it already holds an install) are refused
+# before anything is written. A full path to the current directory is deliberate.
 assert_safe_root() {
-    local label="$1" path="$2" resolved home_path
+    local label="$1" path="$2" resolved home_path here
 
     [[ -n "$path" ]] || die "The $label destination is empty."
     resolved="$(resolve_path "$path")"
     home_path="$(resolve_path "$HOME")"
+    here="$(pwd -P)"
 
     if [[ "$resolved" == / ]]; then
         die "Refusing to install into the filesystem root ($label destination)."
@@ -327,18 +330,31 @@ assert_safe_root() {
             die "Refusing to install into '$resolved' ($label destination): it is inside the skills source directory."
             ;;
     esac
+
+    if [[ "$path" != /* && "$resolved" == "$here" ]] && ! supreme_team_install_present "$resolved"; then
+        die "Refusing to install into '$resolved' ($label destination): it is the current directory and holds no Supreme Team install. Pass the skills folder's full path instead."
+    fi
 }
 
+# Reads the record of the last run. Something at its path that is not a record
+# (another file, a link, a directory) is not the installer's to overwrite.
 read_manifest() {
     local file="$1/$manifest_name" line name
 
     old_items=()
-    [[ -f "$file" && ! -L "$file" ]] || return 0
+    manifest_foreign=0
+    [[ -e "$file" || -L "$file" ]] || return 0
+
+    if [[ -L "$file" || ! -f "$file" ]]; then
+        manifest_foreign=1
+        return 0
+    fi
 
     IFS= read -r line < "$file" || true
     line="${line%"$carriage_return"}"
     if [[ "$line" != "$manifest_header" ]]; then
         printf 'Warning: ignoring %s, which is not a Supreme Team install record.\n' "$file" >&2
+        manifest_foreign=1
         return 0
     fi
 
@@ -563,7 +579,7 @@ report_list() {
 
 install_supreme_team() {
     local root item state
-    local add_items=() replace_items=() kept_items=() foreign_items=() stale_items=() legacy_hits=()
+    local add_items=() replace_items=() kept_items=() foreign_items=() stale_items=() aside_items=()
 
     root="$(resolve_path "$1")"
     read_manifest "$root"
@@ -598,11 +614,16 @@ install_supreme_team() {
         fi
     done
 
+    # Moved aside without being replaced: a recognised old-layout directory, and
+    # a file, link or directory sitting where the record belongs.
     for item in ${legacy_dirs[@]+"${legacy_dirs[@]}"}; do
         if legacy_dir_matches "$root" "$item"; then
-            legacy_hits+=("$item")
+            aside_items+=("$item")
         fi
     done
+    if [[ $manifest_foreign -eq 1 ]]; then
+        aside_items+=("$manifest_name")
+    fi
 
     if [[ $dry_run -eq 1 ]]; then
         report_list "would add" ${add_items[@]+"${add_items[@]}"}
@@ -610,7 +631,7 @@ install_supreme_team() {
         report_list "would keep, yours" ${kept_items[@]+"${kept_items[@]}"}
         report_list "would remove, no longer shipped" ${stale_items[@]+"${stale_items[@]}"}
         report_list "would move aside to $root.supremeteam-backup, not installed by Supreme Team" \
-            ${foreign_items[@]+"${foreign_items[@]}"} ${legacy_hits[@]+"${legacy_hits[@]}"}
+            ${foreign_items[@]+"${foreign_items[@]}"} ${aside_items[@]+"${aside_items[@]}"}
         return
     fi
 
@@ -629,7 +650,7 @@ install_supreme_team() {
     done
 
     backup_dir=""
-    if [[ $((${#foreign_items[@]} + ${#legacy_hits[@]})) -gt 0 ]]; then
+    if [[ $((${#foreign_items[@]} + ${#aside_items[@]})) -gt 0 ]]; then
         make_backup_dir "$root"
     fi
 
@@ -645,7 +666,7 @@ install_supreme_team() {
     for item in ${stale_items[@]+"${stale_items[@]}"}; do
         mv -- "$root/$item" "$stage/old/$item"
     done
-    for item in ${legacy_hits[@]+"${legacy_hits[@]}"}; do
+    for item in ${aside_items[@]+"${aside_items[@]}"}; do
         mv -- "$root/$item" "$backup_dir/$item"
     done
 
@@ -663,7 +684,7 @@ install_supreme_team() {
     report_list "removed, no longer shipped" ${stale_items[@]+"${stale_items[@]}"}
     if [[ -n "$backup_dir" ]]; then
         printf '  moved aside, not installed by Supreme Team and unchanged, to %s:\n' "$backup_dir"
-        printf '    %s\n' ${foreign_items[@]+"${foreign_items[@]}"} ${legacy_hits[@]+"${legacy_hits[@]}"}
+        printf '    %s\n' ${foreign_items[@]+"${foreign_items[@]}"} ${aside_items[@]+"${aside_items[@]}"}
         backup_dirs+=("$backup_dir")
     fi
 }

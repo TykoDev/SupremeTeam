@@ -179,11 +179,11 @@ class Sandbox:
         self.bin = self.root / "bin"
         build_path_directory(self.bin)
 
-    def run(self, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+    def run(self, *args: str, env: dict | None = None, cwd: Path | None = None) -> subprocess.CompletedProcess:
         environment = {"HOME": str(self.home), "PATH": str(self.bin), "LC_ALL": "C", **(env or {})}
         return subprocess.run(
             [BASH, str(self.repo / "scripts" / "install.sh"), *args],
-            cwd=str(self.root),
+            cwd=str(cwd or self.root),
             env=environment,
             capture_output=True,
             text=True,
@@ -422,6 +422,30 @@ class InstallerBehaviourTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, listing(result))
         self.assertIn("filesystem root", result.stderr)
         self.assertEqual(snapshot(box.root), before)
+
+    def test_the_current_directory_is_refused_unless_it_already_holds_an_install(self):
+        box = Sandbox(self)
+        project = box.root / "project"
+        (project / "scripts").mkdir(parents=True)
+        (project / "scripts" / "run.sh").write_text("the project's own\n", encoding="utf-8")
+        (project / "build").mkdir()
+        before = snapshot(box.root)
+
+        result = box.run("--destination", ".", cwd=project)
+
+        self.assertNotEqual(result.returncode, 0, listing(result))
+        self.assertIn("it is the current directory and holds no Supreme Team install", result.stderr)
+        self.assertEqual(snapshot(box.root), before, "the project's scripts/ and build/ must not be touched")
+
+        self.assertEqual(box.install().returncode, 0)
+        again = box.run("--destination", ".", cwd=box.dest)
+        self.assertEqual(again.returncode, 0, listing(again))
+
+        empty = box.root / "empty-skills"
+        empty.mkdir()
+        deliberate = box.run("--destination", str(empty), cwd=empty)
+        self.assertEqual(deliberate.returncode, 0, "a full path to the current directory is deliberate: " + listing(deliberate))
+        self.assertTrue((empty / MANIFEST).is_file())
 
     def test_an_empty_home_is_refused_instead_of_installing_at_the_filesystem_root(self):
         box = Sandbox(self)
@@ -691,15 +715,36 @@ class InstallerBehaviourTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, listing(result))
         self.assertEqual((snapshot(victim), snapshot(hidden), snapshot(box.dest / "listed-but-unmarked")), outside)
 
-    def test_a_manifest_that_is_not_an_install_record_is_ignored_with_a_warning(self):
+    def test_a_file_where_the_record_belongs_is_moved_aside_not_overwritten(self):
         box = Sandbox(self)
         box.install()
-        (box.dest / MANIFEST).write_text("something else entirely\nitem admiral\n", encoding="utf-8")
+        record = box.dest / MANIFEST
+        record.write_text("something else entirely\nitem admiral\n", encoding="utf-8")
+        mine = snapshot(record)
 
         result = box.install()
 
         self.assertEqual(result.returncode, 0, listing(result))
         self.assertIn("not a Supreme Team install record", result.stderr)
+        backup = self.only_backup(box)
+        self.assertEqual(snapshot(backup / MANIFEST), mine, "a file that is not a record must be kept, not overwritten")
+        self.assertEqual(read_manifest(box.dest).items, ITEMS.selected())
+
+    def test_a_link_where_the_record_belongs_is_moved_aside_as_a_link_even_to_a_valid_record(self):
+        box = Sandbox(self)
+        box.dest.mkdir(parents=True)
+        shared = box.root / "shared-record"
+        shared.write_text("supremeteam-manifest 1\nteams design\nitem admiral\n", encoding="utf-8")
+        (box.dest / MANIFEST).symlink_to(shared)
+
+        result = box.install()
+
+        self.assertEqual(result.returncode, 0, listing(result))
+        backup = self.only_backup(box)
+        self.assertTrue((backup / MANIFEST).is_symlink(), "the link must be kept, not replaced")
+        self.assertEqual((backup / MANIFEST).resolve(), shared)
+        self.assertEqual(shared.read_text(encoding="utf-8"), "supremeteam-manifest 1\nteams design\nitem admiral\n")
+        self.assertFalse((box.dest / MANIFEST).is_symlink())
         self.assertEqual(read_manifest(box.dest).items, ITEMS.selected())
 
     def test_a_directory_where_the_manifest_belongs_stops_the_install_before_any_change(self):
@@ -946,6 +991,7 @@ POWERSHELL_BUILTINS = {
     "Set-StrictMode", "Split-Path", "Join-Path", "New-Object", "Get-Content", "Test-Path", "Select-Object",
     "Get-ChildItem", "Where-Object", "Write-Warning", "Write-Host", "Write-Error", "Remove-Item", "Copy-Item",
     "Move-Item", "New-Item", "Out-Null", "Get-Command", "Get-Date", "ConvertFrom-Json", "ForEach-Object", "Get-Item",
+    "Get-Location",
 }
 
 
@@ -1077,7 +1123,7 @@ class PowerShellParityTests(unittest.TestCase):
     def test_both_refuse_the_same_destinations_in_the_same_words(self):
         for message in ("Refusing to install into the filesystem root", "it is your home directory or one of its parents",
                         "it contains the Supreme Team checkout", "it is inside the skills source directory",
-                        "destination is empty", "exists and is not a directory", "is a directory; move it away",
+                        "it is the current directory and holds no Supreme Team install", "destination is empty", "exists and is not a directory", "is a directory; move it away",
                         "Cannot create the backup folder", "nothing was changed", "the previous copy was put back"):
             self.assertIn(message, self.sh)
             self.assertIn(message, self.ps)

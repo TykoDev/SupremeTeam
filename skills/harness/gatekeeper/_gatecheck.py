@@ -59,9 +59,11 @@ _TEXT_SUFFIXES = (".md", ".markdown", ".txt", ".yaml", ".yml")
 
 # Default blocked phrases: hollow-completion claims and contamination markers
 # that must never appear in a clean delivery package. Entries beginning with
-# ``re:`` are treated as regular expressions (used for word-bounded code-rot
-# markers); all others are literal, case-insensitive substrings. Each gate can
-# extend this set with a ``blocked-phrases.txt`` file next to its check.py.
+# ``re:`` are regular expressions compiled exactly as written (the code-rot
+# markers are word-bounded and case-sensitive, so the ordinary word "hack" is not
+# a hit); all others are literal, case-insensitive substrings. This is the one
+# list: the boundary validator (check.py) scans manifest artifacts against it
+# too. A gate extends it with ``--blocked-phrases <file>``.
 DEFAULT_BLOCKED_PHRASES = (
     "trust me",
     "works on my machine",
@@ -76,6 +78,26 @@ DEFAULT_BLOCKED_PHRASES = (
     r"re:\bXXX\b",
     r"re:\bHACK\b",
 )
+
+
+def compile_blocked_phrases(phrases: Sequence[str]) -> tuple[List[str], List[re.Pattern]]:
+    """Split a phrase list into lowercase literals and compiled ``re:`` patterns.
+
+    A pattern that does not compile raises ``ValueError``: a rule the gate cannot
+    apply must stop the gate, because skipping it would still print a clean scan.
+    """
+    literals: List[str] = []
+    regexes: List[re.Pattern] = []
+    for entry in phrases:
+        if entry.startswith("re:"):
+            try:
+                regexes.append(re.compile(entry[3:]))
+            except re.error as exc:
+                raise ValueError(f"blocked-phrase entry {entry!r} is not a valid regular expression: {exc}") from exc
+        else:
+            literals.append(entry.lower())
+    return literals, regexes
+
 
 # Tokens that signal a package adds or changes a cross-cutting runtime
 # intervention (harness-doctrine §5). Their presence alone is not a defect — it
@@ -483,16 +505,7 @@ def scan_blocked_phrases(root: Path, report: Report,
     phrase inside the package is a blocking defect (harness-doctrine note).
     """
     report.checks_run.append("blocked_phrases")
-    literals: List[str] = []
-    regexes: List[re.Pattern] = []
-    for entry in phrases:
-        if entry.startswith("re:"):
-            try:
-                regexes.append(re.compile(entry[3:]))
-            except re.error:
-                continue
-        else:
-            literals.append(entry.lower())
+    literals, regexes = compile_blocked_phrases(phrases)
 
     hits = 0
     for path in iter_package_files(root):
@@ -649,7 +662,11 @@ def check_harness_doctrine(root: Path, report: Report) -> None:
 
 def load_blocked_phrases(extra_path: Optional[Path]) -> List[str]:
     phrases = list(DEFAULT_BLOCKED_PHRASES)
-    if extra_path and extra_path.exists():
+    if extra_path is not None:
+        # A mistyped path used to be ignored, which left the extra rules off and
+        # the report clean.
+        if not extra_path.is_file():
+            raise ValueError(f"blocked-phrases file not found: {extra_path}")
         for line in _read(extra_path).splitlines():
             s = line.strip()
             if s and not s.startswith("#"):

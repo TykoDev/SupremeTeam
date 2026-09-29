@@ -25,6 +25,8 @@ SKILLS = Path(__file__).resolve().parents[2]
 CHECK = SKILLS / "harness" / "gatekeeper" / "check.py"
 GATE_SPEC = SKILLS / "gates.yaml"
 sys.path.insert(0, str(SKILLS / "scripts"))
+sys.path.insert(0, str(CHECK.parent))
+import _gatecheck as gc  # noqa: E402
 from data_formats import content_sha256  # noqa: E402
 
 
@@ -438,6 +440,99 @@ class EvidenceKindTests(EngineCase):
         self.assertEqual(proc.returncode, 2, proc.stdout)
         self.assertEqual(proc.stdout, "")
         self.assertIn("unknown kinds ['scann']", json.loads(proc.stderr)["engine_error"])
+
+
+class BlockedPhraseTests(EngineCase):
+    """One list, one case rule, and a rule the gate cannot apply stops the gate.
+
+    check.py carried its own shorter list, matched the code-rot markers without
+    regard to case, and the shared engine silently dropped a pattern that did not
+    compile and a phrase file that did not exist.
+    """
+
+    LITERALS = ("trust me", "works on my machine", "100% complete", "no issues whatsoever", "lorem ipsum",
+                "placeholder content", "as an ai language model", "i cannot actually")
+
+    def phrase_file(self, text: str | None) -> Path:
+        path = self.root / "phrases.txt"
+        if text is not None:
+            path.write_text(text, encoding="utf-8")
+        return path
+
+    def run_wrapper(self, *extra: str) -> tuple[int, dict]:
+        package = self.root / "pkg"
+        package.mkdir(exist_ok=True)
+        (package / "summary.md").write_text("# Report\n\nThe change adds a validated endpoint.\n", encoding="utf-8")
+        manifest = gc.Manifest(boundary="test", sub_orchestrator="test", artifacts=())
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = gc.main_with_manifest(manifest, [str(package), "--json", *extra])
+        return code, json.loads(out.getvalue())
+
+    def test_the_boundary_validator_reads_the_same_list_as_the_package_validator(self):
+        literals, markers = gc.compile_blocked_phrases(gc.DEFAULT_BLOCKED_PHRASES)
+        self.assertEqual(engine.BLOCKED_LITERALS, literals)
+        self.assertEqual([m.pattern for m in engine.BLOCKED_MARKERS], [m.pattern for m in markers])
+        self.assertEqual(tuple(literals), self.LITERALS)
+
+    def test_every_default_phrase_blocks_in_prose_whatever_its_case(self):
+        for phrase in self.LITERALS:
+            for text in (phrase, phrase.upper(), f"The change is {phrase.title()}, honestly."):
+                with self.subTest(text=text):
+                    self.assertTrue(engine.has_blocked_phrase(text))
+
+    def test_the_code_rot_markers_are_case_sensitive_words(self):
+        for marker in ("TODO", "FIXME", "XXX", "HACK"):
+            with self.subTest(marker=marker):
+                self.assertTrue(engine.has_blocked_phrase(f"# {marker} wire this up"))
+                self.assertFalse(engine.has_blocked_phrase(f"{marker}S and PRE{marker}"))
+        for prose in ("todo", "hack", "fixme", "xxx", "Todo", "Hack", "a quick hack for the demo", "the todo list"):
+            with self.subTest(prose=prose):
+                self.assertFalse(engine.has_blocked_phrase(prose))
+
+    def test_quoted_and_code_text_stays_exempt_for_every_shared_phrase(self):
+        text = "The report quotes `works on my machine` and:\n\n> trust me\n\n```\nlorem ipsum\nTODO\n```\n"
+        self.assertFalse(engine.has_blocked_phrase(engine.strip_code(text)))
+        self.assertTrue(engine.has_blocked_phrase(engine.strip_code(text + "\nWorks on my machine.\n")))
+
+    def test_a_pattern_that_does_not_compile_stops_the_gate(self):
+        with self.assertRaisesRegex(ValueError, r"blocked-phrase entry 're:\(TODO' is not a valid regular expression"):
+            gc.compile_blocked_phrases(["re:(TODO"])
+        report = gc.Report(boundary="test", package_path=str(self.root))
+        with self.assertRaises(ValueError):
+            gc.scan_blocked_phrases(self.root, report, ["re:(TODO"])
+        self.assertNotIn("BLOCKED_PHRASE_CLEAN", {f.code for f in report.findings})
+
+    def test_a_missing_phrase_file_stops_the_gate(self):
+        with self.assertRaisesRegex(ValueError, "blocked-phrases file not found"):
+            gc.load_blocked_phrases(self.root / "typo.txt")
+        with self.assertRaisesRegex(ValueError, "blocked-phrases file not found"):
+            gc.load_blocked_phrases(self.root)
+
+    def test_an_extra_file_extends_the_default_list(self):
+        path = self.phrase_file("# reviewed wording\n\ninternal only\nre:\\bWIP\\b\n")
+        self.assertEqual(gc.load_blocked_phrases(path), [*gc.DEFAULT_BLOCKED_PHRASES, "internal only", r"re:\bWIP\b"])
+        self.assertEqual(gc.load_blocked_phrases(None), list(gc.DEFAULT_BLOCKED_PHRASES))
+
+    def test_the_wrapper_exits_two_with_an_error_record_when_the_phrase_list_is_unusable(self):
+        for text in (None, "re:(TODO\n"):
+            with self.subTest(text=text):
+                code, record = self.run_wrapper("--blocked-phrases", str(self.phrase_file(text)))
+                self.assertEqual(code, 2)
+                self.assertEqual(record["gate_status"], "ERROR")
+                self.assertIn("blocked-phrase", record["error"])
+
+    def test_a_valid_extra_phrase_is_still_applied_by_the_wrapper(self):
+        package = self.root / "pkg"
+        package.mkdir()
+        (package / "summary.md").write_text("# Report\n\nThis is internal only.\n", encoding="utf-8")
+        manifest = gc.Manifest(boundary="test", sub_orchestrator="test", artifacts=())
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = gc.main_with_manifest(manifest, [str(package), "--json", "--blocked-phrases",
+                                                    str(self.phrase_file("internal only\n"))])
+        self.assertEqual(code, 1)
+        self.assertIn("BLOCKED_PHRASE", {f["code"] for f in json.loads(out.getvalue())["findings"]})
 
 
 class UnhashableValueTests(EngineCase):

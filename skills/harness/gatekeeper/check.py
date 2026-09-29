@@ -73,15 +73,19 @@ from pathlib import Path
 SKILLS_ROOT = Path(__file__).resolve().parents[2]
 GATE_SPEC_PATH = SKILLS_ROOT / "gates.yaml"
 REGISTRY_PATH = SKILLS_ROOT / "tech-stacks" / "registry.yaml"
-if str(SKILLS_ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(SKILLS_ROOT / "scripts"))
+for _path in (SKILLS_ROOT / "scripts", Path(__file__).resolve().parent):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
+from _gatecheck import DEFAULT_BLOCKED_PHRASES, compile_blocked_phrases  # noqa: E402
 from data_formats import DataFormatError, content_sha256, load_data  # noqa: E402
 
 SUPPORTED_MANIFEST_SCHEMAS = {1, 2}
 #: The schema a manifest inside skillset-saves/runs/<run>/<phase>/ must declare.
 RUN_MANIFEST_SCHEMA = 2
-BLOCKED = re.compile(r"\b(TODO|FIXME|XXX|HACK)\b|\btrust me\b|\b100% complete\b|\blorem ipsum\b", re.IGNORECASE)
+#: The blocked-phrase rule is _gatecheck.py's, so both validators agree on what
+#: a hollow claim is and on which markers are case-sensitive.
+BLOCKED_LITERALS, BLOCKED_MARKERS = compile_blocked_phrases(DEFAULT_BLOCKED_PHRASES)
 MD_LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 FENCED = re.compile(r"```.*?```|~~~.*?~~~", re.DOTALL)
 INLINE_CODE = re.compile(r"`[^`\n]*`")
@@ -207,6 +211,12 @@ def evidence_strings(value: object) -> list[str]:
 
 def is_path_like(text: str) -> bool:
     return bool(PATH_LIKE.match(text.strip()))
+
+
+def has_blocked_phrase(prose: str) -> bool:
+    """True when prose holds a blocked phrase: literals fold case, ``re:`` markers do not."""
+    folded = prose.lower()
+    return any(literal in folded for literal in BLOCKED_LITERALS) or any(rx.search(prose) for rx in BLOCKED_MARKERS)
 
 
 def filled(value: object) -> bool:
@@ -937,7 +947,7 @@ class Package:
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
             prose = strip_code(text)
-            if BLOCKED.search(prose):
+            if has_blocked_phrase(prose):
                 self.failures.append(f"blocked phrase: {path.name}")
             if suffix != ".md":
                 continue

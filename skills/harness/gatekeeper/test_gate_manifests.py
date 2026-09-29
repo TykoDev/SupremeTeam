@@ -203,6 +203,21 @@ class BoundaryManifestTests(unittest.TestCase):
         mismatch = self.run_check("design-to-build", self.package("design-to-build"), corrupt_hash=True)
         self.assertIn("artifact hash mismatch", " ".join(json.loads(mismatch.stdout)["failures"]))
 
+    def test_every_default_hollow_phrase_blocks_an_artifact_at_the_boundary_validator(self):
+        """check.py used a shorter private list, so five of the shared eight phrases passed it."""
+        for phrase in ("works on my machine", "no issues whatsoever", "placeholder content",
+                       "as an AI language model", "I cannot actually verify this"):
+            with self.subTest(phrase=phrase):
+                r = self.run_check("design-to-build", self.package("design-to-build"), f"# Evidence\n{phrase}.\n")
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn("blocked phrase: evidence.md", json.loads(r.stdout)["failures"])
+
+    def test_ordinary_lowercase_words_are_not_blocked_phrases(self):
+        """The code-rot markers are case-sensitive words; check.py matched them case-insensitively."""
+        r = self.run_check("design-to-build", self.package("design-to-build"),
+                           "# Evidence\nA quick hack of the todo list; xxx and fixme are ordinary words in prose.\n")
+        self.assertEqual(r.returncode, 0, r.stdout)
+
     def test_hash_mismatched_artifact_is_still_scanned(self):
         r = self.run_check("design-to-build", self.package("design-to-build"),
                            "# Evidence\nTODO pending\n", corrupt_hash=True)

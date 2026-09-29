@@ -184,12 +184,18 @@ against a prior verdict for idempotency, and applies the harness-doctrine §5
 structural check. It reports PASS / FAIL / UNCHECKED facts.
 
 ```text
-python skills/design/gatekeeper-design/scripts/check.py <package-dir> [--prior <verdict>] [--json]
+python skills/design/gatekeeper-design/scripts/check.py <package-dir> [--prior <verdict>] [--blocked-phrases <file>] [--json]
 ```
+
+`--blocked-phrases` extends the shared default list (one phrase per line, `#`
+comments allowed, a line beginning `re:` is a regular expression). Both
+validators read that one list, so the same text is a hit in both.
 
 Both validators fail loud. A hook that errors lets the action proceed; a gate
 that cannot prove a package clean must never approve it, so an internal error
-becomes an `UNCHECKED` finding and a non-zero exit, never a hidden PASS.
+ends the run with an `ERROR` record and exit 2, never a hidden PASS. That covers
+a `--blocked-phrases` file that does not exist and a pattern that does not
+compile: the rule cannot be applied, so the package is not called clean.
 
 ## Regression tests
 

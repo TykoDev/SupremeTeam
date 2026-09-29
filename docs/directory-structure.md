@@ -49,7 +49,7 @@ SupremeTeam/
     │   └── package_check.py              # Packaging enumeration and residue check
     ├── validation/                       # Contract test suites
     ├── harness/
-    │   ├── hooks/                        # 3 lifecycle hooks, save_run.py, diagnostics
+    │   ├── hooks/                        # lifecycle hooks, guard and maintenance audits, save_run.py
     │   └── gatekeeper/                   # check.py (gate spec) + _gatecheck.py (shape)
     ├── admiral/                          # The front door
     │   ├── references/                   # workflow.md, examples.md
@@ -66,12 +66,13 @@ SupremeTeam/
     │                                     # frontier, design-qa, devex-review, gatekeeper-code
     ├── investigate/                      # Investigation pipeline owner
     ├── skill-maker/                      # skill-creator, skill-reviewer
+    ├── audit-improve/                    # read-only harness audit and skill-maker handoff
     ├── session-memory/                   # Run record and durable learnings
     ├── taste/                            # Preference lifecycle owner and atomic writer
-    ├── browser-automation/               # browse, open-browser, setup-browser-cookies, pair-agent
-    ├── release-and-deployment/           # ship, land-and-deploy, setup-deploy, document-release
-    ├── safety-guardrails/                # guard, careful, freeze, unfreeze
-    └── testing-and-qa/                   # qa, qa-only, benchmark
+    ├── browse/, open-browser/, setup-browser-cookies/, pair-agent/
+    ├── ship/, land-and-deploy/, setup-deploy/, document-release/
+    ├── guard/, careful/, freeze/, unfreeze/
+    └── qa/, qa-only/, benchmark/
 ```
 
 ## What never gets committed
@@ -97,11 +98,12 @@ dependencies and things break in ways that are annoying to diagnose.
 
 Why things sit where they do:
 
-- `admiral`, `gatekeeper-admiral`, `investigate`, `skill-maker`, and
-  `session-memory`, and `taste` are directly under `skills/` because they are cross-cutting.
+- `admiral`, `gatekeeper-admiral`, `investigate`, `skill-maker`,
+  `session-memory`, `taste`, and `audit-improve` are directly under `skills/`
+  because they are cross-cutting.
 - Pipeline-stage skills nest under their category (`design/`, `build/`,
   `review/`).
-- Standalone tools nest under their group.
+- Standalone tools sit directly under `skills/` for host discovery.
 - Contracts, doctrines, manifests, `scripts/`, `validation/`, `tech-stacks/`, and
   `harness/` live at the skill-set root so every skill can resolve them.
 - `AGENTS.md` is the flat index, so nesting depth never matters for discovery.

@@ -87,14 +87,14 @@ closed. Exactly four shapes matter:
 | Recorded value | Destructive-pattern block |
 | --- | --- |
 | `false`, or the key absent | in force |
-| bare `true` (legacy, never written by `guard_state.py`) | **lifted, with no end** |
+| bare `true` (legacy, never written by `guard_state.py`) | in force |
 | a grant whose `expires_at` is in the future | **lifted until that moment** |
 | a grant with an expired, unparseable, or missing `expires_at` | in force |
 
 A grant that carries no `expires_at` is malformed rather than permanent: the
 writer always records one, and a guard that cannot read its own grant stays
-closed rather than open. The only unbounded lift is the legacy bare `true`, which
-the writer never produces — one more reason the record is not hand-edited.
+closed rather than open. The legacy bare `true` is also rejected, so no
+unbounded value lifts the block.
 
 ## Careful reads the record and never writes it
 

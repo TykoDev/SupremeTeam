@@ -207,6 +207,14 @@ class InstallerContractTests(unittest.TestCase):
         self.assertIn("dry run: nothing written", result.stdout)
         self.assertFalse(settings.exists(), "a dry run created the config file")
 
+    def test_dry_run_reports_invalid_config_as_failure(self):
+        settings = self.tmp / "settings.json"
+        settings.write_text("{ not json", encoding="utf-8")
+        result = run_installer("--target", "claude", "--claude-settings", str(settings), "--dry-run")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("refusing to overwrite", result.stdout)
+        self.assertEqual(settings.read_text(encoding="utf-8"), "{ not json")
+
     def test_a_missing_hook_root_is_refused(self):
         result = subprocess.run(
             [sys.executable, str(INSTALLER), "--hook-root", str(self.tmp), "--target", "claude"],

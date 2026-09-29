@@ -5,11 +5,12 @@ session_memory: session-memory
 cross_stage_gatekeeper: gatekeeper-admiral
 intake_doctrine: grill-me-doctrine
 design_system_doctrine: design-doctrine
-skill_count: 52
+skill_count: 53
 phase_leads: [commander, build-management, code-chief]
 phase_gatekeepers: [gatekeeper-design, gatekeeper-build, gatekeeper-code]
 pipeline_owners: [cso, investigate, qa, redesign, skill-maker, ship, taste]
 specialists:
+  - audit-improve
   - researcher
   - planner
   - architect

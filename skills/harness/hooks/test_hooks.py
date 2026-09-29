@@ -114,7 +114,7 @@ class PreToolUseTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn('"permissionDecision": "deny"', result.stdout)
 
-    def test_allow_dangerous_flag_keeps_hook_inert(self):
+    def test_legacy_unbounded_allow_dangerous_flag_cannot_bypass_guard(self):
         with _project_dir() as project:
             _write_guard(project, {"allow_dangerous": True})
             result = _run_hook(
@@ -123,7 +123,7 @@ class PreToolUseTests(unittest.TestCase):
                 project,
             )
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout, "")
+        self.assertIn('"permissionDecision": "deny"', result.stdout)
 
     def test_frozen_boundary_blocks_writes_but_not_reads(self):
         with _project_dir() as project:

@@ -6,8 +6,11 @@ the save lifecycle writer and the registration diagnostics.
 
 | File | Event | Layer | Behavior |
 |------|-------|-------|----------|
-| `pre_tool_use.py` | `PreToolUse` | 3 | Blocks dangerous shell commands (Rule A), writes into a frozen or guarded boundary (B), writes outside a read-only run (D), and direct writes to the single-writer records — core run files, Taste state, and the guard boundary record itself (C). Rule A is the one family an owner can lift: an `allow_dangerous` grant in `guard-state.json` suspends it globally while the grant is live. A legacy bare `true` lifts it with no bound; the owned grant `guard_state.py` writes lifts it only until `expires_at`. An expired, unparseable, or absent `expires_at` leaves the block in force, so a malformed grant never opens the guard. Rules B, C, and D are not liftable this way. |
-| `post_tool_use.py` | `PostToolUse` | 4 | Records trajectory observations (repeated failures, empty-output streaks, oscillation), and after a command action sweeps project-root coverage residue into the run; see Coverage residue sweep below. All three hooks refresh the pinned run's heartbeat and record observations; see Heartbeat refresh below. |
+| `pre_tool_use.py` | `PreToolUse` | 3 | Registered compatibility entry point that invokes `guard_hook.py`. |
+| `guard_hook.py` | `PreToolUse` via `pre_tool_use.py` | 3 | Blocks dangerous shell commands, writes into frozen or read-only boundaries, and direct writes to single-writer records. Only a complete, live, owned `allow_dangerous` grant lifts destructive-pattern blocking; a legacy bare `true` does not. Also inspects Codex `apply_patch` file headers. |
+| `post_tool_use.py` | `PostToolUse` | 4 | Records trajectory observations, sweeps project-root coverage residue, runs a throttled oversized-runtime scan, and suggests an audit-improve handoff after repeated failures. All three registered hooks refresh the pinned run's heartbeat and record observations. |
+| `size_audit.py` | `PostToolUse` via `post_tool_use.py` | maintenance | Every six hours by default, reports files or cumulative directories of at least 256 MiB under `.harness-state/` and `skillset-saves/`. Traversal is bounded; it does not delete files. |
+| `audit_improve.py` | `PostToolUse` and explicit `/audit-improve` | maintenance | Reads bounded, redacted run and harness failure evidence and routes supported improvement work to the `audit-improve` skill, Admiral, and skill-maker. It never edits skills or saved runs. |
 | `user_prompt_submit.py` | `UserPromptSubmit` | entry routing | Advises routing lifecycle work through `admiral`; reinforces the session pin when a run is active. |
 | `save_run.py` | CLI | persistence | The only writer of `_state.md`, `_lock.md`, `_audit-trail.md`, `_journal.json`, and `_history/`. |
 | `guard_state.py` | CLI | 3 | The only writer of `.harness-state/guard-state.json`: records owned freeze/block boundaries, releases them by `released_at`, grants and revokes `allow_dangerous`, and opens or closes a read-only run. |
@@ -36,6 +39,23 @@ the save lifecycle writer and the registration diagnostics.
 - Inert on the strong case: rules fire only on mechanically certain signals.
 - Config inspection never claims the host actually fired a hook. The readiness
   capability map reports `hooks_observed: unverified` until a hook runs.
+
+## Maintenance audits
+
+`post_tool_use.py` calls `size_audit.py` when its six-hour check is due. The
+default threshold is 256 MiB for a file or a directory's observed cumulative
+size. The scan has entry, depth, and time limits; a truncated result says so.
+Inspect a project immediately with
+`python skills/harness/hooks/size_audit.py --project-root <project> --force --json`.
+The hook reports cleanup candidates and never deletes them. Its throttle marker
+is `.harness-state/observations/size-audit.json`.
+
+Run `python skills/harness/hooks/audit_improve.py --run` for bounded, redacted
+state and failure evidence. `/audit-improve` asks the prompt hook to provide a
+skill handoff; repeated tool failures can also trigger an advisory through
+`post_tool_use.py`. The audit hook collects facts. `skills/audit-improve/SKILL.md`
+corroborates them and routes supported skill changes through Admiral and
+skill-maker for development, review, and a user-visible proposal.
 
 ## Save lifecycle
 
@@ -181,8 +201,8 @@ Field notes:
 - **`allow_dangerous`** lifts destructive-pattern blocking **globally**, not for
   one command. It is an owned grant with an expiry (default 30 minutes); an
   expired or malformed grant leaves the block in force, because a guard that
-  cannot read its own grant must stay closed. A legacy bare `true` is still
-  honored and behaves as a permanent kill-switch.
+  cannot read its own grant must stay closed. A legacy bare `true` does not
+  lift the block.
 - A record stays effective until its owner records `released_at`. Age alone
   never expires a protection.
 
@@ -282,4 +302,5 @@ boundary, `test_hooks_observed.py` the observed-versus-configured distinction,
 `test_registration_contract.py` the host registration contract, and
 `test_guard_state.py` the guard boundary writer — owner-bearing records,
 authority-checked release, the bounded `allow_dangerous` grant, and the hook
-rule that keeps the record itself single-writer.
+rule that keeps the record itself single-writer. `test_size_audit.py` and
+`test_audit_improve.py` cover bounded, advisory maintenance behavior.

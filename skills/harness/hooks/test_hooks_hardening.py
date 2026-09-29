@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Harness regression tests captured from the 2026-09-05 audit (UPDATED-REPORT.md F3, F4).
-
-Registration false positives (`python -c "pass" <hook>` and a configured but
-nonexistent script), missing-session trajectory sharing, freeze records with
-release metadata, the scoped repair tool, and readiness capability reporting.
-"""
+"""Registration, trajectory isolation, and freeze record regressions."""
 from __future__ import annotations
 
 import json
@@ -14,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 HOOK_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOK_DIR))
@@ -45,25 +41,19 @@ class RegistrationAnalysisTests(unittest.TestCase):
 
     def test_nonexistent_configured_script_is_not_registered(self):
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["SUPREMETEAM_HOOK_ROOT"] = tmp
-            try:
+            with patch.dict(os.environ, {"SUPREMETEAM_HOOK_ROOT": tmp}):
                 state = verify.analyse(f'python "{Path(tmp) / "pre_tool_use.py"}"', "pre_tool_use.py")
-            finally:
-                os.environ.pop("SUPREMETEAM_HOOK_ROOT", None)
         self.assertTrue(state["configured"])
         self.assertFalse(state["resolvable"])
         self.assertFalse(state["executable"])
 
     def test_environment_variable_forms_and_py_launcher_are_accepted(self):
         real = HOOK_DIR / "post_tool_use.py"
-        os.environ["SUPREMETEAM_HOOK_ROOT_TEST"] = str(HOOK_DIR)
-        try:
+        with patch.dict(os.environ, {"SUPREMETEAM_HOOK_ROOT_TEST": str(HOOK_DIR)}):
             for command in (f'python "$SUPREMETEAM_HOOK_ROOT_TEST/post_tool_use.py"', f'py -3.13 "%SUPREMETEAM_HOOK_ROOT_TEST%/post_tool_use.py"',
                             f'python -u -X utf8 "{real}"', f'FOO=bar python "{real}"'):
                 with self.subTest(command=command):
                     self.assertTrue(verify.analyse(command, "post_tool_use.py")["executable"], command)
-        finally:
-            os.environ.pop("SUPREMETEAM_HOOK_ROOT_TEST", None)
 
     def test_option_that_swallows_the_path_is_not_executable(self):
         real = HOOK_DIR / "post_tool_use.py"

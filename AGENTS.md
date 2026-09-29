@@ -28,7 +28,7 @@ ordinary conversation.
 | Entry orchestrator | `admiral` |
 | In-scope, defers to admiral when reached cold | `design/commander`, `design/redesign`, `build/build-management`, `review/code-chief`, `skill-maker`, `investigate`, `taste`, `session-memory`, `gatekeeper-admiral`, `review/cso` |
 | Internal specialists | every skill under `design/`, `build/`, `review/` not listed above; `review/cso` owns a pipeline and belongs to the row above |
-| Standalone tools | `careful`, `freeze`, `guard`, `unfreeze`, `browse`, `open-browser`, `setup-browser-cookies`, `pair-agent`, `ship`, `setup-deploy`, `land-and-deploy`, `document-release`, `qa`, `qa-only`, `benchmark` |
+| Standalone tools | `audit-improve`, `careful`, `freeze`, `guard`, `unfreeze`, `browse`, `open-browser`, `setup-browser-cookies`, `pair-agent`, `ship`, `setup-deploy`, `land-and-deploy`, `document-release`, `qa`, `qa-only`, `benchmark` |
 
 ## Pipelines and gate boundaries
 
@@ -47,7 +47,7 @@ Declared in `skills/pipelines.yaml`, gated by `skills/gates.yaml`.
 | `skill-creation` | `skill-maker` | `skill-maker-to-delivery` |
 | `release` | `ship` | `deploy-readiness` |
 
-## The 52 skills
+## The 53 skills
 
 ### Admiral layer
 
@@ -113,6 +113,12 @@ of 14 overlays behind `stack_lock`, not a skill.
 | **skill-reviewer** | `skills/skill-maker/skill-reviewer/SKILL.md` | Adversarial quality gate; scores 0 to 100 across ten rubric dimensions |
 | **session-memory** | `skills/session-memory/SKILL.md` | Owns the run record and durable learnings; writes only through `harness/hooks/save_run.py` |
 | **taste** | `skills/taste/SKILL.md` | Preference lifecycle pipeline owner, canonical writer, consumer handoff owner, and Taste gate submitter |
+
+### Harness audit (1, standalone)
+
+| Skill | Path | Role |
+|---|---|---|
+| **audit-improve** | `skills/audit-improve/SKILL.md` | Audits harness and saved-run failures, then routes supported improvements through Admiral and skill-maker |
 | **taste-review** | `skills/taste/taste-review/SKILL.md` | Read-only reviewer for preference provenance, conflicts, redaction, confirmation, and persistence safety |
 
 ### Browser automation (4, standalone)
@@ -198,7 +204,10 @@ Not skills. These are the files the skills are checked against.
 | Component | Path | Purpose |
 |---|---|---|
 | **pre_tool_use.py** | `skills/harness/hooks/pre_tool_use.py` | `PreToolUse`: blocks dangerous commands, guarded writes, direct edits to core run files |
+| **guard_hook.py** | `skills/harness/hooks/guard_hook.py` | Dedicated guard enforcement invoked by `pre_tool_use.py` |
 | **post_tool_use.py** | `skills/harness/hooks/post_tool_use.py` | `PostToolUse`: records trajectory degeneration, refreshes the run heartbeat |
+| **size_audit.py** | `skills/harness/hooks/size_audit.py` | Periodic bounded report of oversized runtime files and directories |
+| **audit_improve.py** | `skills/harness/hooks/audit_improve.py` | Bounded read-only audit of saved failures and a skill-maker handoff |
 | **user_prompt_submit.py** | `skills/harness/hooks/user_prompt_submit.py` | `UserPromptSubmit`: advisory entry-routing and session-pin reminder |
 | **save_run.py** | `skills/harness/hooks/save_run.py` | The only writer of the run record |
 | **_saves.py** | `skills/harness/hooks/_saves.py` | Shared reader that classifies saved state |
@@ -220,13 +229,14 @@ never approve it.
 
 ## Layout
 
-**52 skills**: Admiral 2, Design 9, Build 8, Review 11, Investigate 1,
-Skill-Maker 3, Session-Memory 1, Taste 2, Browser 4, Release 4, Safety 4, Testing 3. Plus
+**53 skills**: Admiral 2, Design 9, Build 8, Review 11, Investigate 1,
+Skill-Maker 3, Session-Memory 1, Taste 2, Harness Audit 1, Browser 4, Release 4,
+Safety 4, Testing 3. Plus
 the runtime harness, eight doctrine and protocol files, six canonical contracts,
 and the machine-readable specs.
 
 `admiral`, `gatekeeper-admiral`, `investigate`, `skill-maker`, `session-memory`,
-and `taste` sit directly under `skills/` because they are cross-cutting.
+`taste`, and `audit-improve` sit directly under `skills/` because they are cross-cutting.
 Pipeline-stage skills nest under their category directory; standalone tools under
 their group. This manifest is the authoritative flat index regardless of depth.
 

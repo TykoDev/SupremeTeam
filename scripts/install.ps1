@@ -39,6 +39,8 @@ $coreItems = @(
     "session-memory",
     "investigate",
     "skill-maker",
+    "audit-improve",
+    "taste",
     "harness",
     "contracts",
     "scripts",
@@ -58,27 +60,31 @@ $coreItems = @(
     "mcp-tools.md",
     "performance-doctrine.md",
     "routing-doctrine.md",
-    "save-protocol.md"
+    "save-protocol.md",
+    "taste-doctrine.md"
 )
 
-# Friendly team name -> source directory under skills/.
-$teamDirectories = @{
-    design  = "design"
-    build   = "build"
-    review  = "review"
-    browser = "browser-automation"
-    release = "release-and-deployment"
-    safety  = "safety-guardrails"
-    testing = "testing-and-qa"
+# Friendly team name -> paths under skills/.
+$teamItems = @{
+    design  = @("design")
+    build   = @("build")
+    review  = @("review")
+    browser = @("browse", "open-browser", "setup-browser-cookies", "pair-agent")
+    release = @("ship", "land-and-deploy", "setup-deploy", "document-release")
+    safety  = @("guard", "careful", "freeze", "unfreeze")
+    testing = @("qa", "qa-only", "benchmark")
 }
 
 $allTeamNames = @("design", "build", "review", "browser", "release", "safety", "testing")
-$managedItems = $coreItems + ($allTeamNames | ForEach-Object { $teamDirectories[$_] })
+$managedItems = @($coreItems)
+foreach ($teamName in $allTeamNames) {
+    $managedItems += $teamItems[$teamName]
+}
 
 # Paths from older Supreme Team layouts that are no longer shipped. Removed from
 # the destination on each run so an in-place update over an old install does not
 # leave stale directories behind. Not part of the source-layout assertion.
-$legacyItems = @("azure", "references", "design\tech-stacks")
+$legacyItems = @("references", "browser-automation", "release-and-deployment", "safety-guardrails", "testing-and-qa")
 
 function Assert-PathPresent {
     param(
@@ -165,7 +171,9 @@ function Assert-SourceLayout {
     }
 
     foreach ($teamName in $allTeamNames) {
-        Assert-PathPresent -Path (Join-Path $sourceRoot $teamDirectories[$teamName]) -Description "source team '$teamName'"
+        foreach ($item in $teamItems[$teamName]) {
+            Assert-PathPresent -Path (Join-Path $sourceRoot $item) -Description "source item '$item' for team '$teamName'"
+        }
     }
 }
 
@@ -180,7 +188,9 @@ function Assert-DestinationLayout {
     }
 
     foreach ($teamName in $SelectedTeams) {
-        Assert-PathPresent -Path (Join-Path $TargetRoot $teamDirectories[$teamName]) -Description "installed team '$teamName'"
+        foreach ($item in $teamItems[$teamName]) {
+            Assert-PathPresent -Path (Join-Path $TargetRoot $item) -Description "installed item '$item' for team '$teamName'"
+        }
     }
 }
 
@@ -197,7 +207,9 @@ function Install-SupremeTeam {
     }
 
     foreach ($teamName in $SelectedTeams) {
-        Copy-SourceItem -ItemName $teamDirectories[$teamName] -TargetRoot $TargetRoot
+        foreach ($item in $teamItems[$teamName]) {
+            Copy-SourceItem -ItemName $item -TargetRoot $TargetRoot
+        }
     }
 
     Assert-DestinationLayout -TargetRoot $TargetRoot -SelectedTeams $SelectedTeams
@@ -274,7 +286,7 @@ function Test-PythonMinimumVersion {
         [string[]]$Arguments = @()
     )
 
-    $parts = (Get-MinimumPythonVersion) -split '\\.'
+    $parts = (Get-MinimumPythonVersion) -split '\.'
     $probe = "import sys; raise SystemExit(0 if sys.version_info >= ($($parts[0]), $($parts[1])) else 1)"
 
     try {

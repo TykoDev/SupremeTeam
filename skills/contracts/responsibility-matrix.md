@@ -50,12 +50,12 @@ does not own the layer.
 
 ## Specialists
 
-The twenty-one specialists declared under `specialists` in
+The twenty-two specialists declared under `specialists` in
 [`../team-manifest.yaml`](../team-manifest.yaml) (researcher, planner,
 architect, engineer, design-mapper, prototyper, bob-the-builder, test-builder,
 security-builder, cross-check-build-confirm, debugger, health-check,
 bug-review, code-review, quality-review, security-review, mr-robot, frontier,
-design-qa, devex-review, taste-review) work inside these layers under the
+design-qa, devex-review, taste-review, audit-improve) work inside these layers under the
 owning lead. That manifest list is the source; this one mirrors it in the same
 order. Their write boundaries are the artifact ids in
 [`../ownership.yaml`](../ownership.yaml).
@@ -137,7 +137,7 @@ verified row from a plausible one.
 | The RELEASE owner is `ship` | `DeclaredCoverageTests.test_release_layer_owner_matches_the_pipeline_and_the_gate` asserts `pipelines.yaml` `release.owner` equals the `gates.yaml` `deploy-readiness` submitter, then that this file's `| RELEASE ` row contains that name. `validate_manifests.py` independently requires exactly one pipeline per gate boundary. | The name must *be* one of the row's cells, not merely appear inside one: emptying the Owner cell fails the assertion even though `ship` still occurs in the notes cell. What is not covered is *which* cell — any cell equal to `ship` satisfies it, so the Owner column itself is not identified. |
 | The specialist roster matches the team manifest | `DeclaredCoverageTests.test_responsibility_matrix_specialists_match_the_manifest` asserts that every `specialists` entry in `../team-manifest.yaml` appears in the `## Specialists` block, and that the count stated in prose matches the manifest's length. | One direction only: a name listed here that the manifest does not declare passes. The "same order" claim in that section is not compared — it holds today by hand, not by test. |
 | `session-memory` writes the run record through `save_run.py` only | `../harness/hooks/pre_tool_use.py` denies direct edit-tool writes to the core run files; `../validation/test_save_contracts.py` (`test_direct_edit_of_core_files_is_denied_by_hook`) executes the hook against `_state.md`, `_latest.md`, and a `_history/*.state.json`, requiring `save_run.py` in each denial. | Phase reports under the same run are deliberately not denied — the same test asserts that a write to `design/reports/report_plan.md` produces no denial. The rule covers the run record, not the run directory. |
-| The guard record has a single sanctioned writer | `test_catalog_contracts.py` (`GuardWriterTests`) requires the `harness-guards` class to name `guard_state.py`, requires that file to exist, and requires `pre_tool_use.py` to contain both `guard-state.json` and `guard_state.py`. | The hook is matched by substring, never executed. That the mention is a working denial is untested — unlike the run-record row above, which runs the hook. |
+| The guard record has a single sanctioned writer | `test_catalog_contracts.py` (`GuardWriterTests`) requires the `harness-guards` class to name `guard_state.py`, requires that file to exist, and checks that `pre_tool_use.py` delegates to `guard_hook.py`, which protects the guard record. | The catalog check is structural; hook behavior is exercised separately by `test_guard_state.py`. |
 
 ### Mirror gaps — checkable, and currently unchecked
 

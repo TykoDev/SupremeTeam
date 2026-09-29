@@ -666,10 +666,13 @@ class GuardWriterTests(unittest.TestCase):
         self.assertTrue((SKILLS / "harness" / "hooks" / "guard_state.py").is_file())
 
     def test_pre_tool_hook_protects_the_guard_record(self):
-        hook = (SKILLS / "harness" / "hooks" / "pre_tool_use.py").read_text(encoding="utf-8")
-        self.assertIn("guard-state.json", hook)
-        self.assertIn("guard_state.py", hook,
-                      "the hook must route writes to the sanctioned writer")
+        hooks = SKILLS / "harness" / "hooks"
+        entry = (hooks / "pre_tool_use.py").read_text(encoding="utf-8")
+        guard = (hooks / "guard_hook.py").read_text(encoding="utf-8")
+        self.assertIn("from guard_hook import main", entry)
+        self.assertIn("guard-state.json", guard)
+        self.assertIn("guard_state.py", guard,
+                      "the guard hook must route writes to the sanctioned writer")
 
 
 if __name__ == "__main__":
@@ -751,8 +754,7 @@ class EvidenceVocabularyTests(unittest.TestCase):
 
     @staticmethod
     def _gate_keys():
-        spec = yaml.safe_load((SKILLS / "gates.yaml").read_text(encoding="utf-8"))
-        return {k for b in spec["boundaries"].values() for k in b.get("required_evidence", [])}
+        return {k for b in GATES["boundaries"].values() for k in b.get("required_evidence", [])}
 
     def test_evidence_owner_prose_uses_the_gate_key_spelling(self):
         hyphenated = {k.replace("_", "-"): k for k in self._gate_keys() if "_" in k}
@@ -783,7 +785,7 @@ class EvidenceVocabularyTests(unittest.TestCase):
         that prints the wording without ever naming that shape teaches a package
         the gate rejects.
         """
-        spec = yaml.safe_load((SKILLS / "gates.yaml").read_text(encoding="utf-8"))
+        spec = GATES
         values = {}
         for key, allowed in (spec.get("fallback_values") or {}).items():
             values[allowed[0]] = key
@@ -835,8 +837,8 @@ class FrontmatterBudgetTests(unittest.TestCase):
         if end == -1:
             return None
         try:
-            return yaml.safe_load(text[3:end]) or {}
-        except yaml.YAMLError:
+            return _load_text(text[3:end]) or {}
+        except Exception:
             return None
 
     def test_every_skill_has_parseable_frontmatter(self):

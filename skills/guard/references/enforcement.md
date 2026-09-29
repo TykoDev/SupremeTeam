@@ -185,12 +185,10 @@ to `false`. Only the grant's owner may revoke it — the writer records no
 approvers on a grant, so this one has no delegate. It must never be the default
 value and must never be enabled silently.
 
-An expired grant, one whose `expires_at` cannot be parsed, and one carrying no
-`expires_at` at all all leave the block **in force**: a guard that cannot read
-its own grant stays closed rather than open. The writer always records an expiry,
-so a grant without one is malformed rather than permanent. Exactly one shape
-lifts the block without an end — the legacy bare `true` — and the writer never
-produces it, which is one more reason the record is not hand-edited.
+An expired grant, one whose `expires_at` cannot be parsed, one carrying no
+`expires_at`, and the legacy bare `true` all leave the block **in force**. The
+writer always records an owned grant with an expiry; an ownerless or unbounded
+value cannot lift the block.
 
 ## Fail-open semantics (advisory-grade, not a hard control)
 

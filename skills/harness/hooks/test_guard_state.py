@@ -19,6 +19,7 @@ from pathlib import Path
 HOOKS = Path(__file__).resolve().parent
 GUARD = HOOKS / "guard_state.py"
 PRE_TOOL = HOOKS / "pre_tool_use.py"
+GUARD_HOOK = HOOKS / "guard_hook.py"
 
 
 class GuardStateTests(unittest.TestCase):
@@ -41,9 +42,10 @@ class GuardStateTests(unittest.TestCase):
         path = self.project / ".harness-state" / "guard-state.json"
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
-    def pre_tool(self, payload):
-        proc = subprocess.run([sys.executable, str(PRE_TOOL)], input=json.dumps(payload),
+    def pre_tool(self, payload, script=PRE_TOOL):
+        proc = subprocess.run([sys.executable, str(script)], input=json.dumps(payload),
                               capture_output=True, text=True, env=self._env(), cwd=self.project)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout
 
     # --- recording -------------------------------------------------------
@@ -110,6 +112,7 @@ class GuardStateTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         grant = self.record()["allow_dangerous"]
         self.assertEqual(grant["owner"], "ops")
+        self.assertTrue(grant["created_at"])
         self.assertTrue(grant["expires_at"])
         self.assertTrue(grant["reason"])
 
@@ -117,6 +120,7 @@ class GuardStateTests(unittest.TestCase):
         past = (datetime.now(timezone.utc) - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         (self.project / ".harness-state" / "guard-state.json").write_text(
             json.dumps({"allow_dangerous": {"owner": "ops", "reason": "x", "scope": "y",
+                                            "created_at": "2026-01-01T00:00:00Z",
                                             "expires_at": past}}), encoding="utf-8")
         out = self.pre_tool({"tool_name": "Bash",
                              "tool_input": {"command": "rm -rf --no-preserve-root /"}})
@@ -126,6 +130,7 @@ class GuardStateTests(unittest.TestCase):
         future = (datetime.now(timezone.utc) + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
         (self.project / ".harness-state" / "guard-state.json").write_text(
             json.dumps({"allow_dangerous": {"owner": "ops", "reason": "x", "scope": "y",
+                                            "created_at": "2026-01-01T00:00:00Z",
                                             "expires_at": future}}), encoding="utf-8")
         out = self.pre_tool({"tool_name": "Bash",
                              "tool_input": {"command": "rm -rf --no-preserve-root /"}})
@@ -139,11 +144,29 @@ class GuardStateTests(unittest.TestCase):
         a permanent global kill-switch.
         """
         (self.project / ".harness-state" / "guard-state.json").write_text(
-            json.dumps({"allow_dangerous": {"owner": "ops", "reason": "x", "scope": "y"}}),
+            json.dumps({"allow_dangerous": {"owner": "ops", "reason": "x", "scope": "y",
+                                            "created_at": "2026-01-01T00:00:00Z"}}),
             encoding="utf-8")
         out = self.pre_tool({"tool_name": "Bash",
                              "tool_input": {"command": "rm -rf --no-preserve-root /"}})
         self.assertIn("deny", out)
+
+    def test_grant_requires_nonempty_owner_reason_scope_and_created_at(self):
+        grant = {
+            "owner": "ops",
+            "reason": "scratch cleanup",
+            "scope": "rm -rf ./scratch",
+            "created_at": "2026-01-01T00:00:00Z",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        path = self.project / ".harness-state" / "guard-state.json"
+        payload = {"tool_name": "Bash", "tool_input": {"command": "rm -rf --no-preserve-root /"}}
+        for field in ("owner", "reason", "scope", "created_at"):
+            with self.subTest(missing=field):
+                malformed = dict(grant)
+                malformed[field] = ""
+                path.write_text(json.dumps({"allow_dangerous": malformed}), encoding="utf-8")
+                self.assertIn("deny", self.pre_tool(payload))
 
     def test_deny_text_points_at_the_sanctioned_writer(self):
         """The old text told the owner to edit the file the hook now denies."""
@@ -186,15 +209,52 @@ class GuardStateTests(unittest.TestCase):
 
     # --- hook protection -------------------------------------------------
 
-    def test_edit_tool_cannot_write_the_boundary_record(self):
-        out = self.pre_tool({"tool_name": "Write",
-                             "tool_input": {"file_path": ".harness-state/guard-state.json"}})
-        self.assertIn("guard_state.py", out)
+    def test_guard_hook_is_a_direct_executable_entrypoint(self):
+        recorded = self.run_guard("freeze", "--glob", "src/payments/**", "--owner", "ops")
+        self.assertEqual(recorded.returncode, 0, recorded.stderr)
+        out = self.pre_tool({"tool_name": "Edit",
+                             "tool_input": {"file_path": "src/payments/charge.py"}}, GUARD_HOOK)
+        self.assertIn('"permissionDecision": "deny"', out)
 
-    def test_mutating_shell_cannot_write_the_boundary_record(self):
-        out = self.pre_tool({"tool_name": "Bash",
-                             "tool_input": {"command": "echo '{}' > .harness-state/guard-state.json"}})
-        self.assertIn("guard_state.py", out)
+    def test_apply_patch_cannot_cross_frozen_or_single_writer_boundaries(self):
+        recorded = self.run_guard("freeze", "--glob", "src/payments/**", "--owner", "ops")
+        self.assertEqual(recorded.returncode, 0, recorded.stderr)
+        for target in (
+            "src/payments/charge.py",
+            ".harness-state/guard-state.json",
+            "skillset-saves/runs/r1/_state.md",
+        ):
+            with self.subTest(target=target):
+                patch_text = f"*** Begin Patch\n*** Update File: {target}\n@@\n-old\n+new\n*** End Patch"
+                out = self.pre_tool({"tool_name": "apply_patch", "tool_input": {"patch": patch_text}})
+                self.assertIn('"permissionDecision": "deny"', out)
+
+    def test_write_content_quoting_a_patch_header_does_not_target_that_path(self):
+        self.run_guard("freeze", "--glob", "src/payments/**", "--owner", "ops")
+        out = self.pre_tool({"tool_name": "Write", "tool_input": {
+            "file_path": "docs/example.md",
+            "content": "*** Update File: src/payments/charge.py\n",
+        }})
+        self.assertEqual(out, "")
+
+    def test_mentioning_writer_in_shell_comment_does_not_bypass_guard(self):
+        for target, writer in (
+            (".harness-state/guard-state.json", "guard_state.py"),
+            ("skillset-saves/runs/r1/_state.md", "save_run.py"),
+        ):
+            with self.subTest(target=target):
+                command = f"echo changed > {target} # {writer}"
+                out = self.pre_tool({"tool_name": "Bash", "tool_input": {"command": command}})
+                self.assertIn('"permissionDecision": "deny"', out)
+
+    def test_edit_and_shell_tools_cannot_write_the_boundary_record(self):
+        payloads = (
+            {"tool_name": "Write", "tool_input": {"file_path": ".harness-state/guard-state.json"}},
+            {"tool_name": "Bash", "tool_input": {"command": "echo '{}' > .harness-state/guard-state.json"}},
+        )
+        for payload in payloads:
+            with self.subTest(tool=payload["tool_name"]):
+                self.assertIn("guard_state.py", self.pre_tool(payload))
 
     def test_the_sanctioned_writer_itself_passes(self):
         out = self.pre_tool({"tool_name": "Bash", "tool_input": {

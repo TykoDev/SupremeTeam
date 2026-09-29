@@ -157,12 +157,15 @@ def _envelope(context: str) -> str:
 # Set by main() before the trajectory patterns are evaluated, so a sweep hint is
 # never lost behind a recovery hint that exits first.
 _pending_coverage_hint: "str | None" = None
+_pending_maintenance_hints: list[str] = []
 
 
 def _emit(hint: str) -> None:
     context = "[harness:trajectory-regulation] " + hint
     if _pending_coverage_hint:
         context += "\n" + _pending_coverage_hint
+    if _pending_maintenance_hints:
+        context += "\n" + "\n".join(_pending_maintenance_hints)
     print(_envelope(context))
     sys.exit(0)
 
@@ -185,9 +188,9 @@ def _boundary_variants(glob: str) -> list:
     """Guard-glob match forms, borrowed from the pre-tool hook so one boundary
     definition governs both the block and the sweep."""
     try:
-        import pre_tool_use  # noqa: WPS433 — same package, no import-time side effects
+        import guard_hook  # noqa: WPS433 — same package, no import-time side effects
 
-        return pre_tool_use._glob_variants(glob)
+        return guard_hook._glob_variants(glob)
     except Exception:
         g = str(glob).replace("\\", "/")
         return [g, g.rstrip("/") + "/**"]
@@ -405,7 +408,7 @@ def _sweep_coverage_residue(tool_name: str) -> "str | None":
 
 
 def main() -> None:
-    global _pending_coverage_hint
+    global _pending_coverage_hint, _pending_maintenance_hints
 
     data = _state.read_hook_input()
     _state.record_observation("PostToolUse", data)
@@ -419,6 +422,15 @@ def main() -> None:
     # Mechanical repair first: a command step that left coverage residue at the
     # project root has it relocated into the run before anything else is said.
     _pending_coverage_hint = _sweep_coverage_residue(tool_name)
+    _pending_maintenance_hints = []
+    try:
+        import size_audit
+
+        size_hint = size_audit.advisory_for(size_audit.maybe_scan())
+        if size_hint:
+            _pending_maintenance_hints.append(size_hint)
+    except Exception:
+        pass  # advisory maintenance must never delay or block the host action
 
     text = _response_text(data)
     explicit = _explicit_failure(data)
@@ -433,6 +445,14 @@ def main() -> None:
     # Pattern 1: same command failing repeatedly.
     recent_same = [h for h in history[-_REPEAT_FAIL_THRESHOLD:] if h.get("sig") == sig]
     if len(recent_same) >= _REPEAT_FAIL_THRESHOLD and all(h.get("failed") for h in recent_same):
+        try:
+            import audit_improve
+
+            report = audit_improve.maybe_audit()
+            if report:
+                _pending_maintenance_hints.append(audit_improve.advisory_for(report))
+        except Exception:
+            pass
         _emit(
             f"This action has now failed {len(recent_same)} times in a row with the same input. "
             f"Stop retrying it verbatim — change the approach, inspect the error, or try a different tool."
@@ -463,8 +483,8 @@ def main() -> None:
 
     # No degenerate pattern. Report the sweep on its own if it repaired anything,
     # otherwise stay silent.
-    if _pending_coverage_hint:
-        print(_envelope(_pending_coverage_hint))
+    if _pending_coverage_hint or _pending_maintenance_hints:
+        print(_envelope("\n".join(hint for hint in [_pending_coverage_hint, *_pending_maintenance_hints] if hint)))
         sys.exit(0)
 
 

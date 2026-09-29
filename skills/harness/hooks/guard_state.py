@@ -190,6 +190,8 @@ def cmd_release(args) -> int:
 
 def cmd_allow_dangerous(args) -> int:
     state = _load()
+    if any(not str(getattr(args, key, "")).strip() for key in ("owner", "reason", "scope")):
+        _refuse("allow-dangerous requires a non-empty owner, reason, and scope.")
     minutes = max(1, int(args.minutes))
     expires = datetime.now(timezone.utc) + timedelta(minutes=minutes)
     state["allow_dangerous"] = {

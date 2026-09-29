@@ -85,6 +85,15 @@ def main() -> None:
     if not prompt.strip():
         return
 
+    if prompt.strip().split(maxsplit=1)[0] == "/audit-improve":
+        try:
+            import audit_improve
+
+            report = audit_improve.maybe_audit(force=True)
+            _emit(audit_improve.advisory_for(report))
+        except Exception:
+            return
+
     # Explicit slash command: deterministic host routing. Stay silent and let the
     # target skill's own Entry Routing check (routing-doctrine.md sec 3) apply.
     if prompt.lstrip().startswith("/"):

@@ -1,6 +1,6 @@
 # The Skills
 
-52 of them. Three delivery pipelines, a few cross-cutting components, and four
+53 of them. Three delivery pipelines, a few cross-cutting components, and five
 groups of standalone tools you can call whenever you like.
 
 The roster is declared in
@@ -94,10 +94,16 @@ The biggest group, because this is where most of the value is.
 | **taste** | Owns preference intake, canonical writes, effective-profile resolution, and the Taste gate submission |
 | **taste-review** | Read-only review of provenance, conflicts, redaction, confirmation, and persistence safety |
 
-## Standalone tools (15)
+## Standalone tools (16)
 
 Out of routing scope. Call any of these directly, at any time, with or without a
 pipeline running.
+
+### Harness audit (1)
+
+| Skill | What it does |
+|---|---|
+| **audit-improve** | Audits generated harness and run state, then routes supported skill improvements through Admiral and skill-maker |
 
 ### Browser automation (4)
 

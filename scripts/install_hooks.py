@@ -408,8 +408,6 @@ def main() -> int:
     if args.json:
         print("JSON_REPORT: " + json.dumps({"dry_run": args.dry_run, "scope": args.scope, "hosts": results}, sort_keys=True))
 
-    if args.dry_run:
-        return 0
     failed = [r["host"] for r in results if r.get("registered") is False]
     if failed:
         print(f"\nRegistration did not verify for: {', '.join(failed)}")

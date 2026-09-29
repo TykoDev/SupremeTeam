@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub>52 skills · 10 pipelines · one front door · Claude Code, Codex, Cursor, OpenCode</sub>
+  <sub>53 skills · 10 pipelines · one front door · Claude Code, Codex, Cursor, OpenCode</sub>
 </p>
 
 ---
@@ -56,12 +56,12 @@ More in [docs/persistent-saves.md](docs/persistent-saves.md).
 
 Measured, not asserted. Every skill is scored against a ten-dimension rubric,
 every gate boundary is proven satisfiable by submitting a real package to the
-real validator, and routing is measured by putting all 52 descriptions in front
+real validator, and routing was measured by putting the prior 52 descriptions in front
 of a model and asking which one wins.
 
 | | |
 |---|---|
-| Skill quality, 52 skills | mean **98.8** / 100, lowest 95 |
+| Skill quality, prior 52-skill catalog | mean **98.8** / 100, lowest 95 |
 | Spec, harness and doctrine | mean **97.5** / 100 |
 | Routing accuracy, requests in a user's own words | **94.8%** |
 | Automated tests | **359**, all passing |

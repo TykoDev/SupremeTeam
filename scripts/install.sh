@@ -27,6 +27,8 @@ core_items=(
     session-memory
     investigate
     skill-maker
+    audit-improve
+    taste
     harness
     contracts
     scripts
@@ -47,33 +49,36 @@ core_items=(
     performance-doctrine.md
     routing-doctrine.md
     save-protocol.md
+    taste-doctrine.md
 )
 
-# Friendly team name -> source directory under skills/.
+# Friendly team name -> paths under skills/.
 all_teams=(design build review browser release safety testing)
 
-team_dir() {
+team_items() {
     case "$1" in
-        design)  printf 'design' ;;
-        build)   printf 'build' ;;
-        review)  printf 'review' ;;
-        browser) printf 'browser-automation' ;;
-        release) printf 'release-and-deployment' ;;
-        safety)  printf 'safety-guardrails' ;;
-        testing) printf 'testing-and-qa' ;;
+        design)  printf '%s\n' design ;;
+        build)   printf '%s\n' build ;;
+        review)  printf '%s\n' review ;;
+        browser) printf '%s\n' browse open-browser setup-browser-cookies pair-agent ;;
+        release) printf '%s\n' ship land-and-deploy setup-deploy document-release ;;
+        safety)  printf '%s\n' guard careful freeze unfreeze ;;
+        testing) printf '%s\n' qa qa-only benchmark ;;
         *)       return 1 ;;
     esac
 }
 
 managed_items=("${core_items[@]}")
 for team in "${all_teams[@]}"; do
-    managed_items+=("$(team_dir "$team")")
+    while IFS= read -r item; do
+        managed_items+=("$item")
+    done < <(team_items "$team")
 done
 
 # Paths from older Supreme Team layouts that are no longer shipped. Removed from
 # the destination on each run so an in-place update over an old install does not
 # leave stale directories behind. Not part of the source-layout assertion.
-legacy_items=(azure references design/tech-stacks)
+legacy_items=(references browser-automation release-and-deployment safety-guardrails testing-and-qa)
 
 selected_teams=()
 
@@ -128,8 +133,11 @@ assert_source_layout() {
         [[ -e "$source_root/$item" ]] || die "Missing source item '$item' at '$source_root/$item'."
     done
 
-    for item in "${all_teams[@]}"; do
-        [[ -d "$source_root/$(team_dir "$item")" ]] || die "Missing source team '$item' at '$source_root/$(team_dir "$item")'."
+    local team
+    for team in "${all_teams[@]}"; do
+        while IFS= read -r item; do
+            [[ -e "$source_root/$item" ]] || die "Missing source item '$item' for team '$team' at '$source_root/$item'."
+        done < <(team_items "$team")
     done
 }
 
@@ -194,8 +202,11 @@ assert_destination_layout() {
         [[ -e "$target_root/$item" ]] || die "Missing installed item '$item' at '$target_root/$item'."
     done
 
-    for item in "${selected_teams[@]}"; do
-        [[ -d "$target_root/$(team_dir "$item")" ]] || die "Missing installed team '$item' at '$target_root/$(team_dir "$item")'."
+    local team
+    for team in "${selected_teams[@]}"; do
+        while IFS= read -r item; do
+            [[ -e "$target_root/$item" ]] || die "Missing installed item '$item' for team '$team' at '$target_root/$item'."
+        done < <(team_items "$team")
     done
 }
 
@@ -222,8 +233,11 @@ install_supreme_team() {
         copy_source_item "$item" "$target_root"
     done
 
-    for item in "${selected_teams[@]}"; do
-        copy_source_item "$(team_dir "$item")" "$target_root"
+    local team
+    for team in "${selected_teams[@]}"; do
+        while IFS= read -r item; do
+            copy_source_item "$item" "$target_root"
+        done < <(team_items "$team")
     done
 
     assert_destination_layout "$target_root"

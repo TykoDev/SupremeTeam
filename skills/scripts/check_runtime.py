@@ -2058,6 +2058,11 @@ def _without_quoted_strings_lines(lines: list[str]) -> list[str]:
             else:
                 clean_line.append(line[index])
                 index += 1
+        if quote in {"'", '"'}:
+            # Only triple quotes and backticks span lines. A lone apostrophe (a Rust
+            # lifetime, a regex literal) must not blank every line that follows it.
+            quote = None
+            escaped = False
         result.append("".join(clean_line))
     return result
 

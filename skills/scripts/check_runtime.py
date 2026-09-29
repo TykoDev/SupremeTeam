@@ -961,7 +961,9 @@ def _load_registry(catalog_root: Path, errors: list[str]) -> dict[str, dict[str,
                 row_valid = False
             else:
                 if actual_digest != digest:
-                    _add_error(errors, f"tech-stacks/registry.yaml: {slug} overlay digest does not match sha256")
+                    # "digest" ends the message on purpose: followed by more words the
+                    # redactor reads it as an HTTP auth scheme and scrubs the rest.
+                    _add_error(errors, f"tech-stacks/registry.yaml: {slug} overlay does not match its pinned digest")
                     row_valid = False
         # The `source` column records provenance in the `_refs` authoring
         # workspace, which is not shipped with the catalog. Enforce it only

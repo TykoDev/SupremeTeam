@@ -2,9 +2,10 @@
 """Regression tests for the SupremeTeam gatekeeper deterministic gate engine.
 
 Covers the mechanical checks the ``gatekeeper-*`` scripts rely on: frontmatter
-parsing, required-artifact pass/fail, conditional artifacts, mixed-revision
-detection, skip-record validation, blocked-phrase hits, idempotency drift,
-harness-doctrine §5 structure, and fail-loud behavior on a missing package.
+parsing, required-artifact pass/fail, conditional artifacts, project-root
+containment, mixed-revision detection, skip-record validation, blocked-phrase
+hits, idempotency drift, harness-doctrine §5 structure, and fail-loud behavior on
+a missing package. ``test_gate_wrappers.py`` runs the wrapper scripts themselves.
 
 Run from the repo root:
     python -m unittest discover -s SupremeTeam/harness/gatekeeper -p "test_*.py"
@@ -12,6 +13,7 @@ Run from the repo root:
 
 import shutil
 import sys
+import tempfile
 import unittest
 import uuid
 from contextlib import contextmanager
@@ -346,6 +348,129 @@ class RedesignMockFirstLayoutTests(unittest.TestCase):
             report = self._report(pkg)
         self.assertIn("SELECTION_RECORDED", _codes(report))
         self.assertIn("NO_BUILD_AS_DECIDED", _codes(report))
+
+
+def _symlink(target: Path, link: Path) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=target.is_dir())
+    except (OSError, NotImplementedError) as exc:
+        raise unittest.SkipTest(f"symlinks are unavailable here: {exc}") from exc
+
+
+@contextmanager
+def _scratch():
+    with tempfile.TemporaryDirectory() as raw:
+        yield Path(raw).resolve()
+
+
+class ProjectRootTests(unittest.TestCase):
+    def test_the_nearest_marked_ancestor_wins_and_the_start_itself_counts(self):
+        with _scratch() as base:
+            outer, inner = base / "outer", base / "outer" / "inner"
+            (outer / ".git").mkdir(parents=True)
+            (inner / "deep").mkdir(parents=True)
+            (inner / "skillset-saves").mkdir()
+            self.assertEqual(gc.find_project_root(inner / "deep"), inner)
+            self.assertEqual(gc.find_project_root(inner), inner)
+            self.assertEqual(gc.find_project_root(outer), outer)
+
+    def test_each_marker_kind_marks_a_project(self):
+        """A worktree's .git is a file, and .harness-state alone marks a project."""
+        with _scratch() as base:
+            (base / "file-git").mkdir()
+            (base / "file-git" / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+            (base / "state").mkdir()
+            (base / "state" / ".harness-state").mkdir()
+            self.assertEqual(gc.find_project_root(base / "file-git"), base / "file-git")
+            self.assertEqual(gc.find_project_root(base / "state"), base / "state")
+
+    def test_no_marker_means_no_root(self):
+        with _scratch() as base:
+            if gc.find_project_root(base) is not None:
+                self.skipTest("a project marker exists above the temporary directory")
+            self.assertIsNone(gc.find_project_root(base))
+
+    def test_the_marker_tuple_is_the_documented_three(self):
+        self.assertEqual(set(gc.ROOT_MARKERS), {"skillset-saves", ".harness-state", ".git"})
+
+
+class PackageContainmentTests(unittest.TestCase):
+    """resolve_package_dir: the guard every wrapper shares."""
+
+    @staticmethod
+    def _project(base: Path, name: str = "project"):
+        project = base / name
+        (project / ".git").mkdir(parents=True)
+        package = project / "skillset-saves" / "runs" / "r-1" / "review"
+        package.mkdir(parents=True)
+        return project, package
+
+    def test_a_package_inside_the_working_projects_root_resolves(self):
+        with _scratch() as base:
+            project, package = self._project(base)
+            self.assertEqual(gc.resolve_package_dir(str(package), cwd=project), package)
+            self.assertEqual(gc.resolve_package_dir(str(package), cwd=package), package)
+            self.assertEqual(gc.resolve_package_dir(str(project), cwd=project), project)
+
+    def test_a_package_outside_is_refused_however_it_is_named(self):
+        with _scratch() as base:
+            project, package = self._project(base)
+            outside = base / "outside" / "pkg"
+            outside.mkdir(parents=True)
+            link = project / "skillset-saves" / "runs" / "r-2"
+            _symlink(outside, link)
+            named = {
+                "directly": str(outside),
+                "with ..": str(package / ".." / ".." / ".." / ".." / ".." / "outside" / "pkg"),
+                "through a symlink": str(link),
+            }
+            for how, raw in named.items():
+                with self.subTest(how=how):
+                    with self.assertRaisesRegex(gc.PackageRefused, "outside the project"):
+                        gc.resolve_package_dir(raw, cwd=project)
+
+    def test_the_project_is_the_working_directorys_not_the_packages(self):
+        with _scratch() as base:
+            here, _ = self._project(base, "here")
+            _, theirs = self._project(base, "theirs")
+            with self.assertRaisesRegex(gc.PackageRefused, "outside the project"):
+                gc.resolve_package_dir(str(theirs), cwd=here)
+
+    def test_a_working_directory_in_no_project_falls_back_to_the_packages_own(self):
+        with _scratch() as base:
+            _, package = self._project(base)
+            bare = base / "bare"
+            bare.mkdir()
+            if gc.find_project_root(bare) is not None:
+                self.skipTest("a project marker exists above the temporary directory")
+            self.assertEqual(gc.resolve_package_dir(str(package), cwd=bare), package)
+
+    def test_no_project_anywhere_is_refused(self):
+        with _scratch() as base:
+            loose = base / "loose"
+            loose.mkdir()
+            if gc.find_project_root(loose) is not None:
+                self.skipTest("a project marker exists above the temporary directory")
+            with self.assertRaisesRegex(gc.PackageRefused, "cannot locate a project root"):
+                gc.resolve_package_dir(str(loose), cwd=base)
+
+    def test_a_missing_path_and_a_file_are_refused(self):
+        with _scratch() as base:
+            project, package = self._project(base)
+            note = package / "note.md"
+            note.write_text("x", encoding="utf-8")
+            for raw in (str(package / "nope"), str(note)):
+                with self.assertRaisesRegex(gc.PackageRefused, "not a directory"):
+                    gc.resolve_package_dir(raw, cwd=project)
+
+    def test_a_path_the_platform_cannot_read_is_refused_not_raised(self):
+        """Exit 2 is the guard's answer; a traceback would exit 1, which reads as a package defect."""
+        with _scratch() as base:
+            project, _ = self._project(base)
+            for raw in ("a\0b", "x" * 5000):
+                with self.subTest(raw=raw[:8]):
+                    with self.assertRaises(gc.PackageRefused):
+                        gc.resolve_package_dir(raw, cwd=project)
 
 
 class FailLoudTests(unittest.TestCase):

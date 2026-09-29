@@ -136,9 +136,15 @@ any path that:
 On a rejected path, return `ESCALATE` naming it rather than invoking the script.
 This prevents path-injection into the gate engine from a malformed or
 manipulated build context. `scripts/check.py` enforces the same guard in code as
-a backstop: it resolves `<package-dir>`, requires an existing directory inside
-the working tree, and exits 2 without running the gate on a missing,
-non-directory, or out-of-tree path.
+a backstop: it resolves `<package-dir>` (`..` and symlinks included), requires an
+existing directory inside the project, and exits 2 without running the gate on a
+missing, non-directory, or out-of-project path. The project is found from where
+the gate is run: the nearest directory at or above the working directory that
+holds `skillset-saves/`, `.harness-state/`, or `.git`, or, when the working
+directory is in no project, the same search from the package directory. Run it
+from the project, as in
+`python <catalog>/build/gatekeeper-build/scripts/check.py skillset-saves/runs/<run>/build`;
+the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 
 **2. The boundary validator** checks the evidence contract against
 `../../gates.yaml`:
@@ -290,4 +296,4 @@ return the verdict inline and preserve the run and revision.
 
 ## Packaging Notes
 
-Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which it locates by walking up to the repo root — ship the `harness/gatekeeper/` directory alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.
+Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which it locates by walking up from its own path to the catalog that holds `harness/gatekeeper/` — ship the `harness/gatekeeper/` directory alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.

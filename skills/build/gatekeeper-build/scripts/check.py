@@ -18,86 +18,24 @@ import sys
 from pathlib import Path
 
 
-# A project root is recognised by one of these markers, matching
-# harness/hooks/_state.py ``_ROOT_MARKERS`` so both locate the same directory.
-_ROOT_MARKERS = ("skillset-saves", ".harness-state", ".git")
-
-
-def _find_catalog_root():
-    """Nearest ancestor holding harness/gatekeeper/_gatecheck.py, else None.
-
-    This is where the shared engine lives, which is not necessarily where
-    packages live: the catalog can be vendored inside a larger project.
-    """
+def _engine():
+    """Import the shared engine from the nearest ancestor that holds it. The
+    engine owns everything else: the project root, the package-directory guard,
+    and the arguments."""
     here = Path(__file__).resolve()
     for parent in here.parents:
-        if (parent / "harness" / "gatekeeper" / "_gatecheck.py").exists():
-            return parent
-    return None
-
-
-def _find_repo_root():
-    """Return the root a package may live under.
-
-    Packages are written to ``<project>/skillset-saves/runs/<id>/<phase>``,
-    which is a *sibling* of the catalog when the catalog is vendored as
-    ``<project>/skills``. Confining to the catalog root therefore refused every
-    path the save protocol actually produces, so containment is checked against
-    the nearest project marker at or above the catalog, and falls back to the
-    catalog itself for a standalone checkout.
-    """
-    catalog = _find_catalog_root()
-    if catalog is None:
-        return None
-    for candidate in (catalog, *catalog.parents):
-        try:
-            if any((candidate / marker).exists() for marker in _ROOT_MARKERS):
-                return candidate
-        except OSError:
-            continue
-    return catalog
-
-
-_CATALOG_ROOT = _find_catalog_root()
-_REPO_ROOT = _find_repo_root()
-
-
-def _load_engine():
-    if _CATALOG_ROOT is not None:
-        sys.path.insert(0, str(_CATALOG_ROOT / "harness" / "gatekeeper"))
-        import _gatecheck  # type: ignore
-        return _gatecheck
+        directory = parent / "harness" / "gatekeeper"
+        if (directory / "_gatecheck.py").is_file():
+            sys.path.insert(0, str(directory))
+            import _gatecheck  # type: ignore
+            return _gatecheck
     sys.stderr.write(
         "ERROR: could not locate harness/gatekeeper/_gatecheck.py above "
-        f"{Path(__file__).resolve()}. Gate cannot run; validate by hand.\n")
+        f"{here}. Gate cannot run; validate by hand.\n")
     sys.exit(2)
 
 
-def _validate_package_dir(raw):
-    """Confine the untrusted <package-dir> argument to an existing directory
-    inside the working tree before the engine reads it. Enforcing this in code
-    (not only in SKILL.md prose) stops a malformed or manipulated build context
-    from pointing the gate at a non-existent path or arbitrary files outside the
-    tree. Exits 2 — the 'cannot run, validate by hand' code — on any violation."""
-    resolved = Path(raw).resolve()
-    if not resolved.is_dir():
-        sys.stderr.write(
-            f"ERROR: <package-dir> does not exist or is not a directory: {raw!r}\n")
-        sys.exit(2)
-    if _REPO_ROOT is None:
-        sys.stderr.write(
-            "ERROR: cannot locate the working-tree root, so <package-dir> containment "
-            "cannot be verified; refusing to read it.\n")
-        sys.exit(2)
-    if _REPO_ROOT not in (resolved, *resolved.parents):
-        sys.stderr.write(
-            f"ERROR: <package-dir> {resolved} is outside the working tree "
-            f"{_REPO_ROOT}; refusing to read it.\n")
-        sys.exit(2)
-    return resolved
-
-
-gc = _load_engine()
+gc = _engine()
 
 # Required build-to-review evidence set (SKILL.md workflow step 1). Matched by
 # filename pattern and/or a content marker so a deliverable named
@@ -141,28 +79,4 @@ MANIFEST = gc.Manifest(
 
 
 if __name__ == "__main__":
-    _args = sys.argv[1:]
-    # Options that consume the following argument. Without this, the value of
-    # such a flag is the first non-dash token, so `--prior <file> <pkg>` would
-    # validate <file> as the package directory and check the wrong tree.
-    _VALUE_OPTS = ("--prior", "--blocked-phrases")
-    _pkg_idx, _skip = None, False
-    for _i, _a in enumerate(_args):
-        if _skip:
-            _skip = False
-            continue
-        if _a in _VALUE_OPTS:
-            _skip = True
-            continue
-        if _a.startswith("-"):
-            continue
-        _pkg_idx = _i
-        break
-    if _pkg_idx is None:
-        sys.stderr.write(
-            "ERROR: <package-dir> is required. "
-            "Usage: python check.py <package-dir> [--prior <verdict-file>] [--json]\n")
-        sys.exit(2)
-    # Validate and normalize the untrusted path before the engine consumes it.
-    sys.argv[1 + _pkg_idx] = str(_validate_package_dir(_args[_pkg_idx]))
     sys.exit(gc.main_with_manifest(MANIFEST))

@@ -245,9 +245,15 @@ A verdict returned without its evidence anchors is incomplete and is not a gate
 result.
 
 Clause 4 has a concrete local form here: `<package-dir>` is untrusted phase
-context. Both scripts resolve it, require an existing directory inside the
-working tree, and exit 2 without running the gate otherwise; confirm the same
-before invoking and return `ESCALATE` naming the rejected path.
+context. Both scripts resolve it (`..` and symlinks included), require an existing
+directory inside the project, and exit 2 without running the gate otherwise;
+confirm the same before invoking and return `ESCALATE` naming the rejected path.
+The project is found from where the gate is run: the nearest directory at or above
+the working directory that holds `skillset-saves/`, `.harness-state/`, or `.git`,
+or, when the working directory is in no project, the same search from the package
+directory. Run them from the project, as in
+`python <catalog>/design/gatekeeper-design/scripts/check.py skillset-saves/runs/<run>/design`;
+the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 
 ## Workflow
 
@@ -350,4 +356,4 @@ revision.
 
 ## Packaging Notes
 
-Package `SKILL.md`, `scripts/check.py`, `scripts/check_redesign.py`, `references/workflow.md`, `references/boundary-evidence.md`, `references/key-spaces.md`, and `references/examples.md` together. Both scripts depend on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which they locate by walking up to the repo root — ship the `harness/gatekeeper/` directory alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.
+Package `SKILL.md`, `scripts/check.py`, `scripts/check_redesign.py`, `references/workflow.md`, `references/boundary-evidence.md`, `references/key-spaces.md`, and `references/examples.md` together. Both scripts depend on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which they locate by walking up from their own path to the catalog that holds `harness/gatekeeper/` — ship the `harness/gatekeeper/` directory alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.

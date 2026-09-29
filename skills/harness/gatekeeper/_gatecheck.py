@@ -39,7 +39,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence
 
 # --- Shared four-tier severity model (cited by every gatekeeper) --------------
 # critical: package is untrusted / cannot advance without external judgment.
@@ -300,6 +300,72 @@ def _parse_yaml_block(block: List[str]) -> dict:
             result[key] = ""
         i = j
     return result
+
+
+# =============================================================================
+# Project root and package containment
+# =============================================================================
+
+# A project root is recognised by one of these markers. harness/hooks/_state.py
+# keeps the same three; the engine does not import the hooks (they fail open, a
+# gate fails loud), and test_gate_wrappers.py fails when the two tuples drift.
+ROOT_MARKERS = ("skillset-saves", ".harness-state", ".git")
+
+
+def find_project_root(start: Path) -> Optional[Path]:
+    """Nearest ancestor of ``start`` (itself included) holding a project marker."""
+    for candidate in (start, *start.parents):
+        try:
+            if any((candidate / marker).exists() for marker in ROOT_MARKERS):
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+class PackageRefused(ValueError):
+    """The package directory cannot be read: exit 2, never a pass."""
+
+
+def resolve_package_dir(raw: str, cwd: Optional[Path] = None) -> Path:
+    """Confine the untrusted <package-dir> argument to an existing directory
+    inside the project before the engine reads it.
+
+    Saves are written to ``<project>/skillset-saves/runs/<run>/<phase>``. That is
+    inside the project but not below the catalog: a vendored copy sits within the
+    project and an installed one (``~/.agents/skills``) beside it. So the project
+    is found from where the gate is run, never from this file: the nearest marked
+    ancestor of the working directory, or of the package itself when the working
+    directory is in no project. ``resolve`` folds ``..`` and follows symlinks
+    first, so neither leads out of the project. Enforcing this in code, not only
+    in SKILL.md prose, stops a manipulated context from pointing the gate at a
+    non-existent path or at files outside the project.
+
+    ``cwd`` is the directory the project is searched from; it defaults to the
+    process's own and exists so a test can name another."""
+    try:
+        resolved = Path(raw).resolve()
+        is_dir = resolved.is_dir()
+    except (OSError, ValueError) as exc:  # an embedded NUL, a name too long
+        raise PackageRefused(f"<package-dir> cannot be read: {raw[:200]!r} ({exc})") from exc
+    if not is_dir:
+        raise PackageRefused(
+            f"<package-dir> does not exist or is not a directory: {raw!r}")
+    try:
+        here = (cwd or Path.cwd()).resolve()
+    except OSError as exc:
+        raise PackageRefused(f"cannot read the working directory: {exc}") from exc
+    root = find_project_root(here) or find_project_root(resolved)
+    if root is None:
+        raise PackageRefused(
+            f"cannot locate a project root (a directory holding skillset-saves/, "
+            f".harness-state/ or .git) above the working directory or {resolved}, so "
+            f"<package-dir> containment cannot be verified; refusing to read it.")
+    if root not in (resolved, *resolved.parents):
+        raise PackageRefused(
+            f"<package-dir> {resolved} is outside the project {root}; run the gate "
+            f"from the project that holds the package. Refusing to read it.")
+    return resolved
 
 
 # =============================================================================
@@ -709,7 +775,9 @@ def render_markdown(report: Report) -> str:
 
 def build_arg_parser(description: str) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=description)
-    p.add_argument("package", help="Path to the package directory to validate.")
+    p.add_argument("package", help="Path to the package directory to validate; it "
+                                   "must sit inside the project (see "
+                                   "resolve_package_dir).")
     p.add_argument("--prior", default=None,
                    help="Path to a prior gatekeeper verdict / handoff file for "
                         "idempotency comparison.")
@@ -721,17 +789,33 @@ def build_arg_parser(description: str) -> argparse.ArgumentParser:
     return p
 
 
-def main_with_manifest(manifest: Manifest, argv: Optional[List[str]] = None) -> int:
-    """Entry point each gate's check.py calls with its boundary manifest."""
+def main_with_manifest(manifest: Manifest, argv: Optional[List[str]] = None,
+                       extra_checks: Sequence[Callable[[Path, Report], None]] = ()) -> int:
+    """Entry point each gate's check.py calls with its boundary manifest.
+
+    ``extra_checks`` are gate-specific checks run, after the shared ones, on a
+    package that could be read (check_redesign.py's mock-first layout). Exit 2
+    always means the gate could not run: a refused package directory, bad
+    arguments, or an internal error; it is never a verdict."""
     parser = build_arg_parser(f"Deterministic gate check for {manifest.boundary}.")
     args = parser.parse_args(argv)
     try:
+        package = resolve_package_dir(args.package)
+    except PackageRefused as exc:
+        sys.stderr.write(f"ERROR: {exc}\n")
+        return 2
+    try:
         report = run_gate(
-            Path(args.package),
+            package,
             manifest,
             prior_path=Path(args.prior) if args.prior else None,
             blocked_phrases_path=Path(args.blocked_phrases) if args.blocked_phrases else None,
         )
+        # An empty or missing package has already failed critically and a
+        # layout check would only repeat it.
+        if not any(f.code in ("PACKAGE_NOT_FOUND", "PACKAGE_EMPTY") for f in report.findings):
+            for check in extra_checks:
+                check(package, report)
     except Exception as exc:  # fail loud — never a silent pass
         err = {
             "boundary": manifest.boundary,

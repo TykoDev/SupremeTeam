@@ -178,9 +178,15 @@ A verdict returned without its evidence anchors is incomplete and is not a gate
 result.
 
 Clause 4 has a concrete local form here: `<package-dir>` is untrusted review
-context. `scripts/check.py` resolves it, requires an existing directory inside
-the working tree, and exits 2 without running the gate otherwise; confirm the
-same before invoking and return `ESCALATE` naming the rejected path.
+context. `scripts/check.py` resolves it (`..` and symlinks included), requires an
+existing directory inside the project, and exits 2 without running the gate
+otherwise; confirm the same before invoking and return `ESCALATE` naming the
+rejected path. The project is found from where the gate is run: the nearest
+directory at or above the working directory that holds `skillset-saves/`,
+`.harness-state/`, or `.git`, or, when the working directory is in no project,
+the same search from the package directory. Run the gate from the project, as in
+`python <catalog>/review/gatekeeper-code/scripts/check.py skillset-saves/runs/<run>/review`;
+the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 
 ## Workflow
 
@@ -255,4 +261,4 @@ inactive, return the verdict inline and preserve the run and revision.
 
 ## Packaging Notes
 
-Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which it locates by walking up to the repo root — ship the `harness/gatekeeper/` directory alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.
+Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which it locates by walking up from its own path to the catalog that holds `harness/gatekeeper/` — ship the `harness/gatekeeper/` directory alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.

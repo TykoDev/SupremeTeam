@@ -222,6 +222,14 @@ Three-step summary:
    improvements, re-evaluates, loops up to 5 times. Selects `best_description` by
    *test* score to avoid overfitting.
 
+   It shells out to the `claude` CLI, which must be on `PATH` and signed in, and every run
+   is a paid model call (about 20 queries x 3 runs per iteration). `claude` runs in the
+   project root: the nearest ancestor of the working directory holding `.claude`, `.git`,
+   `.harness-state` or `skillset-saves`, never the home directory. With none (an installed
+   skill-creator sits in no project) the loop stops; pass `--project-root <dir>`. A query
+   whose runs all time out or fail is not scored as a miss: the loop stops with `error` set
+   and `exit_reason` `eval_failed (iteration N)`, keeps the history so far and exits non-zero.
+
 Apply `best_description` to SKILL.md frontmatter. Show before/after and report scores.
 
 ### Triggering caveat
@@ -266,7 +274,7 @@ When updating an existing skill:
 | --- | --- |
 | `evals/evals.json` is missing, unparseable, or does not match the shape in `references/schemas.md` (no `evals` array, an entry without `prompt`, duplicate `id` values) | Do not repair it silently and do not grade a partial parse. Report the exact parse error or the first non-conforming entry, and either rewrite the file from the captured intent and show the user the result before running, or run with the subset that does parse while stating which entries were dropped and why. A grade computed over a silently shrunken eval set reads as a passing score. |
 | The user supplies zero test cases, or declines to write any | Do not invent test cases and present their results as evidence. Skills with subjective outputs legitimately have none: record "no behavioral evals for this iteration", hand the reviewer the structural work alone, and say plainly that only Track B signal exists. Offer one concrete starter prompt drawn from the intake so the decision is informed rather than a default. |
-| `run_loop.py` exits non-zero, times out, or returns no `best_description` | Keep the current description unchanged — a failed optimizer is not a signal to edit the trigger by hand, because the whole point of the loop is the held-out test score. Report the iteration it reached, the last scores, and the failure, then either re-run with a smaller `--max-iterations` or return Optimize as not-run so the orchestrator can skip Stage 4 deliberately. |
+| `run_loop.py` exits non-zero, times out, or returns no `best_description` | Keep the current description unchanged — a failed optimizer is not a signal to edit the trigger by hand, because the whole point of the loop is the held-out test score. Report the iteration it reached, the last scores, and the failure (the JSON it still prints carries `error` and an `exit_reason` of `eval_failed` or `improve_failed`, naming the iteration, plus the history so far), then either re-run with a smaller `--max-iterations` or return Optimize as not-run so the orchestrator can skip Stage 4 deliberately. |
 | The optimizer's `best_description` scores better on train than on test | Take the test-selected description and say so. A train-better candidate is the overfitting the split exists to catch; adopting it because the number is larger discards the only defence in the loop. |
 | `quick_validate.py` returns a failure at Phase 6 | Return the report to the orchestrator as a blocker instead of packaging. A `.skill` built from an invalid source fails at the gate rather than at the desk, and the validation line is the `validation_report` evidence either way. |
 | A user override says a reviewer finding is not real | Record the override with its reason, exclude the finding from this and later improve passes, and pass the override back to the orchestrator so the reviewer is told not to re-flag it. Do not apply a fix the user declined, and do not drop the finding from the delivery report's override table. |

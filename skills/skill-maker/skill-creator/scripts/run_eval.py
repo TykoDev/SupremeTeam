@@ -3,6 +3,17 @@
 
 Tests whether a skill's description causes Claude to trigger (read the skill)
 for a set of queries. Outputs results as JSON.
+
+The command file for the skill is written under <project root>/.claude/commands
+and `claude -p` runs there, so the project root is the nearest ancestor of the
+working directory holding .claude, .git, .harness-state or skillset-saves, or
+--project-root. The home directory is never used.
+
+Exit codes:
+    0  every run produced an outcome; the JSON is on stdout
+    1  no project root, a missing SKILL.md, or at least one run produced no
+       outcome (timeout, claude error, no result). The JSON is still printed:
+       ``errors`` counts those runs and they are left out of every rate.
 """
 
 import argparse
@@ -17,21 +28,7 @@ import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
-from scripts.utils import parse_skill_md
-
-
-def find_project_root() -> Path:
-    """Find the project root by walking up from cwd looking for .claude/.
-
-    Mimics how Claude Code discovers its project root, so the command file
-    we create ends up where claude -p will look for it.
-    """
-    current = Path.cwd()
-    for parent in [current, *current.parents]:
-        if (parent / ".claude").is_dir():
-            return parent
-    return current
-
+from scripts.utils import ProjectRootError, find_project_root, parse_skill_md
 
 EVAL_COMMAND_PREFIX = "zz-skilleval-"
 
@@ -72,7 +69,7 @@ def run_single_query(
     timeout: int,
     project_root: str,
     model: str | None = None,
-) -> bool:
+) -> bool | None:
     """Run a single query and return whether the skill was triggered.
 
     Creates a command file in .claude/commands/ so it appears in Claude's
@@ -80,6 +77,11 @@ def run_single_query(
     Uses --include-partial-messages to detect triggering early from
     stream events (content_block_start) rather than waiting for the
     full assistant message, which only arrives after tool execution.
+
+    True: the skill was invoked. False: the model answered, or chose another
+    tool, without invoking it. None: no outcome was observed - the deadline
+    passed, the stream ended without a result, or the CLI reported an error.
+    None is a failed measurement and must never be scored as "did not trigger".
     """
     unique_id = uuid.uuid4().hex[:8]
     clean_name = f"{EVAL_COMMAND_PREFIX}{skill_name}-skill-{unique_id}"
@@ -211,6 +213,10 @@ def run_single_query(
                         return triggered
 
                 elif event.get("type") == "result":
+                    if event.get("is_error"):
+                        # e.g. not logged in: the run never reached the model.
+                        print(f"Warning: claude reported an error: {str(event.get('result'))[:200]}", file=sys.stderr)
+                        return None
                     return triggered
         finally:
             # Clean up process on any exit path (return, exception, timeout)
@@ -221,7 +227,8 @@ def run_single_query(
             if not reader.is_alive():
                 process.stdout.close()
 
-        return triggered
+        # Deadline passed, or the stream closed before any terminal event.
+        return None
     finally:
         try:
             command_file.unlink(missing_ok=True)
@@ -240,7 +247,13 @@ def run_eval(
     trigger_threshold: float = 0.5,
     model: str | None = None,
 ) -> dict:
-    """Run the full eval set and return results."""
+    """Run the full eval set and return results.
+
+    A run with no outcome (run_single_query returned None, or its worker raised)
+    is counted in ``errors`` and left out of ``runs``, ``triggers`` and the rate;
+    a query with no observed run has a null rate and a null ``pass``, and the
+    summary counts it as ``unmeasured``, not as failed.
+    """
     results = []
 
     # Sweep exactly once, here, before any worker exists: the command files are
@@ -265,7 +278,7 @@ def run_eval(
                 )
                 future_to_info[future] = (item, run_idx)
 
-        query_triggers: dict[str, list[bool]] = {}
+        query_triggers: dict[str, list[bool | None]] = {}
         query_items: dict[str, dict] = {}
         for future in as_completed(future_to_info):
             item, _ = future_to_info[future]
@@ -277,13 +290,16 @@ def run_eval(
                 query_triggers[query].append(future.result())
             except Exception as e:
                 print(f"Warning: query failed: {e}", file=sys.stderr)
-                query_triggers[query].append(False)
+                query_triggers[query].append(None)
 
-    for query, triggers in query_triggers.items():
+    for query, outcomes in query_triggers.items():
         item = query_items[query]
-        trigger_rate = sum(triggers) / len(triggers)
+        observed = [o for o in outcomes if o is not None]
+        trigger_rate = sum(observed) / len(observed) if observed else None
         should_trigger = item["should_trigger"]
-        if should_trigger:
+        if trigger_rate is None:
+            did_pass = None
+        elif should_trigger:
             did_pass = trigger_rate >= trigger_threshold
         else:
             did_pass = trigger_rate < trigger_threshold
@@ -291,12 +307,14 @@ def run_eval(
             "query": query,
             "should_trigger": should_trigger,
             "trigger_rate": trigger_rate,
-            "triggers": sum(triggers),
-            "runs": len(triggers),
+            "triggers": sum(observed),
+            "runs": len(observed),
+            "errors": len(outcomes) - len(observed),
             "pass": did_pass,
         })
 
     passed = sum(1 for r in results if r["pass"])
+    unmeasured = sum(1 for r in results if r["pass"] is None)
     total = len(results)
 
     return {
@@ -306,7 +324,9 @@ def run_eval(
         "summary": {
             "total": total,
             "passed": passed,
-            "failed": total - passed,
+            "failed": total - passed - unmeasured,
+            "unmeasured": unmeasured,
+            "errors": sum(r["errors"] for r in results),
         },
     }
 
@@ -321,10 +341,13 @@ def main():
     parser.add_argument("--runs-per-query", type=int, default=3, help="Number of runs per query")
     parser.add_argument("--trigger-threshold", type=float, default=0.5, help="Trigger rate threshold")
     parser.add_argument("--model", default=None, help="Model to use for claude -p (default: user's configured model)")
+    parser.add_argument("--project-root", default=None,
+                        help="Directory claude -p runs in (default: the nearest ancestor of the working "
+                             "directory with .claude, .git, .harness-state or skillset-saves; never the home directory)")
     parser.add_argument("--verbose", action="store_true", help="Print progress to stderr")
     args = parser.parse_args()
 
-    eval_set = json.loads(Path(args.eval_set).read_text())
+    eval_set = json.loads(Path(args.eval_set).read_text(encoding="utf-8"))
     skill_path = Path(args.skill_path)
 
     if not (skill_path / "SKILL.md").exists():
@@ -333,7 +356,11 @@ def main():
 
     name, original_description, content = parse_skill_md(skill_path)
     description = args.description or original_description
-    project_root = find_project_root()
+    try:
+        project_root = find_project_root(args.project_root)
+    except ProjectRootError as e:
+        print(f"Error: {e}. Run from inside a project, or pass --project-root.", file=sys.stderr)
+        sys.exit(1)
 
     if args.verbose:
         print(f"Evaluating: {description}", file=sys.stderr)
@@ -354,11 +381,18 @@ def main():
         summary = output["summary"]
         print(f"Results: {summary['passed']}/{summary['total']} passed", file=sys.stderr)
         for r in output["results"]:
-            status = "PASS" if r["pass"] else "FAIL"
+            status = "NONE" if r["pass"] is None else "PASS" if r["pass"] else "FAIL"
             rate_str = f"{r['triggers']}/{r['runs']}"
-            print(f"  [{status}] rate={rate_str} expected={r['should_trigger']}: {r['query'][:70]}", file=sys.stderr)
+            print(f"  [{status}] rate={rate_str} errors={r['errors']} expected={r['should_trigger']}: {r['query'][:70]}", file=sys.stderr)
 
     print(json.dumps(output, indent=2))
+
+    summary = output["summary"]
+    if summary["errors"]:
+        print(f"Error: {summary['errors']} run(s) produced no outcome (timeout, claude error or no result), "
+              f"leaving {summary['unmeasured']} of {summary['total']} queries unmeasured; "
+              "the counts above cover only the runs that completed", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

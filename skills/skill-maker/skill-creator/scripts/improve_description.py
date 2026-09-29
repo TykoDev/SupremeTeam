@@ -16,12 +16,22 @@ from pathlib import Path
 
 from scripts.utils import parse_skill_md
 
+# The host truncates a description here, so a longer one is not what gets evaluated.
+MAX_DESCRIPTION_CHARS = 1024
+# Each retry is a model call; three is enough to tell a bad prompt from a bad reply.
+MAX_REWRITES = 3
+
+
+class DescriptionError(RuntimeError):
+    """The model never returned a usable description."""
+
 
 def _call_claude(prompt: str, model: str | None, timeout: int = 300) -> str:
     """Run `claude -p` with the prompt on stdin and return the text response.
 
     Prompt goes over stdin (not argv) because it embeds the full SKILL.md
-    body and can easily exceed comfortable argv length.
+    body and can easily exceed comfortable argv length. It is UTF-8 both ways:
+    the locale default (cp1252 on Windows) cannot encode a SKILL.md's punctuation.
     """
     cmd = ["claude", "-p", "--output-format", "text"]
     if model:
@@ -32,19 +42,63 @@ def _call_claude(prompt: str, model: str | None, timeout: int = 300) -> str:
     # programmatic subprocess usage is safe. Same pattern as run_eval.py.
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 
-    result = subprocess.run(
-        cmd,
-        input=prompt,
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=timeout,
-    )
+    try:
+        result = subprocess.run(
+            cmd,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"claude -p timed out after {timeout}s") from e
+    except FileNotFoundError as e:
+        raise RuntimeError("the claude CLI was not found on PATH") from e
     if result.returncode != 0:
         raise RuntimeError(
             f"claude -p exited {result.returncode}\nstderr: {result.stderr}"
         )
     return result.stdout
+
+
+def _extract_description(text: str) -> str | None:
+    """The text inside <new_description>, or None when the tags or their content are missing.
+
+    A reply without the tags is an apology, a refusal or commentary; using it whole
+    would put that prose into the next evaluation as the description.
+    """
+    match = re.search(r"<new_description>(.*?)</new_description>", text, re.DOTALL)
+    if match is None:
+        return None
+    return match.group(1).strip().strip('"').strip() or None
+
+
+def _unusable(description: str | None) -> bool:
+    return description is None or len(description) > MAX_DESCRIPTION_CHARS
+
+
+def _rewrite_prompt(prompt: str, description: str | None) -> str:
+    """A fresh single-turn prompt that says what was wrong with the previous reply.
+
+    `claude -p` is one-shot, so the earlier output is quoted into the new prompt
+    rather than continued as a conversation.
+    """
+    if description is None:
+        problem = ("A previous reply had no non-empty <new_description> block, so it could not be used. "
+                   "Respond with only the new description in <new_description> tags.")
+    else:
+        problem = (
+            f"A previous attempt produced this description, which at "
+            f"{len(description)} characters is over the {MAX_DESCRIPTION_CHARS}-character hard limit:\n\n"
+            f'"{description}"\n\n'
+            f"Rewrite it to be under {MAX_DESCRIPTION_CHARS} characters while keeping the most "
+            f"important trigger words and intent coverage. Respond with only "
+            f"the new description in <new_description> tags."
+        )
+    return f"{prompt}\n\n---\n\n{problem}"
 
 
 def improve_description(
@@ -58,14 +112,18 @@ def improve_description(
     log_dir: Path | None = None,
     iteration: int | None = None,
 ) -> str:
-    """Call Claude to improve the description based on eval results."""
+    """Call Claude to improve the description based on eval results.
+
+    Raises DescriptionError (a RuntimeError) when no usable description comes back.
+    """
+    # `is False`: a query with no observed run has a null pass and is not a failure to fix.
     failed_triggers = [
         r for r in eval_results["results"]
-        if r["should_trigger"] and not r["pass"]
+        if r["should_trigger"] and r["pass"] is False
     ]
     false_triggers = [
         r for r in eval_results["results"]
-        if not r["should_trigger"] and not r["pass"]
+        if not r["should_trigger"] and r["pass"] is False
     ]
 
     # Build scores summary
@@ -142,51 +200,43 @@ I'd encourage you to be creative and mix up the style in different iterations si
 Please respond with only the new description text in <new_description> tags, nothing else."""
 
     text = _call_claude(prompt, model)
-
-    match = re.search(r"<new_description>(.*?)</new_description>", text, re.DOTALL)
-    description = match.group(1).strip().strip('"') if match else text.strip().strip('"')
+    description = _extract_description(text)
 
     transcript: dict = {
         "iteration": iteration,
         "prompt": prompt,
         "response": text,
         "parsed_description": description,
-        "char_count": len(description),
-        "over_limit": len(description) > 1024,
+        "char_count": len(description or ""),
+        "over_limit": len(description or "") > MAX_DESCRIPTION_CHARS,
+        "rewrites": [],
     }
 
-    # Safety net: the prompt already states the 1024-char hard limit, but if
-    # the model blew past it anyway, make one fresh single-turn call that
-    # quotes the too-long version and asks for a shorter rewrite. (The old
-    # SDK path did this as a true multi-turn; `claude -p` is one-shot, so we
-    # inline the prior output into the new prompt instead.)
-    if len(description) > 1024:
-        shorten_prompt = (
-            f"{prompt}\n\n"
-            f"---\n\n"
-            f"A previous attempt produced this description, which at "
-            f"{len(description)} characters is over the 1024-character hard limit:\n\n"
-            f'"{description}"\n\n'
-            f"Rewrite it to be under 1024 characters while keeping the most "
-            f"important trigger words and intent coverage. Respond with only "
-            f"the new description in <new_description> tags."
-        )
-        shorten_text = _call_claude(shorten_prompt, model)
-        match = re.search(r"<new_description>(.*?)</new_description>", shorten_text, re.DOTALL)
-        shortened = match.group(1).strip().strip('"') if match else shorten_text.strip().strip('"')
-
-        transcript["rewrite_prompt"] = shorten_prompt
-        transcript["rewrite_response"] = shorten_text
-        transcript["rewrite_description"] = shortened
-        transcript["rewrite_char_count"] = len(shortened)
-        description = shortened
+    # Safety net: the prompt already states the format and the hard limit, but a
+    # reply can still lack the tags or blow past it. Retry, bounded, and check
+    # every result the same way, since a rewrite can be just as unusable.
+    while _unusable(description) and len(transcript["rewrites"]) < MAX_REWRITES:
+        rewrite_prompt = _rewrite_prompt(prompt, description)
+        rewrite_text = _call_claude(rewrite_prompt, model)
+        description = _extract_description(rewrite_text)
+        transcript["rewrites"].append({
+            "prompt": rewrite_prompt,
+            "response": rewrite_text,
+            "description": description,
+            "char_count": len(description or ""),
+        })
 
     transcript["final_description"] = description
 
     if log_dir:
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / f"improve_iter_{iteration or 'unknown'}.json"
-        log_file.write_text(json.dumps(transcript, indent=2))
+        log_file.write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+
+    if _unusable(description):
+        reason = ("no non-empty <new_description> block" if description is None
+                  else f"{len(description)} characters, over the {MAX_DESCRIPTION_CHARS} limit")
+        raise DescriptionError(f"no usable description after {len(transcript['rewrites'])} rewrite(s): {reason}")
 
     return description
 
@@ -205,10 +255,10 @@ def main():
         print(f"Error: No SKILL.md found at {skill_path}", file=sys.stderr)
         sys.exit(1)
 
-    eval_results = json.loads(Path(args.eval_results).read_text())
+    eval_results = json.loads(Path(args.eval_results).read_text(encoding="utf-8"))
     history = []
     if args.history:
-        history = json.loads(Path(args.history).read_text())
+        history = json.loads(Path(args.history).read_text(encoding="utf-8"))
 
     name, _, content = parse_skill_md(skill_path)
     current_description = eval_results["description"]
@@ -217,14 +267,18 @@ def main():
         print(f"Current: {current_description}", file=sys.stderr)
         print(f"Score: {eval_results['summary']['passed']}/{eval_results['summary']['total']}", file=sys.stderr)
 
-    new_description = improve_description(
-        skill_name=name,
-        skill_content=content,
-        current_description=current_description,
-        eval_results=eval_results,
-        history=history,
-        model=args.model,
-    )
+    try:
+        new_description = improve_description(
+            skill_name=name,
+            skill_content=content,
+            current_description=current_description,
+            eval_results=eval_results,
+            history=history,
+            model=args.model,
+        )
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
 
     if args.verbose:
         print(f"Improved: {new_description}", file=sys.stderr)

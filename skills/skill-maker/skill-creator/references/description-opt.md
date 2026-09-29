@@ -144,6 +144,14 @@ When it's done, it opens an HTML report showing results per iteration and return
 JSON with `best_description` — selected by **test** score (not train) to avoid
 overfitting.
 
+A timeout or a `claude` error is never scored as "did not trigger". If a query has no
+completed run the loop stops, exits non-zero and prints the history so far with `error`
+and an `exit_reason` of `eval_failed (iteration N)`; if the improver returns no usable
+description after three retries the `exit_reason` is `improve_failed (iteration N)`. Raise
+`--timeout` or lower `--num-workers` and rerun. Run it from inside a project: with none
+above the working directory (an installed skill-creator) it stops and asks for
+`--project-root <dir>`, and it never uses the home directory.
+
 ---
 
 ## How skill triggering works

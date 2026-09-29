@@ -192,6 +192,43 @@ class AuditImproveTests(unittest.TestCase):
         self.assertIn("audit-improve trigger", outputs[-1])
         self.assertNotIn("SECRET_DO_NOT_ECHO", outputs[-1])
 
+    def test_counts_the_refusals_and_degradations_the_canonical_writer_records(self):
+        """`refused` and `degraded` were in the audit's vocabulary and the writer never emitted
+        them, so the audit could not see the failures it exists to audit."""
+        self.run.rmdir()
+        (self.root / "README.md").write_text("fixture\n", encoding="utf-8")
+
+        def save(*args: str) -> int:
+            return subprocess.run([sys.executable, str(HOOKS / "save_run.py"), *args, "--project-root", str(self.root),
+                                   "--run-id", "r1"], text=True, capture_output=True, check=False).returncode
+
+        self.assertEqual(save("create", "--evidence", "README.md"), 0)
+        self.assertEqual(save("checkpoint", "--expect-revision", "9"), 1)
+        pointer = self.root / "skillset-saves" / "_latest.md"
+        pointer.unlink()
+        pointer.mkdir()
+        self.assertEqual(save("checkpoint"), 2)
+        history = next(item for item in subject.audit(self.root)["findings"] if item["code"] == "failure_history")
+        self.assertEqual(history["audit_events"], {"refused": 1, "degraded": 1, "pointer-degraded": 1})
+
+    def test_a_recovered_interrupted_publish_is_counted_like_a_rollback(self):
+        (self.run / "_audit-trail.md").write_text(json.dumps({"event": "rollforward"}) + "\n", encoding="utf-8")
+        history = next(item for item in subject.audit(self.root)["findings"] if item["code"] == "failure_history")
+        self.assertEqual(history["audit_events"], {"rollforward": 1})
+
+    def test_every_run_status_the_writer_can_publish_is_recognised_and_others_are_not(self):
+        from _saves import ACTIVE_STATUSES, TERMINAL_STATUSES
+
+        for status in sorted(ACTIVE_STATUSES | TERMINAL_STATUSES):
+            with self.subTest(status=status):
+                self.record(self.run / "_state.md", {"status": status, "revision": 1})
+                self.assertEqual(subject.audit(self.root)["run_statuses"], {status: 1})
+        self.record(self.run / "_state.md", {"status": "delivered", "revision": 1})
+        report = subject.audit(self.root)
+        self.assertEqual(report["run_statuses"], {})
+        unreadable = next(item for item in report["findings"] if item["code"] == "unreadable_records")
+        self.assertEqual(unreadable["counts"]["state:invalid_status"], 1)
+
     def test_run_scan_is_bounded(self):
         for index in range(subject.MAX_RUNS + 2):
             (self.root / "skillset-saves" / "runs" / f"run-{index:02d}").mkdir()

@@ -65,13 +65,13 @@ python skills/harness/hooks/save_run.py checkpoint --run-id 2026-04-23_dashboard
 
 **Command:** `save_run.py status --run-id 2026-04-23_dashboard-redesign_a3f9k2` (read-only; no revision published).
 
-**Result:** `result: ok`, classification `active`, lock held and pinned, revision 7.
+**Result:** `result: ok`, classification `corrupt` (`missing evidence path 'review/reports/review-packet.md'`), lock held and pinned, revision 7. A held run is not coherent while evidence registered against it is missing, so it is not `active` however fresh its lock.
 
 **Output:**
 - Restored and verified: `design/artifacts/tokens.css` rev 3 and `build/packages/app.zip` rev 5, both matching their registered digests.
 - Drift: `review/reports/review-packet.md` is registered at revision 7 but absent on disk, so the boundary it backs cannot be re-judged from evidence.
 - Resume path narrowed to the last fully verified checkpoint, revision 6, with the review boundary reopened.
-- Recommendation: regenerate the missing packet before the downstream stage advances; nothing was rewritten, because the record is the evidence of what broke.
+- Recommendation: regenerate the missing packet before the downstream stage advances. If it was deliberately moved or pruned instead, record that with `checkpoint --drop-evidence review/reports/review-packet.md --reason "<why>"` and register its new location in the same call. Nothing was rewritten, because the record is the evidence of what broke.
 
 ## Example 4 — lookup against prior learnings
 
@@ -103,6 +103,6 @@ python skills/harness/hooks/save_run.py checkpoint --run-id 2026-04-23_dashboard
 
 **Output:**
 - Persistence reported as **degraded**, not active. Revision 2 remains the latest published state; nothing was partially written.
-- Warned once, and no retry by direct file write: the six `core-run-record` paths are written only through `save_run.py`.
+- Warned once, and no retry by direct file write: the `core-run-record` paths are written only through `save_run.py`.
 - Continuity held inline for the remainder of the turn, with the same four checkpoint fields the write would have carried, so the orchestrator can re-attempt the save once the cause is cleared.
 - Next action: resolve the save-root failure, then reissue the checkpoint against revision 2; treat the run as unresumable across sessions until a write returns `ok`.

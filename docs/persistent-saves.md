@@ -16,6 +16,7 @@ the Supreme Team source tree.
 ```text
 skillset-saves/
   _latest.md                       # pointer: run_id, revision, updated_at
+  _write.lock                      # writer mutex, locked by the OS while save_run.py writes
   runs/{run-id}/
     _state.md                      # run state
     _lock.md                       # lock with heartbeat
@@ -66,32 +67,53 @@ python skills/harness/hooks/save_run.py complete   --run-id <run>
 python skills/harness/hooks/save_run.py recover    --run-id <run> --reason "<why>" [--rollback]
 ```
 
-`create` runs a write, read, and delete probe before claiming anything, and
-refuses while another run holds the session pin. Persistence is active only once
-it returns `ok`.
+`create` needs at least one `--evidence` path, since a run stands on the evidence
+it is created from. It runs a write, read, and delete probe before claiming
+anything, and refuses while another run holds the session pin. Persistence is
+active only once it returns `ok`. Resolve the intake report it cites with
+`skills/scripts/output_paths.py --kind phase_report --phase intake --name
+report_grilling.md`.
 
 Checkpoint before every delegation and at every returned boundary. Each checkpoint
 snapshots the previous revision into `_history/`, registers evidence hashes,
 refreshes the heartbeat, and publishes state, lock, and pointer atomically behind
-`_journal.json`.
+`_journal.json`. Evidence that moved or was pruned is dropped with
+`--drop-evidence <path> --reason <why>`, which the audit trail records.
 
 An interrupted publish shows up as `interrupted` and is repaired with
 `recover --rollback`. While the journal exists, every other operation is refused
-rather than layering a second partial write on top of the first.
+rather than layering a second partial write on top of the first. The rollback
+leaves the lock with a fresh heartbeat, and it also frees the id of a `create` that
+died before it finished.
 
 Exit codes matter here. 0 is `ok`. 1 is `refused`, which is a contract violation to
-resolve, never something to work around by hand-editing save files. 2 is
-`degraded`, meaning the write failed and nothing coherent was published.
+resolve, never something to work around by hand-editing save files; the one
+refusal to simply retry is a busy write lock. 2 is `degraded`, meaning the write
+failed and nothing coherent was published. Refused and degraded operations are
+recorded in the run's audit trail, so `/audit-improve` can see them.
 
 ## Locks and staleness
 
 A lock records owner, status, session pin, revision, and an ISO-8601 heartbeat.
 Active state needs a pinned, held lock. Terminal state needs an unpinned, released
-one. A lock goes stale when its heartbeat is more than 30 minutes old.
+one. A lock goes stale when its heartbeat is more than 30 minutes old, or dated
+more than five minutes in the future.
 
-With hooks registered, `post_tool_use.py` refreshes the heartbeat from real host
-activity, throttled to once every five minutes, so an attended run does not go
-stale mid-phase. It will not revive a lock that is already stale.
+Separate from that lock record, every write holds one mutex, `_write.lock`, from
+reading the run to its last write, and re-checks the revision inside it. Two
+writers at once therefore take turns instead of losing an update: the second finds
+what the first published, and a stale `--expect-revision` is refused. The operating
+system releases the mutex when its holder exits, so a killed writer never wedges a
+run. A writer that must succeed waits `--lock-timeout` seconds (default 10), then
+refuses and asks you to retry.
+
+With hooks registered, all three hooks (`pre_tool_use.py`, `post_tool_use.py`,
+`user_prompt_submit.py`) refresh the heartbeat from real host activity, throttled
+to once every five minutes, so an attended run does not go stale mid-phase. The
+refresh costs a read of the pointer and the pointed run's lock, not a scan of every
+saved run; a hook waits a quarter of a second for the mutex and skips the refresh
+if another writer has it, because a hook never holds up the host. It will not
+revive a lock that is already stale.
 
 Reclaiming a stale lock requires `recover --reason`, which writes the stale lock's
 path, heartbeat, owner, and sha256 into the audit trail before taking it. Nothing
@@ -101,8 +123,11 @@ disappears quietly.
 
 `save_run.py status` (or the readiness diagnostic) classifies saved state as
 active, inactive, complete, stale, orphaned, conflicting, corrupt, interrupted,
-missing, or unreadable. Only a coherent fresh active or orphaned record reinforces
-the session pin.
+missing, uninitialized, or unreadable. `complete` is a finished run; `inactive` is
+a released or blocked one, and `run_status` names which. `uninitialized` is a run
+directory that holds intake's report and no record yet: run `create`. `status`
+also classifies the run you asked about as `requested_run` and says what to do
+next. Only a coherent fresh active or orphaned record reinforces the session pin.
 
 `_latest.md` is a pointer, not the truth. When it is missing, stale, or disagrees
 with a reclaimable run, scan `runs/` before concluding there is nothing to resume.

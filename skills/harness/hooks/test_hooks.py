@@ -787,7 +787,7 @@ class CheckReadinessTests(unittest.TestCase):
             result = self._run(project, home, "--require-active-run")
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("Hooks: registered", result.stdout)
-        self.assertIn("Saves: inactive", result.stdout)
+        self.assertIn("Saves: complete", result.stdout)
         self.assertIn("Ready: no", result.stdout)
 
     def test_json_output_reports_missing_hooks(self):

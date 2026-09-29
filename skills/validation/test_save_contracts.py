@@ -78,12 +78,14 @@ class SaveLifecycleTests(unittest.TestCase):
         code, out = self.save("complete", "--run-id", "run-1")
         self.assertEqual(code, 0, out)
         code, out = self.save("status", "--run-id", "run-1")
-        self.assertEqual(out["status"], "inactive", out)
+        self.assertEqual(out["status"], "complete", out)
+        self.assertEqual(out["run_status"], "complete")
         lock = json.loads((self.project / "skillset-saves/runs/run-1/_lock.md").read_text(encoding="utf-8"))
         self.assertEqual(lock["status"], "released")
         self.assertFalse(lock["session_pin"])
         audit = (self.project / "skillset-saves/runs/run-1/_audit-trail.md").read_text(encoding="utf-8").splitlines()
-        self.assertEqual([json.loads(line)["event"] for line in audit], ["create", "checkpoint", "complete"])
+        # The refused stale-revision checkpoint above is on the trail between the two it bracketed.
+        self.assertEqual([json.loads(line)["event"] for line in audit], ["create", "checkpoint", "refused", "complete"])
 
     def test_competing_owner_and_wrong_owner_are_refused(self):
         self.save("create", "--run-id", "run-1", "--evidence", "README.md")

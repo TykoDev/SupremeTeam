@@ -16,7 +16,7 @@ mechanics — flags, results, exit codes, reclaim, rollback — live in
 ## Continuity Sequence
 
 1. Determine whether the request is a checkpoint, a learning write, a resume, or a lookup against prior learnings. The four are enumerated below; only the first three write.
-2. Write core run state only through `../../harness/hooks/save_run.py` operations, following `../../save-protocol.md` and `../../save-ownership.yaml`. Session-memory is the declared sole writer of that class: no other skill writes those six paths, and a skill that needs one changed asks for the write rather than making it.
+2. Write core run state only through `../../harness/hooks/save_run.py` operations, following `../../save-protocol.md` and `../../save-ownership.yaml`. Session-memory is the declared sole writer of that class: no other skill writes those paths, and a skill that needs one changed asks for the write rather than making it.
 3. Resolve every supplemental report destination with `python skills/scripts/output_paths.py --run-id <run-id> --phase <phase> --kind reports --name <file> --mkdir`, confirm the printed path is inside the run's phase directory, and write only there. Save only the durable state needed for safe continuation: current boundary, active artifacts, blockers, and the next intended action.
 4. Normalize learnings into short searchable entries with evidence and confidence so later sessions can query them quickly.
 5. On resume, reload only the verified artifacts and notes relevant to the immediate next step, then surface any drift or missing state.

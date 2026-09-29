@@ -19,7 +19,7 @@ import time
 from collections import Counter
 from pathlib import Path
 
-from _saves import DataFormatError, parse_yaml
+from _saves import ACTIVE_STATUSES, TERMINAL_STATUSES, DataFormatError, parse_yaml
 
 MAX_FILES = 240
 MAX_DIRS = 80
@@ -31,7 +31,9 @@ MAX_PHASE_FILES = 80
 MAX_PHASE_DIRS = 20
 AUDIT_TIME_BUDGET_SECONDS = 2.0
 COOLDOWN_SECONDS = 6 * 3600
-AUDIT_EVENTS = {"refused", "degraded", "pointer-degraded", "rollback", "recover", "blocked", "reopen"}
+# Failure-shaped events of the save writer's trail; `refused` and `degraded` are
+# the lines save_run.py appends for an operation it refused or could not finish.
+AUDIT_EVENTS = {"refused", "degraded", "pointer-degraded", "rollforward", "rollback", "recover", "blocked", "reopen"}
 FAIL_VERDICTS = {"REVISE", "ESCALATE", "BLOCKED", "FAIL", "FAILED"}
 TRIGGER = "/audit-improve"
 
@@ -224,7 +226,7 @@ def audit(root: Path) -> dict:
                 note_unreadable(kind, error, run=run_key)
         if isinstance(state, dict):
             status = state.get("status")
-            if isinstance(status, str) and status in {"active", "paused", "awaiting-input", "complete", "blocked", "released"}:
+            if isinstance(status, str) and status in ACTIVE_STATUSES | TERMINAL_STATUSES:
                 run_statuses[status] += 1
             else:
                 unreadable["state:invalid_status"] += 1

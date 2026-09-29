@@ -242,6 +242,14 @@ The "Benchmark" tab shows pass rates, timing, token usage for each configuration
 Navigation: prev/next buttons or arrow keys. When done, "Submit All Reviews" saves
 feedback to `feedback.json`.
 
+The workspace is untrusted input, because an output is whatever the skill under test
+wrote. The viewer never follows a symlink or junction (a link shows as "Symlink not
+followed"), embeds the data so that no string in it, `</script>` included, can end the page's
+script, and its server answers only `localhost` and `127.0.0.1` names, refuses a write from
+another origin or that is not `application/json`, and caps the size of a feedback body. If
+the port asked for is busy it serves on a free one and prints the URL; it never stops
+whatever holds the busy port.
+
 ### In Cowork specifically
 
 The viewer's "Submit All Reviews" button downloads `feedback.json` as a file instead

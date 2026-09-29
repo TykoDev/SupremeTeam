@@ -257,11 +257,25 @@ On a failure, return the report to the orchestrator as a blocker rather than pac
 `.skill` built from an invalid source fails at the gate instead of at the desk.
 
 ```bash
-python -m scripts.package_skill <path/to/skill-folder>
+python -m scripts.package_skill <path/to/skill-folder> <absolute-output-directory>
 ```
 
-This writes the `.skill` ZIP to `<project>/.harness-state/packages/` by default (pass an output directory, normally the active run's `skill-creation/packages/`, to place it elsewhere), excluding `evals/`, `__pycache__`, `.pyc`,
-`.DS_Store`. Point the user to the resulting file path.
+The working directory is `skill-creator/` after the `cd` above, so a relative path resolves
+there and not in the project: `skillset-saves/runs/<run-id>/skill-creation/packages` would land
+beside this source instead of in the run, and the packager refuses to write anywhere inside
+`skill-creator/`. Pass the run's `packages/` directory as an absolute path, the project root
+you started in joined with `skillset-saves/runs/<run-id>/skill-creation/packages`.
+
+Outside a run, omit the directory: the `.skill` ZIP goes to `<project>/.harness-state/packages/`,
+`<project>` being the nearest ancestor of the working directory holding `.claude`, `.git`,
+`.harness-state` or `skillset-saves` (never the home directory). With none, the packager
+stops and asks for a directory rather than writing into the skill.
+
+It skips `evals/` at the root, `.git`, `node_modules`, `__pycache__`, `.pyc` and `.DS_Store`.
+It refuses, listing every offender and writing nothing, a symlink, a secret (`.env`, `.env.*`,
+`*.pem`, `*.key`) or run state (`.harness-state`, `skillset-saves`) anywhere in the folder:
+remove it from the source rather than working around the refusal. Point the user to the
+resulting file path.
 
 When updating an existing skill:
 - Preserve the original name — use the same directory name and `name` frontmatter
@@ -380,12 +394,14 @@ orphaned — the ones not invoked directly are imported by the ones that are.
 | `aggregate_benchmark.py` | 3 | Aggregates run results into benchmark statistics with the with-skill/baseline delta |
 | `utils.py` | — | Shared helpers, including SKILL.md frontmatter parsing. Imported, never invoked |
 | `__init__.py` | — | Marks `scripts` as a package so `python -m scripts.<name>` works |
-| `test_regressions.py` | — | Regression tests, below |
+| `test_*.py` | — | Regression tests, one module per script or behavior, below |
 
-**Regression tests.** `scripts/test_regressions.py` covers frontmatter
-validation, packaging exclusions, and the eval subprocess and pipe handling those
-scripts depend on. Run it after changing anything under `scripts/`, from the
-skill-creator directory:
+**Regression tests.** The `scripts/test_*.py` modules cover each script's failure paths:
+frontmatter validation and parser parity, packaging refusals and output location, the eval
+subprocess and pipe handling, failed runs that are not measurements, the benchmark layouts,
+the viewer's embedding, symlink and server rules, and UTF-8 on a Windows code page. None
+runs the `claude` CLI or opens a network connection. Run them after changing anything under
+`scripts/` or `eval-viewer/`, from the skill-creator directory:
 
 ```bash
 python -m unittest discover -s scripts -p "test_*.py"

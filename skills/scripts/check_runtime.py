@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import ast
 import bisect
-import hashlib
 import importlib.util
 import json
 import math
@@ -15,7 +14,6 @@ import re
 import shlex
 import stat
 import sys
-import tomllib
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
@@ -1356,6 +1354,13 @@ def _cargo_binary_targets(
     }
     text = _read_cached_text(cargo_path, root, errors, text_cache, required=True)
     if text is None:
+        return [], None
+    try:
+        # tomllib is 3.11+; importing it here keeps the interpreter-floor report
+        # reachable on older interpreters instead of dying at import time.
+        import tomllib
+    except ImportError:
+        _add_error(errors, "Cargo.toml: cannot be parsed (tomllib requires Python 3.11 or newer)")
         return [], None
     try:
         manifest = tomllib.loads(text)

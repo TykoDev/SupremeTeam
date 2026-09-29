@@ -17,6 +17,7 @@ Run from the repo root:
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -447,9 +448,53 @@ class WrapperManifestTests(unittest.TestCase):
         "gatekeeper-admiral": {"delivery_or_package"},
     }
 
+    #: The lens skills that fix a packet template, by the slot their packet fills.
+    LENS_SKILLS = {
+        "lens_bug": ("bug-review",),
+        "lens_code": ("code-review",),
+        "lens_quality": ("quality-review",),
+        "lens_security": ("security-review",),
+        "lens_adversarial": ("mr-robot", "frontier"),
+    }
+
     @classmethod
     def setUpClass(cls):
         cls.contracts = gc.Contracts.load()
+
+    def test_a_lens_slot_asks_only_for_fields_its_skill_fixes(self):
+        """The wrapper and the lens skill state the packet shape twice; a field one
+        asks for and the other never promises turns a valid packet away."""
+        slots = {spec.key: spec for spec in _manifest_of(WRAPPERS[0]).artifacts}
+        for key, skills in self.LENS_SKILLS.items():
+            self.assertTrue(slots[key].fields, f"{key} asks for no structure at all")
+            for skill in skills:
+                text = (SKILLS / "review" / skill / "SKILL.md").read_text(encoding="utf-8")
+                for name in slots[key].fields:
+                    with self.subTest(slot=key, skill=skill, field=name):
+                        self.assertRegex(text, gc._field_line(name))
+
+    def test_the_cso_slot_asks_for_what_review_cso_returns(self):
+        """review/cso fixes no lens template, only the return of a gate-owning skill."""
+        slots = {spec.key: spec for spec in _manifest_of(WRAPPERS[0]).artifacts}
+        text = (SKILLS / "review" / "cso" / "SKILL.md").read_text(encoding="utf-8")
+        stated = re.search(r"Return ([^.]*?)\s+when the skill owns\s+a gate", text)
+        self.assertIsNotNone(stated, "review/cso no longer states the fields it returns")
+        self.assertTrue(slots["lens_cso"].fields)
+        for name in slots["lens_cso"].fields:
+            self.assertIn(name, stated.group(1))
+
+    def test_a_cso_packet_with_only_the_returned_fields_fills_its_slot(self):
+        with tempfile.TemporaryDirectory() as raw:
+            package = Path(raw).resolve() / "review"
+            _review(package, True)
+            _write(package / "deliverable_cso.md",
+                   "# CSO\n\nOutcome:  cso, r1, release posture reviewed\nEvidence: threat model\n")
+            report = gc.run_gate(package, _manifest_of(WRAPPERS[0]))
+        codes = [f.code for f in report.findings]
+        self.assertIn("deliverable_cso.md",
+                      {f.location for f in report.findings if f.code == "ARTIFACT_PRESENT"})
+        self.assertNotIn("ARTIFACT_CONDITIONAL", codes)
+        self.assertNotIn("ARTIFACT_MISSING", codes)
 
     def test_optional_slots_are_the_ones_the_contracts_make_optional(self):
         for wrapper in WRAPPERS:

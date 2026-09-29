@@ -39,9 +39,15 @@ def _engine():
 
 gc = _engine()
 
-# Every lens files its packet in the shape review/*/SKILL.md fixes. Outcome and
-# Findings are fields a prose mention of the topic does not supply.
+# The bug, code, quality, security, and adversarial lenses file their packet in the
+# shape their SKILL.md fixes. Outcome and Findings are fields a prose mention of
+# the topic does not supply.
 _PACKET = ("Outcome", "Findings")
+
+# review/cso fixes no packet template and no Findings field. Its SKILL.md states
+# the return every gate-owning skill makes (execution-contract clause 6), which
+# names Outcome first, so that is the one field asked of a CSO packet.
+_CSO_PACKET = ("Outcome",)
 
 # Bug, code, and quality run on every review: their stages carry no condition in
 # pipelines.yaml. The others are not declared optional here. pipelines.yaml gives
@@ -94,7 +100,7 @@ MANIFEST = gc.Manifest(
             key="lens_cso",
             label="CSO security-leadership lens",
             patterns=("*cso*.md", "deliverable_*cso*.md"),
-            fields=_PACKET,
+            fields=_CSO_PACKET,
             requirement="conditional",
         ),
     ),

@@ -2685,6 +2685,16 @@ def _inspect_project(
             )
         if scan_scaffold:
             inspection["scaffold_markers"] = _scan_scaffold(files, project_root, errors)
+        if (
+            (detect_project or detect_start_command)
+            and not errors
+            and not (manifests or configs or inspection["stacks"] or inspection["start_commands"])
+        ):
+            _add_warning(
+                warnings,
+                "no project evidence found: no manifests, configuration files or registered stacks "
+                "under the inspected root; run from the project root or pass --project-root",
+            )
     inspection["errors"] = sorted(set(errors))
     inspection["warnings"] = sorted(set(warnings))
     inspection["ok"] = not inspection["errors"]
@@ -2692,20 +2702,20 @@ def _inspect_project(
 
 
 def check(
-    root: Path,
+    catalog_root: Path,
     *,
     project_root: Path | None = None,
     detect_project: bool = False,
     detect_start_command: bool = False,
     scan_scaffold: bool = False,
 ) -> dict:
-    requested_root = root.expanduser().absolute()
+    requested_root = catalog_root.expanduser().absolute()
     if _has_reparse_ancestor(requested_root):
         errors: list[str] = []
         _add_error(errors, "catalog root: reparse points are not inspected")
         return _redact_value(_runtime_error_report(errors))
-    root = requested_root.resolve()
-    manifest_path = root / "runtime-manifest.yaml"
+    catalog_root = requested_root.resolve()
+    manifest_path = catalog_root / "runtime-manifest.yaml"
     try:
         manifest = load_data(manifest_path)
     except (DataFormatError, UnicodeError, ValueError, RecursionError) as exc:
@@ -2735,8 +2745,8 @@ def check(
     }
     if detect_project or detect_start_command or scan_scaffold:
         inspection = _inspect_project(
-            root,
-            project_root if project_root is not None else root,
+            catalog_root,
+            project_root if project_root is not None else Path("."),
             detect_project=detect_project,
             detect_start_command=detect_start_command,
             scan_scaffold=scan_scaffold,
@@ -2753,8 +2763,18 @@ def check(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", default=str(Path(__file__).resolve().parents[1]))
-    parser.add_argument("--project-root", help="project directory to inspect read-only")
+    parser.add_argument(
+        "--catalog-root",
+        "--root",
+        dest="catalog_root",
+        default=str(Path(__file__).resolve().parents[1]),
+        help="catalog directory holding runtime-manifest.yaml and tech-stacks/ "
+        "(default: this script's skills/ directory); --root is the older spelling",
+    )
+    parser.add_argument(
+        "--project-root",
+        help="project directory to inspect read-only (default: the current directory)",
+    )
     parser.add_argument("--detect-project", action="store_true", help="detect project evidence and registered stacks")
     parser.add_argument("--detect-start-command", action="store_true", help="record package start-command candidates without running them")
     parser.add_argument("--scan-scaffold", action="store_true", help="scan conservative scaffold markers without changing files")
@@ -2762,7 +2782,7 @@ def main() -> int:
     parser.add_argument("--require-optional", action="store_true", help="fail when an optional dependency is unavailable")
     args = parser.parse_args()
     report = check(
-        Path(args.root),
+        Path(args.catalog_root),
         project_root=Path(args.project_root) if args.project_root else None,
         detect_project=args.detect_project,
         detect_start_command=args.detect_start_command,
@@ -2780,6 +2800,7 @@ def main() -> int:
             print(f"Optional {item['name']}: {'available' if item['available'] else 'missing; stdlib fallback documented'}")
         inspection = report.get("project_inspection")
         if isinstance(inspection, dict):
+            print(f"Inspecting: {inspection.get('root')}")
             stacks = ", ".join(str(item.get("slug")) for item in inspection.get("stacks", [])) or "none"
             print(
                 "Inspection: "
@@ -2792,6 +2813,8 @@ def main() -> int:
                 print(f"Candidate {candidate['source']}: {candidate['command']}")
             for error in inspection.get("errors", []):
                 print(f"Inspection error: {error}")
+            for warning in inspection.get("warnings", []):
+                print(f"Inspection warning: {warning}")
             for ambiguity in inspection.get("ambiguities", []):
                 print(f"Inspection note: {ambiguity}")
         print(f"Ready: {'yes' if report['ok'] else 'no'}")

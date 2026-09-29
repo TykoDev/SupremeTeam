@@ -76,7 +76,7 @@
     "scan_record": "python skills/scripts/scan_record.py --out <run>/security/evidence/scan-<tool>.json --input <lockfile> -- <scanner command>",
     "output_paths": "python skills/scripts/output_paths.py --kind <reports|artifacts|evidence|packages|manifest|coverage> --run-id <run> --phase <phase> --name <file>  # representative run-scoped form, and every kind it names works with exactly these arguments. It is NOT the whole set: `--kind` accepts 17 values and `output_paths.py --help` enumerates them authoritatively. Other kinds take other arguments and fail if invoked with this line - verdict needs --boundary, trajectory needs --session, core takes only _state.md / _lock.md / _audit-trail.md as --name, and guards / project_preferences / global_preferences take neither --run-id nor --phase. Read --help before copying this for a kind it does not name.",
     "package_check": "python skills/scripts/package_check.py --root . [--out .harness-state/packages/supremeteam.zip]",
-    "stack_detect": "python skills/scripts/check_runtime.py --detect-project",
+    "stack_detect": "python skills/scripts/check_runtime.py --project-root . --detect-project",
     "parity_check": "python skills/scripts/check_parity.py --level <mock|full> --inventory <design-inventory.json> --app <mock.html|app.html> --components <components.html> --out <run>/redesign/evidence/<mock-parity-<id>|parity-<id>>.json",
     "content_hash": "python skills/scripts/content_hash.py <path> [<path> ...] [--project-root .]"
   },

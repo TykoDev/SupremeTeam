@@ -43,7 +43,7 @@ below state what each key must contain and what may stand in for it.
 Three keys at this boundary are waivable, and each waiver is a claim about the
 project rather than about the run's convenience:
 
-- `stack_lock` — waivable only when the design introduces no runtime, framework, or dependency. Detect the slug deterministically with `python skills/scripts/check_runtime.py --detect-project` before claiming this; a registry that has no slug for the detected runtime is not the same as no new runtime, and is handled in `../SKILL.md` Failure Modes.
+- `stack_lock` — waivable only when the design introduces no runtime, framework, or dependency. Detect the slug deterministically with `python skills/scripts/check_runtime.py --project-root . --detect-project`, run from the project root, before claiming this; the report prints the root it inspected and warns when nothing under it looks like a project, so an empty stack list from the wrong directory is not read as no new runtime. A registry that has no slug for the detected runtime is not the same as no new runtime either, and is handled in `../SKILL.md` Failure Modes.
 - `taste_snapshot` — waivable only when neither Taste store holds a profile. A profile that exists but was not requested is a missing key, not an absent one.
 - `ui_evidence` — waivable only when the design produces no user-facing surface. A backend-only service uses it; a design whose UI work was skipped for time does not.
 
@@ -58,6 +58,6 @@ author rather than defaulting to the submitter:
 
 | Fallback | Decided by | Recorded during |
 | --- | --- | --- |
-| `stack_lock` no-new-runtime | commander | the stack-lock stage, after `check_runtime.py --detect-project` |
+| `stack_lock` no-new-runtime | commander | the stack-lock stage, after `check_runtime.py --project-root . --detect-project` |
 | `taste_snapshot` no-profile | commander, on the resolution Admiral/Taste returns | intake, before the first specialist delegation |
 | `ui_evidence` no-surface | architect, confirmed by commander against the scope statement | the interface-and-design-system stage decision |

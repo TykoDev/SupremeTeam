@@ -20,9 +20,11 @@ The record carries:
 
 | Field | Content |
 | --- | --- |
-| `artifacts` | Hashed files produced by the run, including the retained raw scanner output |
+| `artifacts` | Hashed files produced by the run, including the retained raw scanner output, named relative to the directory of the manifest that will embed the record (`evidence/<stem>.stdout.txt` and `.stderr.txt` for a record under a run phase), so each name is a key of `artifact_hashes` and the record is embedded unchanged |
 | `tool` | The scanner name (defaults to the first command token) |
-| `command` | The exact command executed, argv-preserved |
+| `command` | The scanner command as `shlex.join(argv)`, so an argument containing a space stays one argument when it is split back (POSIX quoting on every platform) |
+| `argv` | The exact argument list the scanner was started with, unquoted |
+| `version_command` | The `--version-command` argument list in the same quoting, or null; `tool_version` holds the first line it printed |
 | `exit_code` | The scanner's own exit code, unmodified |
 | `observed_at` | When the scan ran |
 | `inputs` | `[{path, sha256}]` bound to the inspected manifests and lockfiles |
@@ -31,7 +33,11 @@ The record carries:
 Only `pass` satisfies the gate. `unavailable` and `error` are data gaps, never a
 clean scan, and `fail` means the scanner ran correctly and reported findings.
 The record is written by the script, never by hand: a hand-written record cannot
-carry a truthful `exit_code` or a digest of output it did not observe.
+carry a truthful `exit_code` or a digest of output it did not observe. The gate
+cannot tell the two apart, though: it checks the record's shape, its digests, and
+that a `pass` does not sit beside a non-zero `exit_code`, and it never opens the
+raw output. That the record is the script's own is a property of how it was made,
+not of anything `check.py` verifies.
 
 The one sanctioned fallback for the key is
 `no dependency or source scan surface - scanner not engaged`. At manifest schema
@@ -55,8 +61,10 @@ python skills/scripts/scan_record.py --project-root . --out skillset-saves/runs/
 | `--out` | Path of the JSON record; the raw scanner output is retained beside it as `<stem>.stdout.txt` / `<stem>.stderr.txt`. Resolved against the process working directory, **not** `--project-root` — a bare relative value writes the one artifact this lens owns outside the run it belongs to (`../SKILL.md` Scan Evidence). |
 | `--input` | Repeatable; binds an inspected manifest or lockfile by sha256 |
 | `--tool` | Tool name override; defaults to the first token of the command |
-| `--version-command` | Command that prints the scanner version, recorded on the result |
-| `--fail-exit-codes` | Comma-separated exit codes that mean findings were reported rather than a broken run (default `1`) |
+| `--version-command` | Command that prints the scanner version, recorded on the result. Split with POSIX shell quoting rules and run as an argument list, never through a shell, so shell operators in the text are ordinary arguments and quoting is how an argument keeps a space. An unparseable value is a wrapper error |
+| `--fail-exit-codes` | Comma-separated integer exit codes that mean findings were reported rather than a broken run (default `1`). A non-integer is a wrapper error (exit 2) |
+| `--fail-on-output` | Repeatable regular expression. An exit-0 run whose stdout or stderr matches it is recorded `fail`, with a limitation naming the pattern, for scanners that print findings and exit 0 |
+| `--manifest-root` | Directory of the manifest that will embed the record; artifact names are written relative to it. The default is the run phase directory when `--out` sits inside `skillset-saves/runs/<run>/<phase>/`, else the record's own directory. A root that does not contain the record is a wrapper error |
 | `--limitation` | Repeatable; records a known coverage gap on the record itself |
 | `--timeout` | Bounds the scanner run |
 | `--no-run` | Records the request as `not-run` without executing the scanner |
@@ -71,8 +79,8 @@ wrapper's exit code as the scan verdict inverts the contract.
 
 | `result.status` | What happened | What to do |
 | --- | --- | --- |
-| `pass` | Scanner exited 0 | Report the scan as clean for the bound inputs and the declared limitations, and name both |
-| `fail` | Scanner exited on a declared `--fail-exit-codes` value | Triage the reported findings; the record stands as evidence the scan ran |
+| `pass` | Scanner exited 0 and no `--fail-on-output` pattern matched | Report that the scanner exited 0 for the bound inputs and the declared limitations, and name both. Exit 0 is not proof of no findings: a scanner that prints findings and exits 0 (semgrep without `--error`, trivy without `--exit-code 1`) needs its own exit-code flag or a `--fail-on-output` pattern, and the scan is not reported as clean until one is in force |
+| `fail` | Scanner exited on a declared `--fail-exit-codes` value, or exited 0 with output matching `--fail-on-output` | Triage the reported findings; the record stands as evidence the scan ran |
 | `error` | Scanner exited on an undeclared code, or crashed | Do not promote it to `fail` or `pass`. Add a `--limitation` naming the unclassified code, re-run with the code declared only when it genuinely means "findings reported", and report any printed findings as unconfirmed |
 | `unavailable` | The scanner could not be found or run in this environment | Record it as a data gap, name the missing coverage, and either request the sanctioned applicability record or escalate |
 | `not-run` | `--no-run` recorded the request honestly | Same as `unavailable`: a gap, with the reason on the record |

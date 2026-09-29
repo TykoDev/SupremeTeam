@@ -63,8 +63,10 @@ python skills/harness/gatekeeper/check.py \
 ```
 
 Exit 0 for a mechanically clean package, 1 for a package defect, 2 for an engine
-or input failure (including an unknown `--boundary`, which emits the
-`engine_error` JSON envelope on stderr). The result carries
+or input failure (including an unknown `--boundary`, and any fault inside the
+engine itself, which emit the `engine_error` JSON envelope on stderr and print
+no result). A malformed submission, such as a list where a severity belongs, is
+a package defect: exit 1 with the failure in the result. The result carries
 `mechanical_only: true`; human judgment still owns semantic quality.
 
 **Evidence root.** Artifact paths are manifest-relative. Inside the canonical

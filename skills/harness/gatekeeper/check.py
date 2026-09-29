@@ -67,10 +67,12 @@ BLOCKED = re.compile(r"\b(TODO|FIXME|XXX|HACK)\b|\btrust me\b|\b100% complete\b|
 MD_LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 FENCED = re.compile(r"```.*?```|~~~.*?~~~", re.DOTALL)
 INLINE_CODE = re.compile(r"`[^`\n]*`")
-HEX64 = re.compile(r"^[0-9a-f]{64}$")
-# A string counts as an artifact reference when it is shaped like a relative
-# file path: no whitespace, an extension, optional directory segments.
-PATH_LIKE = re.compile(r"^(?:\.\.?[/\\])*(?:[\w.\-]+[/\\])*[\w.\-]+\.[A-Za-z0-9]{1,8}$")
+HEX64 = re.compile(r"[0-9a-f]{64}")
+# A string counts as an artifact reference when it is shaped like a file path:
+# no whitespace, an extension, optional directory segments. An absolute, drive
+# or UNC root still counts, because such a path can never be a hashed artifact
+# and must be refused rather than read as prose.
+PATH_LIKE = re.compile(r"^(?:[A-Za-z]:)?(?:[/\\]{1,2}|(?:\.\.?[/\\])*)(?:[\w.\-]+[/\\])*[\w.\-]+\.[A-Za-z0-9]{1,8}$")
 SCANNED_TEXT_SUFFIXES = {".md", ".txt"}
 VERDICTS = {"APPROVED", "REVISE", "ESCALATE"}
 RESULT_STATUSES = {"pass", "fail", "error", "not-run", "unavailable", "inferred"}
@@ -177,6 +179,20 @@ def evidence_strings(value: object) -> list[str]:
 
 def is_path_like(text: str) -> bool:
     return bool(PATH_LIKE.match(text.strip()))
+
+
+def filled(value: object) -> bool:
+    """True for a real, non-blank string; null, numbers, lists and mappings are not filled.
+
+    ``str(x.get(f, ""))`` turns an explicit JSON null into the truthy word "None",
+    so every field that means "someone named this" is read through here.
+    """
+    return isinstance(value, str) and bool(value.strip())
+
+
+def is_sha256(value: object) -> bool:
+    """True for a lowercase-foldable 64-digit hex string with nothing before or after it."""
+    return isinstance(value, str) and HEX64.fullmatch(value.lower()) is not None
 
 
 def fingerprint(data: dict) -> str:
@@ -328,7 +344,7 @@ class Package:
             if not candidate.is_file():
                 self.failures.append(f"missing artifact: {relative}")
                 continue
-            if not HEX64.match(expected.lower()):
+            if not is_sha256(expected):
                 self.failures.append(f"invalid artifact digest: {relative}")
             elif digest(candidate) != expected.lower():
                 self.failures.append(f"artifact hash mismatch: {relative}")
@@ -417,6 +433,11 @@ class Package:
                     self.failures.append(f"bare fallback string not accepted at schema 2: {key} (use an applicability record)")
                 continue
             refs = evidence_strings(value)
+            # A bare string or list is a file reference only where the key is
+            # artifact-backed; elsewhere it is prose, and a version number or a
+            # hostname is path-shaped without being a file.
+            if key not in artifact_keys and not isinstance(value, dict):
+                refs = []
             path_refs = [item for item in refs if is_path_like(item)]
             # Every declared path reference must be a correctly hashed artifact.
             enforce_refs = key in artifact_keys or self.schema >= 2
@@ -482,7 +503,7 @@ class Package:
         entries = value.get(str(params.get("list_field") or "variants")) if isinstance(value, dict) else None
         if not isinstance(entries, list):
             return None
-        return {str(item.get("id", "")).strip() for item in entries if isinstance(item, dict)}
+        return {item["id"].strip() for item in entries if isinstance(item, dict) and filled(item.get("id"))}
 
     def check_variant_set(self, key: str, value: object) -> None:
         """Exactly N entries, unique ids, every declared file a hashed artifact.
@@ -509,17 +530,19 @@ class Package:
             if not isinstance(entry, dict):
                 self.failures.append(f"{label} must be a mapping")
                 continue
-            ident = str(entry.get("id", "")).strip()
-            if not ident:
+            if not filled(entry.get("id")):
                 self.failures.append(f"{label} requires id")
-            elif ident in seen:
-                self.failures.append(f"{label} duplicate id {ident}")
-            seen.add(ident)
+            else:
+                ident = entry["id"].strip()
+                if ident in seen:
+                    self.failures.append(f"{label} duplicate id {ident}")
+                seen.add(ident)
             for field in file_fields:
-                path = str(entry.get(field, "")).strip()
-                if not path:
+                if not filled(entry.get(field)):
                     self.failures.append(f"{label} requires {field}")
-                elif path not in self.artifact_hashes:
+                    continue
+                path = entry[field].strip()
+                if path not in self.artifact_hashes:
                     self.failures.append(f"{label} {field} is not a hashed artifact: {path}")
                 elif path not in self.hashed_ok:
                     self.failures.append(f"{label} {field} references a defective artifact: {path}")
@@ -595,7 +618,7 @@ class Package:
             entries = built.get(list_field) if isinstance(built, dict) else None
             first = entries[0] if isinstance(entries, list) and entries and isinstance(entries[0], dict) else None
             if first is not None and isinstance(chosen, str) and chosen.strip():
-                ident = str(first.get("id", "")).strip()
+                ident = first["id"].strip() if filled(first.get("id")) else ""
                 if ident != chosen.strip():
                     self.failures.append(
                         f"{built_key} was built for {ident!r} but {key} chose {chosen.strip()!r}: "
@@ -661,17 +684,17 @@ class Package:
             "consumer_handoff": ("effective_profile_digest",),
         }.get(kind, ())
         for field in digest_fields:
-            if not HEX64.match(str(value.get(field, "")).lower()):
+            if not is_sha256(value.get(field)):
                 self.failures.append(f"{key} record requires sha256 {field}")
         if kind == "persistence_result":
             hashes = value.get("hashes")
             if not isinstance(hashes, dict) or not hashes or any(
-                    not HEX64.match(str(item).lower()) for item in hashes.values()):
+                    not is_sha256(item) for item in hashes.values()):
                 self.failures.append(f"{key} record requires a non-empty hashes map of sha256 values")
         if kind == "effective_profile" and isinstance(value.get("entries"), list):
             for index, entry in enumerate(value["entries"]):
                 if not isinstance(entry, dict) or any(
-                        not str(entry.get(field, "")).strip()
+                        not filled(entry.get(field))
                         for field in ("id", "source_scope", "source_id")):
                     self.failures.append(
                         f"{key}.entries[{index}] requires id, source_scope, and source_id")
@@ -691,12 +714,12 @@ class Package:
             self.failures.append(f"{key} result not passing: {status}")
         if kind == "scan":
             for field in ("tool", "command", "observed_at"):
-                if not str(value.get(field, "")).strip():
+                if not filled(value.get(field)):
                     self.failures.append(f"{key} scan record requires {field}")
             if "exit_code" not in value:
                 self.failures.append(f"{key} scan record requires exit_code")
         if kind == "render":
-            if status == "inferred" and not str(value.get("limitation", "")).strip():
+            if status == "inferred" and not filled(value.get("limitation")):
                 self.failures.append(f"{key} inferred render requires a limitation statement")
             for field in ("breakpoints", "themes"):
                 if not isinstance(value.get(field), list) or not value.get(field):
@@ -712,15 +735,15 @@ class Package:
             self.failures.append(f"{key} inputs must be a list")
             inputs = []
         for entry in inputs:
-            if not isinstance(entry, dict) or not str(entry.get("path", "")).strip() or not HEX64.match(str(entry.get("sha256", "")).lower()):
+            if not isinstance(entry, dict) or not filled(entry.get("path")) or not is_sha256(entry.get("sha256")):
                 self.failures.append(f"{key} input entry requires path and sha256")
                 continue
-            target = self.project_path(str(entry["path"]), key)
+            target = self.project_path(entry["path"], key)
             if target is None:
                 continue
             if not target.is_file():
                 self.failures.append(f"{key} input missing: {entry['path']}")
-            elif digest(target) != str(entry["sha256"]).lower():
+            elif digest(target) != entry["sha256"].lower():
                 self.failures.append(f"{key} input hash drift (stale evidence): {entry['path']}")
         input_revision = value.get("input_revision")
         if input_revision is not None and str(input_revision) != str(self.data.get("revision")):
@@ -739,13 +762,13 @@ class Package:
                 continue
             severity = item.get("severity")
             status = item.get("status")
-            if severity not in FINDING_SEVERITIES:
+            if not isinstance(severity, str) or severity not in FINDING_SEVERITIES:
                 self.failures.append(f"{label} severity must be one of {sorted(FINDING_SEVERITIES)}")
                 continue
-            if status not in FINDING_STATUSES:
+            if not isinstance(status, str) or status not in FINDING_STATUSES:
                 self.failures.append(f"{label} status must be one of {sorted(FINDING_STATUSES)}")
                 continue
-            if status == "not-applicable" and not str(item.get("reason", "")).strip():
+            if status == "not-applicable" and not filled(item.get("reason")):
                 self.failures.append(f"{label} not-applicable requires a reason")
             if severity == "Critical" and status != "verified" and status != "not-applicable":
                 self.failures.append(f"{label} open Critical finding blocks the gate (status {status})")
@@ -754,32 +777,34 @@ class Package:
                 deferred_ok = (
                     status == "deferred"
                     and policy.get("major_deferral", "owner-and-reopen-trigger") == "owner-and-reopen-trigger"
-                    and str(item.get("owner", "")).strip()
-                    and str(item.get("reopen_trigger", "")).strip()
+                    and filled(item.get("owner"))
+                    and filled(item.get("reopen_trigger"))
                 )
                 if not closed and not deferred_ok:
                     self.failures.append(f"{label} unresolved Major finding blocks the gate (status {status})")
 
     def check_verdict(self, key: str, value: object) -> None:
         recommendation = value.get("recommendation") if isinstance(value, dict) else value
-        if recommendation not in VERDICTS:
+        if not isinstance(recommendation, str) or recommendation not in VERDICTS:
             self.failures.append(f"{key} must carry a recommendation in {sorted(VERDICTS)}")
             return
         if recommendation != "APPROVED":
             challenge = value.get("challenge") if isinstance(value, dict) else None
-            if not isinstance(challenge, dict) or not str(challenge.get("by", "")).strip() or not str(challenge.get("reason", "")).strip():
+            if not isinstance(challenge, dict) or not filled(challenge.get("by")) or not filled(challenge.get("reason")):
                 self.failures.append(f"{key} recommendation {recommendation} without a challenge record")
 
     def check_stack_lock(self, key: str, value: object) -> None:
         if not isinstance(value, dict):
             self.failures.append(f"{key} must be a stack-lock record or applicability record at schema 2")
             return
-        slug = str(value.get("slug", "")).strip()
-        overlay = str(value.get("overlay_sha256", "")).lower().strip()
+        slug = value.get("slug")
+        overlay = value.get("overlay_sha256")
+        overlay = overlay.strip() if isinstance(overlay, str) else overlay
         versions = value.get("versions")
-        if not slug or not HEX64.match(overlay) or not isinstance(versions, list) or not versions:
+        if not filled(slug) or not is_sha256(overlay) or not isinstance(versions, list) or not versions:
             self.failures.append(f"{key} record requires slug, versions, and overlay_sha256")
             return
+        slug, overlay = slug.strip(), overlay.lower()
         registry_path = Path(str(self.spec.get("_registry_path") or REGISTRY_PATH))
         try:
             registry = load_data(registry_path)
@@ -1008,8 +1033,9 @@ def main() -> int:
             os.replace(tmp, out)
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0 if not failures else 1
-    except (OSError, ValueError) as exc:
-        print(json.dumps({"boundary": args.boundary, "engine_error": str(exc)}, indent=2), file=sys.stderr)
+    except Exception as exc:  # fail loud: an engine fault is exit 2, never a bare traceback or a hidden pass
+        message = str(exc) if isinstance(exc, (OSError, ValueError)) else f"internal error: {type(exc).__name__}: {exc}"
+        print(json.dumps({"boundary": args.boundary, "engine_error": message}, indent=2), file=sys.stderr)
         return 2
 
 

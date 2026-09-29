@@ -11,13 +11,21 @@ subprocess could not reach it.
 from __future__ import annotations
 
 import importlib.util
+import io
+import json
+import subprocess
+import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 SKILLS = Path(__file__).resolve().parents[2]
 CHECK = SKILLS / "harness" / "gatekeeper" / "check.py"
 GATE_SPEC = SKILLS / "gates.yaml"
+sys.path.insert(0, str(SKILLS / "scripts"))
+from data_formats import content_sha256  # noqa: E402
 
 
 def load_engine():
@@ -114,6 +122,279 @@ class WaiverWordingTests(EngineCase):
         package = self.package("build-to-review")
         self.assertTrue(package.applicability_record("implementation", self.record("anything at all")))
         self.assertEqual(package.failures, ["evidence not waivable: implementation"])
+
+
+class PolicyFieldTests(EngineCase):
+    """A field that means "someone named this" counts only when it is a real string.
+
+    ``str(item.get(f, ""))`` made an explicit JSON null the truthy word "None", so
+    a Major deferred with owner null, a Critical waived with reason null, or a
+    REVISE with a null challenge passed the finding policy.
+    """
+
+    NOT_FILLED = (None, "", "   ", 0, 1, False, True, [], ["owner"], {}, {"name": "owner"})
+
+    def failures_of(self, check: str, *args) -> list[str]:
+        package = self.package("review-to-delivery")
+        getattr(package, check)(*args)
+        return package.failures
+
+    def test_a_deferred_major_needs_a_real_owner_and_a_real_reopen_trigger(self):
+        real = {"id": "F1", "severity": "Major", "status": "deferred",
+                "owner": "build-management", "reopen_trigger": "before release"}
+        self.assertEqual(self.failures_of("check_findings", "findings", {"items": [real]}), [])
+        for field in ("owner", "reopen_trigger"):
+            for bad in self.NOT_FILLED:
+                with self.subTest(field=field, bad=bad):
+                    self.assertEqual(
+                        self.failures_of("check_findings", "findings", {"items": [{**real, field: bad}]}),
+                        ["findings[0] unresolved Major finding blocks the gate (status deferred)"])
+            absent = {k: v for k, v in real.items() if k != field}
+            self.assertEqual(
+                self.failures_of("check_findings", "findings", {"items": [absent]}),
+                ["findings[0] unresolved Major finding blocks the gate (status deferred)"])
+
+    def test_a_not_applicable_finding_needs_a_real_reason(self):
+        for severity in ("Critical", "Major", "Minor"):
+            item = {"id": "F1", "severity": severity, "status": "not-applicable", "reason": "scope excludes it"}
+            self.assertEqual(self.failures_of("check_findings", "findings", {"items": [item]}), [])
+            for bad in self.NOT_FILLED:
+                with self.subTest(severity=severity, bad=bad):
+                    self.assertEqual(
+                        self.failures_of("check_findings", "findings", {"items": [{**item, "reason": bad}]}),
+                        ["findings[0] not-applicable requires a reason"])
+
+    def test_a_non_approved_verdict_needs_a_real_challenge_by_and_reason(self):
+        challenge = {"by": "code-chief", "reason": "finding disputed with evidence"}
+        self.assertEqual(self.failures_of("check_verdict", "review_verdict",
+                                          {"recommendation": "REVISE", "challenge": challenge}), [])
+        expected = ["review_verdict recommendation REVISE without a challenge record"]
+        for field in ("by", "reason"):
+            for bad in self.NOT_FILLED:
+                with self.subTest(field=field, bad=bad):
+                    self.assertEqual(
+                        self.failures_of("check_verdict", "review_verdict",
+                                         {"recommendation": "REVISE", "challenge": {**challenge, field: bad}}),
+                        expected)
+        for bad in (None, "why not", ["by", "reason"]):
+            with self.subTest(challenge=bad):
+                self.assertEqual(self.failures_of("check_verdict", "review_verdict",
+                                                  {"recommendation": "ESCALATE", "challenge": bad}),
+                                 ["review_verdict recommendation ESCALATE without a challenge record"])
+
+    def test_effective_profile_entries_need_real_id_scope_and_source(self):
+        digest = "a" * 64
+        entry = {"id": "p1", "source_scope": "repository", "source_id": "run-1"}
+        good = {"entries": [entry], "digest": digest}
+        self.assertEqual(self.failures_of("check_taste_record", "effective_profile", "effective_profile", good), [])
+        for field in entry:
+            for bad in self.NOT_FILLED:
+                with self.subTest(field=field, bad=bad):
+                    failures = self.failures_of("check_taste_record", "effective_profile", "effective_profile",
+                                                {**good, "entries": [{**entry, field: bad}]})
+                    self.assertEqual(failures, ["effective_profile.entries[0] requires id, source_scope, and source_id"])
+
+    def test_scan_tool_command_and_observed_at_need_real_strings(self):
+        record = {"artifacts": ["scan.stdout.txt"], "tool": "pip-audit", "command": "pip-audit -r requirements.txt",
+                  "observed_at": "2026-09-05T00:00:00Z", "exit_code": 0, "result": {"status": "pass"}}
+        for field in ("tool", "command", "observed_at"):
+            for bad in self.NOT_FILLED:
+                with self.subTest(field=field, bad=bad):
+                    failures = self.failures_of("check_result_record", "vulnerability_scan", "scan", {**record, field: bad})
+                    self.assertIn(f"vulnerability_scan scan record requires {field}", failures)
+
+    def test_an_inferred_render_needs_a_real_limitation(self):
+        record = {"captures": ["capture.png"], "breakpoints": ["375"], "themes": ["light"],
+                  "result": {"status": "inferred"}, "inputs": []}
+        for bad in self.NOT_FILLED:
+            with self.subTest(bad=bad):
+                failures = self.failures_of("check_result_record", "rendered_verification", "render",
+                                            {**record, "limitation": bad})
+                self.assertIn("rendered_verification inferred render requires a limitation statement", failures)
+
+    def test_a_variant_needs_a_real_id_and_real_file_fields(self):
+        params = self.spec["evidence_type_params"]["selected_variant"]
+        entry = {"id": "m2", "name": "Direction 2", "direction": "d2", **{f: "artifacts/x.css" for f in params["file_fields"]}}
+        for bad in self.NOT_FILLED:
+            with self.subTest(bad=bad):
+                package = self.package("redesign-review")
+                package.check_variant_set("selected_variant", {"variants": [{**entry, "id": bad}], "count": 1})
+                self.assertIn("selected_variant.variants[0] requires id", package.failures)
+                self.assertFalse(any("duplicate id" in f for f in package.failures), package.failures)
+                package = self.package("redesign-review")
+                package.check_variant_set("selected_variant", {"variants": [{**entry, "spec": bad}], "count": 1})
+                self.assertIn("selected_variant.variants[0] requires spec", package.failures)
+
+    def test_a_built_variant_with_no_real_id_is_not_the_chosen_one(self):
+        package = self.package("redesign-review", {
+            "selection": {"decision": "variant", "chosen": "None", "recommended": "None"},
+            "selected_variant": {"variants": [{"id": None}]}})
+        package.check_selection_dependencies("selection")
+        self.assertTrue(any("was built for '' but selection chose 'None'" in f for f in package.failures), package.failures)
+
+
+class UnhashableValueTests(EngineCase):
+    """A list or object where a word belongs is a finding, not a crash."""
+
+    UNHASHABLE = (["Major"], {"level": "Major"}, [["Major"]], [{}])
+
+    def test_unhashable_severity_and_status_are_findings(self):
+        for bad in self.UNHASHABLE:
+            with self.subTest(bad=bad):
+                package = self.package("review-to-delivery")
+                package.check_findings("findings", {"items": [{"id": "F", "severity": bad, "status": "open"}]})
+                self.assertEqual(package.failures, [f"findings[0] severity must be one of {sorted(engine.FINDING_SEVERITIES)}"])
+                package = self.package("review-to-delivery")
+                package.check_findings("findings", {"items": [{"id": "F", "severity": "Major", "status": bad}]})
+                self.assertEqual(package.failures, [f"findings[0] status must be one of {sorted(engine.FINDING_STATUSES)}"])
+
+    def test_unhashable_recommendation_is_a_finding_in_both_forms(self):
+        for bad in self.UNHASHABLE:
+            for form in (bad, {"recommendation": bad}):
+                with self.subTest(form=form):
+                    package = self.package("review-to-delivery")
+                    package.check_verdict("review_verdict", form)
+                    self.assertEqual(package.failures,
+                                     [f"review_verdict must carry a recommendation in {sorted(engine.VERDICTS)}"])
+
+    def test_the_command_line_answers_with_a_json_revise_not_a_traceback(self):
+        manifest = self.root / "manifest.json"
+        manifest.write_text(json.dumps({
+            "schema_version": 2, "boundary": "review-to-delivery", "owner": "code-chief", "submission_id": "s1",
+            "revision": "r1", "revisions": ["r1"], "artifact_hashes": {},
+            "evidence": {"review_verdict": ["APPROVED"],
+                         "findings": {"items": [{"id": "F", "severity": ["Major"], "status": {"x": 1}}]},
+                         "residual_risk": "none", "revision_lineage": "r1"}}), encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(CHECK), "--boundary", "review-to-delivery", "--package", str(manifest)],
+                              capture_output=True, text=True, check=False)
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+        failures = json.loads(proc.stdout)["failures"]
+        self.assertTrue(any(f.startswith("review_verdict must carry a recommendation") for f in failures), failures)
+        self.assertTrue(any(f.startswith("findings[0] severity must be one of") for f in failures), failures)
+
+
+class EngineFaultTests(EngineCase):
+    """Any fault inside the engine is the documented exit 2, never exit 1 with a traceback."""
+
+    def run_main(self, manifest: Path) -> tuple[int, str, str]:
+        argv = ["check.py", "--boundary", "review-to-delivery", "--package", str(manifest)]
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "argv", argv), redirect_stdout(out), redirect_stderr(err):
+            code = engine.main()
+        return code, out.getvalue(), err.getvalue()
+
+    def manifest(self) -> Path:
+        path = self.root / "manifest.json"
+        path.write_text(json.dumps({"schema_version": 2, "boundary": "review-to-delivery", "owner": "code-chief",
+                                    "submission_id": "s1", "revision": "r1", "revisions": ["r1"],
+                                    "artifact_hashes": {}, "evidence": {}}), encoding="utf-8")
+        return path
+
+    def test_an_unexpected_exception_is_an_engine_error(self):
+        for fault in (TypeError("unhashable type: 'list'"), AttributeError("'NoneType' has no attribute 'get'"),
+                      KeyError("boundary"), RecursionError("maximum recursion depth exceeded")):
+            with self.subTest(fault=type(fault).__name__):
+                with mock.patch.object(engine.Package, "check_evidence", side_effect=fault):
+                    code, out, err = self.run_main(self.manifest())
+                self.assertEqual(code, 2)
+                self.assertEqual(out, "", "an engine error must not print a result that reads like a verdict")
+                error = json.loads(err)
+                self.assertEqual(error["boundary"], "review-to-delivery")
+                self.assertTrue(error["engine_error"].startswith(f"internal error: {type(fault).__name__}"), error)
+
+    def test_a_bad_input_keeps_its_plain_message(self):
+        code, out, err = self.run_main(self.root / "no-such-manifest.json")
+        self.assertEqual(code, 2)
+        self.assertNotIn("internal error", json.loads(err)["engine_error"])
+
+
+class DigestFormatTests(EngineCase):
+    """A sha256 is exactly 64 hex digits: `$` let a trailing newline through."""
+
+    GOOD = "a" * 64
+
+    def test_only_a_bare_64_digit_hex_string_is_a_digest(self):
+        self.assertTrue(engine.is_sha256(self.GOOD))
+        self.assertTrue(engine.is_sha256(self.GOOD.upper()), "hex case is folded, as before")
+        for bad in (self.GOOD + "\n", "\n" + self.GOOD, self.GOOD + " ", self.GOOD[:-1], self.GOOD + "a",
+                    "g" * 64, "", None, 5, [self.GOOD], {"sha256": self.GOOD}):
+            with self.subTest(bad=bad):
+                self.assertFalse(engine.is_sha256(bad))
+
+    def test_an_artifact_digest_with_a_trailing_newline_is_invalid(self):
+        (self.root / "evidence.md").write_text("# Evidence\n", encoding="utf-8")
+        package = self.package("review-to-delivery", artifact_hashes={
+            "evidence.md": content_sha256(self.root / "evidence.md") + "\n"})
+        package.check_artifacts()
+        self.assertEqual(package.failures, ["invalid artifact digest: evidence.md"])
+
+    def test_a_taste_digest_with_a_trailing_newline_is_refused(self):
+        record = {"added": [], "updated": [], "deprecated": [], "revoked": [], "unchanged": ["p1"],
+                  "before_digest": self.GOOD, "after_digest": self.GOOD}
+        package = self.package("taste-review")
+        package.check_taste_record("preference_diff", "preference_diff", record)
+        self.assertEqual(package.failures, [])
+        package.check_taste_record("preference_diff", "preference_diff", {**record, "after_digest": self.GOOD + "\n"})
+        self.assertEqual(package.failures, ["preference_diff record requires sha256 after_digest"])
+
+    def test_a_persistence_hash_with_a_trailing_newline_is_refused(self):
+        record = {"requested_destinations": ["preferences/taste.md"], "committed_revisions": [1],
+                  "hashes": {"taste.md": self.GOOD + "\n"}, "atomicity_status": "committed", "rollback_result": "none"}
+        package = self.package("taste-review")
+        package.check_taste_record("persistence_result", "persistence_result", record)
+        self.assertEqual(package.failures, ["persistence_result record requires a non-empty hashes map of sha256 values"])
+
+
+class PathReferenceTests(EngineCase):
+    """A path reference is a declared path field or an artifact-backed value, not any string that has a dot."""
+
+    def evidence_failures(self, evidence: dict, boundary: str = "review-to-delivery") -> list[str]:
+        proof = self.root / "proof.md"
+        proof.write_text("# Proof\n\nObserved.\n", encoding="utf-8")
+        package = self.package(boundary, evidence, artifact_hashes={"proof.md": content_sha256(proof)})
+        package.check_artifacts()
+        package.check_evidence()
+        return [f for f in package.failures if "path" in f or "artifact" in f]
+
+    def test_a_version_or_a_hostname_on_a_prose_key_is_not_a_file(self):
+        for prose in ("1.4.2", "v1.2.0", "api.example.com", "10.0.0.1"):
+            with self.subTest(prose=prose):
+                failures = self.evidence_failures({
+                    "executed_probes": {"artifacts": ["proof.md"], "result": {"status": "pass"}},
+                    "residual_risk": prose, "revision_lineage": [prose, "r1"]})
+                self.assertEqual([f for f in failures if "unhashed" in f], [])
+
+    def test_a_revision_ref_may_be_a_version_number(self):
+        package = self.package("build-to-review", {"approved_design_revision": "1.4.2"}, artifact_hashes={})
+        package.check_artifacts()
+        package.check_evidence()
+        self.assertFalse(any("approved_design_revision" in f and "path" in f for f in package.failures), package.failures)
+
+    def test_a_declared_path_field_still_needs_a_hashed_artifact_whatever_it_looks_like(self):
+        for ref in ("missing.md", "1.4.2", "api.example.com"):
+            with self.subTest(ref=ref):
+                failures = self.evidence_failures({
+                    "executed_probes": {"artifacts": ["proof.md", ref], "result": {"status": "pass"}}})
+                self.assertIn(f"evidence references unhashed path: executed_probes -> {ref}", failures)
+
+    def test_a_bare_value_on_an_artifact_backed_key_is_still_a_file_reference(self):
+        failures = self.evidence_failures({"decisions": "1.4.2"}, "design-to-build")
+        self.assertIn("evidence references unhashed path: decisions -> 1.4.2", failures)
+
+    def test_an_absolute_drive_or_unc_reference_is_refused_not_read_as_prose(self):
+        for ref in ("/var/log/tests.log", "C:/logs/tests.log", "C:\\logs\\tests.log", "//server/share/tests.log",
+                    "\\\\server\\share\\tests.log", "/tests.log"):
+            with self.subTest(ref=ref):
+                failures = self.evidence_failures({
+                    "executed_probes": {"artifacts": ["proof.md", ref], "result": {"status": "pass"}}})
+                self.assertIn(f"evidence references unhashed path: executed_probes -> {ref}", failures)
+
+    def test_shapes_that_are_not_files_stay_prose(self):
+        for text in ("https://example.com/a.md", "10:15.30", "desktop, mobile, both themes", "see proof.md", "r1 <- design r1",
+                     "", "no extension", "C:", "trailing."):
+            with self.subTest(text=text):
+                self.assertFalse(engine.is_path_like(text))
 
 
 if __name__ == "__main__":

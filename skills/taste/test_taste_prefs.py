@@ -1058,6 +1058,32 @@ class LockTests(WriterCase):
         self.assertEqual(commit["revision"], 1)
         self.assertEqual(self.record("project")["entries"]["a"]["value"], 1)
 
+    @unittest.skipIf(sys.platform == "win32", "the writer cannot probe another process on Windows")
+    def test_a_writer_killed_while_it_holds_the_lock_does_not_wedge_the_store(self):
+        hang = (
+            "import importlib.util, sys, time\n"
+            "spec = importlib.util.spec_from_file_location('taste_prefs', sys.argv[1])\n"
+            "taste = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(taste)\n"
+            "taste.mutate = lambda *args, **kwargs: time.sleep(600)\n"
+            "taste.main(['--project-root', sys.argv[2], 'set', '--scope', 'project', '--id', 'a', '--value', '1'])\n"
+        )
+        child = subprocess.Popen([sys.executable, "-c", hang, str(SCRIPT), str(self.project)])
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        deadline = time.time() + 30
+        while not self.lock_path("project").exists() and time.time() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(json.loads(self.lock_path("project").read_text(encoding="utf-8"))["pid"], child.pid)
+        error = self.refused("set", "--scope", "project", "--id", "b", "--value", "2")
+        self.assertEqual((error["code"], error["holder_pid"]), ("locked", child.pid))
+        child.kill()
+        child.wait()
+        result = self.ok("set", "--scope", "project", "--id", "b", "--value", "2")
+        self.assertEqual([(note["reason"], note["prior"]["pid"]) for note in result["lock_reclaimed"]], [("holder-dead", child.pid)])
+        self.assertEqual(sorted(self.record("project")["entries"]), ["b"])
+        self.assertFalse(self.lock_path("project").exists())
+
     def test_a_lock_older_than_the_bound_is_reclaimed_even_though_its_pid_is_alive(self):
         self.leave_lock("project", created_at=minutes_ago(9))
         self.assertEqual(self.refused("set", "--scope", "project", "--id", "a", "--value", "1")["code"], "locked")

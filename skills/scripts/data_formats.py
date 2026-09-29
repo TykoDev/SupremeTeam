@@ -132,9 +132,31 @@ def parse_scalar(value: str) -> Any:
     return value
 
 
+_BLOCK_INDICATORS = {"|", ">", "|-", "|+", ">-", ">+"}
+
+
 def _normalise_lines(text: str) -> list[tuple[int, str, int]]:
+    """Split text into (indent, content, line number), dropping comments and blank lines.
+
+    The lines of a block scalar are the exception: inside one, a line that starts
+    with ``#``, a `` #`` tail, and a blank line are all content, so they pass
+    through raw and blank lines are kept as empty content one level deeper than
+    the header.
+    """
     lines: list[tuple[int, str, int]] = []
+    block_indent: int | None = None
     for lineno, raw in enumerate(text.splitlines(), 1):
+        indent = len(raw) - len(raw.lstrip(" "))
+        if block_indent is not None:
+            if not raw.strip():
+                lines.append((block_indent + 1, "", lineno))
+                continue
+            if indent > block_indent:
+                if "\t" in raw[: len(raw) - len(raw.lstrip(" \t"))]:
+                    raise DataFormatError(f"tabs are not supported for indentation at line {lineno}")
+                lines.append((indent, raw[indent:], lineno))
+                continue
+            block_indent = None
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
         stripped = raw.strip()
@@ -143,9 +165,31 @@ def _normalise_lines(text: str) -> list[tuple[int, str, int]]:
         leading = raw[: len(raw) - len(raw.lstrip(" \t"))]
         if "\t" in leading:
             raise DataFormatError(f"tabs are not supported for indentation at line {lineno}")
-        indent = len(raw) - len(raw.lstrip(" "))
-        lines.append((indent, _strip_comment(raw[indent:]), lineno))
+        content = _strip_comment(raw[indent:])
+        lines.append((indent, content, lineno))
+        if not content.startswith("-") and ":" in content and content.split(":", 1)[1].strip() in _BLOCK_INDICATORS:
+            block_indent = indent
     return lines
+
+
+def _block_scalar(pieces: list[str], folded: bool) -> str:
+    """Join a block scalar's lines: literal keeps line breaks, folded joins with a space.
+
+    A blank line inside a folded scalar is a paragraph break, so it becomes a
+    newline in place of the space rather than a second space.
+    """
+    if not folded:
+        return "\n".join(pieces).rstrip()
+    text, blanks = "", 0
+    for piece in pieces:
+        if not piece:
+            blanks += 1
+            continue
+        if text:
+            text += "\n" * blanks if blanks else " "
+        text += piece
+        blanks = 0
+    return text.rstrip()
 
 
 def _parse_block(lines: list[tuple[int, str, int]], index: int, indent: int) -> tuple[Any, int]:
@@ -204,13 +248,18 @@ def _parse_block(lines: list[tuple[int, str, int]], index: int, indent: int) -> 
             raise DataFormatError(f"duplicate mapping key: {key!r} at line {lineno}")
         raw_value = raw_value.strip()
         index += 1
-        if raw_value in {"|", ">", "|-", "|+", ">-", ">+"}:
+        if raw_value in _BLOCK_INDICATORS:
             pieces: list[str] = []
+            base: int | None = None
             while index < len(lines) and lines[index][0] > indent:
                 child_indent, child_content, _ = lines[index]
-                pieces.append(child_content if child_indent else "")
+                if child_content:
+                    base = child_indent if base is None else base
+                    pieces.append(" " * max(child_indent - base, 0) + child_content)
+                else:
+                    pieces.append("")
                 index += 1
-            result[key] = ("\n" if raw_value.startswith("|") else " ").join(pieces).rstrip()
+            result[key] = _block_scalar(pieces, folded=raw_value.startswith(">"))
         elif raw_value:
             result[key] = parse_scalar(raw_value)
             if index < len(lines) and lines[index][0] > indent:

@@ -4,9 +4,10 @@
 Canonical records are JSON; ``taste.md`` is a deterministic rendered view.  The
 global root is ``SUPREMETEAM_HOME`` when set, then ``CODEX_HOME``/``AGENTS_HOME``,
 then the platform user-data convention (XDG data, macOS Application Support, or
-Windows local app data). It is rejected if it resolves inside the checkout. The
-module deliberately uses only the Python standard library so hooks and recovery
-tools can invoke it in the minimum supported runtime.
+Windows local app data). An empty or relative ``XDG_DATA_HOME`` is ignored, as the
+XDG specification requires. The root is rejected if it resolves inside the
+checkout. The module deliberately uses only the Python standard library so hooks
+and recovery tools can invoke it in the minimum supported runtime.
 """
 from __future__ import annotations
 
@@ -29,13 +30,34 @@ from typing import Any
 
 SCHEMA = "supremeteam-taste-preferences"
 VERSION = 1
+EXPORT_SCHEMA = "supremeteam-taste-export"
+EXPORT_VERSION = 1
+READS = ("status", "list", "effective", "diff", "export")
 MUTATIONS = {"propose", "confirm", "set", "deprecate", "revoke", "promote", "specialize", "import", "reset"}
 STATES = {"proposed", "active", "deprecated"}
+ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}")
+# The vocabularies of taste-doctrine.md sections 3 and 4. test_taste_store.py compares them
+# with the doctrine, which stays canonical.
+CATEGORIES = ("visual-style", "typography", "color-behavior", "density", "motion", "layout", "component-behavior", "content-tone", "interaction-patterns", "technology-ergonomics", "anti-preference")
+STRENGTHS = ("hard", "strong", "soft")
+SOURCES = ("explicit", "imported", "confirmed-inference")
 # A mutation holds the lock for milliseconds, so a lock this old was abandoned.
 LOCK_STALE_AFTER = 600
-SENSITIVE_KEY = re.compile(r"(?:secret|password|passwd|credential|token|api[_-]?key|private[_-]?key|cookie|authorization|prompt|conversation|email|phone|address|full[_-]?name|user[_-]?name|social[_-]?security|ssn)", re.I)
+# Design vocabulary reuses several of these words as qualifiers (design tokens, phone layouts,
+# cookie banners), so a key is judged by whole words: the credential words anywhere, and the
+# personal-datum words only when they end the key or are followed by a datum qualifier.
+CREDENTIAL_KEY = re.compile(r"(?<![a-z0-9])(?:secrets?|passwords?|passwd|credentials?|authorization|ssn|api-?keys?|private-?keys?|social-?security|full-?names?|user-?names?)(?![a-z])")
+DATUM_KEY = re.compile(r"(?<![a-z0-9])(?:tokens?|cookies?|prompts?|conversations?|emails?|phones?|address(?:es)?)\d*(?:-(?:numbers?|values?|ids?|hash|lines?\d*|text|history|\d+))*$")
+DESIGN_TOKEN = re.compile(r"(?<![a-z0-9])design-tokens?(?![a-z0-9])")
+# Key material has a separator after the prefix and a token-shaped tail. Real sk- keys carry
+# digits, which words such as skeleton-loading-states and skeuomorphic-glass-theme do not.
 SENSITIVE_VALUE = re.compile(
-    r"(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._~+/=-]+|\b(?:sk|ghp|github_pat|xox[baprs])[-_A-Za-z0-9]{12,}|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b)",
+    r"(?:-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    r"|\bBearer\s+[A-Za-z0-9._~+/=-]{16,}"
+    r"|\bsk_(?:live|test)_[A-Za-z0-9]{10,}"
+    r"|\bsk-(?=[A-Za-z_-]*\d)[A-Za-z0-9_-]{16,}"
+    r"|\b(?:ghp|github_pat|xox[baprs])[-_A-Za-z0-9]{12,}"
+    r"|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b)",
     re.I,
 )
 MAX_TEXT = 1000
@@ -78,7 +100,10 @@ def global_root() -> Path:
         return (base / "SupremeTeam").resolve()
     if sys.platform == "darwin":
         return (Path.home() / "Library" / "Application Support" / "SupremeTeam").resolve()
-    return (Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "supremeteam").resolve()
+    xdg = Path(os.environ.get("XDG_DATA_HOME", ""))
+    # Path("") is the current directory, and a relative value would resolve against it.
+    base = xdg if xdg.is_absolute() else Path.home() / ".local" / "share"
+    return (base / "supremeteam").resolve()
 
 
 def paths(project_root: Path, scope: str) -> dict[str, Path]:
@@ -117,33 +142,74 @@ def blank(project_root: Path, scope: str) -> dict[str, Any]:
     return result
 
 
-def validate_safe(value: Any, path: str = "$", *, redact: bool = False) -> Any:
+def sensitive_key(key: str) -> bool:
+    """Whether a field name or an id names a credential or a personal datum."""
+    spaced = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1-\2", key)
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", spaced)
+    words = DESIGN_TOKEN.sub("design", re.sub(r"[^a-z0-9]+", "-", spaced.lower()).strip("-"))
+    return bool(CREDENTIAL_KEY.search(words) or DATUM_KEY.search(words))
+
+
+def validate_safe(value: Any, path: str = "$", *, redact: bool = False, report: list[dict[str, str]] | None = None) -> Any:
+    """Refuse secrets and personal fields, or with ``redact`` remove them and record where in ``report``."""
     if isinstance(value, dict):
         clean = {}
         for key, item in value.items():
-            if not isinstance(key, str) or SENSITIVE_KEY.search(key):
+            if not isinstance(key, str) or sensitive_key(key):
                 if redact:
+                    if report is not None:
+                        report.append({"path": f"{path}.{key}", "action": "dropped"})
                     continue
                 raise TasteError("sensitive_input", "sensitive or personal fields are not accepted", field=f"{path}.{key}")
-            clean[key] = validate_safe(item, f"{path}.{key}", redact=redact)
+            clean[key] = validate_safe(item, f"{path}.{key}", redact=redact, report=report)
         return clean
     if isinstance(value, list):
         if len(value) > 100:
             raise TasteError("unbounded_input", "lists are limited to 100 items", field=path)
-        return [validate_safe(v, f"{path}[]", redact=redact) for v in value]
+        return [validate_safe(v, f"{path}[]", redact=redact, report=report) for v in value]
     if isinstance(value, str):
-        if len(value) > MAX_TEXT:
-            if redact:
-                return value[:MAX_TEXT] + "[REDACTED:TRUNCATED]"
+        if len(value) > MAX_TEXT and not redact:
             raise TasteError("unbounded_input", f"text is limited to {MAX_TEXT} characters", field=path)
-        if SENSITIVE_VALUE.search(value):
+        # The scan runs before truncation and reaches past the cut, so a secret in the kept text
+        # or straddling the cut is caught; it never runs over unbounded input.
+        if SENSITIVE_VALUE.search(value[:MAX_TEXT + 256]):
             if redact:
+                if report is not None:
+                    report.append({"path": path, "action": "redacted"})
                 return "[REDACTED]"
             raise TasteError("sensitive_input", "secret, credential, token, or personal identifier detected", field=path)
+        if len(value) > MAX_TEXT:
+            if report is not None:
+                report.append({"path": path, "action": "truncated"})
+            return value[:MAX_TEXT] + "[REDACTED:TRUNCATED]"
         return value
     if value is None or isinstance(value, (bool, int, float)):
         return value
     raise TasteError("invalid_input", "preference values must be JSON data", field=path)
+
+
+def check_id(entry_id: str | None) -> None:
+    """An id is a stable label, and a label must not embed a secret or name a personal datum."""
+    if not entry_id or not ID_PATTERN.fullmatch(entry_id):
+        raise TasteError("invalid_id", "--id must be a stable lowercase identifier")
+    check_id_safe(entry_id)
+
+
+def check_id_safe(entry_id: str, **where: Any) -> None:
+    if sensitive_key(entry_id) or SENSITIVE_VALUE.search(entry_id):
+        raise TasteError("sensitive_input", "an id may not embed a secret, contain a credential word, or end in a personal-data word; say what the preference is about", field="id", **where)
+
+
+def validate_proposal(value: Any) -> None:
+    """Enforce the doctrine section 4 fields on a new proposal. Stored entries are never re-checked."""
+    if not isinstance(value, dict):
+        raise TasteError("invalid_entry", "a proposal is a JSON object carrying category, normalized_rule, strength, and source")
+    for field, allowed in (("category", CATEGORIES), ("strength", STRENGTHS), ("source", SOURCES)):
+        if value.get(field) not in allowed:
+            raise TasteError("invalid_entry", f"{field} is required and must be a taste-doctrine.md identifier", field=field, allowed=list(allowed))
+    rule = value.get("normalized_rule")
+    if not isinstance(rule, str) or not rule.strip():
+        raise TasteError("invalid_entry", "normalized_rule is required and must be a non-empty string", field="normalized_rule")
 
 
 def validate(record: Any, expected_scope: str) -> dict[str, Any]:
@@ -163,13 +229,16 @@ def load(project_root: Path, scope: str) -> tuple[dict[str, Any], bool]:
     target = paths(project_root, scope)["json"]
     if not target.exists():
         return blank(project_root, scope), False
+    recovery = "repair or move the file explicitly before retrying"
     try:
         record = json.loads(target.read_text(encoding="utf-8"))
         return validate(record, scope), True
-    except TasteError:
-        raise
+    except TasteError as exc:
+        # The doctrine refuses an unreadable record and one that fails validation alike; the
+        # specific validation code stays in `reason` for whoever repairs the file.
+        raise TasteError("corrupt_record", "canonical record failed validation; original bytes were preserved", path=str(target), reason=exc.code, detail=exc.message, recovery=recovery) from exc
     except Exception as exc:
-        raise TasteError("corrupt_record", "canonical record is unreadable; original bytes were preserved", path=str(target), recovery="repair or move the file explicitly before retrying") from exc
+        raise TasteError("corrupt_record", "canonical record is unreadable; original bytes were preserved", path=str(target), recovery=recovery) from exc
 
 
 def render(record: dict[str, Any]) -> str:
@@ -452,9 +521,11 @@ def mutate(record: dict[str, Any], command: str, args: argparse.Namespace, sourc
     result = copy.deepcopy(record)
     entry_id = args.entry_id
     if command in {"propose", "set"}:
-        if not entry_id or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,127}", entry_id):
-            raise TasteError("invalid_id", "--id must be a stable lowercase identifier")
-        value = validate_safe(parse_value(args.value), redact=args.redact)
+        check_id(entry_id)
+        raw = parse_value(args.value)
+        if command == "propose":
+            validate_proposal(raw)
+        value = validate_safe(raw, redact=args.redact)
         result["entries"][entry_id] = {"state": "proposed" if command == "propose" else "active", "value": value, "updated_at": now()}
         result["tombstones"].pop(entry_id, None)
     elif command in {"confirm", "deprecate"}:
@@ -472,6 +543,7 @@ def mutate(record: dict[str, Any], command: str, args: argparse.Namespace, sourc
     elif command in {"promote", "specialize"}:
         if not source or entry_id not in source["entries"]:
             raise TasteError("not_found", "source preference entry does not exist", id=entry_id)
+        check_id_safe(entry_id)
         result["entries"][entry_id] = copy.deepcopy(source["entries"][entry_id]); result["entries"][entry_id]["updated_at"] = now()
         result["tombstones"].pop(entry_id, None)
     elif command == "import":
@@ -479,12 +551,16 @@ def mutate(record: dict[str, Any], command: str, args: argparse.Namespace, sourc
             incoming = json.loads(Path(args.input).read_text(encoding="utf-8"))
         except Exception as exc:
             raise TasteError("invalid_import", "import must be a readable JSON file", path=args.input) from exc
+        if isinstance(incoming, dict) and "entries" in incoming and ("schema" in incoming or "schema_version" in incoming):
+            if (incoming.get("schema"), incoming.get("schema_version")) not in ((SCHEMA, VERSION), (EXPORT_SCHEMA, EXPORT_VERSION)):
+                raise TasteError("invalid_schema", "an import that declares a schema must declare a recognised schema and version", expected=[SCHEMA, EXPORT_SCHEMA])
         entries = incoming.get("entries", incoming) if isinstance(incoming, dict) else incoming
         if not isinstance(entries, dict) or len(entries) > 1000:
             raise TasteError("invalid_import", "import entries must be a JSON object with at most 1000 entries")
-        for key, item in entries.items():
-            if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,127}", str(key)):
+        for index, (key, item) in enumerate(entries.items()):
+            if not ID_PATTERN.fullmatch(str(key)):
                 raise TasteError("invalid_id", "import contains an invalid stable id", id=str(key))
+            check_id_safe(key, index=index)
             value = item.get("value") if isinstance(item, dict) and "value" in item else item
             result["entries"][key] = {"state": "active", "value": validate_safe(value, redact=args.redact), "updated_at": now()}
             result["tombstones"].pop(key, None)
@@ -497,6 +573,11 @@ def mutate(record: dict[str, Any], command: str, args: argparse.Namespace, sourc
     result["generated_at"] = now(); result["previous_revision_digest"] = prior
     result["canonical_record_digest"] = digest(result)
     return result
+
+
+def substance(entry: dict[str, Any] | None) -> tuple[Any, Any] | None:
+    """What two stores can disagree about. updated_at differs on every write, so it is left out."""
+    return None if entry is None else (entry["state"], entry["value"])
 
 
 def selected_scopes(scope: str | None) -> list[str]:
@@ -525,9 +606,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-root", default=".")
     sub = parser.add_subparsers(dest="command", required=True)
-    for command in ("status", "list", "effective", "diff", "export"):
+    for command in READS:
         p = sub.add_parser(command); p.add_argument("--scope", choices=("global", "project", "both"), default="both")
-        if command == "export": p.add_argument("--output", required=True); p.add_argument("--redact", action="store_true", default=True)
+        if command == "export":
+            p.add_argument("--output", required=True)
+            # Redaction is a safety property, so an export cannot be made unredacted. The flag stays
+            # so callers that already pass it keep working.
+            p.add_argument("--redact", action="store_true", help="accepted and ignored: an export is always redacted")
     for command in sorted(MUTATIONS):
         p = sub.add_parser(command); p.add_argument("--scope", choices=("global", "project", "both"), required=True)
         p.add_argument("--expect-revision", action="append"); p.add_argument("--id", dest="entry_id"); p.add_argument("--value")
@@ -536,6 +621,8 @@ def main(argv: list[str] | None = None) -> int:
     held = None
     try:
         if args.command not in MUTATIONS:
+            if args.command == "diff" and args.scope != "both":
+                raise TasteError("invalid_scope", "diff compares the project store with the global store; use --scope both")
             loaded = {scope: load(root, scope)[0] for scope in selected_scopes(args.scope)}
             if args.command == "status":
                 return emit(True, stores={s: {"path": str(paths(root, s)["json"]), "exists": paths(root, s)["json"].exists(), "revision": r["revision"], "digest": r["canonical_record_digest"]} for s, r in loaded.items()})
@@ -546,12 +633,12 @@ def main(argv: list[str] | None = None) -> int:
                     if item["state"] == "active": effective[key] = {**item, "source_scope": scope}
             if args.command == "effective": return emit(True, entries=effective)
             if args.command == "diff":
-                project, global_ = load(root, "project")[0], load(root, "global")[0]
-                ids = sorted(set(project["entries"]) | set(global_["entries"]))
-                return emit(True, differences=[{"id": i, "project": project["entries"].get(i), "global": global_["entries"].get(i)} for i in ids if project["entries"].get(i) != global_["entries"].get(i)])
-            export = {"schema": "supremeteam-taste-export", "schema_version": 1, "generated_at": now(), "provenance": {s: r["canonical_record_digest"] for s, r in loaded.items()}, "entries": validate_safe(effective, redact=True)}
+                project, global_ = loaded["project"]["entries"], loaded["global"]["entries"]
+                return emit(True, differences=[{"id": i, "project": project.get(i), "global": global_.get(i)} for i in sorted(set(project) | set(global_)) if substance(project.get(i)) != substance(global_.get(i))])
+            redactions: list[dict[str, str]] = []
+            export = {"schema": EXPORT_SCHEMA, "schema_version": EXPORT_VERSION, "generated_at": now(), "provenance": {s: r["canonical_record_digest"] for s, r in loaded.items()}, "entries": validate_safe(effective, redact=True, report=redactions)}
             Path(args.output).write_text(json.dumps(export, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            return emit(True, output=str(Path(args.output).resolve()), redacted=True)
+            return emit(True, output=str(Path(args.output).resolve()), redacted=True, redactions=redactions)
         scopes = selected_scopes(args.scope)
         destinations = {scope: paths(root, scope) for scope in scopes}
         held = lock(destinations)

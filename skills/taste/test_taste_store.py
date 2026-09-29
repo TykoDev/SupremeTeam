@@ -1,8 +1,10 @@
-"""Unit tests for the storage engine of the Taste writer.
+"""Unit tests for the storage engine and the safety validators of the Taste writer.
 
 `test_taste_prefs.py` proves the command surface end to end. These tests reach the
 pieces underneath directly: process probing and lock staleness, the lock and its
-races, the commit helpers, and the retry policy for a file another process holds open.
+races, the commit helpers, global root resolution, owner identity, the secret and
+field-name validators, proposal validation, and the checks that keep the writer's
+vocabularies equal to `taste-doctrine.md`.
 """
 from __future__ import annotations
 
@@ -13,6 +15,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import stat
 import subprocess
@@ -23,6 +26,10 @@ from unittest import mock
 
 
 SCRIPT = Path(__file__).with_name("taste_prefs.py")
+DOCTRINE = Path(__file__).resolve().parents[1] / "taste-doctrine.md"
+OWNERSHIP = Path(__file__).resolve().parents[1] / "save-ownership.yaml"
+SKILL = Path(__file__).with_name("SKILL.md")
+WORKFLOW = Path(__file__).with_name("references") / "workflow.md"
 _SPEC = importlib.util.spec_from_file_location("taste_prefs", SCRIPT)
 taste = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(taste)
@@ -405,6 +412,385 @@ class ReplaceRetryTests(unittest.TestCase):
                 with self.assertRaises(PermissionError):
                     taste.unlink_with_retry(Path(directory) / "present")
             self.assertEqual(unlink.call_count, 8)
+
+
+class GlobalRootTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name).resolve()
+        self.home = self.tmp / "home"
+
+    def root(self, env: dict[str, str], platform: str = "linux") -> Path:
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(taste.sys, "platform", platform), mock.patch.object(taste.Path, "home", return_value=self.home):
+            return taste.global_root()
+
+    def test_an_explicit_root_wins_and_is_used_as_given(self):
+        self.assertEqual(self.root({"SUPREMETEAM_HOME": str(self.tmp / "explicit"), "CODEX_HOME": str(self.tmp / "codex")}), self.tmp / "explicit")
+
+    def test_codex_home_then_agents_home_hold_a_supremeteam_directory(self):
+        self.assertEqual(self.root({"CODEX_HOME": str(self.tmp / "codex"), "AGENTS_HOME": str(self.tmp / "agents")}), self.tmp / "codex" / "supremeteam")
+        self.assertEqual(self.root({"AGENTS_HOME": str(self.tmp / "agents")}), self.tmp / "agents" / "supremeteam")
+
+    def test_an_empty_override_is_ignored(self):
+        self.assertEqual(self.root({"SUPREMETEAM_HOME": "", "CODEX_HOME": "", "AGENTS_HOME": str(self.tmp / "agents")}), self.tmp / "agents" / "supremeteam")
+
+    def test_linux_uses_an_absolute_xdg_data_home(self):
+        self.assertEqual(self.root({"XDG_DATA_HOME": str(self.tmp / "xdg")}), self.tmp / "xdg" / "supremeteam")
+
+    def test_linux_falls_back_to_the_home_directory_without_xdg_data_home(self):
+        self.assertEqual(self.root({}), (self.home / ".local" / "share" / "supremeteam").resolve())
+
+    def test_an_empty_or_relative_xdg_data_home_is_ignored_not_resolved_against_the_current_directory(self):
+        expected = (self.home / ".local" / "share" / "supremeteam").resolve()
+        for name, value in {"empty": "", "relative": "data", "dot": ".", "dotted relative": "./share", "tilde": "~/share"}.items():
+            with self.subTest(name=name):
+                root = self.root({"XDG_DATA_HOME": value})
+                self.assertEqual(root, expected)
+                self.assertNotEqual(root, (Path.cwd() / "supremeteam").resolve())
+
+    def test_macos_uses_application_support(self):
+        self.assertEqual(self.root({"XDG_DATA_HOME": str(self.tmp / "xdg")}, "darwin"), (self.home / "Library" / "Application Support" / "SupremeTeam").resolve())
+
+    def test_windows_prefers_local_app_data_then_app_data_then_the_profile(self):
+        local, roaming = self.tmp / "local", self.tmp / "roaming"
+        self.assertEqual(self.root({"LOCALAPPDATA": str(local), "APPDATA": str(roaming)}, "win32"), local / "SupremeTeam")
+        self.assertEqual(self.root({"LOCALAPPDATA": "", "APPDATA": str(roaming)}, "win32"), roaming / "SupremeTeam")
+        self.assertEqual(self.root({}, "win32"), (self.home / "AppData" / "Local" / "SupremeTeam").resolve())
+
+
+class PathsTests(StoreCase):
+    def test_project_files_live_under_the_project_preferences_directory(self):
+        found = taste.paths(self.project, "project")
+        base = self.project / "skillset-saves" / "preferences"
+        self.assertEqual(found, {"json": base / "taste.json", "md": base / "taste.md", "history": base / "_history", "journal": base / "taste.journal.jsonl", "lock": base / "taste.lock"})
+
+    def test_global_files_live_under_the_global_root_outside_the_checkout(self):
+        found = taste.paths(self.project, "global")
+        self.assertEqual(found["json"], self.global_home / "preferences" / "taste.json")
+        self.assertNotIn(self.project, found["json"].parents)
+
+    def test_a_global_root_that_is_or_contains_the_checkout_is_refused(self):
+        for root in (self.project, self.project / "inside", self.project / "a" / "b"):
+            with self.subTest(root=root), mock.patch.dict(os.environ, {"SUPREMETEAM_HOME": str(root)}):
+                with self.assertRaises(taste.TasteError) as raised:
+                    taste.paths(self.project, "global")
+                self.assertEqual(raised.exception.code, "unsafe_global_path")
+
+    def test_the_files_the_writer_creates_are_the_ones_the_ownership_policy_declares(self):
+        declared = set(re.findall(r"^\s+- skillset-saves/preferences/(\S+)$", OWNERSHIP.read_text(encoding="utf-8"), re.M))
+        written = {path.name + ("/*" if key == "history" else "") for key, path in taste.paths(self.project, "project").items()}
+        self.assertEqual(written, declared)
+
+    def test_a_scope_is_identified_by_kind_and_an_opaque_project_hash(self):
+        project = taste.scope_identity(self.project, "project")
+        self.assertEqual(project, {"kind": "project", "id": "sha256:" + hashlib.sha256(str(self.project).encode()).hexdigest()})
+        self.assertEqual(taste.scope_identity(self.project, "global"), {"kind": "global", "id": "host-user-data"})
+
+
+class OwnerIdentityTests(unittest.TestCase):
+    def owner(self, explicit: str | None, user: dict | None = None):
+        """The owner identity for a given SUPREMETEAM_OWNER (unset when None) on a fixed account and host."""
+        with mock.patch.dict(os.environ):
+            os.environ.pop("SUPREMETEAM_OWNER", None)
+            if explicit is not None:
+                os.environ["SUPREMETEAM_OWNER"] = explicit
+            with mock.patch.object(taste.getpass, "getuser", **(user or {"return_value": "alice"})), mock.patch.object(taste.socket, "gethostname", return_value="workstation-7"):
+                return taste.owner_identity()
+
+    def test_a_well_formed_explicit_owner_is_recorded_as_given(self):
+        self.assertEqual(self.owner("Team-1_a.b"), {"id": "Team-1_a.b", "source": "SUPREMETEAM_OWNER"})
+
+    def test_a_malformed_explicit_owner_is_replaced_by_an_opaque_identifier(self):
+        for value in ("has space", "", "a" * 81, "bad/slash", "bad:colon"):
+            with self.subTest(value=value):
+                owner = self.owner(value)
+                self.assertEqual(owner["source"], "local-opaque")
+                self.assertRegex(owner["id"], r"^sha256:[0-9a-f]{64}$")
+
+    def test_the_opaque_owner_is_a_hash_that_carries_no_account_or_host_name(self):
+        owner = self.owner(None)
+        self.assertEqual(owner, {"id": "sha256:" + hashlib.sha256(b"alice\0workstation-7").hexdigest(), "source": "local-opaque"})
+        text = json.dumps(owner)
+        self.assertNotIn("alice", text)
+        self.assertNotIn("workstation", text)
+
+    def test_no_owner_is_recorded_when_none_can_be_derived(self):
+        self.assertIsNone(self.owner(None, {"side_effect": OSError("no account")}))
+        with mock.patch.object(taste, "owner_identity", return_value=None):
+            self.assertNotIn("owner", taste.blank(Path("."), "project"))
+
+    def test_a_blank_record_is_self_consistent_and_starts_at_revision_zero(self):
+        record = taste.blank(Path("."), "project")
+        self.assertEqual((record["revision"], record["entries"], record["tombstones"], record["previous_revision_digest"]), (0, {}, {}, None))
+        self.assertIs(taste.validate(record, "project"), record)
+        self.assertEqual(record["canonical_record_digest"], taste.digest(record))
+
+
+class SensitiveKeyTests(unittest.TestCase):
+    """A key is sensitive by whole words, so ordinary design vocabulary passes and real fields do not."""
+
+    SENSITIVE = (
+        "password", "Password", "user_password", "userPassword", "PASSWORD_HASH", "password-confirmation", "password2", "passwd",
+        "secret", "client_secret", "secretKey", "secret_key", "secrets", "secret2", "credential", "credentials", "credentials_json",
+        "authorization", "Authorization", "ssn", "SSN", "ssn_last4", "social_security_number",
+        "api_key", "apiKey", "API_KEY", "APIKey", "api-keys", "apikey", "private_key", "privateKey",
+        "full_name", "fullName", "user_name", "userName", "username", "usernames",
+        "token", "tokens", "access_token", "accessToken", "refresh_token", "api-token", "token_value", "token_id", "token2",
+        "cookie", "cookies", "session_cookie", "cookie_value",
+        "prompt", "system_prompt", "prompt_text", "prompt_history",
+        "conversation", "conversation_history", "conversation_id",
+        "email", "emails", "user_email", "emailAddress", "email_address", "contact-email", "email2",
+        "phone", "phones", "phone_number", "phoneNumbers", "home_phone", "mobile.phone", "phone2",
+        "address", "addresses", "home_address", "street_address", "address_line1", "address_line_2", "address2",
+    )
+    ORDINARY = (
+        "design-tokens", "design_tokens", "designTokens", "DesignTokens", "design-token", "design-token-scale", "ui.design-tokens", "design-tokens.naming",
+        "phone-layout", "phoneLayout", "phone_breakpoints", "mobile-phone-frame",
+        "email-density", "email-template-style", "cookie-banner", "cookie-consent-layout", "cookies-banner",
+        "address-bar", "address_bar", "address-book-layout", "prompt-style", "prompt-dialog", "prompt_position",
+        "conversation-density", "conversational-ui", "tokenizer", "tokenization", "microphone", "headphones", "telephone",
+        "addressable", "emailed", "passwordless", "secretary", "secretive", "authorize", "density", "layout", "color-scheme", "spacing", "ui.density", "tables.density-v2", "a", "", "-", "...",
+    )
+
+    def test_credential_and_personal_datum_names_are_sensitive(self):
+        for key in self.SENSITIVE:
+            with self.subTest(key=key):
+                self.assertTrue(taste.sensitive_key(key))
+
+    def test_ordinary_design_vocabulary_is_not_sensitive(self):
+        for key in self.ORDINARY:
+            with self.subTest(key=key):
+                self.assertFalse(taste.sensitive_key(key))
+
+    def test_a_credential_word_counts_anywhere_but_a_personal_datum_word_only_at_the_end(self):
+        self.assertTrue(taste.sensitive_key("password-strength-meter"))
+        self.assertTrue(taste.sensitive_key("secret-santa-theme"))
+        self.assertFalse(taste.sensitive_key("email-newsletter-layout"))
+        self.assertTrue(taste.sensitive_key("newsletter-email"))
+
+    def test_the_design_token_exemption_does_not_hide_a_credential_beside_it(self):
+        self.assertFalse(taste.sensitive_key("design-tokens"))
+        self.assertTrue(taste.sensitive_key("design-tokens-secret"))
+        self.assertTrue(taste.sensitive_key("design-tokens.api-token"))
+
+
+class SensitiveValueTests(unittest.TestCase):
+    ORDINARY = (
+        "skeleton-loading-states", "skeuomorphic-glass-theme", "sketchy-hand-drawn-icons", "sketch-style-illustrations", "skeleton_placeholders",
+        "skeuomorphic-shadows", "prefer skeleton-loading states over spinners", "skewed-card-layout", "skin-tone-neutral-palette", "skeletons",
+        "sk-loading-states-for-everything-everywhere", "risk-averse-confirmation-dialogs", "task-abcdefghijklmnop123", "desk-lamp-elevation-shadows",
+        "Bearer of bad news is fine", "bearer authentication", "a bearer credential-free scheme", "the ghpages theme", "xoxo hugs and kisses",
+        "dark-mode-first-with-high-contrast", "e-mail newsletter layout", "compact", "", "sk-", "sk-1234", "sk-abcdefghijk1234",
+    )
+    SECRETS = (
+        "sk-abcdefghijklmnopqrstuvwxyz123456", "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789", "sk-ant-api03-abcdefghijklmnopqrstuvwxyz",
+        "SK-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456", "sk_" "live_abcdefghijklmnopqrstuvwx", "sk_" "test_4eC39HqLyjWDarjtT1zdp7dc",
+        "gh" "p_abcdefghijklmnopqrstuvwxyz0123456789", "github_" "pat_11ABCDEFG0abcdefghijkl_abcdefghij", "xo" "xb-1234567890-abcdefghijkl", "xo" "xp-abcdefghijklmnop",
+        "-----BEGIN RSA PRIVATE KEY-----", "-----BEGIN PRIVATE KEY-----", "-----BEGIN OPENSSH PRIVATE KEY-----",
+        "Bearer eyJhbGciOiJIUzI1NiJ9.abc", "bearer abcdefghijklmnop1234", "person@example.com", "first.last+tag@sub.example.co.uk",
+    )
+
+    def test_ordinary_design_vocabulary_is_not_mistaken_for_a_secret(self):
+        for text in self.ORDINARY:
+            with self.subTest(text=text):
+                self.assertIsNone(taste.SENSITIVE_VALUE.search(text))
+
+    def test_real_secret_shapes_are_still_found(self):
+        for text in self.SECRETS:
+            with self.subTest(text=text):
+                self.assertIsNotNone(taste.SENSITIVE_VALUE.search(text))
+
+    def test_a_secret_is_found_inside_a_sentence(self):
+        for secret in self.SECRETS:
+            for template in ("my key is {} remember it", "{}", "curl -H 'Authorization: {}' now", "value={};"):
+                with self.subTest(secret=secret, template=template):
+                    self.assertIsNotNone(taste.SENSITIVE_VALUE.search(template.format(secret)))
+
+    def test_an_sk_key_needs_a_separator_a_token_shaped_tail_and_a_digit(self):
+        digits = "abcdefghijklmn12"
+        self.assertIsNotNone(taste.SENSITIVE_VALUE.search(f"sk-{digits}"))
+        self.assertIsNone(taste.SENSITIVE_VALUE.search(f"sk-{digits[:-1]}"))
+        self.assertIsNone(taste.SENSITIVE_VALUE.search("sk-" + "a" * 40))
+        self.assertIsNone(taste.SENSITIVE_VALUE.search("skabcdefghijklmnopqrstuvwxyz123456"))
+        self.assertIsNotNone(taste.SENSITIVE_VALUE.search("sk_" "live_" + "a" * 10))
+        self.assertIsNone(taste.SENSITIVE_VALUE.search("sk_" "live_" + "a" * 9))
+
+    def test_a_bearer_credential_needs_a_long_token_after_the_word(self):
+        self.assertIsNotNone(taste.SENSITIVE_VALUE.search("Bearer " + "a" * 16))
+        self.assertIsNone(taste.SENSITIVE_VALUE.search("Bearer " + "a" * 15))
+
+
+class ValidateSafeTests(unittest.TestCase):
+    def refused(self, value, **kwargs) -> "taste.TasteError":
+        with self.assertRaises(taste.TasteError) as raised:
+            taste.validate_safe(value, **kwargs)
+        return raised.exception
+
+    def test_json_data_passes_unchanged(self):
+        value = {"a": [1, 2.5, True, None, "text"], "b": {"c": "compact"}, "d": ""}
+        self.assertEqual(taste.validate_safe(value), value)
+        self.assertEqual(taste.validate_safe(value, redact=True), value)
+
+    def test_a_sensitive_field_is_refused_with_its_full_path(self):
+        error = self.refused({"a": {"b": [{"password": "x"}]}})
+        self.assertEqual((error.code, error.details["field"]), ("sensitive_input", "$.a.b[].password"))
+
+    def test_a_secret_value_is_refused_with_its_path_and_without_its_content(self):
+        error = self.refused({"a": ["ok", "person@example.com"]})
+        self.assertEqual((error.code, error.details["field"]), ("sensitive_input", "$.a[]"))
+        self.assertNotIn("person@example.com", json.dumps([error.message, error.details]))
+
+    def test_redaction_drops_fields_replaces_secret_values_truncates_and_reports_each(self):
+        report: list[dict[str, str]] = []
+        cleaned = taste.validate_safe({"keep": "compact", "email": "x", "note": "mail person@example.com", "long": "x" * 1200, "nested": {"api_key": "k", "fine": 1}}, redact=True, report=report)
+        self.assertEqual(cleaned, {"keep": "compact", "note": "[REDACTED]", "long": "x" * 1000 + "[REDACTED:TRUNCATED]", "nested": {"fine": 1}})
+        self.assertEqual(sorted(report, key=lambda item: item["path"]), [
+            {"path": "$.email", "action": "dropped"},
+            {"path": "$.long", "action": "truncated"},
+            {"path": "$.nested.api_key", "action": "dropped"},
+            {"path": "$.note", "action": "redacted"},
+        ])
+
+    def test_the_report_is_optional_and_stays_empty_when_nothing_is_removed(self):
+        report: list[dict[str, str]] = []
+        taste.validate_safe({"a": "b"}, redact=True, report=report)
+        self.assertEqual(report, [])
+        taste.validate_safe({"email": "x"}, redact=True)
+
+    def test_text_over_the_limit_is_refused_unless_redacting(self):
+        taste.validate_safe("x" * 1000)
+        error = self.refused("x" * 1001)
+        self.assertEqual((error.code, error.details["field"]), ("unbounded_input", "$"))
+        self.assertEqual(taste.validate_safe("x" * 1001, redact=True), "x" * 1000 + "[REDACTED:TRUNCATED]")
+
+    def test_more_than_one_hundred_list_items_are_refused_even_when_redacting(self):
+        taste.validate_safe(list(range(100)))
+        for redact in (False, True):
+            with self.subTest(redact=redact):
+                self.assertEqual(self.refused(list(range(101)), redact=redact).code, "unbounded_input")
+
+    def test_a_secret_in_text_that_will_be_truncated_is_replaced_not_kept(self):
+        key = "sk-abcdefghijklmnopqrstuvwxyz123456"
+        report: list[dict[str, str]] = []
+        for name, text in {"at the start": "person@example.com " + "x" * 1100, "straddling the cut": "x" * 989 + " " + key + " " + "y" * 200, "just inside the cut": "x" * (999 - len(key)) + " " + key + " " + "y" * 300}.items():
+            with self.subTest(name=name):
+                self.assertEqual(taste.validate_safe(text, redact=True, report=report), "[REDACTED]")
+        self.assertEqual({item["action"] for item in report}, {"redacted"})
+
+    def test_a_secret_beyond_the_scanned_window_leaves_with_the_truncated_text(self):
+        text = "x" * 1400 + "person@example.com"
+        report: list[dict[str, str]] = []
+        cleaned = taste.validate_safe(text, redact=True, report=report)
+        self.assertEqual(cleaned, "x" * 1000 + "[REDACTED:TRUNCATED]")
+        self.assertEqual(report, [{"path": "$", "action": "truncated"}])
+
+    def test_the_secret_scan_never_reads_unbounded_text(self):
+        seen = []
+
+        class Recording:
+            def search(self, text):
+                seen.append(len(text))
+
+        with mock.patch.object(taste, "SENSITIVE_VALUE", Recording()):
+            taste.validate_safe("a" * 2_000_000, redact=True)
+            taste.validate_safe("b" * 999, redact=True)
+        self.assertEqual(seen, [taste.MAX_TEXT + 256, 999])
+
+    def test_a_value_that_is_not_json_data_is_refused(self):
+        for value in (object(), {1, 2}, b"bytes", (1, 2)):
+            with self.subTest(value=type(value).__name__):
+                self.assertEqual(self.refused(value).code, "invalid_input")
+
+
+class ProposalValidationTests(unittest.TestCase):
+    VALID = {"category": "density", "normalized_rule": "Prefer compact table rows", "strength": "soft", "source": "explicit"}
+
+    def refused(self, value) -> "taste.TasteError":
+        with self.assertRaises(taste.TasteError) as raised:
+            taste.validate_proposal(value)
+        self.assertEqual(raised.exception.code, "invalid_entry")
+        return raised.exception
+
+    def test_a_proposal_with_the_four_doctrine_fields_is_accepted(self):
+        self.assertIsNone(taste.validate_proposal(self.VALID))
+
+    def test_every_category_strength_and_source_the_doctrine_lists_is_accepted(self):
+        for category in taste.CATEGORIES:
+            for strength in taste.STRENGTHS:
+                for source in taste.SOURCES:
+                    with self.subTest(category=category, strength=strength, source=source):
+                        taste.validate_proposal({**self.VALID, "category": category, "strength": strength, "source": source})
+
+    def test_the_optional_doctrine_fields_and_unknown_extras_are_carried_as_given(self):
+        extras = {"rationale": "Chose it in review", "confidence": 0.6, "source_run": "run-1", "applicability_selectors": {"surface": "tables"}, "conflicts": ["other"], "supersedes": "old", "expires_at": "2027-01-01", "anything": [1]}
+        self.assertIsNone(taste.validate_proposal({**self.VALID, **extras}))
+
+    def test_a_proposal_that_is_not_an_object_is_refused(self):
+        for value in ("text", ["density"], 7, None, True):
+            with self.subTest(value=value):
+                self.refused(value)
+
+    def test_each_required_field_must_be_present(self):
+        for field in self.VALID:
+            with self.subTest(field=field):
+                error = self.refused({key: item for key, item in self.VALID.items() if key != field})
+                self.assertEqual(error.details["field"], field)
+
+    def test_an_identifier_outside_the_doctrine_is_refused_with_the_allowed_values(self):
+        cases = {"category": ("colour", "Density", "", 5, ["density"], None), "strength": ("medium", "HARD", "", 1), "source": ("inferred", "confirmed", "user", "", None)}
+        allowed = {"category": taste.CATEGORIES, "strength": taste.STRENGTHS, "source": taste.SOURCES}
+        for field, values in cases.items():
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    error = self.refused({**self.VALID, field: value})
+                    self.assertEqual((error.details["field"], error.details["allowed"]), (field, list(allowed[field])))
+
+    def test_the_normalized_rule_must_be_a_non_empty_string(self):
+        for value in ("", "   ", "\n", 5, None, ["compact"], {"rule": "x"}):
+            with self.subTest(value=value):
+                self.assertEqual(self.refused({**self.VALID, "normalized_rule": value}).details["field"], "normalized_rule")
+
+
+class DoctrineParityTests(unittest.TestCase):
+    """The doctrine is canonical for the vocabularies and the operation table; the writer must equal it."""
+
+    def setUp(self):
+        self.doctrine = DOCTRINE.read_text(encoding="utf-8")
+
+    @staticmethod
+    def section(text: str, start: str, end: str) -> str:
+        return text.split(start, 1)[1].split(end, 1)[0]
+
+    def test_the_category_registry_equals_section_three(self):
+        identifiers = re.findall(r"^\| `([a-z-]+)` \|", self.section(self.doctrine, "## 3. Stable categories", "## 4."), re.M)
+        self.assertEqual(len(identifiers), 11)
+        self.assertEqual(sorted(identifiers), sorted(taste.CATEGORIES))
+        self.assertEqual(len(set(taste.CATEGORIES)), len(taste.CATEGORIES))
+
+    def test_the_strength_and_source_enumerations_equal_section_four(self):
+        section = self.section(self.doctrine, "## 4. Entry record and provenance", "## 5.")
+        for field, values in (("strength", taste.STRENGTHS), ("source", taste.SOURCES)):
+            with self.subTest(field=field):
+                line = re.search(rf"^- `{field}`: (.+?);", section, re.M)
+                self.assertIsNotNone(line)
+                self.assertEqual(sorted(re.findall(r"`([a-z-]+)`", line.group(1))), sorted(values))
+
+    def test_the_operation_table_equals_the_commands_the_writer_exposes(self):
+        rows = dict(re.findall(r"^\|[^|]+\| `([a-z]+)` \| (yes|no) \|", self.section(self.doctrine, "## 6. Operations", "## 7."), re.M))
+        self.assertEqual(set(rows), set(taste.READS) | taste.MUTATIONS)
+        self.assertEqual({name for name, mutating in rows.items() if mutating == "yes"}, taste.MUTATIONS)
+
+    def test_the_skill_names_every_command_the_writer_exposes(self):
+        sentence = re.search(r"`taste_prefs.py` exposes (.+?)\.\n", SKILL.read_text(encoding="utf-8"), re.S)
+        self.assertIsNotNone(sentence)
+        self.assertEqual(set(re.findall(r"`([a-z]+)`", sentence.group(1))), set(taste.READS) | taste.MUTATIONS)
+
+    def test_every_error_code_the_writer_raises_appears_in_the_runbooks(self):
+        codes = set(re.findall(r'TasteError\(\s*"([a-z_]+)"', SCRIPT.read_text(encoding="utf-8")))
+        self.assertGreaterEqual(len(codes), 19)
+        documented = "\n".join(path.read_text(encoding="utf-8") for path in (SKILL, WORKFLOW, DOCTRINE))
+        self.assertEqual(sorted(code for code in codes if f"`{code}`" not in documented), [])
 
 
 if __name__ == "__main__":

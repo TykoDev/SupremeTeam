@@ -277,7 +277,7 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
         self.assertFalse(any("shipped" in w for w in out["warnings"]), out["warnings"])
         # A copy with the same content is the shipped spec; an altered copy is not.
         same = self.root / "same-gates.yaml"
-        same.write_bytes(GATE_SPEC.read_bytes().replace(b"\n", b"\r\n"))
+        same.write_bytes(GATE_SPEC.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
         self.assertTrue(result(run_cli("review-to-delivery", manifest, "--gates", str(same)))["gate_spec_is_shipped"])
         altered = self.root / "altered-gates.yaml"
         altered.write_text("# altered\n" + GATE_SPEC.read_text(encoding="utf-8"), encoding="utf-8")

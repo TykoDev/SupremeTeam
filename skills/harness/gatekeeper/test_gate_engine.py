@@ -126,6 +126,51 @@ class WaiverWordingTests(EngineCase):
         self.assertEqual(package.failures, ["evidence not waivable: implementation"])
 
 
+class NewFailureRoutingTests(EngineCase):
+    """A REVISE routes each failure to the owner of the key it names, by finding the key in the message."""
+
+    def route(self, boundary: str, package: engine.Package) -> dict:
+        contract = self.spec["boundaries"][boundary]
+        return engine.revise_packet(sorted(package.failures), list(contract["required_evidence"]),
+                                    self.spec["evidence_owners"][boundary], contract["submitter"])
+
+    def test_a_refused_waiver_goes_to_the_key_owner(self):
+        package = self.package("security-review")
+        package.applicability_record("vulnerability_scan", WaiverWordingTests.record("covered elsewhere"))
+        packet = self.route("security-review", package)
+        self.assertEqual(list(packet["by_key"]), ["vulnerability_scan"])
+        self.assertEqual(list(packet["by_owner"]), ["security-review"])
+
+    def test_a_contradictory_record_goes_to_the_key_owner(self):
+        package = self.package("build-to-review")
+        package.check_result_record("tests", "probe", {"artifacts": ["log.txt"], "result": {"status": "pass"}, "exit_code": 1})
+        packet = self.route("build-to-review", package)
+        self.assertEqual((list(packet["by_key"]), list(packet["by_owner"])), (["tests"], ["test-builder"]))
+
+    def test_a_handoff_digest_mismatch_goes_to_the_handoff_owner_not_the_profile_owner(self):
+        package = self.package("taste-review", {"effective_profile": {"entries": [], "digest": "a" * 64}})
+        package.check_taste_record("consumer_handoff", "consumer_handoff",
+                                   {"consuming_pipeline": "design", "effective_profile_digest": "b" * 64,
+                                    "applicability_summary": "UI"})
+        self.assertEqual(list(self.route("taste-review", package)["by_key"]), ["consumer_handoff"])
+
+    def test_a_missing_overlay_goes_to_the_stack_lock_owner(self):
+        digest = StackLockTests.registry(self, overlay_file=False)
+        package = self.package("design-to-build")
+        package.check_stack_lock("stack_lock", {"slug": "demo", "versions": [19], "overlay_sha256": digest})
+        self.assertEqual(list(self.route("design-to-build", package)["by_owner"]), ["commander"])
+
+    def test_the_run_schema_failure_names_no_key_so_it_goes_to_the_submitter(self):
+        run = self.root / "skillset-saves" / "runs" / "run-a" / "review"
+        run.mkdir(parents=True)
+        package = engine.Package(run / "manifest.json", {"boundary": "review-to-delivery"}, "review-to-delivery", self.spec)
+        packet = self.route("review-to-delivery", package)
+        self.assertEqual(packet["by_key"], {})
+        self.assertEqual(list(packet["by_owner"]), ["code-chief"])
+        self.assertTrue(any(f.startswith("manifest inside a run must declare schema_version 2") for f in packet["unassigned"]),
+                        packet["unassigned"])
+
+
 class PolicyFieldTests(EngineCase):
     """A field that means "someone named this" counts only when it is a real string.
 

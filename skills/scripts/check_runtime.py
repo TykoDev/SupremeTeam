@@ -823,6 +823,23 @@ def _runtime_manifest_inputs(
     return minimum, minimum_version, optional, launchers, errors
 
 
+def _probe_optional_dependencies(
+    dependencies: list[dict[str, Any]],
+    errors: list[str],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for dependency in dependencies:
+        name = str(dependency.get("name", ""))
+        module = OPTIONAL_MODULES.get(name)
+        if module is None:
+            _add_error(errors, f"unsupported optional dependency probe: {name}")
+            available = False
+        else:
+            available = importlib.util.find_spec(module) is not None
+        rows.append({"name": name, "version": dependency.get("version"), "available": available, "fallback": dependency.get("fallback")})
+    return rows
+
+
 def _read_package(
     path: Path,
     root: Path,
@@ -2696,28 +2713,19 @@ def check(
         _add_error(errors, str(exc))
         return _redact_value(_runtime_error_report(errors))
     minimum_value, minimum, optional_dependencies, launchers, manifest_errors = _runtime_manifest_inputs(manifest)
+    errors = []
+    optional = _probe_optional_dependencies(optional_dependencies, errors)
     if manifest_errors or minimum is None:
         return _redact_value(
             _runtime_error_report(
-                manifest_errors,
+                manifest_errors + errors,
                 minimum=minimum_value,
-                optional=optional_dependencies,
+                optional=optional,
                 launchers=launchers,
             )
         )
     current = (sys.version_info.major, sys.version_info.minor)
     python_ok = current >= minimum
-    errors = []
-    optional = []
-    for dependency in optional_dependencies:
-        name = str(dependency.get("name", ""))
-        module = OPTIONAL_MODULES.get(name)
-        if module is None:
-            _add_error(errors, f"unsupported optional dependency probe: {name}")
-            available = False
-        else:
-            available = importlib.util.find_spec(module) is not None
-        optional.append({"name": name, "version": dependency.get("version"), "available": available, "fallback": dependency.get("fallback")})
     report = {
         "python": {"current": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}", "minimum": minimum_value, "status": "ok" if python_ok else "too_old"},
         "optional_dependencies": optional,

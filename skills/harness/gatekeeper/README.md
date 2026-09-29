@@ -84,19 +84,40 @@ revision_ref, and the Taste records preference_diff, confirmation,
 conflict_analysis, persistence_result, effective_profile, consumer_handoff,
 variant_set for the four redesign mocks and for the one variant built from the
 chosen mock, and selection for the decision between them),
-`inputs` that bind evidence to project files by sha256 (line-ending agnostic: `data_formats.content_sha256`) (stale
-evidence fails as `input hash drift`), and applicability records instead of bare
-fallback strings. Schema 1 flat packages keep working.
+`inputs` that bind evidence to project files by sha256 (line-ending agnostic:
+`data_formats.content_sha256`), and applicability records instead of bare
+fallback strings. A manifest inside a run must declare schema 2: an absent or
+schema-1 `schema_version` fails, and the package is checked as schema 2 anyway so
+the typed checks still run and every failure arrives at once. Schema 1 flat
+packages keep working outside a run, and the result says in `warnings` that no
+typed check ran (`declared_schema_version` and `manifest_schema_version` show the
+downgrade).
+
+**Verified and attested.** A typed record is the submitter's own statement. The
+gate checks its shape, that each artifact it names exists and matches its digest,
+that each `inputs` entry still hashes as recorded (stale evidence fails as
+`input hash drift`; scan and render records must carry `inputs`, probe records
+need not), and that a `pass` does not sit beside a non-zero `exit_code`. It never
+opens an artifact or re-runs a command, and each probe record that binds no
+inputs is listed in `warnings`. See
+[`../../contracts/evidence-standards.md`](../../contracts/evidence-standards.md)
+§ Binding evidence to source.
 
 **Verdict records.** `--verdict-out <path>` writes the result with `verdict_id`,
 `package_fingerprint`, and `gate_spec_digest`; `--prior <record>` compares
 against it and reports `prior_reusable` plus `idempotency_drift`. A verdict is
 reusable only for the same boundary, submission, revision, fingerprint, and gate
-spec digest.
+spec digest. Those values are unkeyed sha256 hashes of public inputs: they detect
+drift, they do not authenticate, and `--prior` is trusted as supplied. The result
+reports `gate_spec_is_shipped`, `registry_is_shipped`, and `prior_record` (its
+path, its `gate_spec_digest`, and whether that is the shipped spec), with a
+`warnings` entry for each that is not the shipped input. A reader at delivery
+re-runs `check.py` with none of `--gates`, `--registry`, or `--prior` rather than
+trusting a stored verdict.
 
 ## Boundaries
 
-`gates.yaml` (spec revision 4) carries ten boundaries. Each names the
+`gates.yaml` (spec revision 5) carries ten boundaries. Each names the
 transition it guards and the single skill permitted to submit it. The
 human-readable table lives in [`../../../docs/gatekeepers.md`](../../../docs/gatekeepers.md)
 and a drift test asserts it matches `gates.yaml` exactly.
@@ -194,4 +215,8 @@ and boundary identity, typed result records, the finding policy, waivers,
 YAML-comment specs, quoted diagnostic markers, and verdict reuse.
 `test_gatecheck.py` covers the package-shape engine, and `test_gate_revise.py`
 the batched REVISE packet — per-key grouping, per-owner routing, and the
-changed/unchanged evidence split on a resubmission.
+changed/unchanged evidence split on a resubmission. `test_gate_engine.py` drives
+`check.py` in process, which is what lets it run a matrix (every waivable key at
+every boundary, every evidence type the spec declares) and inject an engine fault:
+waiver wording, policy fields that must be real strings, unhashable values,
+digest and path-reference shapes, typed-record consistency, and the schema rule.

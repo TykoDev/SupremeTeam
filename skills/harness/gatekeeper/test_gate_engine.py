@@ -233,6 +233,85 @@ class PolicyFieldTests(EngineCase):
         self.assertTrue(any("was built for '' but selection chose 'None'" in f for f in package.failures), package.failures)
 
 
+class ResultRecordConsistencyTests(EngineCase):
+    """A typed record is the submitter's own statement; the gate refuses the contradiction it can see."""
+
+    EXTRA = {
+        "probe": {}, "audit": {},
+        "scan": {"tool": "pip-audit", "command": "pip-audit -r requirements.txt", "observed_at": "2026-09-05T00:00:00Z"},
+        "render": {"breakpoints": ["375", "1280"], "themes": ["light", "dark"]},
+    }
+
+    def record(self, kind: str, **fields) -> dict:
+        return {"artifacts": ["evidence/log.txt"], "result": {"status": "pass"}, **self.EXTRA[kind], **fields}
+
+    def check(self, kind: str, record: dict, key: str = "tests") -> engine.Package:
+        package = self.package("build-to-review")
+        package.check_result_record(key, kind, record)
+        return package
+
+    def test_a_pass_beside_a_non_zero_exit_code_is_refused_for_every_result_kind(self):
+        for kind in self.EXTRA:
+            for code in (1, 2, 7, 137, -1):
+                with self.subTest(kind=kind, code=code):
+                    package = self.check(kind, self.record(kind, exit_code=code))
+                    self.assertIn(f"tests result pass contradicts exit_code {code}", package.failures)
+
+    def test_a_pass_with_a_zero_or_an_absent_exit_code_is_not_contradicted(self):
+        for kind in ("probe", "audit"):
+            for fields in ({"exit_code": 0}, {}, {"exit_code": None}):
+                with self.subTest(kind=kind, fields=fields):
+                    package = self.check(kind, self.record(kind, **fields))
+                    self.assertFalse(any("exit_code" in f for f in package.failures), package.failures)
+
+    def test_an_exit_code_that_is_not_an_integer_is_refused(self):
+        for kind in self.EXTRA:
+            for bad in ("0", 0.0, 1.5, True, False, [0], {"code": 0}):
+                with self.subTest(kind=kind, bad=bad):
+                    package = self.check(kind, self.record(kind, exit_code=bad))
+                    self.assertIn("tests exit_code must be an integer", package.failures)
+
+    def test_a_scan_that_passes_must_carry_an_exit_code_of_zero(self):
+        self.assertIn("tests scan record with result pass requires exit_code 0",
+                      self.check("scan", self.record("scan", exit_code=None)).failures)
+        clean = self.check("scan", self.record("scan", exit_code=0,
+                                               inputs=[]))  # inputs fail separately; exit_code must not
+        self.assertFalse(any("exit_code" in f for f in clean.failures), clean.failures)
+
+    def test_a_non_passing_status_reports_only_its_own_failure(self):
+        package = self.check("scan", self.record("scan", exit_code=None, result={"status": "unavailable"}))
+        self.assertIn("tests result not passing: unavailable", package.failures)
+        self.assertFalse(any("exit_code" in f for f in package.failures), package.failures)
+
+    def bound_record(self, kind: str = "probe") -> dict:
+        source = self.root / "src.py"
+        source.write_text("x = 1\n", encoding="utf-8")
+        return self.record(kind, inputs=[{"path": "src.py", "sha256": content_sha256(source)}])
+
+    def test_a_probe_that_binds_no_inputs_is_listed_as_attested(self):
+        for kind in ("probe", "audit"):
+            with self.subTest(kind=kind):
+                package = self.check(kind, self.record(kind))
+                self.assertEqual(package.failures, [])
+                self.assertEqual(package.warnings, ["tests binds no inputs: attested, not tied to the source it describes"])
+
+    def test_a_probe_with_verified_inputs_is_not_listed(self):
+        package = self.check("probe", self.bound_record())
+        self.assertEqual((package.failures, package.warnings), ([], []))
+
+    def test_a_probe_input_that_drifted_fails_as_stale_evidence(self):
+        record = self.bound_record()
+        (self.root / "src.py").write_text("x = 2\n", encoding="utf-8")
+        self.assertEqual(self.check("probe", record).failures, ["tests input hash drift (stale evidence): src.py"])
+
+    def test_scan_and_render_records_fail_instead_of_warning_when_they_bind_nothing(self):
+        for kind in ("scan", "render"):
+            with self.subTest(kind=kind):
+                package = self.check(kind, self.record(kind, exit_code=0))
+                self.assertIn("tests record must bind inputs (path + sha256) to the inspected source", package.failures)
+                self.assertEqual(package.warnings, [])
+
+
 class UnhashableValueTests(EngineCase):
     """A list or object where a word belongs is a finding, not a crash."""
 

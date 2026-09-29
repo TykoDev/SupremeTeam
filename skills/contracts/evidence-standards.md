@@ -97,15 +97,35 @@ changed source with an unchanged evidence file fails the gate as input hash
 drift. This is why application source is never copied wholesale into a run:
 the binding, not the copy, is what proves currency.
 
-This rule is enforced, not asserted.
-[`../harness/gatekeeper/check.py`](../harness/gatekeeper/check.py) re-hashes
-every declared input at submission and fails the package with
-`<key> input hash drift (stale evidence): <path>` when the digest no longer
-matches. A typed record that names no `inputs` at all fails earlier with
-`<key> record must bind inputs (path + sha256) to the inspected source`, a
-missing file with `<key> input missing`, and a record whose `input_revision`
-does not match the package revision with its own failure. The behavior is pinned
-by `../harness/gatekeeper/test_gate_run_layout.py`.
+What the gate enforces and what it takes on trust are different, and the split
+matters most for `tests` and `runtime`:
+
+- **Enforced for every typed record that names `inputs`.**
+  [`../harness/gatekeeper/check.py`](../harness/gatekeeper/check.py) re-hashes
+  each declared input at submission and fails the package with
+  `<key> input hash drift (stale evidence): <path>` when the digest no longer
+  matches, `<key> input missing` for an absent file, `<key> input entry requires
+  path and sha256` for a malformed entry, and its own failure when
+  `input_revision` differs from the package revision.
+- **Required only for `scan` and `render` records.** Those two fail with
+  `<key> record must bind inputs (path + sha256) to the inspected source` when
+  they name none. A `probe` or `audit` record (`tests`, `runtime`,
+  `executed_probes`, `reproduction`, `evidence_chain`, `test_matrix`,
+  `denial_path_evidence`, `mock_parity`, `parity_evidence`) may omit `inputs`,
+  and then passes with nothing tying it to any source. The result lists each
+  such record in `warnings` as `<key> binds no inputs: attested, not tied to the
+  source it describes`, and whether a log describes the revision being shipped is
+  the gatekeeper's judgement. A submitter who wants the drift check on a test
+  log binds its inputs.
+- **Attested, never verified.** check.py does not open an artifact, re-run a
+  command, or confirm which tool produced a record. `result.status`, `tool`,
+  `command`, and `observed_at` are the submitter's own statement, and a hash
+  proves a file is unchanged since it was hashed, not that it says what the
+  record claims. The one contradiction the gate can see, a `pass` beside a
+  non-zero `exit_code`, fails as `<key> result pass contradicts exit_code <n>`.
+
+The behavior is pinned by `../harness/gatekeeper/test_gate_run_layout.py` and
+`../harness/gatekeeper/test_gate_engine.py`.
 
 ## Calibration
 
@@ -152,7 +172,8 @@ mechanical column.
 
 | Standard | Backing | What fails |
 |----------|---------|------------|
-| Evidence that depends on source binds to it by path and sha256 | Machine-checked by `check.py` | `input hash drift (stale evidence)`, `record must bind inputs (path + sha256) to the inspected source`, `input missing`, `input entry requires path and sha256` |
+| Evidence that names source `inputs` stays bound to them by path and sha256 | Machine-checked by `check.py` for any typed record that carries `inputs`; the inputs are required for `scan` and `render` records only | `input hash drift (stale evidence)`, `input missing`, `input entry requires path and sha256`, and for scan and render alone `record must bind inputs (path + sha256) to the inspected source`. A `probe` or `audit` record with no `inputs` passes and is listed in `warnings`. |
+| A typed record is what it claims to be | Judgement, apart from one contradiction | `check.py` checks shape, artifact digests, input digests, and that a pass does not sit beside a non-zero exit code (`result pass contradicts exit_code`, `exit_code must be an integer`). It never opens an artifact, so that a log is the runner's own output, that a scan ran, or that a capture shows the surface is for the gatekeeper. |
 | A key declared artifact-backed points at a hashed artifact | Machine-checked by `check.py` | `evidence not artifact-backed`, `evidence references unhashed path`, `evidence references defective artifact` |
 | A named artifact exists and matches its declared digest | Machine-checked by `check.py` | `missing artifact`, `invalid artifact digest`, `artifact hash mismatch` |
 | Evidence stays inside the run's evidence root | Machine-checked by `check.py` | `escapes evidence root`, `references another run`, `input path must be project-relative` |
@@ -161,7 +182,7 @@ mechanical column.
 | One revision per submission, and no stale verdict lineage | Machine-checked by `check.py` | `mixed revisions`, `revisions must contain exactly one value`, `stale verdict revision`, `idempotency drift on unchanged revision` |
 | Hollow-completion language is not evidence | Machine-checked by `check.py` against the blocked-phrase list in `../harness/gatekeeper/_gatecheck.py` | `blocked phrase: <file>` |
 | An evidence document's internal references resolve | Machine-checked by `check.py` | `broken link in <file>`, `link escapes <root>` |
-| A scan record carries its command, exit code, and inputs | Machine-checked by `check.py`, produced by [`../scripts/scan_record.py`](../scripts/scan_record.py), which distinguishes `pass`, `fail`, `error`, `unavailable`, and `not-run` | `scan record requires <field>`, `scan record requires exit_code` |
+| A scan record carries its command, exit code, and inputs | Machine-checked by `check.py`, produced by [`../scripts/scan_record.py`](../scripts/scan_record.py), which distinguishes `pass`, `fail`, `error`, `unavailable`, and `not-run` | `scan record requires <field>`, `scan record requires exit_code`. `pass` records that the scanner exited 0, which is not proof that it found nothing: a scanner that exits 0 with findings needs its own exit-code flag. |
 | An inferred render record states its limitation | Machine-checked by `check.py` | `inferred render requires a limitation statement` |
 | The current-run rule | Partly machine-checked by `check.py` | `run_id does not match run directory`, `manifest inside a run must declare run_id`. That an item was genuinely produced during this run is judgement. |
 | Specificity and trust labels | Judgement | Nothing. No comparator reads `exact`, `bounded`, `contextual`, `observed`, `corroborated`, `reported`, or `inferred`. |

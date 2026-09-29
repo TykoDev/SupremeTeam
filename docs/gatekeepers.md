@@ -90,8 +90,8 @@ records rather than prose.
 
 | Type | Keys | Must carry |
 |---|---|---|
-| `probe` | `tests`, `runtime`, `executed_probes`, `reproduction`, `evidence_chain`, `test_matrix`, `denial_path_evidence`, `mock_parity`, `parity_evidence` | Hashed artifacts and `result.status: pass`. The executed log is the artifact. A bare count is not evidence. |
-| `scan` | `vulnerability_scan` | Hashed artifacts, tool, command, exit code, `observed_at`, `inputs` bound by sha256, and a passing status. `unavailable` or `error` is a data gap, never a clean scan. |
+| `probe` | `tests`, `runtime`, `executed_probes`, `reproduction`, `evidence_chain`, `test_matrix`, `denial_path_evidence`, `mock_parity`, `parity_evidence` | Hashed artifacts and `result.status: pass`. The executed log is the artifact. A bare count is not evidence. `inputs` are optional and re-hashed when present; a probe that omits them passes and is listed in `warnings`. |
+| `scan` | `vulnerability_scan` | Hashed artifacts, tool, command, exit code, `observed_at`, `inputs` bound by sha256, and a passing status. `unavailable` or `error` is a data gap, never a clean scan. A pass never sits beside a non-zero exit code, and it records that the scanner exited 0, not that it found nothing. |
 | `render` | `rendered_verification`, `mock_rendering` | Hashed captures, the breakpoints and themes covered, `inputs` bound to the rendered source, and pass or `inferred` with a stated limitation. |
 | `findings` | `findings`, `security_evidence`, `defects`, `accessibility_evidence` | Items with id, severity, status. Critical must be verified or not-applicable with a reason. Major must be verified, not-applicable with a reason, or deferred with a named owner and reopen trigger. |
 | `verdict` | `review_verdict` | APPROVED, or REVISE/ESCALATE with a challenge record naming `by` and `reason`. |
@@ -108,7 +108,25 @@ records rather than prose.
 
 `inputs` is the part that stops evidence going stale. It binds a record to the
 project source it describes, so when that source changes the evidence fails as
-`input hash drift` instead of quietly continuing to look valid.
+`input hash drift` instead of quietly continuing to look valid. Scan and render
+records must carry it. A test or probe record carries it only if its author binds
+it, which `test-builder` is told to do; one that does not passes the gate and is
+listed in the result's `warnings`.
+
+### What the gate verifies, and what it takes on trust
+
+A typed record is the submitter's own statement. The gate checks it against
+itself and against the files it names, and goes no further.
+
+| The gate verifies | The gate takes on trust |
+|---|---|
+| Every artifact a record names exists and matches its sha256 | That the artifact is what the record says: the runner's own log, the scanner's own output, a capture of the surface |
+| Every `inputs` entry still hashes to the recorded value (`input hash drift`), and scan and render records carry some | That a test or probe record binds any source at all; one that binds none is listed in `warnings` |
+| `result.status` is an allowed, passing value, and a pass does not sit beside a non-zero `exit_code` | That `tool`, `command`, `observed_at`, and `exit_code` are true; the gate never runs or re-runs anything |
+| Each record has the shape its type requires | Who wrote it: `decided_by`, `actor`, and `by` are free text |
+
+The last column is what a gatekeeper's judgement is for. An approved package
+proves the left column and nothing in the right one.
 
 ## The two validators
 
@@ -148,6 +166,16 @@ Every verdict record carries `verdict_id`, `package_fingerprint`, and
 `gate_spec_digest`. It is reusable only when `check.py --prior` reports
 `prior_reusable: true`, which needs the same boundary, submission, revision,
 fingerprint, and gate spec.
+
+Those three values are plain sha256 hashes of public inputs, not signatures. They
+show that two records were computed from the same manifest, spec, and identity,
+and they catch accidental drift. Anyone can compute them, so a stored
+`verdict_*.json` proves nothing about who wrote it or that `check.py` ran, and
+`--prior` is trusted as supplied. The result names every input that was not the
+shipped one: `gate_spec_is_shipped`, `registry_is_shipped`, and `prior_record`,
+each with a `warnings` entry when it is not. At delivery, re-run `check.py` with
+no `--gates`, `--registry`, or `--prior` and read `gate_spec_is_shipped: true`
+from that fresh result rather than trusting a file on disk.
 
 ## Faster REVISE cycles
 

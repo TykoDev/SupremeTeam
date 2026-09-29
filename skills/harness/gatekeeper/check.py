@@ -38,8 +38,24 @@ gate spec. Typed records are mostly independent of each other; the ``selection``
 kind is the exception, because what it decides changes what four other keys are
 allowed to carry (see ``check_selection_dependencies``).
 
-Output: a JSON report on stdout. On engine error a JSON object carrying
-"engine_error" is written to stderr instead.
+A manifest inside a run must declare schema 2: an absent or schema-1 version
+fails, and the package is checked as schema 2 anyway so the submitter gets
+every failure at once. A flat package at schema 1 still passes, and the result
+says in ``warnings`` that no typed check ran.
+
+What is verified and what is attested: a typed record is the submitter's own
+statement. The gate checks its shape, that each artifact it names exists and
+matches its digest, that each ``inputs`` entry still hashes to what the record
+says, and that a pass does not sit beside a non-zero exit code. It does not open
+an artifact or re-run anything, and a probe record that binds no inputs is
+listed in ``warnings`` as attested rather than tied to the source it describes.
+
+Output: a JSON report on stdout. On engine error, including any fault inside the
+engine itself, a JSON object carrying "engine_error" is written to stderr and
+nothing is printed to stdout. The report names every input that was not the
+shipped one (``gate_spec_is_shipped``, ``registry_is_shipped``, ``prior_record``);
+its digests are unkeyed, so a stored verdict is not authority by itself and the
+reader re-runs this script against the shipped spec.
 
 Exit codes: 0 = facts pass, 1 = defects found, 2 = engine error.
 """
@@ -63,6 +79,8 @@ if str(SKILLS_ROOT / "scripts") not in sys.path:
 from data_formats import DataFormatError, content_sha256, load_data  # noqa: E402
 
 SUPPORTED_MANIFEST_SCHEMAS = {1, 2}
+#: The schema a manifest inside skillset-saves/runs/<run>/<phase>/ must declare.
+RUN_MANIFEST_SCHEMA = 2
 BLOCKED = re.compile(r"\b(TODO|FIXME|XXX|HACK)\b|\btrust me\b|\b100% complete\b|\blorem ipsum\b", re.IGNORECASE)
 MD_LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 FENCED = re.compile(r"```.*?```|~~~.*?~~~", re.DOTALL)
@@ -221,7 +239,21 @@ class Package:
         self.spec = spec
         self.boundary = spec["boundaries"][boundary_name]
         self.failures: list[str] = []
+        #: Facts about what this pass did not verify; they never fail a package.
+        self.warnings: list[str] = []
         self.schema = self._schema_version()
+        if self._run_layout_dir() is not None and self.schema < RUN_MANIFEST_SCHEMA:
+            # Read as the schema it must be, so the typed checks still run and the
+            # submitter gets every failure in one pass instead of a silent downgrade.
+            declared = data.get("schema_version", "absent")
+            self.failures.append(
+                f"manifest inside a run must declare schema_version {RUN_MANIFEST_SCHEMA} (declared: {declared}); "
+                f"checked as schema {RUN_MANIFEST_SCHEMA}")
+            self.schema = RUN_MANIFEST_SCHEMA
+        elif self.schema < 2:
+            self.warnings.append(
+                "schema 1 manifest: typed records, applicability records, the finding policy, boundary and owner "
+                "were not checked; declare schema_version 2")
         self.root, self.root_kind, self.run_dir, self.project_root = self._evidence_root()
         self.artifact_hashes: dict[str, str] = {}
         self.hashed_ok: set[str] = set()
@@ -233,18 +265,21 @@ class Package:
             raise Engine(f"unsupported manifest schema_version: {raw!r} (supported: {sorted(SUPPORTED_MANIFEST_SCHEMAS)})")
         return raw
 
-    def _evidence_root(self) -> tuple[Path, str, Path | None, Path]:
-        """Resolve the authorised evidence root (see module docstring)."""
-        run_dir = None
+    def _run_layout_dir(self) -> Path | None:
+        """The run directory when the manifest sits in skillset-saves/runs/<run-id>/<phase>/, else None."""
         node = self.base
         for _ in range(4):
             parent = node.parent
             if parent.name == "runs" and parent.parent.name == "skillset-saves":
-                run_dir = node
-                break
+                return node
             if parent == node:
                 break
             node = parent
+        return None
+
+    def _evidence_root(self) -> tuple[Path, str, Path | None, Path]:
+        """Resolve the authorised evidence root (see module docstring)."""
+        run_dir = self._run_layout_dir()
         declared = self.data.get("run_id")
         if run_dir is None:
             if self.schema >= 2 and declared is not None and not isinstance(declared, str):
@@ -718,6 +753,15 @@ class Package:
                     self.failures.append(f"{key} scan record requires {field}")
             if "exit_code" not in value:
                 self.failures.append(f"{key} scan record requires exit_code")
+        # The record is self-asserted, so the one contradiction it can show
+        # against itself is refused: a pass beside a non-zero exit code.
+        exit_code = value.get("exit_code")
+        if isinstance(exit_code, bool) or not (exit_code is None or isinstance(exit_code, int)):
+            self.failures.append(f"{key} exit_code must be an integer")
+        elif status == "pass" and exit_code not in (None, 0):
+            self.failures.append(f"{key} result pass contradicts exit_code {exit_code}")
+        elif status == "pass" and exit_code is None and kind == "scan":
+            self.failures.append(f"{key} scan record with result pass requires exit_code 0")
         if kind == "render":
             if status == "inferred" and not filled(value.get("limitation")):
                 self.failures.append(f"{key} inferred render requires a limitation statement")
@@ -745,6 +789,8 @@ class Package:
                 self.failures.append(f"{key} input missing: {entry['path']}")
             elif digest(target) != entry["sha256"].lower():
                 self.failures.append(f"{key} input hash drift (stale evidence): {entry['path']}")
+        if not inputs and kind not in {"scan", "render"}:
+            self.warnings.append(f"{key} binds no inputs: attested, not tied to the source it describes")
         input_revision = value.get("input_revision")
         if input_revision is not None and str(input_revision) != str(self.data.get("revision")):
             self.failures.append(f"{key} input_revision {input_revision!r} does not match package revision")
@@ -945,9 +991,18 @@ def revise_packet(failures: list[str], required: list[str], owners: dict, submit
     }
 
 
+def same_content(path: Path, other: Path) -> bool:
+    """True when both files exist and hold the same content, line endings folded."""
+    try:
+        return digest(path) == digest(other)
+    except OSError:
+        return False
+
+
 def prior_check(prior_path: Path, data: dict, current_fingerprint: str, spec_digest: str,
-                current_digests: dict[str, str] | None = None) -> tuple[bool, bool | None, list[str] | None, list[str] | None]:
-    """Return (drift, prior_reusable, changed_evidence, unchanged_evidence)."""
+                current_digests: dict[str, str] | None = None
+                ) -> tuple[bool, bool | None, list[str] | None, list[str] | None, object]:
+    """Return (drift, prior_reusable, changed_evidence, unchanged_evidence, prior gate_spec_digest)."""
     prior = load_mapping(prior_path, "prior record")
     # Delta review works across revisions: a resubmission is a new revision, and
     # the gatekeeper still wants to know which evidence keys actually changed.
@@ -957,15 +1012,15 @@ def prior_check(prior_path: Path, data: dict, current_fingerprint: str, spec_dig
     if isinstance(prior_digests, dict) and current_digests is not None:
         changed = sorted(k for k, v in current_digests.items() if prior_digests.get(k) != v)
         unchanged = sorted(k for k, v in current_digests.items() if prior_digests.get(k) == v)
+    prior_spec = prior.get("gate_spec_digest")
     same = prior.get("submission_id") == data.get("submission_id") and prior.get("revision") == data.get("revision")
     if not same:
-        return False, None, changed, unchanged
+        return False, None, changed, unchanged, prior_spec
     prior_fingerprint = prior.get("package_fingerprint") or fingerprint(prior)
     drift = prior_fingerprint != current_fingerprint
-    prior_spec = prior.get("gate_spec_digest")
     prior_boundary = prior.get("boundary")
     reusable = (not drift) and prior_spec == spec_digest and (prior_boundary in (None, data.get("boundary")) )
-    return drift, reusable, changed, unchanged
+    return drift, reusable, changed, unchanged, prior_spec
 
 
 def main() -> int:
@@ -997,9 +1052,24 @@ def main() -> int:
         current_fingerprint = fingerprint(data)
         digests = evidence_digests(data, package.artifact_hashes)
         drift, prior_reusable, changed_evidence, unchanged_evidence = False, None, None, None
+        # The digests are unkeyed, so a verdict is only as canonical as the spec
+        # it names; say when any input to this pass was not the shipped one.
+        shipped_digest = digest(GATE_SPEC_PATH) if GATE_SPEC_PATH.is_file() else None
+        spec_shipped = spec_digest == shipped_digest
+        registry_shipped = not args.registry or same_content(Path(args.registry), REGISTRY_PATH)
+        warnings = list(package.warnings)
+        if not spec_shipped:
+            warnings.append(f"gate spec is not the shipped skills/gates.yaml: {spec_path}")
+        if not registry_shipped:
+            warnings.append(f"tech-stack registry is not the shipped one: {args.registry}")
+        prior_record = None
         if args.prior:
-            drift, prior_reusable, changed_evidence, unchanged_evidence = prior_check(
+            drift, prior_reusable, changed_evidence, unchanged_evidence, prior_spec = prior_check(
                 Path(args.prior).resolve(), data, current_fingerprint, spec_digest, digests)
+            prior_record = {"path": str(Path(args.prior).resolve()), "gate_spec_digest": prior_spec,
+                            "gate_spec_is_shipped": prior_spec is not None and prior_spec == shipped_digest}
+            if not prior_record["gate_spec_is_shipped"]:
+                warnings.append("prior record was not produced against the shipped gate spec")
             if drift:
                 package.failures.append("idempotency drift on unchanged revision")
         failures = sorted(set(package.failures))
@@ -1016,9 +1086,13 @@ def main() -> int:
             "submission_id": data.get("submission_id"), "revision": data.get("revision"),
             "run_id": data.get("run_id"), "owner": data.get("owner", data.get("submitter")),
             "manifest_schema_version": package.schema,
+            "declared_schema_version": data.get("schema_version"),
             "evidence_root": str(package.root), "evidence_root_kind": package.root_kind,
             "package_fingerprint": current_fingerprint, "gate_spec_digest": spec_digest,
+            "gate_spec_is_shipped": spec_shipped, "registry_is_shipped": registry_shipped,
+            "prior_record": prior_record,
             "verdict_id": verdict_id,
+            "warnings": sorted(set(warnings)),
             "evidence_digests": digests,
             "changed_evidence": changed_evidence, "unchanged_evidence": unchanged_evidence,
             "revise_packet": packet,

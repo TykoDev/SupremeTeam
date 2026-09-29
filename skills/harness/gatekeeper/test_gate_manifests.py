@@ -100,6 +100,21 @@ class BoundaryManifestTests(unittest.TestCase):
                     with self.subTest(boundary=boundary, key=key):
                         self.assert_passes(boundary, self.package(boundary, {key: value}))
 
+    def test_a_flat_schema_1_package_passes_but_says_no_typed_check_ran(self):
+        """Schema 1 stays valid outside a run, but a bare pass must not read as the whole contract."""
+        r = self.run_check("build-to-review", self.package("build-to-review"))
+        self.assertEqual(r.returncode, 0, r.stdout)
+        out = json.loads(r.stdout)
+        self.assertEqual((out["manifest_schema_version"], out["declared_schema_version"]), (1, None))
+        self.assertTrue(any(w.startswith("schema 1 manifest: typed records") for w in out["warnings"]), out["warnings"])
+
+    def test_a_flat_schema_2_package_carries_no_downgrade_warning(self):
+        p = self.package("build-to-review")
+        p.update({"schema_version": 2, "boundary": "build-to-review", "owner": "build-management"})
+        out = json.loads(self.run_check("build-to-review", p).stdout)
+        self.assertEqual((out["manifest_schema_version"], out["declared_schema_version"]), (2, 2))
+        self.assertFalse(any(w.startswith("schema 1 manifest") for w in out["warnings"]), out["warnings"])
+
     # --- missing-evidence coverage, one required key per boundary
     def test_missing_required_evidence_fails(self):
         for boundary, key in (

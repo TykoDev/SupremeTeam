@@ -83,10 +83,10 @@ enforcement:
     do.
   enforced_at_write_time: >-
     Only two classes are enforced when a write is attempted. harness/hooks/
-    pre_tool_use.py denies direct edit-tool writes to the core-run-record paths
-    and to project-taste-preferences, and denies direct edit-tool or
-    mutating-shell writes to the harness-guards record. Every other class is a
-    declaration that a reviewer applies.
+    pre_tool_use.py denies direct edit-tool writes to the record files of
+    core-run-record (its rule says which) and to project-taste-preferences, and
+    denies direct edit-tool or mutating-shell writes to the harness-guards
+    record. Every other class is a declaration that a reviewer applies.
   judgement: >-
     purpose, generated_roots_rule, notes, writer_vocabulary, unowned_path_rule,
     this enforcement block, and the `rule` text of every class. No comparator

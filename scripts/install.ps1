@@ -18,7 +18,9 @@ param(
 
     [string]$CursorDestination = (Join-Path $env:USERPROFILE ".cursor\skills"),
 
-    [string]$OpenCodeDestination = (Join-Path $env:USERPROFILE ".config\opencode\skills")
+    [string]$OpenCodeDestination = (Join-Path $env:USERPROFILE ".config\opencode\skills"),
+
+    [switch]$DryRun
 )
 
 Set-StrictMode -Version Latest
@@ -26,65 +28,125 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $sourceRoot = Join-Path $repoRoot "skills"
+$itemsFile = Join-Path $PSScriptRoot "install-items.txt"
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
-# Core components are always installed. They contain the Admiral pipeline spine
-# (entry orchestrator, cross-stage gate, memory, investigation, skill-maker), the
-# runtime harness (hooks, save lifecycle, gate validators), the orchestration
-# contracts (gates, pipelines, ownership, manifests, canonical contracts,
-# tech-stack registry, shared scripts, validation suites), and the root doctrine
-# and protocol files every skill resolves by relative path.
-$coreItems = @(
-    "admiral",
-    "gatekeeper-admiral",
-    "session-memory",
-    "investigate",
-    "skill-maker",
-    "audit-improve",
-    "taste",
-    "harness",
-    "contracts",
-    "scripts",
-    "validation",
-    "tech-stacks",
-    "gates.yaml",
-    "pipelines.yaml",
-    "ownership.yaml",
-    "save-ownership.yaml",
-    "team-manifest.yaml",
-    "runtime-manifest.yaml",
-    "package-manifest.yaml",
-    "execution-contract.md",
-    "design-doctrine.md",
-    "grill-me-doctrine.md",
-    "harness-doctrine.md",
-    "mcp-tools.md",
-    "performance-doctrine.md",
-    "routing-doctrine.md",
-    "save-protocol.md",
-    "taste-doctrine.md"
-)
+# The installer only replaces or removes what it can show it installed. Every
+# install root gets a manifest listing the items the last run put there, and
+# every directory it creates carries a marker file. A file is owned when the
+# manifest lists it and a directory when it carries the marker. Anything else
+# that shares a managed name is moved to a backup folder, never deleted.
+$manifestName = ".supremeteam-manifest"
+$manifestHeader = "supremeteam-manifest 1"
+$markerName = ".supremeteam-managed"
+$stageMarkerName = ".supremeteam-stage"
 
-# Friendly team name -> paths under skills/.
-$teamItems = @{
-    design  = @("design")
-    build   = @("build")
-    review  = @("review")
-    browser = @("browse", "open-browser", "setup-browser-cookies", "pair-agent")
-    release = @("ship", "land-and-deploy", "setup-deploy", "document-release")
-    safety  = @("guard", "careful", "freeze", "unfreeze")
-    testing = @("qa", "qa-only", "benchmark")
+# install-items.txt is the one item list; install.sh reads the same file.
+$script:coreItems = @()
+$script:seedItems = @()
+$script:teamItems = [ordered]@{}
+$script:legacyItems = [ordered]@{}
+$script:allTeamNames = @()
+$script:managedItems = @()
+$script:oldItems = @()
+$script:backupDirs = @()
+$script:stage = ""
+$script:stageRoot = ""
+$script:stageCommitted = $false
+$script:backupDir = ""
+
+# Names become path components, so they are checked before any path is built
+# from them: no separators, no leading dot or dash, nothing a wildcard would match.
+function Test-ValidName {
+    param([string]$Name)
+
+    return $Name -match '^[A-Za-z0-9_][A-Za-z0-9._-]*$'
 }
 
-$allTeamNames = @("design", "build", "review", "browser", "release", "safety", "testing")
-$managedItems = @($coreItems)
-foreach ($teamName in $allTeamNames) {
-    $managedItems += $teamItems[$teamName]
-}
+function Import-ItemList {
+    if (-not (Test-Path -LiteralPath $itemsFile -PathType Leaf)) {
+        throw "Missing item list at '$itemsFile'."
+    }
 
-# Paths from older Supreme Team layouts that are no longer shipped. Removed from
-# the destination on each run so an in-place update over an old install does not
-# leave stale directories behind. Not part of the source-layout assertion.
-$legacyItems = @("references", "browser-automation", "release-and-deployment", "safety-guardrails", "testing-and-qa")
+    foreach ($line in (Get-Content -LiteralPath $itemsFile)) {
+        $text = $line.Trim()
+        if ($text -eq "" -or $text.StartsWith("#")) {
+            continue
+        }
+
+        $fields = @($text -split '\s+')
+        $kind = $fields[0]
+        $members = @($fields | Select-Object -Skip 1)
+        if ($members.Count -eq 0) {
+            throw "Invalid record in ${itemsFile}: $text"
+        }
+
+        $name = $members[0]
+        $rest = @($members | Select-Object -Skip 1)
+        if (-not (Test-ValidName -Name $name)) {
+            throw "Invalid name '$name' in $itemsFile."
+        }
+
+        if ($kind -eq "core" -or $kind -eq "seed") {
+            if ($rest.Count -ne 0) {
+                throw "'$kind $name' takes exactly one name in $itemsFile."
+            }
+
+            $script:coreItems += $name
+            if ($kind -eq "seed") {
+                $script:seedItems += $name
+            }
+        }
+        elseif ($kind -eq "team" -or $kind -eq "legacy") {
+            if ($rest.Count -eq 0) {
+                throw "'$kind $name' lists no items in $itemsFile."
+            }
+
+            foreach ($member in $rest) {
+                if (-not (Test-ValidName -Name $member)) {
+                    throw "Invalid name '$member' in $itemsFile."
+                }
+            }
+
+            if ($kind -eq "team") {
+                $table = $script:teamItems
+            }
+            else {
+                $table = $script:legacyItems
+            }
+
+            if ($table.Contains($name)) {
+                $table[$name] = @($table[$name]) + $rest
+            }
+            else {
+                $table[$name] = $rest
+            }
+        }
+        else {
+            throw "Unknown record '$kind' in $itemsFile."
+        }
+    }
+
+    $script:allTeamNames = @($script:teamItems.Keys)
+    if ($script:coreItems.Count -eq 0 -or $script:allTeamNames.Count -eq 0) {
+        throw "$itemsFile lists no core or team items."
+    }
+
+    $script:managedItems = @($script:coreItems)
+    foreach ($teamName in $script:allTeamNames) {
+        foreach ($item in $script:teamItems[$teamName]) {
+            if ($script:managedItems -notcontains $item) {
+                $script:managedItems += $item
+            }
+        }
+    }
+
+    foreach ($dir in $script:legacyItems.Keys) {
+        if ($script:managedItems -contains $dir) {
+            throw "Legacy directory '$dir' is also an installed item in $itemsFile."
+        }
+    }
+}
 
 function Assert-PathPresent {
     param(
@@ -104,7 +166,7 @@ function Resolve-TeamSelection {
 
     foreach ($requestedTeam in $RequestedTeams) {
         if ($requestedTeam -eq "All") {
-            foreach ($teamName in $allTeamNames) {
+            foreach ($teamName in $script:allTeamNames) {
                 if ($resolved -notcontains $teamName) {
                     $resolved += $teamName
                 }
@@ -123,96 +185,535 @@ function Resolve-TeamSelection {
     return $resolved
 }
 
-function Clear-InstallDestination {
-    param([string]$TargetRoot)
+# Core items and the selected teams' items, each once.
+function Get-InstallItems {
+    param([string[]]$SelectedTeams)
 
-    New-Item -ItemType Directory -Force -Path $TargetRoot | Out-Null
+    $items = @($script:coreItems)
 
-    foreach ($item in ($managedItems + $legacyItems)) {
-        $targetPath = Join-Path $TargetRoot $item
-
-        if (-not (Test-Path -LiteralPath $targetPath)) {
-            continue
+    foreach ($teamName in $SelectedTeams) {
+        foreach ($item in $script:teamItems[$teamName]) {
+            if ($items -notcontains $item) {
+                $items += $item
+            }
         }
+    }
 
-        $targetItem = Get-Item -LiteralPath $targetPath
+    return $items
+}
 
-        if ($targetItem.PSIsContainer) {
-            Remove-Item -LiteralPath $targetPath -Recurse -Force
-        }
-        else {
-            Remove-Item -LiteralPath $targetPath -Force
+function Resolve-FullPath {
+    param([string]$Path)
+
+    $full = [System.IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path))
+    $pathRoot = [System.IO.Path]::GetPathRoot($full)
+    if ($full.Length -gt $pathRoot.Length) {
+        $full = $full.TrimEnd([char[]]@('\', '/'))
+    }
+
+    return $full
+}
+
+function Test-PathWithin {
+    param(
+        [string]$Child,
+        [string]$Parent
+    )
+
+    $childPrefix = $Child.TrimEnd('\') + "\"
+    $parentPrefix = $Parent.TrimEnd('\') + "\"
+
+    return $childPrefix.StartsWith($parentPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+# An install root is a skills folder, so a drive root, the profile directory and
+# its parents, and anything overlapping this checkout are refused before
+# anything is written.
+function Assert-SafeRoot {
+    param(
+        [string]$Label,
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "The $Label destination is empty."
+    }
+
+    $resolved = Resolve-FullPath -Path $Path
+    $homePath = Resolve-FullPath -Path $env:USERPROFILE
+
+    if (Test-Path -LiteralPath $resolved -PathType Leaf) {
+        throw "'$resolved' exists and is not a directory."
+    }
+
+    if ($resolved -eq [System.IO.Path]::GetPathRoot($resolved)) {
+        throw "Refusing to install into the filesystem root ($Label destination)."
+    }
+
+    if (Test-PathWithin -Child $homePath -Parent $resolved) {
+        throw "Refusing to install into '$resolved' ($Label destination): it is your home directory or one of its parents."
+    }
+
+    if (Test-PathWithin -Child (Resolve-FullPath -Path $repoRoot) -Parent $resolved) {
+        throw "Refusing to install into '$resolved' ($Label destination): it contains the Supreme Team checkout."
+    }
+
+    if (Test-PathWithin -Child $resolved -Parent (Resolve-FullPath -Path $sourceRoot)) {
+        throw "Refusing to install into '$resolved' ($Label destination): it is inside the skills source directory."
+    }
+}
+
+function Test-ReparsePoint {
+    param([System.IO.FileSystemInfo]$Item)
+
+    return [bool]($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+}
+
+# The directory entry called $Name under $Root, or $null. Unlike Get-Item it also
+# finds a link whose target is gone.
+function Get-EntryInfo {
+    param(
+        [string]$Root,
+        [string]$Name
+    )
+
+    $found = @(Get-ChildItem -LiteralPath $Root -Force -Filter $Name -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -eq $Name })
+
+    if ($found.Count -eq 0) {
+        return $null
+    }
+
+    return $found[0]
+}
+
+function Read-Manifest {
+    param([string]$Root)
+
+    $script:oldItems = @()
+    $file = Join-Path $Root $manifestName
+
+    $info = Get-EntryInfo -Root $Root -Name $manifestName
+    if ($null -eq $info -or $info.PSIsContainer -or (Test-ReparsePoint -Item $info)) {
+        return
+    }
+
+    $lines = @(Get-Content -LiteralPath $file)
+    if ($lines.Count -eq 0 -or $lines[0].Trim() -ne $manifestHeader) {
+        Write-Warning "Ignoring $file, which is not a Supreme Team install record."
+        return
+    }
+
+    foreach ($line in $lines) {
+        if ($line.StartsWith("item ")) {
+            $name = $line.Substring(5).Trim()
+            if ((Test-ValidName -Name $name) -and ($script:oldItems -notcontains $name)) {
+                $script:oldItems += $name
+            }
         }
     }
 }
 
-function Copy-SourceItem {
+# Returns absent, owned or foreign for $Root\$Name. A link is never owned, so it
+# is moved aside as a link and never followed.
+function Get-ItemState {
     param(
-        [string]$ItemName,
-        [string]$TargetRoot
+        [string]$Root,
+        [string]$Name
     )
 
+    $item = Get-EntryInfo -Root $Root -Name $Name
+
+    if ($null -eq $item) {
+        return "absent"
+    }
+
+    if (Test-ReparsePoint -Item $item) {
+        return "foreign"
+    }
+
+    if ($item.PSIsContainer) {
+        $marker = Get-EntryInfo -Root $item.FullName -Name $markerName
+        if ($null -ne $marker -and -not $marker.PSIsContainer -and -not (Test-ReparsePoint -Item $marker)) {
+            return "owned"
+        }
+
+        return "foreign"
+    }
+
+    if ($script:oldItems -contains $Name) {
+        return "owned"
+    }
+
+    return "foreign"
+}
+
+# A directory from an older layout is recognised only while it holds nothing but
+# the entries that layout put there.
+function Test-LegacyDirectory {
+    param(
+        [string]$Root,
+        [string]$Name
+    )
+
+    $item = Get-EntryInfo -Root $Root -Name $Name
+    if ($null -eq $item -or -not $item.PSIsContainer -or (Test-ReparsePoint -Item $item)) {
+        return $false
+    }
+
+    $entries = @(Get-ChildItem -LiteralPath $item.FullName -Force)
+    if ($entries.Count -eq 0) {
+        return $false
+    }
+
+    foreach ($entry in $entries) {
+        if ($script:legacyItems[$Name] -notcontains $entry.Name) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Test-SupremeTeamInstallPresent {
+    param([string]$TargetRoot)
+
+    if (-not (Test-Path -LiteralPath $TargetRoot -PathType Container)) {
+        return $false
+    }
+
+    if (Test-Path -LiteralPath (Join-Path $TargetRoot $manifestName) -PathType Leaf) {
+        return $true
+    }
+
+    foreach ($item in $script:managedItems) {
+        if (Test-Path -LiteralPath (Join-Path (Join-Path $TargetRoot $item) $markerName) -PathType Leaf) {
+            return $true
+        }
+    }
+
+    # An install from before the ownership records existed.
+    return (Test-Path -LiteralPath (Join-Path $TargetRoot "admiral\SKILL.md") -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $TargetRoot "gatekeeper-admiral\SKILL.md") -PathType Leaf)
+}
+
+# Windows PowerShell 5.1's Remove-Item -Recurse can follow a link out of the tree
+# and delete what it points at, so every link inside is removed as a link first.
+function Remove-LinksWithin {
+    param([string]$Directory)
+
+    foreach ($entry in @(Get-ChildItem -LiteralPath $Directory -Force)) {
+        if (Test-ReparsePoint -Item $entry) {
+            $entry.Delete()
+        }
+        elseif ($entry.PSIsContainer) {
+            Remove-LinksWithin -Directory $entry.FullName
+        }
+    }
+}
+
+# The only place anything is deleted: a staging directory this installer created,
+# recognised by its name and by the marker written inside it. Items that are
+# replaced or dropped are moved into it first, so what it holds is all the
+# installer's own.
+function Remove-StageDirectory {
+    param([string]$Path)
+
+    if (-not (Split-Path $Path -Leaf).StartsWith(".supremeteam-stage.")) {
+        return
+    }
+
+    if (-not (Test-Path -LiteralPath (Join-Path $Path $stageMarkerName) -PathType Leaf)) {
+        return
+    }
+
+    Remove-LinksWithin -Directory $Path
+    Remove-Item -LiteralPath $Path -Recurse -Force
+}
+
+# An aborted run puts back an owned item it had moved aside whose replacement never
+# landed, so the install is left as it was found. A committed run keeps its removals.
+function Restore-RetiredItems {
+    $retiredRoot = Join-Path $script:stage "old"
+
+    foreach ($retired in @(Get-ChildItem -LiteralPath $retiredRoot -Force -ErrorAction SilentlyContinue)) {
+        if ($null -eq (Get-EntryInfo -Root $script:stageRoot -Name $retired.Name)) {
+            Move-Item -LiteralPath $retired.FullName -Destination (Join-Path $script:stageRoot $retired.Name)
+        }
+    }
+}
+
+function Clear-Stage {
+    if ($script:stage -ne "") {
+        try {
+            if (-not $script:stageCommitted) {
+                Restore-RetiredItems
+            }
+
+            Remove-StageDirectory -Path $script:stage
+        }
+        catch {
+            Write-Warning "Could not clean up the staging folder '$($script:stage)': $($_.Exception.Message)"
+        }
+
+        $script:stage = ""
+    }
+}
+
+# An interrupted run can leave its staging directory behind.
+function Clear-OldStages {
+    param([string]$TargetRoot)
+
+    $candidates = @(Get-ChildItem -LiteralPath $TargetRoot -Directory -Force -Filter ".supremeteam-stage.*" -ErrorAction SilentlyContinue)
+    foreach ($candidate in $candidates) {
+        if (-not (Test-ReparsePoint -Item $candidate)) {
+            Remove-StageDirectory -Path $candidate.FullName
+        }
+    }
+}
+
+function Copy-ToStage {
+    param([string]$ItemName)
+
     $sourcePath = Join-Path $sourceRoot $ItemName
+    $newRoot = Join-Path $script:stage "new"
     $sourceItem = Get-Item -LiteralPath $sourcePath
 
     if ($sourceItem.PSIsContainer) {
-        Copy-Item -LiteralPath $sourcePath -Destination $TargetRoot -Recurse -Force
+        Copy-Item -LiteralPath $sourcePath -Destination $newRoot -Recurse -Force
+        [System.IO.File]::WriteAllText((Join-Path (Join-Path $newRoot $ItemName) $markerName), "supremeteam-managed 1`n", $utf8NoBom)
     }
     else {
-        Copy-Item -LiteralPath $sourcePath -Destination $TargetRoot -Force
+        Copy-Item -LiteralPath $sourcePath -Destination $newRoot -Force
     }
 }
 
-function Assert-SourceLayout {
-    Assert-PathPresent -Path $sourceRoot -Description "skills source directory"
+# The backup folder sits next to the install root, not inside it, so a host that
+# scans the root for skills never picks up the moved-aside copies.
+function New-BackupDirectory {
+    param([string]$TargetRoot)
 
-    foreach ($item in $coreItems) {
-        Assert-PathPresent -Path (Join-Path $sourceRoot $item) -Description "source item '$item'"
+    $base = "${TargetRoot}.supremeteam-backup"
+    $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd'T'HHmmss'Z'")
+
+    try {
+        New-Item -ItemType Directory -Force -Path $base | Out-Null
+    }
+    catch {
+        throw "Cannot create the backup folder '$base'; nothing was changed."
     }
 
-    foreach ($teamName in $allTeamNames) {
-        foreach ($item in $teamItems[$teamName]) {
-            Assert-PathPresent -Path (Join-Path $sourceRoot $item) -Description "source item '$item' for team '$teamName'"
+    $candidate = Join-Path $base $stamp
+    $attempt = 0
+    while (Test-Path -LiteralPath $candidate) {
+        $attempt++
+        if ($attempt -ge 100) {
+            throw "Cannot create a backup folder under '$base'; nothing was changed."
         }
+
+        $candidate = Join-Path $base "$stamp-$attempt"
     }
+
+    New-Item -ItemType Directory -Path $candidate | Out-Null
+    $script:backupDir = $candidate
 }
 
-function Assert-DestinationLayout {
+# Moves the staged copy of $ItemName into place. What is there now is moved aside
+# first: an owned copy into the staging directory, anything else into the backup
+# folder. If the final move fails, the previous copy is put back.
+function Move-IntoPlace {
     param(
-        [string]$TargetRoot,
-        [string[]]$SelectedTeams
+        [string]$Root,
+        [string]$ItemName,
+        [string]$State
     )
 
-    foreach ($item in $coreItems) {
-        Assert-PathPresent -Path (Join-Path $TargetRoot $item) -Description "installed item '$item'"
+    $targetPath = Join-Path $Root $ItemName
+    $stagedPath = Join-Path (Join-Path $script:stage "new") $ItemName
+    $retiredPath = Join-Path (Join-Path $script:stage "old") $ItemName
+    $backupPath = Join-Path $script:backupDir $ItemName
+
+    if ($State -eq "owned") {
+        Move-Item -LiteralPath $targetPath -Destination $retiredPath
+    }
+    elseif ($State -eq "foreign") {
+        Move-Item -LiteralPath $targetPath -Destination $backupPath
     }
 
-    foreach ($teamName in $SelectedTeams) {
-        foreach ($item in $teamItems[$teamName]) {
-            Assert-PathPresent -Path (Join-Path $TargetRoot $item) -Description "installed item '$item' for team '$teamName'"
+    try {
+        Move-Item -LiteralPath $stagedPath -Destination $targetPath
+    }
+    catch {
+        if ($State -eq "owned") {
+            Move-Item -LiteralPath $retiredPath -Destination $targetPath
         }
+        elseif ($State -eq "foreign") {
+            Move-Item -LiteralPath $backupPath -Destination $targetPath
+        }
+
+        throw "Could not install '$ItemName' into '$Root'; the previous copy was put back."
+    }
+}
+
+function Write-Manifest {
+    param(
+        [string]$Root,
+        [string[]]$SelectedTeams,
+        [string[]]$Items
+    )
+
+    $lines = @(
+        $manifestHeader,
+        ("installed_at " + (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")),
+        ("teams " + ($SelectedTeams -join " "))
+    )
+    foreach ($item in $Items) {
+        $lines += "item $item"
+    }
+
+    $stagedPath = Join-Path $script:stage "manifest"
+    [System.IO.File]::WriteAllText($stagedPath, (($lines -join "`n") + "`n"), $utf8NoBom)
+    Move-Item -LiteralPath $stagedPath -Destination (Join-Path $Root $manifestName) -Force
+}
+
+function Assert-InstalledLayout {
+    param(
+        [string]$Root,
+        [string[]]$Items
+    )
+
+    foreach ($item in $Items) {
+        Assert-PathPresent -Path (Join-Path $Root $item) -Description "installed item '$item'"
+    }
+}
+
+function Write-ItemList {
+    param(
+        [string]$Label,
+        [string[]]$Items
+    )
+
+    if (@($Items).Count -gt 0) {
+        Write-Host "  ${Label}: $(@($Items) -join ' ')"
     }
 }
 
 function Install-SupremeTeam {
     param(
         [string]$TargetRoot,
-        [string[]]$SelectedTeams
+        [string[]]$SelectedTeams,
+        [string[]]$Items
     )
 
-    Clear-InstallDestination -TargetRoot $TargetRoot
+    $root = Resolve-FullPath -Path $TargetRoot
+    Read-Manifest -Root $root
 
-    foreach ($item in $coreItems) {
-        Copy-SourceItem -ItemName $item -TargetRoot $TargetRoot
+    $manifestPath = Join-Path $root $manifestName
+    if (Test-Path -LiteralPath $manifestPath -PathType Container) {
+        throw "'$manifestPath' is a directory; move it away and run the installer again."
     }
 
-    foreach ($teamName in $SelectedTeams) {
-        foreach ($item in $teamItems[$teamName]) {
-            Copy-SourceItem -ItemName $item -TargetRoot $TargetRoot
+    $addItems = @()
+    $replaceItems = @()
+    $keptItems = @()
+    $foreignItems = @()
+    $staleItems = @()
+    $legacyHits = @()
+
+    foreach ($item in $Items) {
+        $state = Get-ItemState -Root $root -Name $item
+        if ($state -ne "absent" -and $script:seedItems -contains $item) {
+            $keptItems += $item
+            continue
+        }
+
+        if ($state -eq "absent") {
+            $addItems += $item
+        }
+        elseif ($state -eq "owned") {
+            $replaceItems += $item
+        }
+        else {
+            $foreignItems += $item
         }
     }
 
-    Assert-DestinationLayout -TargetRoot $TargetRoot -SelectedTeams $SelectedTeams
+    foreach ($item in $script:oldItems) {
+        if (($Items -notcontains $item) -and ((Get-ItemState -Root $root -Name $item) -eq "owned")) {
+            $staleItems += $item
+        }
+    }
+
+    foreach ($dir in $script:legacyItems.Keys) {
+        if (Test-LegacyDirectory -Root $root -Name $dir) {
+            $legacyHits += $dir
+        }
+    }
+
+    if ($DryRun) {
+        Write-ItemList -Label "would add" -Items $addItems
+        Write-ItemList -Label "would replace" -Items $replaceItems
+        Write-ItemList -Label "would keep, yours" -Items $keptItems
+        Write-ItemList -Label "would remove, no longer shipped" -Items $staleItems
+        Write-ItemList -Label "would move aside to ${root}.supremeteam-backup, not installed by Supreme Team" -Items @($foreignItems + $legacyHits)
+        return
+    }
+
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    Clear-OldStages -TargetRoot $root
+    $script:stage = Join-Path $root (".supremeteam-stage." + [guid]::NewGuid().ToString("N").Substring(0, 8))
+    $script:stageRoot = $root
+    $script:stageCommitted = $false
+    New-Item -ItemType Directory -Path $script:stage | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $script:stage $stageMarkerName), "supremeteam-stage 1`n", $utf8NoBom)
+    New-Item -ItemType Directory -Path (Join-Path $script:stage "new") | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $script:stage "old") | Out-Null
+
+    # Everything that can fail for lack of space or permission happens here,
+    # before the first change to an item that is already in place.
+    foreach ($item in @($addItems + $replaceItems + $foreignItems)) {
+        Copy-ToStage -ItemName $item
+    }
+
+    $script:backupDir = ""
+    if (($foreignItems.Count + $legacyHits.Count) -gt 0) {
+        New-BackupDirectory -TargetRoot $root
+    }
+
+    foreach ($item in $addItems) {
+        Move-IntoPlace -Root $root -ItemName $item -State "absent"
+    }
+    foreach ($item in $replaceItems) {
+        Move-IntoPlace -Root $root -ItemName $item -State "owned"
+    }
+    foreach ($item in $foreignItems) {
+        Move-IntoPlace -Root $root -ItemName $item -State "foreign"
+    }
+    foreach ($item in $staleItems) {
+        Move-Item -LiteralPath (Join-Path $root $item) -Destination (Join-Path (Join-Path $script:stage "old") $item)
+    }
+    foreach ($item in $legacyHits) {
+        Move-Item -LiteralPath (Join-Path $root $item) -Destination (Join-Path $script:backupDir $item)
+    }
+
+    Write-Manifest -Root $root -SelectedTeams $SelectedTeams -Items $Items
+    $script:stageCommitted = $true
+    Assert-InstalledLayout -Root $root -Items $Items
+    Clear-Stage
+
+    $newCount = $addItems.Count + $foreignItems.Count
+    Write-Host "  installed $($newCount + $replaceItems.Count) items ($newCount new, $($replaceItems.Count) replaced)"
+    Write-Host "  recorded in $(Join-Path $root $manifestName)"
+    Write-ItemList -Label "kept, yours" -Items $keptItems
+    Write-ItemList -Label "removed, no longer shipped" -Items $staleItems
+    if ($script:backupDir -ne "") {
+        Write-Host "  moved aside, not installed by Supreme Team and unchanged, to $($script:backupDir):"
+        foreach ($item in @($foreignItems + $legacyHits)) {
+            Write-Host "    $item"
+        }
+
+        $script:backupDirs += $script:backupDir
+    }
 }
 
 function Format-TeamList {
@@ -234,18 +735,6 @@ function Add-UniqueValue {
     }
 
     return $Values
-}
-
-function Test-SupremeTeamInstallPresent {
-    param([string]$TargetRoot)
-
-    foreach ($item in ($managedItems + $legacyItems)) {
-        if (Test-Path -LiteralPath (Join-Path $TargetRoot $item)) {
-            return $true
-        }
-    }
-
-    return $false
 }
 
 function Test-CommandAvailable {
@@ -419,42 +908,64 @@ function Register-HarnessHooks {
 }
 
 try {
-    Assert-SourceLayout
+    Import-ItemList
+    Assert-PathPresent -Path $sourceRoot -Description "skills source directory"
+    foreach ($item in $script:managedItems) {
+        Assert-PathPresent -Path (Join-Path $sourceRoot $item) -Description "source item '$item'"
+    }
 
-    $selectedTeams = Resolve-TeamSelection -RequestedTeams $Team
+    $selectedTeams = @(Resolve-TeamSelection -RequestedTeams $Team)
+    $installItems = @(Get-InstallItems -SelectedTeams $selectedTeams)
     $hostTargets = @(Resolve-HostTargets -RequestedTargets $Target)
     $normalizedRequestedTargets = @($Target | ForEach-Object { $_.ToLowerInvariant() })
     $explicitCodexTarget = $normalizedRequestedTargets -contains "codex"
     $explicitCursorTarget = $normalizedRequestedTargets -contains "cursor"
     Write-PythonReadinessWarning
 
-    Write-Host "Installing Supreme Team to $Destination"
-    Install-SupremeTeam -TargetRoot $Destination -SelectedTeams $selectedTeams
-
-    $mirrorSummaries = @()
+    $installRoots = @(@{ Label = "common"; Path = $Destination })
 
     if (($hostTargets -contains "codex") -and ($explicitCodexTarget -or (Test-SupremeTeamInstallPresent -TargetRoot $CodexDestination))) {
-        Write-Host "Mirroring Supreme Team to $CodexDestination"
-        Install-SupremeTeam -TargetRoot $CodexDestination -SelectedTeams $selectedTeams
-        $mirrorSummaries += "codex=$CodexDestination"
+        $installRoots += @{ Label = "codex"; Path = $CodexDestination }
     }
 
     if ($hostTargets -contains "claude") {
-        Write-Host "Mirroring Supreme Team to $ClaudeDestination"
-        Install-SupremeTeam -TargetRoot $ClaudeDestination -SelectedTeams $selectedTeams
-        $mirrorSummaries += "claude=$ClaudeDestination"
+        $installRoots += @{ Label = "claude"; Path = $ClaudeDestination }
     }
 
     if (($hostTargets -contains "cursor") -and ($explicitCursorTarget -or (Test-SupremeTeamInstallPresent -TargetRoot $CursorDestination))) {
-        Write-Host "Mirroring Supreme Team to $CursorDestination"
-        Install-SupremeTeam -TargetRoot $CursorDestination -SelectedTeams $selectedTeams
-        $mirrorSummaries += "cursor=$CursorDestination"
+        $installRoots += @{ Label = "cursor"; Path = $CursorDestination }
     }
 
     if ($hostTargets -contains "opencode") {
-        Write-Host "Mirroring Supreme Team to $OpenCodeDestination"
-        Install-SupremeTeam -TargetRoot $OpenCodeDestination -SelectedTeams $selectedTeams
-        $mirrorSummaries += "opencode=$OpenCodeDestination"
+        $installRoots += @{ Label = "opencode"; Path = $OpenCodeDestination }
+    }
+
+    foreach ($entry in $installRoots) {
+        Assert-SafeRoot -Label $entry.Label -Path $entry.Path
+    }
+
+    if ($DryRun) {
+        Write-Host "Dry run: nothing will be written."
+    }
+
+    $mirrorSummaries = @()
+
+    foreach ($entry in $installRoots) {
+        if ($entry.Label -eq "common") {
+            Write-Host "Installing Supreme Team to $($entry.Path)"
+        }
+        else {
+            Write-Host "Mirroring Supreme Team to $($entry.Path)"
+            $mirrorSummaries += "$($entry.Label)=$($entry.Path)"
+        }
+
+        Install-SupremeTeam -TargetRoot $entry.Path -SelectedTeams $selectedTeams -Items $installItems
+    }
+
+    if ($DryRun) {
+        Write-Host ""
+        Write-Host "Dry run complete: nothing was written."
+        return
     }
 
     if ($RegisterHooks) {
@@ -462,8 +973,17 @@ try {
     }
 
     $mirrorStatus = if ($mirrorSummaries.Count -gt 0) { $mirrorSummaries -join "; " } else { "none" }
-    $hookStatus = if ($RegisterHooks) { "requested" } else { "not requested" }
     $hostStatus = if ($hostTargets.Count -gt 0) { $hostTargets -join ", " } else { "none detected" }
+    $backupStatus = if ($script:backupDirs.Count -gt 0) { "Moved aside, kept unchanged: $($script:backupDirs -join '; ')" } else { "Moved aside: nothing" }
+    if (-not $RegisterHooks) {
+        $hookStatus = "not requested"
+    }
+    elseif ($hostTargets.Count -eq 0) {
+        $hookStatus = "skipped (no host detected)"
+    }
+    else {
+        $hookStatus = "completed"
+    }
 
     Write-Host ""
     Write-Host "Supreme Team installation complete."
@@ -471,13 +991,18 @@ try {
     Write-Host "Host targets: $hostStatus"
     Write-Host "Host mirrors: $mirrorStatus"
     Write-Host "Teams: $(Format-TeamList -SelectedTeams $selectedTeams)"
+    Write-Host "Installed items: $($installItems.Count) in $($installRoots.Count) location(s)"
+    Write-Host $backupStatus
     Write-Host "Hook registration: $hookStatus"
     Write-Host "Restart your assistant session if it was already running."
     if (-not $RegisterHooks) {
-        Write-Host "Run again with -RegisterHooks to register runtime harness hooks for the selected hosts."
+        Write-Host "To register runtime harness hooks for the selected hosts, run this installer again from a checkout with -RegisterHooks, or preview the registration with: python `"$Destination\harness\hooks\repair_registration.py`" --host <host> --scope project"
     }
 }
 catch {
     Write-Error $_.Exception.Message
     exit 1
+}
+finally {
+    Clear-Stage
 }

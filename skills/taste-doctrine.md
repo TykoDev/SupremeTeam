@@ -41,7 +41,7 @@ lifecycle states in §5.
 | The stored record's schema, version, scope kind, required top-level keys, and self-consistent sha256 digest | machine-checked | `taste_prefs.py`, `validate()` |
 | A corrupt or unreadable store is refused rather than repaired or silently replaced | machine-checked | `taste_prefs.py`, `load()` raising `corrupt_record` (§4) |
 | A write to an existing store carries `--expect-revision`, and a stale revision is refused | machine-checked | `taste_prefs.py`, `expected_revisions()` and the `stale_revision` error |
-| Only one writer mutates a store at a time | machine-checked | `taste_prefs.py`, `lock()` raising `locked` |
+| Only one writer mutates a store at a time, and a lock whose holder is provably gone is reclaimed rather than wedging the store | machine-checked | `taste_prefs.py`, `lock()` raising `locked`, `reclaim()`, and `Held.verify()` raising `lock_lost` (Failure paths) |
 | A preference id is a stable lowercase identifier | machine-checked | `taste_prefs.py`, the `[a-z0-9][a-z0-9._-]{0,127}` pattern in `mutate()` |
 | Secrets, credentials, and personal identifiers are refused or redacted; text and list sizes are bounded | machine-checked | `taste_prefs.py`, `validate_safe()` |
 | `confirm` applies only to a `proposed` entry (§5) | machine-checked | `taste_prefs.py`, the `invalid_state` error in `mutate()` |
@@ -267,8 +267,11 @@ Operations are auditable and update timestamps and lifecycle links atomically.
 The writer backs that up for the parts it owns: every mutation increments the
 store revision, chains `previous_revision_digest`, snapshots the prior revision
 under `_history/`, appends to the store journal, and commits the JSON and
-rendered Markdown pair together, rolling both back on failure. Lifecycle *links*
-between entries are content inside `value` and are not maintained by the writer.
+rendered Markdown pair together, rolling both back on failure. A rollback also
+removes the journal lines that write appended, so the journal lists committed
+revisions, plus one `lock_reclaimed` note for each abandoned lock the writer
+removed. Lifecycle *links* between entries are content inside `value` and are
+not maintained by the writer.
 
 Promotion, specialization, and `both` always create distinct records rather than
 changing inheritance semantics. `promote` and `specialize` copy the source
@@ -368,8 +371,20 @@ enters the normal lifecycle (§5, §6): nothing a grilling produces becomes
 - **The store is missing.** That is not corruption. It is an empty store at
   revision 0, and a first mutation creates it.
 - **Another writer holds the lock.** The writer refuses with `locked` rather
-  than waiting or forcing. Surface it; a second concurrent taste run is a
-  routing problem, not a retry problem.
+  than waiting or forcing, and the error names the holder's pid and the lock's
+  age. Surface it; a second concurrent taste run is a routing problem, not a
+  retry problem. The lock does not outlive its holder: on the next write the
+  writer removes a lock whose holder is a process on this host that no longer
+  exists, or that is older than ten minutes because no mutation holds it that
+  long, appends a `lock_reclaimed` note to the store journal, and reports it in
+  the result. Windows cannot probe a process, so only the age applies there. A
+  `locked` refusal that survives this means a live writer holds the lock, and
+  the answer is to wait. Nothing needs the lock file deleted by hand, and the
+  hooks deny an edit-tool write to it.
+- **A writer's lock was reclaimed while it ran.** The writer checks that it still
+  owns its lock immediately before committing and refuses with `lock_lost` when
+  it does not. Nothing was written. Reload with `status`, re-resolve, and redo
+  the change.
 - **The expected revision does not match.** The writer refuses with
   `stale_revision`. Re-read the store with `status`, re-resolve the intended
   change against the current revision, and re-issue. Never drop
@@ -378,6 +393,8 @@ enters the normal lifecycle (§5, §6): nothing a grilling produces becomes
 - **A `--scope both` write fails on one store.** The pair commits atomically or
   rolls back to the prior bytes of both, reporting `write_failed`. Treat a
   reported rollback as the final state and verify with `status` before retrying.
+  If a restore itself fails, `write_failed` lists each `unrestored` file with the
+  `backup` that still holds its prior bytes, and that backup is kept.
 - **Two entries contradict at equal precedence.** §7 step 5 governs: leave it
   unresolved, record it in `unresolved_conflicts`, surface it, and ask. Choosing
   by recency or strength is a doctrine violation even though nothing prevents

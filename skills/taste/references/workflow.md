@@ -79,6 +79,27 @@ global=0` — repeated flags, not a single slash-joined value). A mismatch exits
 `stale_revision` and changes nothing, so reload with `status` and re-preview
 before retrying.
 
+## Lock and recovery
+
+A mutation takes `taste.lock` in each scope it writes with `O_CREAT | O_EXCL` and
+records its `pid`, an opaque `host` hash, `created_at`, and a random `token` in
+it. It releases a lock only while the token is still its own, and it checks the
+token again immediately before committing, refusing with `lock_lost` when another
+writer reclaimed the lock in between.
+
+A killed writer does not wedge the store. Before it refuses with `locked`, the
+writer reclaims a lock that is provably abandoned: the holder was recorded on
+this host and that process no longer exists (`holder-dead`), or the lock is older
+than ten minutes (`expired`), because a mutation holds it for milliseconds. A lock
+file with no readable content is judged by its modification time, and Windows
+cannot probe a process, so only the age applies there. A reclaim appends a
+`lock_reclaimed` note to the store journal (`event`, `at`, `scope`, `reason`, and
+the prior `pid` and `created_at`) and is reported as `lock_reclaimed` in the
+result, including on a write that is then refused. Never delete `taste.lock` by
+hand or with an edit tool. A `locked` refusal that survives this means a live
+writer holds the lock, so wait for it; the error names the holder's pid, the
+lock's age, and the ten-minute bound.
+
 ## Gate package and handoff
 
 `../SKILL.md` § Gate evidence summarizes the three keys this skill authors at the

@@ -22,6 +22,8 @@ import shutil
 import socket
 import sys
 import tempfile
+import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +31,8 @@ SCHEMA = "supremeteam-taste-preferences"
 VERSION = 1
 MUTATIONS = {"propose", "confirm", "set", "deprecate", "revoke", "promote", "specialize", "import", "reset"}
 STATES = {"proposed", "active", "deprecated"}
+# A mutation holds the lock for milliseconds, so a lock this old was abandoned.
+LOCK_STALE_AFTER = 600
 SENSITIVE_KEY = re.compile(r"(?:secret|password|passwd|credential|token|api[_-]?key|private[_-]?key|cookie|authorization|prompt|conversation|email|phone|address|full[_-]?name|user[_-]?name|social[_-]?security|ssn)", re.I)
 SENSITIVE_VALUE = re.compile(
     r"(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._~+/=-]+|\b(?:sk|ghp|github_pat|xox[baprs])[-_A-Za-z0-9]{12,}|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b)",
@@ -182,43 +186,221 @@ def render(record: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def lock(targets: list[dict[str, Path]]) -> list[Path]:
-    acquired = []
+def host_id() -> str:
+    """Opaque host identifier recorded in a lock; empty when the hostname is unavailable."""
     try:
-        for item in targets:
-            item["lock"].parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(item["lock"], os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            os.write(fd, json.dumps({"pid": os.getpid(), "created_at": now()}).encode())
-            os.close(fd)
-            acquired.append(item["lock"])
-        return acquired
-    except FileExistsError as exc:
-        for path in acquired:
-            path.unlink(missing_ok=True)
-        raise TasteError("locked", "preference store is locked by another writer", path=str(exc.filename))
+        return hashlib.sha256(socket.gethostname().encode()).hexdigest()[:16]
     except Exception:
-        for path in acquired:
-            path.unlink(missing_ok=True)
+        return ""
+
+
+def pid_alive(pid: int) -> bool | None:
+    """Whether a process exists on this host, or None where the platform cannot say."""
+    if sys.platform == "win32":
+        return None  # os.kill(pid, 0) raises a console event there instead of probing
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except (OSError, OverflowError):  # a lock file is not trusted to hold a pid the platform accepts
+        return None
+    return True
+
+
+def read_lock(path: Path) -> dict[str, Any]:
+    """What a lock file records about its holder; empty when unreadable, as after a kill mid-write."""
+    try:
+        holder = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return holder if isinstance(holder, dict) else {}
+
+
+def lock_age(path: Path, holder: dict[str, Any]) -> float | None:
+    """Seconds since the lock was taken: the time it records, else the file's own."""
+    try:
+        taken = dt.datetime.fromisoformat(str(holder["created_at"]))
+        return (dt.datetime.now(dt.timezone.utc) - taken).total_seconds()
+    except (KeyError, ValueError, TypeError):
+        pass
+    try:
+        return time.time() - path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def stale_reason(path: Path, holder: dict[str, Any]) -> str | None:
+    """Why a lock is provably abandoned, or None when its holder may still be running."""
+    pid, mine = holder.get("pid"), host_id()
+    if type(pid) is int and pid > 0 and mine and holder.get("host") == mine and pid_alive(pid) is False:
+        return "holder-dead"
+    age = lock_age(path, holder)
+    return "expired" if age is not None and age > LOCK_STALE_AFTER else None
+
+
+def retrying(action: Any, attempts: int = 8) -> None:
+    """Run a file operation with short retries: on Windows a reader holding the file open (host
+    hook, indexer, antivirus, another writer checking the lock) makes a rename or delete fail
+    transiently with PermissionError. The same policy as save_run._replace_with_retry,
+    repeated because this module stays standalone."""
+    delay = 0.05
+    for attempt in range(attempts):
+        try:
+            action()
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.8)
+
+
+def replace_with_retry(source: Path, target: Path, attempts: int = 8) -> None:
+    retrying(lambda: os.replace(source, target), attempts)
+
+
+def unlink_with_retry(path: Path) -> None:
+    retrying(lambda: path.unlink(missing_ok=True))
+
+
+def take(path: Path) -> str:
+    """Create the lock file exclusively, record the holder in it, and return the token that proves it is ours."""
+    token = uuid.uuid4().hex
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        os.write(fd, json.dumps({"pid": os.getpid(), "host": host_id(), "created_at": now(), "token": token}).encode())
+    except BaseException:
+        os.close(fd)
+        path.unlink(missing_ok=True)
         raise
+    os.close(fd)
+    return token
+
+
+def reclaim(path: Path) -> dict[str, Any] | None:
+    """Remove the lock at path if its holder is provably gone, and describe what was removed."""
+    holder = read_lock(path)
+    reason = stale_reason(path, holder)
+    # A lock that changed between the two reads belongs to a writer that just took it.
+    if reason is None or read_lock(path) != holder:
+        return None
+    unlink_with_retry(path)
+    return {"reason": reason, "prior": {key: holder[key] for key in ("pid", "created_at") if isinstance(holder.get(key), (int, str)) and len(str(holder[key])) <= 64}}
+
+
+def busy(path: Path) -> TasteError:
+    holder = read_lock(path)
+    details: dict[str, Any] = {"path": str(path), "stale_after_seconds": LOCK_STALE_AFTER}
+    age = lock_age(path, holder)
+    if age is not None:
+        details["age_seconds"] = int(age)
+    if type(holder.get("pid")) is int:
+        details["holder_pid"] = holder["pid"]
+    return TasteError("locked", "preference store is locked by another writer", **details)
+
+
+class Held:
+    """The lock files one writer owns. Each carries a token, so a lock is trusted or released only while it is still ours."""
+
+    def __init__(self) -> None:
+        self.locks: list[tuple[Path, str]] = []
+        self.reclaimed: list[dict[str, Any]] = []
+
+    def acquire(self, scope: str, target: dict[str, Path]) -> None:
+        path = target["lock"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        removed = None
+        try:
+            token = take(path)
+        except FileExistsError:
+            removed = reclaim(path)
+            if removed is None:
+                raise busy(path) from None
+            try:
+                token = take(path)
+            except FileExistsError:  # another writer took the freed lock first
+                raise busy(path) from None
+        self.locks.append((path, token))
+        if removed:
+            note = {"scope": scope, **removed}
+            with target["journal"].open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps({"event": "lock_reclaimed", "at": now(), **note}, sort_keys=True) + "\n")
+            self.reclaimed.append(note)
+
+    def verify(self) -> None:
+        for path, token in self.locks:
+            if read_lock(path).get("token") != token:
+                raise TasteError("lock_lost", "the store lock was reclaimed while this writer held it; nothing was written", path=str(path))
+
+    def release(self) -> None:
+        for path, token in self.locks:
+            if read_lock(path).get("token") == token:
+                unlink_with_retry(path)
+        self.locks.clear()
+
+
+def lock(destinations: dict[str, dict[str, Path]]) -> Held:
+    held = Held()
+    try:
+        for scope, target in destinations.items():
+            held.acquire(scope, target)
+    except BaseException:
+        held.release()
+        raise
+    return held
 
 
 def stage(record: dict[str, Any], destination: dict[str, Path]) -> tuple[Path, Path]:
     destination["json"].parent.mkdir(parents=True, exist_ok=True)
-    staged = []
-    for suffix, content in ((".json.tmp", canonical_bytes(record)), (".md.tmp", render(record).encode())):
-        fd, name = tempfile.mkstemp(prefix=".taste-", suffix=suffix, dir=destination["json"].parent)
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(content); stream.flush(); os.fsync(stream.fileno())
-        staged.append(Path(name))
+    staged: list[Path] = []
+    try:
+        for suffix, content in ((".json.tmp", canonical_bytes(record)), (".md.tmp", render(record).encode())):
+            fd, name = tempfile.mkstemp(prefix=".taste-", suffix=suffix, dir=destination["json"].parent)
+            staged.append(Path(name))
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(content); stream.flush(); os.fsync(stream.fileno())
+    except BaseException:
+        for path in staged:
+            path.unlink(missing_ok=True)
+        raise
     return staged[0], staged[1]
 
 
+def rollback(records: list[tuple[str, dict[str, Any], dict[str, Path], bool]], backups: list[dict[str, Path]], replaced: list[tuple[int, str]], journals: dict[int, int | None]) -> list[tuple[Path, Path | None]]:
+    """Undo a partial commit. Returns each file that could not be restored with the backup that
+    still holds its prior bytes. A journal only ever lists committed revisions, so its appended
+    lines go first."""
+    failed: list[tuple[Path, Path | None]] = []
+    for index, size in journals.items():
+        journal = records[index][2]["journal"]
+        try:
+            if size is None:
+                journal.unlink(missing_ok=True)
+            else:
+                os.truncate(journal, size)
+        except OSError:
+            failed.append((journal, None))
+    for index, key in reversed(replaced):
+        dest = records[index][2]
+        backup = backups[index].get(key)
+        try:
+            if backup:
+                replace_with_retry(backup, dest[key])
+            else:
+                dest[key].unlink(missing_ok=True)
+        except OSError:
+            failed.append((dest[key], backup))
+    return failed
+
+
 def commit_pair(records: list[tuple[str, dict[str, Any], dict[str, Path], bool]], *, locks_held: bool = False) -> None:
-    locks, staged, backups, replaced = [], [], [], []
+    held, staged, backups, replaced, journals, keep = None, [], [], [], {}, set()
     try:
         if not locks_held:
-            locks = lock([item[2] for item in records])
-        for scope, record, dest, existed in records:
+            held = lock({scope: dest for scope, _, dest, _ in records})
+        for _, record, dest, _ in records:
             pair = stage(record, dest); staged.append(pair)
             backup = {}
             for key in ("json", "md"):
@@ -233,27 +415,28 @@ def commit_pair(records: list[tuple[str, dict[str, Any], dict[str, Path], bool]]
                 history = dest["history"] / f"revision-{old['revision']:08d}-{old['canonical_record_digest'].split(':')[1][:12]}.json"
                 if not history.exists():
                     shutil.copy2(dest["json"], history)
-            os.replace(staged[index][0], dest["json"]); replaced.append((index, "json"))
-            os.replace(staged[index][1], dest["md"]); replaced.append((index, "md"))
+            replace_with_retry(staged[index][0], dest["json"]); replaced.append((index, "json"))
+            replace_with_retry(staged[index][1], dest["md"]); replaced.append((index, "md"))
+            journals[index] = dest["journal"].stat().st_size if dest["journal"].exists() else None
             with dest["journal"].open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps({"revision": record["revision"], "digest": record["canonical_record_digest"], "generated_at": record["generated_at"]}, sort_keys=True) + "\n")
     except Exception as exc:
-        for index, key in reversed(replaced):
-            dest = records[index][2]
-            backup = backups[index].get(key)
-            if backup:
-                os.replace(backup, dest[key])
-            else:
-                dest[key].unlink(missing_ok=True)
+        failed = rollback(records, backups, replaced, journals)
+        keep.update(backup for _, backup in failed if backup)
         if isinstance(exc, TasteError):
             raise
+        if failed:
+            unrestored = [{"path": str(target), "backup": str(backup) if backup else None} for target, backup in failed]
+            raise TasteError("write_failed", "atomic preference write failed and the rollback was incomplete; each unrestored file's prior bytes are in its backup", reason=str(exc), unrestored=unrestored) from exc
         raise TasteError("write_failed", "atomic preference write failed and replacements were rolled back", reason=str(exc)) from exc
     finally:
         for pair in staged:
             for path in pair: path.unlink(missing_ok=True)
         for backup in backups:
-            for path in backup.values(): path.unlink(missing_ok=True)
-        for path in locks: path.unlink(missing_ok=True)
+            for path in backup.values():
+                if path not in keep: path.unlink(missing_ok=True)
+        if held:
+            held.release()
 
 
 def parse_value(raw: str | None) -> Any:
@@ -350,6 +533,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--expect-revision", action="append"); p.add_argument("--id", dest="entry_id"); p.add_argument("--value")
         p.add_argument("--input"); p.add_argument("--redact", action="store_true")
     args = parser.parse_args(argv); root = Path(args.project_root).resolve()
+    held = None
     try:
         if args.command not in MUTATIONS:
             loaded = {scope: load(root, scope)[0] for scope in selected_scopes(args.scope)}
@@ -370,7 +554,7 @@ def main(argv: list[str] | None = None) -> int:
             return emit(True, output=str(Path(args.output).resolve()), redacted=True)
         scopes = selected_scopes(args.scope)
         destinations = {scope: paths(root, scope) for scope in scopes}
-        held = lock(list(destinations.values()))
+        held = lock(destinations)
         try:
             # Re-read and compare revisions only after every destination lock is
             # held, preventing two writers from validating the same revision.
@@ -391,13 +575,17 @@ def main(argv: list[str] | None = None) -> int:
                 updated = mutate(current[scope][0], args.command, args, source)
                 validate(updated, scope)
                 records.append((scope, updated, destinations[scope], current[scope][1]))
+            held.verify()
             commit_pair(records, locks_held=True)
         finally:
-            for path in held:
-                path.unlink(missing_ok=True)
-        return emit(True, command=args.command, stores={s: {"revision": r["revision"], "digest": r["canonical_record_digest"]} for s, r, _, _ in records})
+            held.release()
+        result: dict[str, Any] = {"command": args.command, "stores": {s: {"revision": r["revision"], "digest": r["canonical_record_digest"]} for s, r, _, _ in records}}
+        if held.reclaimed:
+            result["lock_reclaimed"] = held.reclaimed
+        return emit(True, **result)
     except TasteError as exc:
-        return emit(False, error={"code": exc.code, "message": exc.message, **exc.details})
+        extra = {"lock_reclaimed": held.reclaimed} if held and held.reclaimed else {}
+        return emit(False, error={"code": exc.code, "message": exc.message, **exc.details}, **extra)
 
 
 if __name__ == "__main__":

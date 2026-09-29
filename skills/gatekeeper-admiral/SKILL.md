@@ -185,10 +185,14 @@ reader of the package, not the second. The script declares this gate's
 required-artifact manifest and calls the shared engine at
 `../harness/gatekeeper/_gatecheck.py`, which mechanizes:
 
-- package shape, single-revision lineage, and one submission id
+- package shape, single-revision lineage, and one submission id; the handoff
+  record is a file of its own that carries `submission_id` and `verdict`, and a
+  file that also fits the delivery-summary slot fills only one of the two
 - skip-record completeness
 - the blocked-phrase scan — this gate **owns** it
 - idempotency drift against `--prior`, and harness-doctrine §5 structure
+- links out of the package: a symlink whose target leaves the package directory
+  is never read and is reported as `LINK_ESCAPES_PACKAGE`
 
 It returns `PASS` / `FAIL` / `UNCHECKED` findings plus a `gate_status`
 (`STRUCTURE_OK` / `NEEDS_JUDGMENT` / `BLOCKERS_PRESENT`) and **never emits a
@@ -321,4 +325,4 @@ the verdict inline and preserve the run and revision.
 
 ## Packaging Notes
 
-Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../harness/gatekeeper/_gatecheck.py`, which it locates by walking up from its own path to the catalog that holds `harness/gatekeeper/` — ship the `harness/gatekeeper/` directory alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.
+Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../harness/gatekeeper/_gatecheck.py`, which it locates by walking up from its own path to the catalog that holds `harness/gatekeeper/`; the engine reads `gates.yaml` and `pipelines.yaml` from that catalog and imports `scripts/data_formats.py`, so ship those alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.

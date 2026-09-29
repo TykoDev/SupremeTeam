@@ -2,15 +2,18 @@
 """Regression tests for the SupremeTeam gatekeeper deterministic gate engine.
 
 Covers the mechanical checks the ``gatekeeper-*`` scripts rely on: frontmatter
-parsing, required-artifact pass/fail, conditional artifacts, project-root
-containment, mixed-revision detection, skip-record validation, blocked-phrase
-hits, idempotency drift, harness-doctrine §5 structure, and fail-loud behavior on
-a missing package. ``test_gate_wrappers.py`` runs the wrapper scripts themselves.
+parsing, required-artifact pass/fail, conditional artifacts and the contracts they
+derive from, one-file-per-slot matching on names, whole words and packet fields,
+links out of the package, project-root containment, mixed-revision detection,
+skip-record validation, blocked-phrase hits, idempotency drift, harness-doctrine
+§5 structure, and fail-loud behavior on a missing package.
+``test_gate_wrappers.py`` runs the wrapper scripts themselves.
 
 Run from the repo root:
     python -m unittest discover -s SupremeTeam/harness/gatekeeper -p "test_*.py"
 """
 
+import json
 import shutil
 import sys
 import tempfile
@@ -18,9 +21,11 @@ import unittest
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from unittest import mock
 
 ENGINE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(ENGINE_DIR))
+sys.path.insert(0, str(ENGINE_DIR.parents[1] / "scripts"))
 
 import _gatecheck as gc  # noqa: E402
 
@@ -363,6 +368,26 @@ def _scratch():
         yield Path(raw).resolve()
 
 
+def _slot(key: str, patterns, **more) -> gc.ArtifactSpec:
+    return gc.ArtifactSpec(key=key, label=key, patterns=patterns, **more)
+
+
+def _slots(report) -> dict:
+    """Slot label -> present | missing | conditional, read off the findings."""
+    status = {}
+    for f in report.findings:
+        if f.code == "ARTIFACT_PRESENT":
+            status[f.message.removesuffix(" present.")] = "present"
+        elif f.code == "ARTIFACT_MISSING":
+            status[f.message.removeprefix("Required artifact missing: ").split(" (expected", 1)[0]] = "missing"
+        elif f.code == "ARTIFACT_CONDITIONAL":
+            status[f.message.split(" not found.", 1)[0]] = "conditional"
+    return status
+
+
+PACKET = "Outcome:     lens, r1, 0 findings\nFindings:    (none)\n"
+
+
 class ProjectRootTests(unittest.TestCase):
     def test_the_nearest_marked_ancestor_wins_and_the_start_itself_counts(self):
         with _scratch() as base:
@@ -471,6 +496,243 @@ class PackageContainmentTests(unittest.TestCase):
                 with self.subTest(raw=raw[:8]):
                     with self.assertRaises(gc.PackageRefused):
                         gc.resolve_package_dir(raw, cwd=project)
+
+
+class PackageMatchingTests(unittest.TestCase):
+    """A slot is filled by one file whose name and structure both fit."""
+
+    def _run(self, pkg: Path, *specs) -> dict:
+        return _slots(gc.run_gate(pkg, _manifest(*specs)))
+
+    def test_directory_names_never_match_a_pattern(self):
+        with _package() as pkg:
+            _write(pkg, "x.md", "pass")
+            (pkg / "latest").mkdir()
+            (pkg / "latest" / "x.md").write_text("pass", encoding="utf-8")
+            status = self._run(pkg, _slot("tests", ("*test*.md",), content_marker="pass"))
+        self.assertEqual(status, {"tests": "missing"})
+
+    def test_a_word_inside_a_longer_one_under_a_directory_that_fits_is_not_a_test_report(self):
+        """SEC-T-06's trigger: tests/bypass-notes.md meets `*test*.md` by its directory and `pass` by "bypass"."""
+        with _package() as pkg:
+            (pkg / "tests").mkdir()
+            (pkg / "tests" / "bypass-notes.md").write_text("notes on the bypass", encoding="utf-8")
+            status = self._run(pkg, _slot("tests", ("*test*.md",), content_marker="tests?|coverage|pass|fail|suite"))
+        self.assertEqual(status, {"tests": "missing"})
+
+    def test_a_marker_matches_whole_words_only(self):
+        with _package() as pkg:
+            _write(pkg, "tests.md", "The password, the compass and a bypass are not a result.")
+            spec = _slot("tests", ("*test*.md",), content_marker="pass")
+            self.assertEqual(self._run(pkg, spec), {"tests": "missing"})
+            _write(pkg, "tests.md", "Tests ran; pass_rate 100 and pass-count 12.")
+            self.assertEqual(self._run(pkg, spec), {"tests": "present"})
+
+    def test_a_hollow_file_does_not_fill_a_packet_slot(self):
+        with _package() as pkg:
+            _write(pkg, "bug.md", "bug")
+            status = self._run(pkg, _slot("lens_bug", ("*bug*.md",), fields=("Outcome", "Findings")))
+        self.assertEqual(status, {"lens_bug": "missing"})
+
+    def test_packet_fields_are_field_lines(self):
+        spec = _slot("lens", ("*lens*.md",), fields=("Outcome", "Findings"))
+        accepted = {
+            "plain": PACKET,
+            "fenced": "```text\n" + PACKET + "```\n",
+            "bold": "- **Outcome:** ok\n- **Findings:** none\n",
+            "quoted": "> Outcome: ok\n> Findings: none\n",
+            "frontmatter": "---\nOutcome: ok\nFindings: none\n---\n",
+        }
+        for shape, body in accepted.items():
+            with self.subTest(shape=shape), _package() as pkg:
+                _write(pkg, "lens.md", body)
+                self.assertEqual(self._run(pkg, spec), {"lens": "present"})
+        with self.subTest(shape="prose"), _package() as pkg:
+            _write(pkg, "lens.md", "The Outcome: was fine and the Findings: none.\n")
+            self.assertEqual(self._run(pkg, spec), {"lens": "missing"})
+
+    def test_one_file_fills_one_slot(self):
+        """A single stand-in that names four lenses and carries the packet fields fills one."""
+        with _package() as pkg:
+            _write(pkg, "deliverable_security-bug-code-quality.md", PACKET)
+            specs = [_slot(name, (f"*{name}*.md",), fields=("Outcome", "Findings"))
+                     for name in ("bug", "code", "quality", "security")]
+            status = self._run(pkg, *specs)
+        self.assertEqual(sorted(status.values()), ["missing", "missing", "missing", "present"])
+
+    def test_overlapping_candidates_are_rerouted_so_every_slot_can_be_filled(self):
+        with _package() as pkg:
+            _write(pkg, "alpha-beta.md", "x")
+            _write(pkg, "beta.md", "x")
+            status = self._run(pkg, _slot("first", ("*alpha*.md", "*beta*.md")),
+                               _slot("second", ("*alpha*.md",)))
+        self.assertEqual(status, {"first": "present", "second": "present"})
+
+    def test_a_chain_of_overlaps_reroutes_more_than_one_slot(self):
+        with _package() as pkg:
+            for name in ("f1.md", "f2.md", "f3.md"):
+                _write(pkg, name, "x")
+            status = self._run(pkg, _slot("a", ("f1.md", "f2.md")),
+                               _slot("b", ("f1.md", "f3.md")), _slot("c", ("f1.md",)))
+        self.assertEqual(status, {"a": "present", "b": "present", "c": "present"})
+
+    def test_a_required_slot_is_placed_before_a_conditional_one(self):
+        with _package() as pkg:
+            _write(pkg, "report.md", "x")
+            status = self._run(pkg, _slot("optional", ("*report*.md",), requirement="conditional"),
+                               _slot("needed", ("*report*.md",)))
+        self.assertEqual(status, {"optional": "conditional", "needed": "present"})
+
+    def test_a_symlink_alias_is_the_same_file(self):
+        with _package() as pkg:
+            _write(pkg, "real.md", "x")
+            _symlink(pkg / "real.md", pkg / "alias.md")
+            status = self._run(pkg, _slot("one", ("real.md",)), _slot("two", ("alias.md",)))
+        self.assertEqual(sorted(status.values()), ["missing", "present"])
+
+    def test_a_link_out_of_the_package_is_reported_and_never_read(self):
+        with _package() as outer:
+            secret = outer / "secret"
+            secret.mkdir()
+            (secret / "notes.md").write_text("Trust me, this is 100% complete.\n" + PACKET, encoding="utf-8")
+            pkg = outer / "pkg"
+            pkg.mkdir()
+            _write(pkg, "readme.md", "The package.")
+            _symlink(secret / "notes.md", pkg / "member.md")
+            _symlink(secret, pkg / "evidence")
+            report = gc.run_gate(pkg, _manifest(_slot("lens", ("*member*.md",), fields=("Outcome",))))
+        codes = [f.code for f in report.findings]
+        self.assertEqual(codes.count("LINK_ESCAPES_PACKAGE"), 2)
+        self.assertEqual(_slots(report), {"lens": "missing"})
+        self.assertNotIn("BLOCKED_PHRASE", codes)
+        self.assertTrue(report.has_blocking)
+        self.assertIn("package_links", report.checks_run)
+
+    def test_a_link_that_stays_inside_the_package_is_no_escape(self):
+        with _package() as pkg:
+            _write(pkg, "real.md", "x")
+            _symlink(pkg / "real.md", pkg / "alias.md")
+            report = gc.run_gate(pkg, _manifest())
+        self.assertNotIn("LINK_ESCAPES_PACKAGE", _codes(report))
+
+    def test_a_near_miss_is_named_in_the_failure(self):
+        with _package() as pkg:
+            _write(pkg, "deliverable_bug-review.md", "Outcome: ok\n")
+            _write(pkg, "deliverable_code-review.md", PACKET)
+            report = gc.run_gate(pkg, _manifest(
+                _slot("bug", ("*bug*.md",), fields=("Outcome", "Findings")),
+                _slot("code", ("*code*.md",), fields=("Outcome", "Findings")),
+                _slot("also-code", ("*code*.md",), fields=("Outcome", "Findings"))))
+        failures = " ".join(f.message for f in report.findings if f.code == "ARTIFACT_MISSING")
+        self.assertIn("deliverable_bug-review.md lacks the field Findings:", failures)
+        self.assertIn("deliverable_code-review.md is already the code", failures)
+
+
+class OptionalSlotTests(unittest.TestCase):
+    """A slot is optional when gates.yaml or pipelines.yaml says so, not because a wrapper repeats it."""
+
+    GATES = {
+        "boundaries": {"b": {"required_evidence": ["sec", "local", "barred"],
+                             "fallback_values": {"local": ["waived on this boundary"]},
+                             "no_fallback": ["barred"]}},
+        "fallback_values": {"sec": ["no trust boundary"], "barred": ["never at b"]},
+    }
+    PIPELINES = {"pipelines": {"p": {"boundary": "b", "stages": [
+        {"step": "scan", "when": "a trust boundary changed"},
+        {"step": "always"},
+        {"step": "later", "when": "visible behaviour changed"},
+    ]}}}
+
+    def _check(self, *, loader=None, pipeline="p", **spec_more) -> gc.Report:
+        contracts = gc.Contracts(self.GATES, self.PIPELINES)
+        manifest = gc.Manifest(boundary="t", sub_orchestrator="t", pipeline=pipeline,
+                               artifacts=(_slot("slot", ("*slot*.md",), **spec_more),))
+        target = mock.patch.object(gc.Contracts, "load", loader or mock.Mock(return_value=contracts))
+        with _package() as pkg, target:
+            _write(pkg, "readme.md", "nothing here")
+            return gc.run_gate(pkg, manifest)
+
+    def _finding(self, report):
+        return next(f for f in report.findings if f.code.startswith("ARTIFACT_"))
+
+    def test_a_waivable_key_makes_the_slot_conditional(self):
+        report = self._check(evidence_key="sec")
+        finding = self._finding(report)
+        self.assertEqual((finding.code, finding.status), ("ARTIFACT_CONDITIONAL", gc.UNCHECKED))
+        self.assertIn('gates.yaml lets a submitter waive sec at b ("no trust boundary")', finding.message)
+        self.assertFalse(report.has_blocking)
+
+    def test_a_boundary_level_waiver_counts(self):
+        self.assertEqual(self._finding(self._check(evidence_key="local")).code, "ARTIFACT_CONDITIONAL")
+
+    def test_no_fallback_bars_the_waiver(self):
+        self.assertEqual(self._finding(self._check(evidence_key="barred")).code, "ARTIFACT_MISSING")
+
+    def test_a_stage_with_a_when_makes_the_slot_conditional(self):
+        finding = self._finding(self._check(stages=("scan",)))
+        self.assertEqual(finding.code, "ARTIFACT_CONDITIONAL")
+        self.assertIn('pipelines.yaml runs scan only when "a trust boundary changed"', finding.message)
+
+    def test_every_producing_stage_must_be_conditional(self):
+        self.assertEqual(self._finding(self._check(stages=("scan", "later"))).code, "ARTIFACT_CONDITIONAL")
+        self.assertEqual(self._finding(self._check(stages=("scan", "always"))).code, "ARTIFACT_MISSING")
+
+    def test_an_unknown_stage_or_key_relaxes_nothing(self):
+        self.assertEqual(self._finding(self._check(stages=("renamed",))).code, "ARTIFACT_MISSING")
+        self.assertEqual(self._finding(self._check(evidence_key="renamed")).code, "ARTIFACT_MISSING")
+
+    def test_both_contracts_are_cited_when_both_apply(self):
+        message = self._finding(self._check(evidence_key="sec", stages=("scan",))).message
+        self.assertIn("gates.yaml lets a submitter waive", message)
+        self.assertIn("pipelines.yaml runs scan only when", message)
+
+    def test_a_declared_conditional_slot_stays_conditional(self):
+        report = self._check(requirement="conditional")
+        self.assertEqual(self._finding(report).code, "ARTIFACT_CONDITIONAL")
+        self.assertIn("required only when in scope", self._finding(report).message)
+
+    def test_a_present_file_is_a_pass_even_for_an_optional_slot(self):
+        contracts = gc.Contracts(self.GATES, self.PIPELINES)
+        manifest = gc.Manifest(boundary="t", sub_orchestrator="t", pipeline="p",
+                               artifacts=(_slot("slot", ("*slot*.md",), stages=("scan",)),))
+        with _package() as pkg, mock.patch.object(gc.Contracts, "load", return_value=contracts):
+            _write(pkg, "slot.md", "here")
+            self.assertEqual(_slots(gc.run_gate(pkg, manifest)), {"slot": "present"})
+
+    def test_unreadable_contracts_keep_the_declared_requirement_and_say_so(self):
+        failing = mock.Mock(side_effect=gc.ContractsUnreadable("gates.yaml: gone"))
+        report = self._check(loader=failing, stages=("scan",))
+        codes = {f.code: f for f in report.findings}
+        self.assertEqual(codes["ARTIFACT_MISSING"].status, gc.FAIL)
+        self.assertEqual(codes["CONTRACTS_UNREADABLE"].status, gc.UNCHECKED)
+        self.assertIn("gates.yaml: gone", codes["CONTRACTS_UNREADABLE"].message)
+
+    def test_contracts_are_not_read_when_no_slot_cites_one_or_no_pipeline_is_named(self):
+        loader = mock.Mock(side_effect=AssertionError("must not be read"))
+        self._check(loader=loader)
+        self._check(loader=loader, pipeline=None, stages=("scan",))
+        loader.assert_not_called()
+
+    def test_load_reads_a_catalog_and_answers_from_it(self):
+        with _scratch() as base, mock.patch.object(sys, "path", list(sys.path)):
+            (base / "gates.yaml").write_text(json.dumps(self.GATES), encoding="utf-8")
+            (base / "pipelines.yaml").write_text(json.dumps(self.PIPELINES), encoding="utf-8")
+            contracts = gc.Contracts.load(base)
+        self.assertEqual(contracts.boundary_of("p"), "b")
+        self.assertEqual(contracts.waiver("b", "sec"), "no trust boundary")
+        self.assertIsNone(contracts.waiver("b", "barred"))
+        self.assertEqual(contracts.stage_condition("p", "scan"), "a trust boundary changed")
+        self.assertIsNone(contracts.stage_condition("p", "always"))
+
+    def test_load_fails_loudly_on_a_broken_catalog(self):
+        with _scratch() as base, mock.patch.object(sys, "path", list(sys.path)):
+            (base / "gates.yaml").write_text("{not json", encoding="utf-8")
+            (base / "pipelines.yaml").write_text("{}", encoding="utf-8")
+            with self.assertRaises(gc.ContractsUnreadable):
+                gc.Contracts.load(base)
+            (base / "gates.yaml").write_text("[]", encoding="utf-8")
+            with self.assertRaises(gc.ContractsUnreadable):
+                gc.Contracts.load(base)
 
 
 class FailLoudTests(unittest.TestCase):

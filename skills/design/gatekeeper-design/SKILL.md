@@ -170,16 +170,23 @@ parity probe output.
 
 Both wrap the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which
 also mechanizes single-revision lineage, skip-record completeness, the
-blocked-phrase scan, idempotency drift against `--prior`, and harness-doctrine §5
-structure. Both return `PASS` / `FAIL` / `UNCHECKED` findings plus a
-`gate_status`, never a verdict, and never a judgment about design coherence. Both
-fail loud: a blocking failure exits non-zero, an internal error exits 2.
+blocked-phrase scan, idempotency drift against `--prior`, links out of the
+package (never read, reported as `LINK_ESCAPES_PACKAGE`), and harness-doctrine §5
+structure. Each artifact is a file of its own, matched on its own name and on
+whole words of its marker; a name-matching file that lacks the marker is named in
+the failure as a near miss. Both return `PASS` / `FAIL` / `UNCHECKED` findings plus
+a `gate_status`, never a verdict, and never a judgment about design coherence.
+Both fail loud: a blocking failure exits non-zero, an internal error exits 2.
 
-Two `design-to-build` artifacts are **conditional** — API contracts and the
-frontend/UI handoff. The script cannot know whether endpoints or a user-facing
-surface are in scope, so it reports their absence as `UNCHECKED`, to be resolved
+Four `design-to-build` artifacts are **conditional**. The script cannot know
+whether endpoints or a user-facing surface are in scope, so it reports the API
+contracts and the frontend/UI handoff as `UNCHECKED` when absent, to be resolved
 against the actual scope and the `../architect/references/api-endpoint-design.md`
-and `../../design-doctrine.md` contracts.
+and `../../design-doctrine.md` contracts. The stack lock and the Taste snapshot are
+conditional because `../../gates.yaml` lets a submitter waive `stack_lock` and
+`taste_snapshot`; the manifest cites those keys instead of restating the waiver,
+and an absent file is `UNCHECKED` with the waiver named, to be resolved against the
+sanctioned applicability record the boundary validator checks.
 
 **2. The boundary validator** checks the evidence contract against
 `../../gates.yaml`:
@@ -356,4 +363,4 @@ revision.
 
 ## Packaging Notes
 
-Package `SKILL.md`, `scripts/check.py`, `scripts/check_redesign.py`, `references/workflow.md`, `references/boundary-evidence.md`, `references/key-spaces.md`, and `references/examples.md` together. Both scripts depend on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which they locate by walking up from their own path to the catalog that holds `harness/gatekeeper/` — ship the `harness/gatekeeper/` directory alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.
+Package `SKILL.md`, `scripts/check.py`, `scripts/check_redesign.py`, `references/workflow.md`, `references/boundary-evidence.md`, `references/key-spaces.md`, and `references/examples.md` together. Both scripts depend on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which they locate by walking up from their own path to the catalog that holds `harness/gatekeeper/`; the engine reads `gates.yaml` and `pipelines.yaml` from that catalog and imports `scripts/data_formats.py`, so ship those alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.

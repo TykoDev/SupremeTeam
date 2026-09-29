@@ -3,9 +3,10 @@
 Deterministic gate check for ``gatekeeper-build`` — the build→review boundary.
 
 Validates that a build-phase packet attaches the implementation diff, test
-evidence, security outcome, cross-check completeness certification, and the
-build-gate verdict for one coherent revision — plus the shared lineage,
-skip-record, blocked-phrase, idempotency, and harness-doctrine §5 checks.
+evidence, security outcome (when the build touched a trust boundary),
+cross-check completeness certification, and the build-gate verdict for one
+coherent revision — plus the shared lineage, skip-record, blocked-phrase,
+idempotency, and harness-doctrine §5 checks.
 
 Reports PASS / FAIL / UNCHECKED facts only; the skill issues the verdict.
 See ../SKILL.md and ../references/workflow.md.
@@ -37,36 +38,47 @@ def _engine():
 
 gc = _engine()
 
-# Required build-to-review evidence set (SKILL.md workflow step 1). Matched by
-# filename pattern and/or a content marker so a deliverable named
-# deliverable_implementation.md or review-packet.md is recognized either way.
+# `diff` as a part of a file name, not the start of "different".
+_DIFF_NAMES = ("diff.md", "diff[-_.]*.md", "*[-_.]diff.md", "*[-_.]diff[-_.]*.md")
+
+# Required build-to-review evidence set (SKILL.md workflow step 1), matched by
+# file name and proved by a whole-word marker in the file. The security outcome is
+# not declared optional here: gates.yaml lets a submitter waive security_evidence
+# and pipelines.yaml runs security-checkpoint only on a trust-boundary change, so
+# the engine reads both and reports an absent outcome UNCHECKED.
 MANIFEST = gc.Manifest(
     boundary="build-to-review",
     sub_orchestrator="build/build-management",
+    pipeline="build",
     artifacts=(
         gc.ArtifactSpec(
             key="implementation",
             label="implementation diff / change summary",
-            patterns=("*implementation*.md", "deliverable_*build*.md", "*diff*.md"),
-            content_marker=r"implementation|changed file|diff|module",
+            patterns=("*implementation*.md", "deliverable_*build*.md", *_DIFF_NAMES),
+            content_marker=r"implement\w*|changed files?|diff|modules?",
+            stages=("implementation",),
         ),
         gc.ArtifactSpec(
             key="tests",
             label="test-builder evidence (execution results)",
             patterns=("*test*.md", "deliverable_*test*.md"),
-            content_marker=r"test|coverage|pass|fail|suite",
+            content_marker=r"tests?|testing|coverage|pass(?:ed|es)?|fail(?:ed|s|ures?)?|suites?",
+            stages=("test-surface",),
         ),
         gc.ArtifactSpec(
             key="security",
             label="security-builder outcome (findings or clean bill)",
             patterns=("*security*.md", "deliverable_*security*.md"),
-            content_marker=r"security|vulnerab|clean bill|finding",
+            content_marker=r"security|vulnerab\w*|clean bill|findings?",
+            evidence_key="security_evidence",
+            stages=("security-checkpoint",),
         ),
         gc.ArtifactSpec(
             key="completeness",
             label="cross-check-build-confirm completeness certification",
             patterns=("*cross-check*.md", "*completeness*.md", "*confirm*.md"),
-            content_marker=r"complete|certif|confirm",
+            content_marker=r"complet\w*|certif\w*|confirm\w*",
+            stages=("completeness-cross-check",),
         ),
         gc.ArtifactSpec(
             key="build_verdict",

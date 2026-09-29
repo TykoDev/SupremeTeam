@@ -42,9 +42,10 @@ gc = _engine()
 
 # The cross-stage handoff record (save-protocol.md §1:
 # delivery/reports/handoff_<boundary>.md) is the one artifact admiral must attach
-# for any boundary; pass the run's delivery/ directory as <package-dir>. The
-# package narrative + delivery package are validated structurally by the shared
-# checks.
+# for any boundary; pass the run's delivery/ directory as <package-dir>. Its
+# frontmatter carries submission_id and verdict (admiral/references/workflow.md).
+# The package narrative + delivery package are validated structurally by the
+# shared checks.
 MANIFEST = gc.Manifest(
     boundary="cross-stage handoff (admiral)",
     sub_orchestrator="admiral",
@@ -53,7 +54,7 @@ MANIFEST = gc.Manifest(
             key="handoff_record",
             label="cross-stage handoff record with submission/verdict frontmatter",
             patterns=("*handoff*.md", "gatekeeper-admiral_handoff-*.md"),
-            content_marker=r"submission_id|package_path|verdict",
+            fields=("submission_id", "verdict"),
         ),
         gc.ArtifactSpec(
             key="delivery_or_package",

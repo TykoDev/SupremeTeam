@@ -34,12 +34,13 @@ once in ``skills/runtime-manifest.yaml`` (``runtime.python.minimum``) and checke
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 # --- Shared four-tier severity model (cited by every gatekeeper) --------------
 # critical: package is untrusted / cannot advance without external judgment.
@@ -118,14 +119,31 @@ class Finding:
 
 @dataclass
 class ArtifactSpec:
-    """A required (or conditional) package artifact, matched by filename glob
-    and/or a content marker regex.
+    """A required (or conditional) package artifact: found by file name, proved
+    by what the file contains, and held to one file per slot.
+
+    patterns:       shell globs matched against the file's own name, never its
+                    directory components, so ``latest/x.md`` does not answer to
+                    ``*test*.md``.
+    content_marker: a regex, case-insensitive, that must match on whole words:
+                    letters and digits may not continue it, so ``pass`` is not
+                    found in ``password`` (``pass_rate`` and ``pass-rate`` count).
+    fields:         packet field names (``Outcome``, ``Findings``) that must each
+                    open a line as ``Name:``. This is the structural proof; a
+                    common word in prose is not.
 
     requirement:
       - "required":    absence is a MAJOR FAIL.
       - "conditional": absence is an INFO UNCHECKED — the engine cannot know
         whether this artifact is in scope (e.g. API contracts only when
         endpoints exist), so the model must confirm. Presence is a PASS.
+
+    evidence_key and stages name the contracts that decide whether the slot is
+    optional, so a wrapper states where the condition lives instead of copying
+    it: ``evidence_key`` is a gates.yaml key a submitter may waive at this
+    boundary, ``stages`` are the pipelines.yaml stages that produce the file. A
+    required slot whose key is waivable, or whose every stage carries a ``when``,
+    is held as conditional (see ``Contracts``).
     """
 
     key: str
@@ -133,15 +151,22 @@ class ArtifactSpec:
     patterns: Sequence[str]
     content_marker: Optional[str] = None
     requirement: str = "required"
+    fields: Sequence[str] = ()
+    evidence_key: Optional[str] = None
+    stages: Sequence[str] = ()
 
 
 @dataclass
 class Manifest:
-    """A boundary's deterministic acceptance shape, declared by each gate."""
+    """A boundary's deterministic acceptance shape, declared by each gate.
+
+    ``pipeline`` names the pipelines.yaml pipeline that closes at this boundary;
+    without it a slot's ``evidence_key`` and ``stages`` cannot be looked up."""
 
     boundary: str
     sub_orchestrator: str
     artifacts: Sequence[ArtifactSpec] = field(default_factory=tuple)
+    pipeline: Optional[str] = None
 
 
 @dataclass
@@ -372,20 +397,38 @@ def resolve_package_dir(raw: str, cwd: Optional[Path] = None) -> Path:
 # Package discovery
 # =============================================================================
 
+def _leaves(path: Path, real_root: Path) -> bool:
+    """True when ``path`` resolves outside ``real_root``, or cannot be resolved."""
+    try:
+        path.resolve().relative_to(real_root)
+    except (OSError, ValueError):
+        return True
+    return False
+
+
+def find_escaping_links(root: Path) -> List[Path]:
+    """Symlinks and junctions inside the package whose target leaves it."""
+    real_root = root.resolve()
+    return [p for p in sorted(root.rglob("*"))
+            if (p.is_symlink() or p.is_junction()) and _leaves(p, real_root)]
+
+
 def iter_all_files(root: Path) -> List[Path]:
     """Every regular file under the package (JSON evidence records and HTML
     prototypes included), sorted for stable output. Used for artifact
-    presence; lineage and phrase scans use the text-only enumeration."""
-    return [p for p in sorted(root.rglob("*")) if p.is_file()]
+    presence; lineage and phrase scans use the text-only enumeration. A member
+    that resolves outside the package is left out, so the gate reads what the
+    package contains and nothing a link points at; ``find_escaping_links``
+    reports the links."""
+    real_root = root.resolve()
+    return [p for p in sorted(root.rglob("*"))
+            if p.is_file() and not _leaves(p, real_root)]
 
 
 def iter_package_files(root: Path) -> List[Path]:
     """All readable text files under the package, sorted for stable output."""
-    files: List[Path] = []
-    for p in sorted(root.rglob("*")):
-        if p.is_file() and p.suffix.lower() in _TEXT_SUFFIXES:
-            files.append(p)
-    return files
+    return [p for p in iter_all_files(root)
+            if p.suffix.lower() in _TEXT_SUFFIXES]
 
 
 def _read(path: Path) -> str:
@@ -400,55 +443,255 @@ def _rel(path: Path, root: Path) -> str:
 
 
 # =============================================================================
+# Contracts a manifest derives its optional slots from
+# =============================================================================
+
+class ContractsUnreadable(Exception):
+    """gates.yaml or pipelines.yaml could not be read from the catalog."""
+
+
+def _mapping(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+class Contracts:
+    """What gates.yaml and pipelines.yaml say about which artifacts are optional.
+
+    Read from the catalog this engine ships in (two levels above this file), so a
+    wrapper cites a key or a stage instead of restating its condition, and a
+    change to either file reaches every gate that cites it."""
+
+    def __init__(self, gates: dict, pipelines: dict) -> None:
+        self.gates = gates
+        self.pipelines = pipelines
+
+    @classmethod
+    def load(cls, catalog: Optional[Path] = None) -> "Contracts":
+        root = catalog or Path(__file__).resolve().parents[2]
+        scripts = str(root / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        try:
+            from data_formats import load_data  # stdlib only, ships in scripts/
+            gates = load_data(root / "gates.yaml")
+            pipelines = load_data(root / "pipelines.yaml")
+        except (ImportError, ValueError) as exc:  # DataFormatError is a ValueError
+            raise ContractsUnreadable(f"{type(exc).__name__}: {exc}") from exc
+        if not isinstance(gates, dict) or not isinstance(pipelines, dict):
+            raise ContractsUnreadable("gates.yaml and pipelines.yaml must be mappings")
+        return cls(gates, pipelines)
+
+    def _pipeline(self, name: str) -> dict:
+        return _mapping(_mapping(self.pipelines.get("pipelines")).get(name))
+
+    def boundary_of(self, pipeline: str) -> Optional[str]:
+        boundary = self._pipeline(pipeline).get("boundary")
+        return boundary if isinstance(boundary, str) else None
+
+    def waiver(self, boundary: str, key: str) -> Optional[str]:
+        """The reason a submitter may waive ``key`` at ``boundary``, if one is sanctioned."""
+        spec = _mapping(_mapping(self.gates.get("boundaries")).get(boundary))
+        if key in (spec.get("no_fallback") or ()):
+            return None
+        for table in (spec.get("fallback_values"), self.gates.get("fallback_values")):
+            reasons = _mapping(table).get(key)
+            if isinstance(reasons, list) and reasons and isinstance(reasons[0], str):
+                return reasons[0]
+        return None
+
+    def stage_condition(self, pipeline: str, stage: str) -> Optional[str]:
+        """The ``when`` that gates ``stage``, or None when the stage always runs."""
+        stages = self._pipeline(pipeline).get("stages")
+        for entry in stages if isinstance(stages, list) else ():
+            if isinstance(entry, dict) and entry.get("step") == stage:
+                when = entry.get("when")
+                return when if isinstance(when, str) and when.strip() else None
+        return None
+
+
+def _contracts_for(manifest: Manifest, report: Report) -> Optional[Contracts]:
+    """The contracts, read only when a slot cites one. When they cannot be read
+    every slot keeps its declared requirement: stricter, never looser."""
+    if not manifest.pipeline or not any(
+            spec.evidence_key or spec.stages for spec in manifest.artifacts):
+        return None
+    try:
+        return Contracts.load()
+    except ContractsUnreadable as exc:
+        report.add(Finding(
+            code="CONTRACTS_UNREADABLE", severity="minor", status=UNCHECKED,
+            message=(f"Could not read gates.yaml / pipelines.yaml ({exc}); artifacts "
+                     f"those files make optional are held to their declared requirement."),
+            location="package",
+        ))
+        return None
+
+
+def _optional_because(spec: ArtifactSpec, manifest: Manifest,
+                      contracts: Optional[Contracts]) -> str:
+    """Why the contracts make this slot optional, or "" when they do not."""
+    if contracts is None or not manifest.pipeline:
+        return ""
+    reasons: List[str] = []
+    boundary = contracts.boundary_of(manifest.pipeline)
+    if boundary and spec.evidence_key:
+        waiver = contracts.waiver(boundary, spec.evidence_key)
+        if waiver:
+            reasons.append(f'gates.yaml lets a submitter waive {spec.evidence_key} '
+                           f'at {boundary} ("{waiver}")')
+    if spec.stages:
+        conditions = [contracts.stage_condition(manifest.pipeline, stage)
+                      for stage in spec.stages]
+        if all(conditions):
+            reasons.append("pipelines.yaml runs " + " and ".join(
+                f'{stage} only when "{when}"'
+                for stage, when in zip(spec.stages, conditions, strict=True)))
+    return "; ".join(reasons)
+
+
+# =============================================================================
 # Individual deterministic checks
 # =============================================================================
+
+def _named(path: Path, patterns: Sequence[str]) -> bool:
+    """Does the file's own name match a pattern? Directory names never count."""
+    name = path.name.lower()
+    return any(fnmatch.fnmatchcase(name, pattern.lower()) for pattern in patterns)
+
+
+def _field_line(name: str) -> re.Pattern:
+    """A packet field: ``name`` opening a line (list, quote and emphasis marks
+    allowed) and followed by a colon, so frontmatter keys count too."""
+    return re.compile(r"^[ \t>*_|`\-]*" + re.escape(name) + r"[ \t*_`]*:",
+                      re.IGNORECASE | re.MULTILINE)
+
+
+def _whole_word(marker: str) -> re.Pattern:
+    return re.compile(r"(?<![^\W_])(?:" + marker + r")(?![^\W_])", re.IGNORECASE)
+
+
+def _structure_gaps(texts: Dict[Path, str], path: Path, spec: ArtifactSpec) -> List[str]:
+    """What the file lacks of the structure the slot asks for; empty when it
+    qualifies. ``texts`` caches reads across slots."""
+    if not (spec.content_marker or spec.fields):
+        return []
+    if path not in texts:
+        texts[path] = _read(path)
+    text = texts[path]
+    gaps = [f"the field {name}:" for name in spec.fields
+            if not _field_line(name).search(text)]
+    if spec.content_marker and not _whole_word(spec.content_marker).search(text):
+        gaps.append(f"a whole-word match for /{spec.content_marker}/")
+    return gaps
+
+
+def _assign(candidates: List[List[Path]], real: Dict[Path, Path]) -> List[Optional[Path]]:
+    """Give each slot a file of its own, re-routing earlier slots when a later
+    one needs their file (bipartite matching over resolved paths).
+
+    A file names one artifact, not several: a single stand-in whose name and text
+    satisfy five slots would otherwise turn five missing lenses green, and a
+    symlink alias of a file is the same file. Slots are placed in list order, so
+    callers list the required slots first."""
+    holder: Dict[Path, int] = {}
+    assigned: Dict[int, Path] = {}
+
+    def place(slot: int, tried: Set[Path]) -> bool:
+        for path in candidates[slot]:
+            key = real[path]
+            if key in tried:
+                continue
+            tried.add(key)
+            if key not in holder or place(holder[key], tried):
+                holder[key] = slot
+                assigned[slot] = path
+                return True
+        return False
+
+    for slot in range(len(candidates)):
+        place(slot, set())
+    return [assigned.get(slot) for slot in range(len(candidates))]
+
+
+def _near_misses(root: Path, lacking: Dict[Path, List[str]],
+                 taken: List[Tuple[Path, str]]) -> str:
+    """Name-matching files that did not fill a slot, and why, so a REVISE can say
+    what to fix and not only what is absent."""
+    notes = [f"{_rel(path, root)} lacks {' and '.join(gaps)}"
+             for path, gaps in lacking.items()]
+    notes += [f"{_rel(path, root)} is already the {label}" for path, label in taken]
+    if not notes:
+        return ""
+    more = f" (+{len(notes) - 3} more)" if len(notes) > 3 else ""
+    return "; near misses: " + "; ".join(notes[:3]) + more
+
+
+def check_package_links(root: Path, report: Report) -> None:
+    """A link out of the package lets a file elsewhere stand in for a member, so
+    it is a defect in itself and is never read."""
+    report.checks_run.append("package_links")
+    for link in find_escaping_links(root):
+        rel = _rel(link, root)
+        report.add(Finding(
+            code="LINK_ESCAPES_PACKAGE", severity="major", status=FAIL,
+            message=(f"{rel} is a link to {link.readlink()}, which leaves the "
+                     f"package. It is not read; ship the file itself."),
+            location=rel,
+        ))
+
 
 def check_required_artifacts(root: Path, manifest: Manifest,
                              report: Report) -> None:
     report.checks_run.append("required_artifacts")
+    specs = list(manifest.artifacts)
     files = iter_all_files(root)
-    rels = [_rel(f, root) for f in files]
-    for spec in manifest.artifacts:
-        match = _find_artifact(files, rels, spec)
-        if match is not None:
+    real = {f: f.resolve() for f in files}
+    contracts = _contracts_for(manifest, report)
+    why = [_optional_because(spec, manifest, contracts) for spec in specs]
+    optional = [spec.requirement == "conditional" or bool(reason)
+                for spec, reason in zip(specs, why, strict=True)]
+
+    texts: Dict[Path, str] = {}
+    candidates: List[List[Path]] = []
+    lacking: List[Dict[Path, List[str]]] = []
+    for spec in specs:
+        named = [f for f in files if _named(f, spec.patterns)]
+        gaps = {f: _structure_gaps(texts, f, spec) for f in named}
+        candidates.append([f for f in named if not gaps[f]])
+        lacking.append({f: g for f, g in gaps.items() if g})
+
+    order = sorted(range(len(specs)), key=lambda i: optional[i])
+    placed = _assign([candidates[i] for i in order], real)
+    chosen = {i: placed[n] for n, i in enumerate(order)}
+    holder = {real[p]: i for i, p in chosen.items() if p is not None}
+
+    for i, spec in enumerate(specs):
+        if chosen[i] is not None:
             report.add(Finding(
                 code="ARTIFACT_PRESENT", severity="info", status=PASS,
-                message=f"{spec.label} present.", location=match,
+                message=f"{spec.label} present.", location=_rel(chosen[i], root),
             ))
-        elif spec.requirement == "conditional":
+            continue
+        near = _near_misses(root, lacking[i], [
+            (f, specs[holder[real[f]]].label) for f in candidates[i]])
+        if optional[i]:
+            when = (f"{why[i]}. Confirm that condition was false for this "
+                    f"submission, or that a valid _skip-record.md or the "
+                    f"sanctioned waiver covers it" if why[i] else
+                    "This artifact is required only when in scope — confirm "
+                    "whether this submission needs it")
             report.add(Finding(
                 code="ARTIFACT_CONDITIONAL", severity="info", status=UNCHECKED,
-                message=(f"{spec.label} not found. This artifact is required only "
-                         f"when in scope — confirm whether this submission needs it."),
+                message=f"{spec.label} not found. {when}{near}.",
                 location="package",
             ))
         else:
             report.add(Finding(
                 code="ARTIFACT_MISSING", severity="major", status=FAIL,
                 message=(f"Required artifact missing: {spec.label} "
-                         f"(expected one of: {', '.join(spec.patterns)})."),
+                         f"(expected one of: {', '.join(spec.patterns)}{near})."),
                 location="package",
             ))
-
-
-def _find_artifact(files: List[Path], rels: List[str],
-                   spec: ArtifactSpec) -> Optional[str]:
-    marker = re.compile(spec.content_marker, re.IGNORECASE) if spec.content_marker else None
-    for path, rel in zip(files, rels):
-        name = path.name
-        if not any(_glob_match(name, pat) or _glob_match(rel, pat)
-                   for pat in spec.patterns):
-            continue
-        if marker is None:
-            return rel
-        if marker.search(_read(path)):
-            return rel
-    return None
-
-
-def _glob_match(value: str, pattern: str) -> bool:
-    import fnmatch
-    return fnmatch.fnmatch(value.lower(), pattern.lower())
 
 
 def check_lineage(root: Path, report: Report) -> None:
@@ -734,6 +977,7 @@ def run_gate(root: Path, manifest: Manifest,
             location=str(root),
         ))
         return report
+    check_package_links(root, report)
     if not iter_all_files(root):
         report.add(Finding(
             code="PACKAGE_EMPTY", severity="critical", status=FAIL,

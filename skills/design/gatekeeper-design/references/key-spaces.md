@@ -21,8 +21,8 @@ advances with a file present and its evidence key empty.
 | --- | --- | --- |
 | `plan` | `check.py`: a `*plan*.md` file exists in the package directory | required at `design-to-build`, artifact-backed — a path in `artifact_hashes` |
 | `architecture` | `check.py`: an `*architect*.md` or `*adr*.md` file exists | required at `design-to-build`, artifact-backed |
-| `taste_snapshot` | `check.py`: a `*taste*snapshot*` file carrying digest/source markers | required at both boundaries, artifact-backed, waivable |
-| `stack_locks` / `stack_lock` | `check.py` `stack_locks`: any `*stack*.md`, `*lock*.md`, or `*tech*.md` file | spec `stack_lock`: a typed record `{slug, versions, overlay_sha256}` validated against `../../../tech-stacks/registry.yaml` |
+| `taste_snapshot` | `check.py`: a `*taste*snapshot*` file carrying digest/source markers; conditional because the spec lets a submitter waive the key, so absence is `UNCHECKED` and names the waiver | required at both boundaries, artifact-backed, waivable |
+| `stack_locks` / `stack_lock` | `check.py` `stack_locks`: any `*stack*.md`, `*lock*.md`, or `*tech*.md` file; conditional for the same reason | spec `stack_lock`: a typed record `{slug, versions, overlay_sha256}` validated against `../../../tech-stacks/registry.yaml`, or the sanctioned applicability record |
 | `design_inventory` | `check_redesign.py`: a `*design-inventory*` file exists | required at `redesign-review`, artifact-backed |
 | `taste_grilling` | `check_redesign.py`: a grilling log file exists | required at `redesign-review`, artifact-backed |
 | `design_directions` | `check_redesign.py`: `*direction*.md` files exist | required at `redesign-review`, artifact-backed |

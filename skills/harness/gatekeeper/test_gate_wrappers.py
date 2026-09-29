@@ -361,5 +361,86 @@ class WrapperBootstrapTests(unittest.TestCase):
         self.assertEqual(tuple(gc.ROOT_MARKERS), tuple(state._ROOT_MARKERS))
 
 
+class OptionalArtifactTests(unittest.TestCase):
+    """An artifact a contract makes optional may be absent: the wrapper leaves it to the model."""
+
+    def test_a_package_without_its_optional_artifacts_is_no_defect(self):
+        scratch = REPO / ".harness-state" / "test-work" / "gate-wrappers" / uuid.uuid4().hex
+        try:
+            for wrapper in WRAPPERS:
+                with self.subTest(wrapper=wrapper.name):
+                    package = scratch / "skillset-saves" / "runs" / "r-1" / wrapper.phase
+                    wrapper.write(package, False)
+                    done = _run(SKILLS / wrapper.script, os.path.relpath(package, REPO), "--json", cwd=REPO)
+                    self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+                    report = json.loads(done.stdout)
+                    codes = [f["code"] for f in report["findings"]]
+                    self.assertNotIn("ARTIFACT_MISSING", codes)
+                    self.assertEqual(codes.count("ARTIFACT_PRESENT"), wrapper.minimal)
+                    self.assertEqual(codes.count("ARTIFACT_CONDITIONAL"), wrapper.optional)
+                    self.assertEqual(report["gate_status"], "NEEDS_JUDGMENT")
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+            try:
+                scratch.parent.rmdir()
+            except OSError:
+                pass
+
+
+def _manifest_of(wrapper: Wrapper):
+    path = SKILLS / wrapper.script
+    spec = importlib.util.spec_from_file_location(f"wrapper_{wrapper.name}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.MANIFEST
+
+
+class WrapperManifestTests(unittest.TestCase):
+    """The manifests cite the contracts that decide their optional slots."""
+
+    #: Slots a wrapper may report UNCHECKED instead of FAIL, per wrapper. Each is
+    #: optional because a contract says so (a gates.yaml waiver, a pipelines.yaml
+    #: `when`) or because the script cannot know the scope; a change to that
+    #: contract changes this set and this test names the wrapper to revisit.
+    OPTIONAL = {
+        "gatekeeper-code": {"lens_security", "lens_adversarial", "lens_cso"},
+        "gatekeeper-build": {"security", "build_verdict"},
+        "gatekeeper-design": {"stack_locks", "taste_snapshot", "api_contracts", "ui_handoff"},
+        "check_redesign": {"rendered_verification"},
+        "gatekeeper-admiral": {"delivery_or_package"},
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        cls.contracts = gc.Contracts.load()
+
+    def test_optional_slots_are_the_ones_the_contracts_make_optional(self):
+        for wrapper in WRAPPERS:
+            manifest = _manifest_of(wrapper)
+            with self.subTest(wrapper=wrapper.name):
+                optional = {
+                    spec.key for spec in manifest.artifacts
+                    if spec.requirement == "conditional"
+                    or gc._optional_because(spec, manifest, self.contracts)}
+                self.assertEqual(optional, self.OPTIONAL[wrapper.name])
+
+    def test_every_cited_stage_and_key_exists(self):
+        """A renamed stage would silently stop relaxing a slot, so a dangling name fails."""
+        pipelines = self.contracts.pipelines["pipelines"]
+        for wrapper in WRAPPERS:
+            manifest = _manifest_of(wrapper)
+            for spec in manifest.artifacts:
+                with self.subTest(wrapper=wrapper.name, slot=spec.key):
+                    if not (spec.stages or spec.evidence_key):
+                        continue
+                    self.assertTrue(manifest.pipeline, "a slot cites a contract but the manifest names no pipeline")
+                    steps = {s["step"] for s in pipelines[manifest.pipeline]["stages"]}
+                    self.assertLessEqual(set(spec.stages), steps)
+                    boundary = self.contracts.boundary_of(manifest.pipeline)
+                    required = self.contracts.gates["boundaries"][boundary]["required_evidence"]
+                    if spec.evidence_key:
+                        self.assertIn(spec.evidence_key, required)
+
+
 if __name__ == "__main__":
     unittest.main()

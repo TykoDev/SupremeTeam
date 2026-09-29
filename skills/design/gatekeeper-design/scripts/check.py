@@ -4,8 +4,9 @@ Deterministic gate check for ``gatekeeper-design`` — the design phase-exit
 boundary.
 
 Validates that a design packet carries the research evidence, project plan,
-architecture decisions, stack locks, and implementation spec for the phase exit
-— and surfaces the conditional API-contract and frontend/UI-handoff artifacts as
+architecture decisions, and implementation spec for the phase exit, plus the
+stack lock and Taste snapshot unless the sanctioned waiver for either applies —
+and surfaces the conditional API-contract and frontend/UI-handoff artifacts as
 UNCHECKED so the model confirms whether they are in scope. Adds the shared
 lineage, skip-record, blocked-phrase, idempotency, and harness-doctrine §5
 checks.
@@ -40,50 +41,62 @@ def _engine():
 
 gc = _engine()
 
-# Design phase-exit artifact set (SKILL.md workflow step 1). API contracts and
-# frontend/UI handoff are CONDITIONAL — required only when endpoints or a
-# user-facing surface are in scope, which the script cannot determine, so their
-# absence is reported as UNCHECKED for the model to resolve against the actual
-# scope and the design-doctrine / api-endpoint-design contracts.
+# Design phase-exit artifact set (SKILL.md workflow step 1), matched by file name
+# and proved by a whole-word marker in the file. The stack lock and the Taste
+# snapshot are not declared optional here: gates.yaml lets a submitter waive
+# stack_lock and taste_snapshot, so the engine reads that and reports an absent
+# one UNCHECKED. API contracts and the frontend/UI handoff are CONDITIONAL —
+# required only when endpoints or a user-facing surface are in scope, which the
+# script cannot determine, so their absence is reported as UNCHECKED for the model
+# to resolve against the actual scope and the design-doctrine / api-endpoint-design
+# contracts.
 MANIFEST = gc.Manifest(
     boundary="design phase-exit",
     sub_orchestrator="design/commander",
+    pipeline="design",
     artifacts=(
         gc.ArtifactSpec(
             key="research",
             label="research evidence",
             patterns=("*research*.md", "deliverable_*research*.md"),
-            content_marker=r"research|finding|evidence|source",
+            content_marker=r"research\w*|findings?|evidence|sources?",
+            stages=("research",),
         ),
         gc.ArtifactSpec(
             key="plan",
             label="project plan",
             patterns=("*plan*.md", "deliverable_*plan*.md"),
-            content_marker=r"plan|milestone|phase|scope",
+            content_marker=r"plans?|planning|milestones?|phases?|scope",
+            stages=("plan",),
         ),
         gc.ArtifactSpec(
             key="architecture",
             label="architecture decisions (ADRs)",
             patterns=("*architect*.md", "*adr*.md", "deliverable_*arch*.md"),
-            content_marker=r"architect|decision|component|ADR",
+            content_marker=r"architect\w*|decisions?|components?|ADR",
+            stages=("architecture",),
         ),
         gc.ArtifactSpec(
             key="stack_locks",
             label="locked technology choices / stack locks",
             patterns=("*stack*.md", "*lock*.md", "*tech*.md"),
-            content_marker=r"stack|lock|version|dependency",
+            content_marker=r"stacks?|locks?|locked|versions?|dependenc\w*",
+            evidence_key="stack_lock",
+            stages=("stack-lock",),
         ),
         gc.ArtifactSpec(
             key="taste_snapshot",
             label="effective Taste profile snapshot",
             patterns=("*taste*snapshot*", "*effective*profile*"),
-            content_marker=r"canonical digest|source revisions|resolved entries|applicability",
+            content_marker=r"canonical digest|source revisions?|resolved entries|applicability",
+            evidence_key="taste_snapshot",
         ),
         gc.ArtifactSpec(
             key="impl_spec",
             label="implementation specification",
             patterns=("*spec*.md", "*implementation*.md", "deliverable_*spec*.md"),
-            content_marker=r"spec|interface|contract|implementation",
+            content_marker=r"specs?|specification|interfaces?|contracts?|implement\w*",
+            stages=("implementation-spec",),
         ),
         gc.ArtifactSpec(
             key="api_contracts",
@@ -96,6 +109,7 @@ MANIFEST = gc.Manifest(
             label="frontend/UI handoff (shadcn template + UI/UX handoff)",
             patterns=("*ui*.md", "*frontend*.md", "*handoff*.md", "*design-system*.md"),
             requirement="conditional",
+            stages=("interface-and-design-system",),
         ),
     ),
 )

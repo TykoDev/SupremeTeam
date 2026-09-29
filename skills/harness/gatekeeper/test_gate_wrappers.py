@@ -387,6 +387,43 @@ class OptionalArtifactTests(unittest.TestCase):
                 pass
 
 
+class PriorVerdictRecordTests(unittest.TestCase):
+    """--prior reads the record the boundary validator actually writes."""
+
+    def test_wrapper_compares_against_a_verdict_record_check_py_wrote(self):
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw).resolve()
+            project = base / "project"
+            (project / ".git").mkdir(parents=True)
+            package = project / "skillset-saves" / "runs" / "r-1" / "delivery"
+            _delivery(package, True)
+            handoff = package / "reports" / "handoff_review-to-delivery.md"
+            handoff.write_text(handoff.read_text(encoding="utf-8").replace("revision: 1", "revision: r1"),
+                               encoding="utf-8")
+
+            manifest = base / "manifest.json"
+            manifest.write_text(json.dumps({
+                "schema_version": 1, "submission_id": "S1", "revision": "r1",
+                "revisions": ["r1"], "evidence": {}, "artifact_hashes": {},
+            }), encoding="utf-8")
+            record = base / "verdict_review-to-delivery.json"
+            written = _run(ENGINE_DIR / "check.py", "--boundary", "review-to-delivery",
+                           "--package", str(manifest), "--verdict-out", str(record), cwd=base)
+            self.assertIn(written.returncode, (0, 1), written.stderr)
+            self.assertEqual(json.loads(record.read_text(encoding="utf-8"))["submission_id"], "S1")
+
+            script = SKILLS / WRAPPERS[1].script
+            done = _run(script, str(package), "--prior", str(record), "--json", cwd=project)
+            self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+            self.assertIn("VERDICT_REUSABLE", [f["code"] for f in json.loads(done.stdout)["findings"]])
+
+            handoff.write_text(handoff.read_text(encoding="utf-8").replace("revision: r1", "revision: r2"),
+                               encoding="utf-8")
+            done = _run(script, str(package), "--prior", str(record), "--json", cwd=project)
+            self.assertEqual(done.returncode, 1, done.stderr + done.stdout)
+            self.assertIn("SILENT_DRIFT", [f["code"] for f in json.loads(done.stdout)["findings"]])
+
+
 def _manifest_of(wrapper: Wrapper):
     path = SKILLS / wrapper.script
     spec = importlib.util.spec_from_file_location(f"wrapper_{wrapper.name}", path)

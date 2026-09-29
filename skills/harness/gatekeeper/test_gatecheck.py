@@ -5,9 +5,9 @@ Covers the mechanical checks the ``gatekeeper-*`` scripts rely on: frontmatter
 parsing, required-artifact pass/fail, conditional artifacts and the contracts they
 derive from, one-file-per-slot matching on names, whole words and packet fields,
 links out of the package, project-root containment, mixed-revision detection,
-skip-record validation, blocked-phrase hits, idempotency drift, harness-doctrine
-§5 structure, and fail-loud behavior on a missing package.
-``test_gate_wrappers.py`` runs the wrapper scripts themselves.
+skip-record validation, blocked-phrase hits, idempotency drift against Markdown and
+JSON priors, harness-doctrine §5 structure, and fail-loud behavior on a missing
+package. ``test_gate_wrappers.py`` runs the wrapper scripts themselves.
 
 Run from the repo root:
     python -m unittest discover -s SupremeTeam/harness/gatekeeper -p "test_*.py"
@@ -28,6 +28,7 @@ sys.path.insert(0, str(ENGINE_DIR))
 sys.path.insert(0, str(ENGINE_DIR.parents[1] / "scripts"))
 
 import _gatecheck as gc  # noqa: E402
+import data_formats  # noqa: E402
 
 
 def _project_root() -> Path:
@@ -733,6 +734,155 @@ class OptionalSlotTests(unittest.TestCase):
             (base / "gates.yaml").write_text("[]", encoding="utf-8")
             with self.assertRaises(gc.ContractsUnreadable):
                 gc.Contracts.load(base)
+
+
+class RevisionLabelTests(unittest.TestCase):
+    """Gate manifests label revisions r1, r2; handoff templates count 1, 2."""
+
+    def test_mixed_revision_labels_are_flagged(self):
+        with _package() as pkg:
+            _write(pkg, "a.md", "---\nrevision: r1\n---\nbody")
+            _write(pkg, "b.md", "---\nrevision: r2\n---\nbody")
+            report = gc.run_gate(pkg, _manifest())
+        self.assertIn("MIXED_REVISIONS", _codes(report))
+        self.assertNotIn("REVISION_ABSENT", _codes(report))
+
+    def test_one_label_is_coherent_and_named(self):
+        with _package() as pkg:
+            _write(pkg, "a.md", "---\nrevision: r1\n---\nbody")
+            _write(pkg, "b.md", "---\nrevision: r1\n---\nbody")
+            report = gc.run_gate(pkg, _manifest())
+        coherent = next(f for f in report.findings if f.code == "REVISION_COHERENT")
+        self.assertIn("revision r1", coherent.message)
+
+    def test_a_number_and_its_quoted_spelling_are_one_revision(self):
+        with _package() as pkg:
+            _write(pkg, "a.md", "---\nrevision: 3\n---\nbody")
+            _write(pkg, "b.md", '---\nrevision: "3"\n---\nbody')
+            report = gc.run_gate(pkg, _manifest())
+        self.assertIn("REVISION_COHERENT", _codes(report))
+
+    def test_a_list_or_a_flag_is_no_revision(self):
+        with _package() as pkg:
+            _write(pkg, "a.md", "---\nrevision: [1, 2]\n---\nbody")
+            _write(pkg, "b.md", "---\nrevision: true\n---\nbody")
+            report = gc.run_gate(pkg, _manifest())
+        self.assertIn("REVISION_ABSENT", _codes(report))
+
+
+class PriorRecordTests(unittest.TestCase):
+    """--prior reads Markdown frontmatter and the JSON the boundary validator writes."""
+
+    def _idempotency(self, package_files: dict, prior_text: str, name: str = "prior.json"):
+        with _package() as pkg, _package() as side:
+            for rel, body in package_files.items():
+                _write(pkg, rel, body)
+            prior = side / name
+            prior.write_text(prior_text, encoding="utf-8")
+            report = gc.run_gate(pkg, _manifest(), prior_path=prior)
+        return report, {f.code: f for f in report.findings}
+
+    def test_a_json_verdict_record_is_reusable_for_the_same_submission_and_revision(self):
+        record = json.dumps({"submission_id": "S3", "revision": "r2", "pass": True,
+                             "package_fingerprint": "f", "mechanical_only": True})
+        report, found = self._idempotency({"a.md": "---\nsubmission_id: S3\nrevision: r2\n---\n"}, record)
+        self.assertIn("VERDICT_REUSABLE", found)
+        self.assertIn("verdict=mechanical pass", found["VERDICT_REUSABLE"].message)
+        self.assertNotIn("NEW_SUBMISSION", found)
+
+    def test_a_json_verdict_record_detects_drift(self):
+        record = json.dumps({"submission_id": "S3", "revision": "r1"})
+        report, found = self._idempotency({"a.md": "---\nsubmission_id: S3\nrevision: r2\n---\n"}, record)
+        self.assertIn("SILENT_DRIFT", found)
+        self.assertTrue(report.has_blocking)
+
+    def test_a_json_verdict_record_for_another_submission_is_new(self):
+        record = json.dumps({"submission_id": "OTHER", "revision": "r1"})
+        _, found = self._idempotency({"a.md": "---\nsubmission_id: S3\nrevision: r1\n---\n"}, record)
+        self.assertIn("NEW_SUBMISSION", found)
+
+    def test_the_packages_own_manifest_declares_its_identity(self):
+        """Lens packets carry no frontmatter; the phase manifest.json is where the id lives."""
+        manifest = json.dumps({"submission_id": "S3", "revision": "r2"})
+        record = json.dumps({"submission_id": "S3", "revision": "r2"})
+        _, found = self._idempotency({"manifest.json": manifest, "packet.md": PACKET}, record)
+        self.assertIn("VERDICT_REUSABLE", found)
+
+    def test_an_undeclared_identity_is_undetermined_not_a_fresh_pass(self):
+        record = json.dumps({"submission_id": "S3", "revision": "r1"})
+        report, found = self._idempotency({"packet.md": PACKET}, record)
+        self.assertIn("IDEMPOTENCY_UNDETERMINED", found)
+        self.assertEqual(found["IDEMPOTENCY_UNDETERMINED"].status, gc.UNCHECKED)
+        self.assertNotIn("NEW_SUBMISSION", found)
+        self.assertFalse(report.has_blocking)
+
+    def test_an_unreadable_prior_is_undetermined(self):
+        for text in ("not a record at all", "[1, 2]", "{broken", ""):
+            with self.subTest(text=text):
+                _, found = self._idempotency({"a.md": "---\nsubmission_id: S3\nrevision: r1\n---\n"}, text)
+                self.assertIn("IDEMPOTENCY_UNDETERMINED", found)
+                self.assertNotIn("NEW_SUBMISSION", found)
+
+    def test_a_matching_id_with_an_unreadable_revision_is_undetermined(self):
+        record = json.dumps({"submission_id": "S3"})
+        _, found = self._idempotency({"a.md": "---\nsubmission_id: S3\nrevision: r1\n---\n"}, record)
+        self.assertIn("IDEMPOTENCY_UNDETERMINED", found)
+        self.assertNotIn("NEW_SUBMISSION", found)
+
+    def test_a_pending_submission_id_declares_nothing(self):
+        record = json.dumps({"submission_id": "PENDING", "revision": "r1"})
+        _, found = self._idempotency({"a.md": "---\nsubmission_id: PENDING\nrevision: r1\n---\n"}, record)
+        self.assertIn("IDEMPOTENCY_UNDETERMINED", found)
+
+    def test_a_markdown_prior_still_works(self):
+        prior = "---\nsubmission_id: S3\nrevision: r2\nverdict: APPROVED\n---\n"
+        _, found = self._idempotency({"a.md": "---\nsubmission_id: S3\nrevision: r2\n---\n"}, prior, "prior.md")
+        self.assertIn("verdict=APPROVED", found["VERDICT_REUSABLE"].message)
+
+
+class LayerCitationTests(unittest.TestCase):
+    """harness-doctrine §5: the citation the failure message asks for satisfies the check."""
+
+    def _report(self, body: str):
+        with _package() as pkg:
+            _write(pkg, "change.md", body)
+            return gc.run_gate(pkg, _manifest())
+
+    def test_a_section_number_in_the_words_of_the_failure_message_counts(self):
+        for citation in ("(§1)", "see §1", "§ 4", "harness-doctrine", "Layer 3"):
+            with self.subTest(citation=citation):
+                report = self._report(f"A new PreToolUse hook, {citation}. Regression: none observed.")
+                self.assertIn("DOCTRINE_NOTE_PRESENT", _codes(report))
+                self.assertNotIn("DOCTRINE_GAP", _codes(report))
+
+    def test_a_section_outside_the_doctrine_does_not(self):
+        for citation in ("§ 10", "§6", "xLayer 2", "the harness-doctrines"):
+            with self.subTest(citation=citation):
+                report = self._report(f"A new PreToolUse hook, {citation}. Regression: none observed.")
+                self.assertIn("DOCTRINE_GAP", _codes(report))
+
+
+class VersionTokenTests(unittest.TestCase):
+    """A version keeps its spelling: 3.10 is not 3.1, and the registry compares text."""
+
+    def test_a_spelling_that_does_not_round_trip_stays_text(self):
+        parsed = data_formats.parse_yaml("versions: [3.10, 1.20, 3.12, 0.115, 2]\nbare: 3.10\n")
+        self.assertEqual(parsed["versions"], ["3.10", "1.20", 3.12, 0.115, 2])
+        self.assertEqual(parsed["bare"], "3.10")
+
+    def test_a_canonical_number_is_still_a_number(self):
+        for text, value in (("1.5", 1.5), ("0.115", 0.115), ("-2.0", -2.0), ("10.0", 10.0), ("12", 12)):
+            with self.subTest(text=text):
+                self.assertEqual(data_formats.parse_scalar(text), value)
+
+    def test_the_registry_versions_read_back_as_spelled(self):
+        registry = ENGINE_DIR.parents[1] / "tech-stacks" / "registry.yaml"
+        spelled = [[token.strip() for token in line.split("[", 1)[1].rstrip("]\n ").split(",")]
+                   for line in registry.read_text(encoding="utf-8").splitlines()
+                   if line.strip().startswith("versions:")]
+        parsed = [[str(v) for v in overlay["versions"]]
+                  for overlay in data_formats.load_data(registry)["overlays"]]
+        self.assertEqual(parsed, spelled)
 
 
 class FailLoudTests(unittest.TestCase):

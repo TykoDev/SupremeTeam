@@ -142,6 +142,12 @@ resolved against its condition, or accepted via an explicit `_skip-record.md`
 whose required fields the engine validates; the record names no lens, so the
 engine cannot retire the slot itself and the resolution is this gate's judgment.
 
+`--prior` takes Markdown frontmatter or the JSON record `check.py --verdict-out`
+writes. Two submissions are compared only when both declare a `submission_id` and
+a `revision`, in frontmatter or in the package's own `manifest.json` (lens packets
+carry no frontmatter); when either side declares none the check reports
+`IDEMPOTENCY_UNDETERMINED`, never a fresh submission.
+
 **2. The boundary validator** checks the evidence contract against
 `../../gates.yaml`:
 

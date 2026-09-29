@@ -190,7 +190,10 @@ required-artifact manifest and calls the shared engine at
   file that also fits the delivery-summary slot fills only one of the two
 - skip-record completeness
 - the blocked-phrase scan — this gate **owns** it
-- idempotency drift against `--prior`, and harness-doctrine §5 structure
+- idempotency drift against `--prior` (Markdown frontmatter or the JSON record
+  `check.py --verdict-out` writes, compared only when both sides declare a
+  `submission_id` and a `revision`, otherwise `IDEMPOTENCY_UNDETERMINED`), and
+  harness-doctrine §5 structure
 - links out of the package: a symlink whose target leaves the package directory
   is never read and is reported as `LINK_ESCAPES_PACKAGE`
 

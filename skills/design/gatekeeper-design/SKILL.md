@@ -170,9 +170,11 @@ parity probe output.
 
 Both wrap the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which
 also mechanizes single-revision lineage, skip-record completeness, the
-blocked-phrase scan, idempotency drift against `--prior`, links out of the
-package (never read, reported as `LINK_ESCAPES_PACKAGE`), and harness-doctrine §5
-structure. Each artifact is a file of its own, matched on its own name and on
+blocked-phrase scan, idempotency drift against `--prior` (Markdown frontmatter or
+the JSON record `check.py --verdict-out` writes; a side that declares no
+`submission_id` and `revision` leaves it `IDEMPOTENCY_UNDETERMINED`), links out of
+the package (never read, reported as `LINK_ESCAPES_PACKAGE`), and harness-doctrine
+§5 structure. Each artifact is a file of its own, matched on its own name and on
 whole words of its marker; a name-matching file that lacks the marker is named in
 the failure as a near miss. Both return `PASS` / `FAIL` / `UNCHECKED` findings plus
 a `gate_status`, never a verdict, and never a judgment about design coherence.

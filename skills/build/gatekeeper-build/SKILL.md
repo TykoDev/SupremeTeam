@@ -116,7 +116,10 @@ certification, build-gate lineage — and calls the shared engine at
 - package shape and single-revision lineage
 - skip-record completeness
 - the blocked-phrase scan
-- idempotency drift against `--prior`, and harness-doctrine §5 structure
+- idempotency drift against `--prior` (Markdown frontmatter or the JSON record
+  `check.py --verdict-out` writes; a side that declares no `submission_id` and
+  `revision` leaves it `IDEMPOTENCY_UNDETERMINED`, never a fresh submission), and
+  harness-doctrine §5 structure
 - links out of the package: a symlink whose target leaves the package directory
   is never read and is reported as `LINK_ESCAPES_PACKAGE`
 

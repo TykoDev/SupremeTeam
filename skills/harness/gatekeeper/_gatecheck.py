@@ -87,8 +87,10 @@ _INTERVENTION_MARKERS = re.compile(
     r"trajectory\s+regulation|guard\s+boundary|freeze\s+boundary)\b",
     re.IGNORECASE,
 )
+# A word boundary needs a word character on one side and the section sign is not
+# one, so only the alternatives that begin with a word are anchored on the left.
 _LAYER_CITATION = re.compile(
-    r"\b(?:Layer\s*[1-4]|§\s*[1-5]|harness-doctrine)\b", re.IGNORECASE
+    r"(?:\bLayer\s*[1-4]|§\s*[1-5]|\bharness-doctrine)\b", re.IGNORECASE
 )
 _REGRESSION_NOTE = re.compile(r"\bregression\b", re.IGNORECASE)
 
@@ -694,6 +696,25 @@ def check_required_artifacts(root: Path, manifest: Manifest,
             ))
 
 
+def _revision_token(value: object) -> Optional[str]:
+    """A revision as a comparable token. Both ``3`` (handoff templates) and ``r3``
+    (gate manifests) are in use, so a bare number and a label count alike and
+    neither is coerced into the other."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _submission_token(value: object) -> Optional[str]:
+    if isinstance(value, str) and value.strip() and value.strip().upper() != "PENDING":
+        return value.strip()
+    return None
+
+
 def check_lineage(root: Path, report: Report) -> None:
     """Detect packages that mix deliverables from different revisions, and
     surface the submission id / revision the gate keys idempotency on.
@@ -702,16 +723,16 @@ def check_lineage(root: Path, report: Report) -> None:
     mechanical signature of a contaminated, mixed-revision submission.
     """
     report.checks_run.append("lineage")
-    revisions: Dict[int, List[str]] = {}
+    revisions: Dict[str, List[str]] = {}
     submission_ids: Dict[str, List[str]] = {}
     for path in iter_package_files(root):
         fm = parse_frontmatter(_read(path))
         rel = _rel(path, root)
-        rev = fm.get("revision")
-        if isinstance(rev, int):
+        rev = _revision_token(fm.get("revision"))
+        if rev is not None:
             revisions.setdefault(rev, []).append(rel)
-        sid = fm.get("submission_id")
-        if isinstance(sid, str) and sid and sid.upper() != "PENDING":
+        sid = _submission_token(fm.get("submission_id"))
+        if sid is not None:
             submission_ids.setdefault(sid, []).append(rel)
 
     if len(revisions) > 1:
@@ -833,11 +854,46 @@ def scan_blocked_phrases(root: Path, report: Report,
         ))
 
 
+def _read_record(path: Path) -> dict:
+    """A record as a mapping: Markdown frontmatter, or a JSON object such as the
+    verdict ``harness/gatekeeper/check.py --verdict-out`` writes."""
+    text = _read(path)
+    record = parse_frontmatter(text)
+    if record:
+        return record
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _declared_identity(root: Path) -> Tuple[Set[str], Set[str]]:
+    """The submission ids and revisions the package declares: in the frontmatter
+    of its Markdown and in its own manifest.json, where a package that ships
+    evidence records its identity."""
+    sids: Set[str] = set()
+    revs: Set[str] = set()
+    for path in iter_all_files(root):
+        if path.suffix.lower() not in _TEXT_SUFFIXES and path != root / "manifest.json":
+            continue
+        record = _read_record(path)
+        sid = _submission_token(record.get("submission_id"))
+        rev = _revision_token(record.get("revision"))
+        if sid is not None:
+            sids.add(sid)
+        if rev is not None:
+            revs.add(rev)
+    return sids, revs
+
+
 def check_idempotency(root: Path, report: Report,
                       prior_path: Optional[Path]) -> None:
     """Compare the current submission against a prior verdict record so the same
     package is not re-gated under conflicting rationale, and so a reused
-    submission id with changed contents is flagged as silent drift.
+    submission id with changed contents is flagged as silent drift. Two packages
+    are called different only when both declare an identity; a side that declares
+    none leaves the comparison undetermined, never a pass.
     """
     report.checks_run.append("idempotency")
     if prior_path is None:
@@ -856,21 +912,18 @@ def check_idempotency(root: Path, report: Report,
         ))
         return
 
-    prior = parse_frontmatter(_read(prior_path))
-    prior_sid = prior.get("submission_id")
-    prior_rev = prior.get("revision")
+    prior = _read_record(prior_path)
+    prior_sid = _submission_token(prior.get("submission_id"))
+    prior_rev = _revision_token(prior.get("revision"))
     prior_verdict = prior.get("verdict")
+    if prior_verdict is None and isinstance(prior.get("pass"), bool):
+        prior_verdict = "mechanical pass" if prior["pass"] else "mechanical fail"
 
-    cur_sids, cur_revs = set(), set()
-    for path in iter_package_files(root):
-        fm = parse_frontmatter(_read(path))
-        if isinstance(fm.get("submission_id"), str):
-            cur_sids.add(fm["submission_id"])
-        if isinstance(fm.get("revision"), int):
-            cur_revs.add(fm["revision"])
-
-    same_sid = prior_sid in cur_sids if prior_sid else False
-    same_rev = prior_rev in cur_revs if isinstance(prior_rev, int) else False
+    cur_sids, cur_revs = _declared_identity(root)
+    known_sid = prior_sid is not None and bool(cur_sids)
+    known_rev = prior_rev is not None and bool(cur_revs)
+    same_sid = known_sid and prior_sid in cur_sids
+    same_rev = known_rev and prior_rev in cur_revs
 
     if same_sid and same_rev:
         report.add(Finding(
@@ -880,7 +933,7 @@ def check_idempotency(root: Path, report: Report,
                      f"not re-gate under new rationale."),
             location=str(prior_path),
         ))
-    elif same_sid and not same_rev:
+    elif same_sid and known_rev:
         report.add(Finding(
             code="SILENT_DRIFT", severity="major", status=FAIL,
             message=(f"Submission id '{prior_sid}' is reused but the revision "
@@ -888,11 +941,23 @@ def check_idempotency(root: Path, report: Report,
                      f"Prior verdict is non-transferable; require a fresh delta."),
             location=str(prior_path),
         ))
-    else:
+    elif known_sid and not same_sid:
         report.add(Finding(
             code="NEW_SUBMISSION", severity="info", status=PASS,
             message=("Submission id/revision differ from the prior verdict; "
                      "evaluating as a fresh submission."),
+            location=str(prior_path),
+        ))
+    else:
+        report.add(Finding(
+            code="IDEMPOTENCY_UNDETERMINED", severity="minor", status=UNCHECKED,
+            message=(f"Cannot confirm idempotency: the prior verdict and the package "
+                     f"do not both declare a readable submission_id and revision "
+                     f"(Markdown frontmatter, a JSON record, or the package's "
+                     f"manifest.json). Prior: submission_id={prior_sid!r} "
+                     f"revision={prior_rev!r}. Package: submission_ids="
+                     f"{sorted(cur_sids)} revisions={sorted(cur_revs)}. Verify "
+                     f"manually."),
             location=str(prior_path),
         ))
 
@@ -1023,8 +1088,9 @@ def build_arg_parser(description: str) -> argparse.ArgumentParser:
                                    "must sit inside the project (see "
                                    "resolve_package_dir).")
     p.add_argument("--prior", default=None,
-                   help="Path to a prior gatekeeper verdict / handoff file for "
-                        "idempotency comparison.")
+                   help="Path to a prior gatekeeper verdict for idempotency "
+                        "comparison: Markdown frontmatter or the JSON record "
+                        "check.py --verdict-out writes.")
     p.add_argument("--blocked-phrases", default=None,
                    help="Path to an extra blocked-phrases list (one per line; "
                         "lines beginning 're:' are regexes).")

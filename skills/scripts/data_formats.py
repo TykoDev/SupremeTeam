@@ -126,9 +126,14 @@ def parse_scalar(value: str) -> Any:
             pass
     if re.fullmatch(r"[-+]?(?:\d+\.\d*|\d*\.\d+)(?:[eE][-+]?\d+)?", value):
         try:
-            return float(value)
+            number = float(value)
         except ValueError:
             pass
+        else:
+            # A spelling that does not survive the round trip (3.10, 1.20) is a
+            # version, not a quantity: converting it would rename the release.
+            if str(number) == value:
+                return number
     return value
 
 

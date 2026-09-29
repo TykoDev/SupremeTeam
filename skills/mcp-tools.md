@@ -12,8 +12,9 @@ This is a schema and cache, not a claim about live tools. `admiral` reads it at
 intake. When the file is missing, empty, at the epoch placeholder, or older than
 `discovery_ttl_hours`, discover tools through the active host, show the user the
 diff, and ask them to confirm material changes before rewriting the registry.
-Preserve user annotations, and append `MCP_REGISTRY_CHECK` with `use-cache` or
-`refreshed` to the run audit trail.
+Preserve user annotations, and record the outcome as `--set mcp_registry_check=use-cache`
+or `--set mcp_registry_check=refreshed` on `save_run.py create` or the run's first
+`checkpoint`: the audit trail has no operation that appends a line by name.
 
 The `discovery_ttl_hours` frontmatter field is the single source of truth for
 the staleness window. Prose elsewhere that says "480 hours" is quoting this

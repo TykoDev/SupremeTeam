@@ -345,7 +345,7 @@ enforcement table exists to prevent.
   rule 2 cannot be evaluated, so it does not apply. Do not infer a pin from a
   damaged lock and do not start a second run on top of an ambiguous one: treat
   the state as unresolved, report it, and let `admiral` classify it
-  (active / inactive / orphaned / missing / unreadable / conflict) before any
+  (active / inactive / orphaned / missing / unreadable / conflicting) before any
   new work.
 - **A lock exists but is stale.** Staleness must be verified, not assumed from
   age alone where a heartbeat is available. A verified-stale lock may be

@@ -522,7 +522,9 @@ def _read_text(
             if required:
                 _add_error(errors, f"{relative}: file exceeds the inspection size limit")
             return None
-        return path.read_text(encoding="utf-8")
+        # utf-8-sig: Windows editors write a byte order mark that Node itself accepts,
+        # and json.loads rejects, so a marked package.json must not read as invalid.
+        return path.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeError) as exc:
         if required:
             _add_error(errors, f"{relative}: cannot read text ({exc})")

@@ -1312,8 +1312,6 @@ def _makefile_recipe(lines: list[str], target: str, seen: set[str] | None = None
             recipe = _makefile_recipe(lines, prerequisite, seen)
             if recipe:
                 return recipe
-        return None
-        return None
     return None
 
 

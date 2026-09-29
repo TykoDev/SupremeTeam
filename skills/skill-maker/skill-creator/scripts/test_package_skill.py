@@ -81,9 +81,11 @@ class RefusalTests(PackagingCase):
 
     def test_every_offender_is_listed_not_just_the_first(self):
         skill = make_skill(self.root, {".env": "a", "x/id.pem": "b", ".harness-state/s": "c"})
-        _, printed = package(skill, self.out)
+        result, printed = package(skill, self.out)
+        self.assertIsNone(result)
+        refusal = printed[printed.index("Refusing"):]
         for offender in (".env", "id.pem", ".harness-state"):
-            self.assertIn(offender, printed)
+            self.assertIn(offender, refusal)
 
     def test_a_symlinked_file_is_refused_not_zipped_under_an_innocent_name(self):
         secret = self.root / "secret.txt"

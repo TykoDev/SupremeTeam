@@ -385,17 +385,18 @@ def _add_error(errors: list[str], message: str) -> None:
         errors.append(message)
 
 
-def _skip_reparse_directory(path: Path, root: Path, errors: list[str]) -> bool:
-    if path.is_symlink():
-        _add_error(errors, f"{_relative(path, root)}: reparse points are not inspected")
-        return True
-    if _is_reparse_point(path):
-        _add_error(errors, f"{_relative(path, root)}: reparse points are not inspected")
-        return True
-    return False
+def _add_warning(warnings: list[str], message: str) -> None:
+    _add_error(warnings, message)
 
 
-def _walk_project(root: Path, errors: list[str]) -> list[Path]:
+def _skip_reparse_directory(path: Path, root: Path, warnings: list[str]) -> bool:
+    if not _is_reparse_point(path):
+        return False
+    _add_warning(warnings, f"{_relative(path, root)}: skipped, reparse points are not inspected")
+    return True
+
+
+def _walk_project(root: Path, errors: list[str], warnings: list[str]) -> list[Path]:
     files: list[Path] = []
     file_count = 0
     directory_count = 0
@@ -420,11 +421,17 @@ def _walk_project(root: Path, errors: list[str]) -> list[Path]:
             bisect.insort(entries, entry)
         return True
 
+    def stopped(limit: str) -> bool:
+        _add_warning(
+            warnings,
+            f"project inspection {limit} limit exceeded; the walk stopped early and results may be incomplete",
+        )
+        return False
+
     def visit(current_path: Path, current_depth: int) -> bool:
         nonlocal directory_count, file_count, total_bytes
         if directory_count >= MAX_INSPECTION_DIRECTORY_COUNT:
-            _add_error(errors, "project inspection directory-count limit exceeded")
-            return False
+            return stopped("directory-count")
         directory_count += 1
         directory_candidates: list[tuple[str, Path]] = []
         file_candidates: list[tuple[str, Path]] = []
@@ -437,17 +444,20 @@ def _walk_project(root: Path, errors: list[str]) -> list[Path]:
                     if name.lower() in SKIPPED_DIRECTORY_NAMES or name.lower() in SENSITIVE_DIRECTORY_NAMES:
                         continue
                     candidate = current_path / name
-                    if _skip_reparse_directory(candidate, root, errors):
+                    if _skip_reparse_directory(candidate, root, warnings):
                         continue
                     try:
                         is_directory = entry.is_dir(follow_symlinks=False)
                         is_file = entry.is_file(follow_symlinks=False)
                     except OSError as exc:
-                        _add_error(errors, f"cannot inspect {candidate}: {exc}")
+                        _add_warning(warnings, f"{_relative(candidate, root)}: skipped, cannot inspect entry ({exc})")
                         continue
                     if is_directory:
                         if current_depth + 1 > MAX_INSPECTION_DEPTH:
-                            _add_error(errors, f"{_relative(candidate, root)}: inspection depth limit exceeded")
+                            _add_warning(
+                                warnings,
+                                f"{_relative(candidate, root)}: skipped, inspection depth limit exceeded",
+                            )
                             continue
                         directory_overflow = keep_smallest(
                             directory_candidates,
@@ -466,33 +476,32 @@ def _walk_project(root: Path, errors: list[str]) -> list[Path]:
                         MAX_INSPECTION_FILE_COUNT - file_count,
                     ) or file_overflow
         except OSError as exc:
-            _add_error(errors, f"cannot inspect {current_path}: {exc}")
+            if current_depth == 0:
+                _add_error(errors, f"cannot inspect {current_path}: {exc}")
+            else:
+                _add_warning(warnings, f"{_relative(current_path, root)}: skipped, cannot read directory ({exc})")
 
         for _, path in file_candidates:
             if file_count >= MAX_INSPECTION_FILE_COUNT:
-                _add_error(errors, "project inspection file-count limit exceeded")
-                return False
+                return stopped("file-count")
             try:
                 size = path.stat().st_size
             except OSError as exc:
-                _add_error(errors, f"{_relative(path, root)}: cannot inspect file ({exc})")
+                _add_warning(warnings, f"{_relative(path, root)}: skipped, cannot inspect file ({exc})")
                 continue
             if total_bytes + size > MAX_INSPECTION_TOTAL_BYTES:
-                _add_error(errors, "project inspection total-byte limit exceeded")
-                return False
+                return stopped("total-byte")
             files.append(path)
             file_count += 1
             total_bytes += size
         if file_overflow:
-            _add_error(errors, "project inspection file-count limit exceeded")
-            return False
+            return stopped("file-count")
 
         for _, path in directory_candidates:
             if not visit(path, current_depth + 1):
                 return False
         if directory_overflow:
-            _add_error(errors, "project inspection directory-count limit exceeded")
-            return False
+            return stopped("directory-count")
         return True
 
     visit(root, 0)
@@ -857,6 +866,7 @@ def _load_cached_data(
     path: Path,
     root: Path,
     errors: list[str],
+    warnings: list[str],
     text_cache: dict[Path, str | None],
 ) -> Any | None:
     text = _read_cached_text(path, root, errors, text_cache, required=True)
@@ -865,7 +875,9 @@ def _load_cached_data(
     try:
         return parse_yaml(text)
     except (DataFormatError, UnicodeError, ValueError, RecursionError) as exc:
-        _add_error(errors, f"{_relative(path, root)}: {exc}")
+        # The stdlib reader covers a YAML subset (no anchors or merge keys), so a
+        # file it rejects is skipped rather than reported as a broken project.
+        _add_warning(warnings, f"{_relative(path, root)}: not parsed, its services are not considered ({exc})")
         return None
 
 
@@ -1624,6 +1636,7 @@ def _compose_service_has_ports(service: Any) -> bool:
 def _start_commands(
     package: dict[str, Any],
     errors: list[str],
+    warnings: list[str],
     *,
     files: list[Path],
     root: Path,
@@ -1695,7 +1708,7 @@ def _start_commands(
         compose = root_files.get(compose_name)
         if not compose:
             continue
-        compose_data = _load_cached_data(compose, root, errors, text_cache)
+        compose_data = _load_cached_data(compose, root, errors, warnings, text_cache)
         if compose_data is None:
             continue
         services = compose_data.get("services") if isinstance(compose_data, dict) else None
@@ -2398,10 +2411,10 @@ def _scan_scaffold(files: list[Path], root: Path, errors: list[str]) -> list[dic
 def _classify_project(
     files: list[Path],
     root: Path,
-    package: dict[str, Any],
     stacks: list[dict[str, Any]],
     text_cache: dict[Path, str | None],
     errors: list[str],
+    warnings: list[str],
     *,
     packages: list[tuple[Path, dict[str, Any]]] | None = None,
 ) -> tuple[str, list[dict[str, str]], list[str]]:
@@ -2410,8 +2423,15 @@ def _classify_project(
         relative: path for relative, path in relative_paths.items() if "/" not in relative
     }
     stack_slugs = {str(item["slug"]) for item in stacks}
+    package_records = packages or []
     classification_evidence: list[dict[str, str]] = []
     ambiguities: list[str] = []
+    # Every source of evidence adds to these signals before anything is decided, so
+    # the first manifest found cannot hide what the rest of the tree says.
+    frontend = bool(stack_slugs & FRONTEND_STACKS)
+    backend = False
+    published_ports = False
+    manifest_seen = bool(package_records)
 
     compose = next(
         (
@@ -2422,13 +2442,13 @@ def _classify_project(
         None,
     )
     if compose:
-        compose_data = _load_cached_data(compose[1], root, errors, text_cache)
+        compose_data = _load_cached_data(compose[1], root, errors, warnings, text_cache)
         services = compose_data.get("services") if isinstance(compose_data, dict) else None
         if isinstance(services, dict):
             classification_evidence.append(_stack_evidence(compose[0], "compose services definition"))
-            if any(_compose_service_has_ports(service) for service in services.values()):
-                return "container-orchestrated", classification_evidence, ambiguities
-            ambiguities.append("compose services were found without a ports mapping")
+            published_ports = any(_compose_service_has_ports(service) for service in services.values())
+            if not published_ports:
+                ambiguities.append("compose services were found without a ports mapping")
 
     makefile_paths = sorted(
         path
@@ -2439,71 +2459,28 @@ def _classify_project(
             and _path_class(_relative(path, root)) == "production"
         )
     )
-    makefile_frontend = False
-    makefile_backend = False
-    makefile_evidence: list[dict[str, str]] = []
     for path in makefile_paths:
         relative = _relative(path, root)
         makefile_text = _read_cached_text(path, root, errors, text_cache, required=True) or ""
-        frontend, backend = _makefile_runtime_signals(makefile_text)
-        makefile_frontend = makefile_frontend or frontend
-        makefile_backend = makefile_backend or backend
-        if frontend or backend:
-            makefile_evidence.append(_stack_evidence(relative, "Makefile runtime command"))
+        makefile_frontend, makefile_backend = _makefile_runtime_signals(makefile_text)
+        frontend = frontend or makefile_frontend
+        backend = backend or makefile_backend
+        if makefile_frontend or makefile_backend:
+            classification_evidence.append(_stack_evidence(relative, "Makefile runtime command"))
 
-    root_package_path = next(
-        ((relative, path) for relative, path in root_paths.items() if Path(relative).name.lower() == "package.json"),
-        None,
-    )
-    if packages and (len(packages) > 1 or root_package_path is None):
-        frontend = bool(stack_slugs & FRONTEND_STACKS) or makefile_frontend
-        backend = makefile_backend
-        for package_path, package_value in packages:
-            package_frontend, package_backend = _package_classification_signals(package_value)
-            frontend = frontend or package_frontend
-            backend = backend or package_backend
-            classification_evidence.append(
-                _stack_evidence(_relative(package_path, root), "package.json service manifest")
+    single_root_package = len(package_records) == 1 and package_records[0][0].parent == root
+    for package_path, package_value in package_records:
+        package_frontend, package_backend = _package_classification_signals(package_value)
+        frontend = frontend or package_frontend
+        backend = backend or package_backend
+        classification_evidence.append(
+            _stack_evidence(
+                _relative(package_path, root),
+                "root package.json" if single_root_package else "package.json service manifest",
             )
-        classification_evidence.extend(makefile_evidence)
-        if frontend and backend:
-            return "full-stack", classification_evidence, ambiguities
-        if frontend:
-            return "frontend-only", classification_evidence, ambiguities
-        if backend:
-            return "backend-only", classification_evidence, ambiguities
+        )
 
-    package_path = root_package_path
-    if package_path:
-        scripts = _package_scripts(package)
-        dependencies = _package_dependencies(package)
-        frontend = bool(stack_slugs & FRONTEND_STACKS) or bool(
-            dependencies & (FRONTEND_PACKAGE_NAMES | FRONTEND_TOOL_PACKAGE_NAMES | SSR_PACKAGE_NAMES)
-        ) or any(
-            _script_uses_command(scripts, tool)
-            for tool in ("vite", "next", "astro", "nuxt", "svelte", "webpack", "parcel")
-        ) or _script_uses_subcommand(scripts, "ng", "serve") or makefile_frontend
-        backend = bool(dependencies & (BACKEND_PACKAGE_NAMES | SSR_PACKAGE_NAMES)) or any(
-            _script_uses_command(scripts, tool)
-            for tool in ("uvicorn", "gunicorn", "flask", "django", "nest")
-        ) or any(
-            _script_uses_python_module(scripts, module)
-            for module in ("uvicorn", "gunicorn", "flask", "django", "fastapi")
-        ) or _script_uses_node_server(scripts) or makefile_backend
-        classification_evidence.extend(makefile_evidence)
-        classification_evidence.append(_stack_evidence(package_path[0], "root package.json"))
-        if frontend and backend:
-            return "full-stack", classification_evidence, ambiguities
-        if frontend:
-            return "frontend-only", classification_evidence, ambiguities
-        if backend:
-            return "backend-only", classification_evidence, ambiguities
-        return "library/CLI", classification_evidence, ambiguities
-
-    if stack_slugs & FRONTEND_STACKS:
-        classification_evidence.extend(makefile_evidence)
-        if makefile_backend:
-            return "full-stack", classification_evidence, ambiguities
+    if stack_slugs & FRONTEND_STACKS and not package_records:
         frontend_evidence = next(
             (
                 relative
@@ -2515,12 +2492,11 @@ def _classify_project(
             next(iter(sorted(relative_paths)), "registered stack evidence"),
         )
         classification_evidence.append(_stack_evidence(frontend_evidence, "registered frontend stack evidence"))
-        return "frontend-only", classification_evidence, ambiguities
 
     manage = next((relative for relative in root_paths if Path(relative).name.lower() == "manage.py"), None)
     if manage:
+        backend = True
         classification_evidence.append(_stack_evidence(manage, "Django management entrypoint"))
-        return "backend-only", classification_evidence, ambiguities
 
     web_entry = None
     for filename in ("main.py", "app.py"):
@@ -2531,45 +2507,54 @@ def _classify_project(
                 web_entry = relative
                 break
     if web_entry:
+        backend = True
         classification_evidence.append(_stack_evidence(web_entry, "Python web runtime import"))
-        return "backend-only", classification_evidence, ambiguities
 
     go_mod = next((relative for relative in root_paths if Path(relative).name.lower() == "go.mod"), None)
     go_entry = _go_entrypoint(files, root, text_cache, errors)
     if go_mod and go_entry:
+        manifest_seen = True
         classification_evidence.extend(
             (_stack_evidence(go_mod, "Go module manifest"), _stack_evidence(go_entry, "Go executable entrypoint"))
         )
         text = _read_cached_text(relative_paths[go_entry], root, errors, text_cache, required=True) or ""
-        return ("backend-only" if re.search(r"(?i)(?:net/http|gin-gonic|echo|fiber)", text) else "library/CLI"), classification_evidence, ambiguities
+        backend = backend or bool(re.search(r"(?i)(?:net/http|gin-gonic|echo|fiber)", text))
 
     cargo = next((relative for relative in root_paths if Path(relative).name.lower() == "cargo.toml"), None)
     rust_entry = _cargo_binary_entry(files, root, text_cache, errors) if cargo else None
     if cargo and rust_entry:
+        manifest_seen = True
         classification_evidence.extend(
             (_stack_evidence(cargo, "Rust package manifest"), _stack_evidence(rust_entry, "Rust executable entrypoint"))
         )
         manifest_text = _read_cached_text(root_paths[cargo], root, errors, text_cache, required=True) or ""
         entry_text = _read_cached_text(relative_paths[rust_entry], root, errors, text_cache, required=True) or ""
-        text = f"{manifest_text}\n{entry_text}"
-        return ("backend-only" if re.search(r"(?i)\b(?:axum|actix|warp|rocket|hyper)\b", text) else "library/CLI"), classification_evidence, ambiguities
+        backend = backend or bool(
+            re.search(r"(?i)\b(?:axum|actix|warp|rocket|hyper)\b", f"{manifest_text}\n{entry_text}")
+        )
 
     java_manifest = next(
         (relative for relative in root_paths if Path(relative).name.lower() in {"pom.xml", "build.gradle", "build.gradle.kts"}),
         None,
     )
     if java_manifest:
+        manifest_seen = True
         classification_evidence.append(_stack_evidence(java_manifest, "Java build manifest"))
         text = _read_cached_text(root_paths[java_manifest], root, errors, text_cache, required=True) or ""
-        return ("backend-only" if re.search(r"(?i)(?:spring|servlet|jetty|micronaut)", text) else "library/CLI"), classification_evidence, ambiguities
+        backend = backend or bool(re.search(r"(?i)(?:spring|servlet|jetty|micronaut)", text))
 
-    if makefile_frontend or makefile_backend:
-        classification_evidence.extend(makefile_evidence)
-        if makefile_frontend and makefile_backend:
-            return "full-stack", classification_evidence, ambiguities
-        return "frontend-only" if makefile_frontend else "backend-only", classification_evidence, ambiguities
-
-    ambiguities.append("no supported runtime classification signal was found")
+    # A compose file that publishes ports says how the project is deployed, not what
+    # it contains, so it decides only when nothing about the application itself does.
+    if frontend and backend:
+        return "full-stack", classification_evidence, ambiguities
+    if frontend:
+        return "frontend-only", classification_evidence, ambiguities
+    if backend:
+        return "backend-only", classification_evidence, ambiguities
+    if published_ports:
+        return "container-orchestrated", classification_evidence, ambiguities
+    if not manifest_seen:
+        ambiguities.append("no supported runtime classification signal was found")
     return "library/CLI", classification_evidence, ambiguities
 
 
@@ -2582,6 +2567,7 @@ def _inspect_project(
     scan_scaffold: bool,
 ) -> dict[str, Any]:
     errors: list[str] = []
+    warnings: list[str] = []
     try:
         requested_root = project_root.expanduser().absolute()
         if _has_reparse_ancestor(requested_root):
@@ -2602,6 +2588,7 @@ def _inspect_project(
             "scaffold_markers": [],
             "ambiguities": [],
             "errors": sorted(set(errors)),
+            "warnings": [],
             "ok": False,
         }
     inspection: dict[str, Any] = {
@@ -2615,6 +2602,7 @@ def _inspect_project(
         "scaffold_markers": [],
         "ambiguities": [],
         "errors": errors,
+        "warnings": warnings,
         "ok": True,
     }
     if errors:
@@ -2624,15 +2612,11 @@ def _inspect_project(
     elif not project_root.is_dir():
         _add_error(errors, "project root is not a directory")
     else:
-        files = _walk_project(project_root, errors)
+        files = _walk_project(project_root, errors, warnings)
         manifests, configs = _collect_evidence(files, project_root)
         inspection["manifests"] = manifests
         inspection["configs"] = configs
         text_cache: dict[Path, str | None] = {}
-        if detect_project:
-            for path in files:
-                if not _is_sensitive(path, project_root) and _is_text_path(path):
-                    _read_cached_text(path, project_root, errors, text_cache, required=True)
         package: dict[str, Any] = {}
         package_records: list[tuple[Path, dict[str, Any]]] = []
         if detect_project or detect_start_command:
@@ -2662,10 +2646,10 @@ def _inspect_project(
             classification, classification_evidence, ambiguities = _classify_project(
                 files,
                 project_root,
-                package,
                 stacks,
                 text_cache,
                 errors,
+                warnings,
                 packages=package_records or None,
             )
             inspection["stacks"] = stacks
@@ -2676,6 +2660,7 @@ def _inspect_project(
             inspection["start_commands"] = _start_commands(
                 package,
                 errors,
+                warnings,
                 files=files,
                 root=project_root,
                 text_cache=text_cache,
@@ -2684,6 +2669,7 @@ def _inspect_project(
         if scan_scaffold:
             inspection["scaffold_markers"] = _scan_scaffold(files, project_root, errors)
     inspection["errors"] = sorted(set(errors))
+    inspection["warnings"] = sorted(set(warnings))
     inspection["ok"] = not inspection["errors"]
     return inspection
 

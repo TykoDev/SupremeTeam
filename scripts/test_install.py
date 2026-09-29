@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1170,6 +1171,37 @@ class DocumentationTests(unittest.TestCase):
 
     def test_the_quick_start_no_longer_tells_an_agent_to_copy_skills_over_an_existing_folder(self):
         self.assertFalse("download the repo archive and copy skills/" in self.quick)
+
+
+class McpRegistryTemplateTests(unittest.TestCase):
+    """The shipped registry is a blank template, so no install starts from another host's tool list."""
+
+    def setUp(self):
+        self.text = (SKILLS / "mcp-tools.md").read_text(encoding="utf-8")
+        head = re.match(r"---\n(.*?)\n---\n", self.text, re.S)
+        self.assertIsNotNone(head)
+        self.front = {}
+        for line in head.group(1).splitlines():
+            key, _, value = line.partition(":")
+            self.front[key.strip()] = value.strip().strip('"')
+
+    def test_the_timestamp_is_the_epoch_and_older_than_the_ttl(self):
+        self.assertEqual(self.front["last_discovery_at"], "1970-01-01T00:00:00Z")
+        age = datetime.now(timezone.utc) - datetime(1970, 1, 1, tzinfo=timezone.utc)
+        self.assertGreater(age.total_seconds() / 3600, int(self.front["discovery_ttl_hours"]))
+        self.assertEqual(self.front["protocol_version"], "1")
+
+    def test_it_names_no_host_and_lists_no_tool(self):
+        self.assertEqual(self.front["host"], "")
+        self.assertEqual(self.front["workspace"], "")
+        rows = [line for line in self.text.splitlines() if line.startswith("|") and not re.match(r"^\|[\s|:-]+\|$", line)]
+        self.assertEqual([row.split("|")[1].strip() for row in rows], ["Tool", "Tool"], "only the two table headers")
+        for stale in ("codex_app", "codex_apps", "multi_agent_v1", "node_repl", "playwright", "2026-06-30"):
+            self.assertNotIn(stale, self.text)
+
+    def test_the_prose_still_describes_the_epoch_branch_admiral_relies_on(self):
+        self.assertIn("epoch placeholder", self.text)
+        self.assertIn("discovery_ttl_hours", self.text)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 ---
-last_discovery_at: 2026-06-30T02:58:03Z
+last_discovery_at: 1970-01-01T00:00:00Z
 discovery_ttl_hours: 480
-host: codex
-workspace: SupremeTeam
+host: ""
+workspace: ""
 protocol_version: 1
 ---
 
@@ -27,23 +27,20 @@ tool state silently between hosts.
 
 | Tool | Server | When to use | Prefer over |
 |------|--------|-------------|-------------|
-| browser_navigate, browser_snapshot, browser_take_screenshot, browser_click, browser_resize, browser_tabs | mcp__playwright | Drive and inspect browser pages for UI verification and accessibility-state checks | Blind DOM assumptions or screenshots without an action path |
-| browser_console_messages, browser_network_requests, browser_network_request | mcp__playwright | Inspect client-side errors and API traffic during frontend debugging | Guessing at browser failures from server logs |
-| js, js_reset, js_add_node_module_dir | mcp__node_repl | Run JavaScript in a persistent Node kernel for browser control and generated visual checks | One-off scripts when persistent REPL state helps |
-| automation_update | codex_app | Create, inspect, update, or delete automations, reminders, and recurring checks | Hand-written RRULE plumbing |
-| GitHub issue and PR helpers | mcp__codex_apps__github | Inspect and mutate issues, pull requests, labels, and review state | Manual REST or GraphQL calls |
-| Sites hosting helpers | mcp__codex_apps__sites | Manage Sites project metadata, access, and saved-version deployment | Invented deployment ids or unsaved deployment attempts |
-| Workspace agent helpers | mcp__codex_apps__workspace_agents | Search and manage editable workspace agents, attached files, and API channels | Manual Agent Studio instructions when connector state is available |
-| resume_agent, close_agent | multi_agent_v1 | Resume or close sub-agents when a multi-agent workflow is in progress | Leaving completed helpers open or recreating a closed collaborator |
 
 ## Workspace tools
 
 | Tool | Server | When to use | Prefer over |
 |------|--------|-------------|-------------|
-| Current Codex session | tool_search-discovered surface | No workspace-scoped MCP servers were exposed beyond the global tools during the 2026-06-30 refresh | Carrying stale workspace-only rows from another host |
 
 ## Notes
 
+- This copy is the blank template the installer ships: `last_discovery_at` is the
+  epoch (`1970-01-01T00:00:00Z`) and both tables are empty, so the first intake on
+  any host discovers that host's tools and asks the user to confirm them. Once the
+  file holds a confirmed registry the installer never replaces it, so the registry
+  survives upgrades; delete the file and re-run the installer to get the blank
+  template back.
 - The workspace copy always wins over a global mirror at
   `~/.claude/skills/mcp-tools.md`.
 - Refresh when the host changes or `last_discovery_at` exceeds the TTL. The

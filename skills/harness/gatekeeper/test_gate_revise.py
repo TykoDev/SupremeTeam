@@ -8,7 +8,6 @@ verdict, and the owner-grouped revise packet (gates.yaml revise_policy).
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import subprocess
 import sys
@@ -23,6 +22,8 @@ from data_formats import content_sha256  # noqa: E402
 
 DEFERRED = "selection deferred - no variant built"
 MERGED = "merge brief recorded - implemented as a fifth direction in the design pipeline"
+DEPENDENT_KEYS = ("selected_variant", "parity_evidence", "rendered_verification", "accessibility_evidence")
+MOCK_WAIVER = "synthetic wording that only a test spec sanctions"
 
 
 def sha256(path: Path) -> str:
@@ -169,6 +170,41 @@ class VariantSetTests(unittest.TestCase):
         proc, out = run(self.pkg.write(data))
         self.assertEqual(proc.returncode, 0, out["failures"])
 
+    def waivable_mock_rendering_spec(self, *, barred: bool) -> str:
+        """The shipped spec with `mock_rendering` made waivable in the global map.
+
+        The shipped spec bars a key that no waiver map names, so the precedence
+        `no_fallback` promises was never exercised: deleting it left every test
+        green. Here the key is waivable everywhere and only the bar can refuse it.
+        """
+        spec = json.loads((SKILLS / "gates.yaml").read_text(encoding="utf-8"))
+        spec["fallback_values"]["mock_rendering"] = [MOCK_WAIVER]
+        if not barred:
+            del spec["boundaries"]["redesign-review"]["no_fallback"]
+        path = self.pkg.root / f"gates-{'barred' if barred else 'open'}.yaml"
+        path.write_text(json.dumps(spec), encoding="utf-8")
+        return str(path)
+
+    def test_no_fallback_beats_a_waiver_map_that_names_the_key(self):
+        data = self.pkg.manifest()
+        data["evidence"]["mock_rendering"] = {"applicable": False, "reason": MOCK_WAIVER,
+                                              "scope": "whole run", "decided_by": "design-qa"}
+        manifest = self.pkg.write(data)
+        proc, out = run(manifest, "--gates", self.waivable_mock_rendering_spec(barred=False))
+        self.assertEqual(proc.returncode, 0, out.get("failures", out))
+        _, out = run(manifest, "--gates", self.waivable_mock_rendering_spec(barred=True))
+        self.assertIn("evidence not waivable: mock_rendering", out["failures"])
+
+    def test_no_fallback_refuses_the_bare_sanctioned_string_at_schema_one(self):
+        data = self.pkg.manifest()
+        del data["schema_version"]
+        data["evidence"]["mock_rendering"] = MOCK_WAIVER
+        manifest = self.pkg.write(data)
+        _, out = run(manifest, "--gates", self.waivable_mock_rendering_spec(barred=False))
+        self.assertNotIn("evidence not artifact-backed: mock_rendering", out["failures"])
+        _, out = run(manifest, "--gates", self.waivable_mock_rendering_spec(barred=True))
+        self.assertIn("evidence not artifact-backed: mock_rendering", out["failures"])
+
 
 class SelectionContractTests(unittest.TestCase):
     """The decision is the hinge: it decides what four other keys may carry."""
@@ -218,6 +254,34 @@ class SelectionContractTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         self.assertTrue(any(f.startswith("parity_evidence stands down on") for f in out["failures"]),
                         out["failures"])
+
+    def test_a_variant_decision_refuses_a_stand_down_in_any_wording(self):
+        """A built variant contradicts every waiver on its dependent keys, sanctioned or not.
+
+        The check used to trip only on the two sanctioned wordings, so a key
+        waived as "covered elsewhere" - or with a null reason - passed beside a
+        variant that was built and never verified.
+        """
+        for key in DEPENDENT_KEYS:
+            for reason in ("covered elsewhere", None, "", DEFERRED):
+                with self.subTest(key=key, reason=reason):
+                    data = self.pkg.manifest()
+                    data["evidence"][key] = {"applicable": False, "reason": reason,
+                                             "scope": "whole run", "decided_by": "redesign"}
+                    proc, out = run(self.pkg.write(data))
+                    self.assertEqual(proc.returncode, 1)
+                    self.assertTrue(any(f.startswith(f"{key} stands down on {reason!r}") for f in out["failures"]),
+                                    out["failures"])
+
+    def test_a_variant_decision_refuses_a_bare_sanctioned_string_on_a_dependent_key(self):
+        for key in DEPENDENT_KEYS:
+            with self.subTest(key=key):
+                data = self.pkg.manifest()
+                data["evidence"][key] = DEFERRED
+                proc, out = run(self.pkg.write(data))
+                self.assertEqual(proc.returncode, 1)
+                self.assertTrue(any(f.startswith(f"{key} stands down on {DEFERRED!r}") for f in out["failures"]),
+                                out["failures"])
 
     def test_the_built_variant_must_be_the_chosen_one(self):
         data = self.pkg.manifest()

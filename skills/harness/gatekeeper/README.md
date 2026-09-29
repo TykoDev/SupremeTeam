@@ -121,17 +121,18 @@ keys accept a sanctioned applicability record instead (`security_evidence`,
 at `taste-review` only `before_revision`, `consumer_handoff`,
 `residual_uncertainty`, and at `redesign-review` only `selected_variant`,
 `parity_evidence`, `accessibility_evidence`), and only the exact reasons listed
-under `fallback_values` are accepted; any other bare string fails the
-artifact-backing check. `confirmation` is never waivable, and a boundary's
+under `fallback_values` are accepted, as a record's `reason` (any other reason
+fails as `applicability reason not sanctioned`) and as a schema-1 bare string;
+any other bare string fails the artifact-backing check. `confirmation` is never waivable, and a boundary's
 `no_fallback` list removes a key's fallback there (`mock_rendering` at
 `redesign-review`: the four mocks are always built and always rendered).
 
 At `redesign-review` those waivers are not independent of each other. `selection`
 records what was decided, and `check_selection_dependencies` makes four keys
 follow it: a decision naming a variant may not stand `selected_variant`,
-`parity_evidence`, `rendered_verification` or `accessibility_evidence` down, and
-a merge or a deferral must stand all four down on the one sanctioned wording
-that matches the decision.
+`parity_evidence`, `rendered_verification` or `accessibility_evidence` down in
+any wording, and a merge or a deferral must stand all four down on the one
+sanctioned wording that matches the decision.
 
 ## Batched REVISE
 

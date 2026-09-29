@@ -299,27 +299,40 @@ class GateRefusalTests(unittest.TestCase):
                         verdict.get("failures"))
 
     def test_no_fallback_key_cannot_be_waived(self):
-        """A boundary's `no_fallback` list beats the global waiver map."""
-        barred = None
-        for boundary, spec in GATES["boundaries"].items():
-            for key in spec.get("no_fallback") or []:
-                if key in (GATES.get("fallback_values") or {}):
-                    barred = (boundary, key)
-                    break
-            if barred:
-                break
-        if not barred:
-            self.skipTest("no boundary bars a key that the global map would otherwise waive")
-        boundary, key = barred
+        """A boundary's `no_fallback` list beats a global waiver map that names the key.
+
+        The shipped spec bars keys that no waiver map names, so this test used to
+        find nothing to exercise and skip, and deleting the precedence from
+        check.py left the suite green. It now builds a synthetic spec that makes
+        the barred key waivable globally, with that spec's own wording as the
+        reason so only the bar can refuse the waiver, and a control run without
+        the bar that proves the same record is otherwise accepted.
+        """
+        boundary, key = next((b, k) for b, s in GATES["boundaries"].items() for k in s.get("no_fallback") or [])
+        wording = "synthetic wording that only this test's spec sanctions"
+        verdicts = {}
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            package = build_package(boundary, root)
-            package["evidence"][key] = {
-                "applicable": False, "reason": (GATES["fallback_values"][key])[0],
-                "scope": "synthetic probe", "decided_by": "test"}
-            verdict = run_gate(boundary, package, root)
-        self.assertFalse(verdict.get("pass"))
-        self.assertIn(f"evidence not waivable: {key}", verdict.get("failures", []))
+            for barred in (True, False):
+                synthetic = json.loads(json.dumps(GATES))
+                synthetic["fallback_values"][key] = [wording]
+                if not barred:
+                    del synthetic["boundaries"][boundary]["no_fallback"]
+                gates = root / f"gates-{barred}.yaml"
+                gates.write_text(json.dumps(synthetic), encoding="utf-8")
+                package = build_package(boundary, root)
+                package["evidence"][key] = {
+                    "applicable": False, "reason": wording, "scope": "synthetic probe", "decided_by": "test"}
+                manifest = root / f"manifest-{barred}.json"
+                manifest.write_text(json.dumps(package), encoding="utf-8")
+                proc = subprocess.run(
+                    [sys.executable, str(CHECK), "--boundary", boundary, "--package", str(manifest),
+                     "--gates", str(gates)],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(REPO))
+                verdicts[barred] = json.loads(proc.stdout)
+        self.assertFalse(verdicts[True]["pass"])
+        self.assertIn(f"evidence not waivable: {key}", verdicts[True]["failures"])
+        self.assertTrue(verdicts[False]["pass"], verdicts[False]["failures"])
 
 
 class RunLifecycleTests(unittest.TestCase):

@@ -51,9 +51,11 @@ rather than a bare claim.
 The only sanctioned non-artifact values at this boundary are the two fallbacks in
 the table above, and at schema 2 a bare fallback string is rejected: waiving one
 of those two keys takes an applicability record
-`{applicable: false, reason, scope, decided_by}`. `decided_by` names the
-engagement owner who declined, not cso and not the delegate that would have
-produced the evidence. The other five keys have no sanctioned fallback and cannot
+`{applicable: false, reason, scope, decided_by}` whose `reason` is exactly that
+key's sanctioned string, because `check.py` refuses any other reason
+(`applicability reason not sanctioned`). `decided_by` names the engagement
+owner who declined, not cso and not the delegate that would have produced the
+evidence. The other five keys have no sanctioned fallback and cannot
 be waived at all.
 
 ## The Self-Check

@@ -157,7 +157,7 @@ mechanical column.
 | A named artifact exists and matches its declared digest | Machine-checked by `check.py` | `missing artifact`, `invalid artifact digest`, `artifact hash mismatch` |
 | Evidence stays inside the run's evidence root | Machine-checked by `check.py` | `escapes evidence root`, `references another run`, `input path must be project-relative` |
 | An unavailable check is not silently converted to approval | Machine-checked for typed records by `check.py` | `result status must be one of [...]`, `result not passing: <status>` |
-| A waiver is an explicit applicability record on a waivable key | Machine-checked by `check.py` | `evidence not waivable`, `applicability record incomplete`, `bare fallback string not accepted at schema 2` |
+| A waiver is an explicit applicability record on a waivable key, worded exactly as the gate spec sanctions for that key | Machine-checked by `check.py` | `evidence not waivable`, `applicability record incomplete`, `applicability reason not sanctioned`, `bare fallback string not accepted at schema 2`. Whether the waived condition is actually true (no trust boundary moved, no visible surface changed) is judgement. |
 | One revision per submission, and no stale verdict lineage | Machine-checked by `check.py` | `mixed revisions`, `revisions must contain exactly one value`, `stale verdict revision`, `idempotency drift on unchanged revision` |
 | Hollow-completion language is not evidence | Machine-checked by `check.py` against the blocked-phrase list in `../harness/gatekeeper/_gatecheck.py` | `blocked phrase: <file>` |
 | An evidence document's internal references resolve | Machine-checked by `check.py` | `broken link in <file>`, `link escapes <root>` |

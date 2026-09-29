@@ -36,7 +36,9 @@ carry a truthful `exit_code` or a digest of output it did not observe.
 The one sanctioned fallback for the key is
 `no dependency or source scan surface - scanner not engaged`. At manifest schema
 2 a bare fallback string is rejected, so waiving the key takes an applicability
-record `{applicable: false, reason, scope, decided_by}`.
+record `{applicable: false, reason, scope, decided_by}` whose `reason` is that
+exact string; a record with any other reason fails as
+`applicability reason not sanctioned`.
 
 ## `scan_record.py` Options
 

@@ -352,6 +352,13 @@ class Package:
         for field in ("reason", "scope", "decided_by"):
             if not isinstance(value.get(field), str) or not value.get(field).strip():
                 self.failures.append(f"applicability record incomplete: {key} requires {field}")
+        # The sanctioned wording is the whole waiver; any other reason would let
+        # a submitter waive a scan or a stack lock in its own words.
+        reason = value.get("reason")
+        allowed = self.sanctioned_values(key)
+        if isinstance(reason, str) and reason.strip() and reason not in allowed:
+            self.failures.append(
+                f"applicability reason not sanctioned: {key} reason {reason!r} is not one of {sorted(allowed)}")
         return True
 
     def sanctioned_values(self, key: str) -> list[str]:
@@ -385,8 +392,8 @@ class Package:
         if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str):
             return value[0] if value[0] in allowed else None
         if isinstance(value, dict) and value.get("applicable") is False:
-            reason = str(value.get("reason", ""))
-            return reason if reason in allowed else None
+            reason = value.get("reason")
+            return reason if isinstance(reason, str) and reason in allowed else None
         return None
 
     def check_evidence(self) -> list[str]:
@@ -550,9 +557,10 @@ class Package:
         """The cross-key half of the decision: what the four dependent keys carry.
 
         A decision that names a variant means that variant was built, so the
-        keys that describe a built prototype must hold real evidence and the
-        built variant must be the one that was chosen. Any other decision means
-        no prototype exists, so each of them must stand down on the exact
+        keys that describe a built prototype must hold real evidence - standing
+        down in any wording, sanctioned or not, is refused - and the built
+        variant must be the one that was chosen. Any other decision means no
+        prototype exists, so each of them must stand down on the exact
         sanctioned wording for that decision - not a different one, and not
         silence.
         """
@@ -569,11 +577,16 @@ class Package:
         variant_decision = str(params.get("variant_decision") or "variant")
         if decision == variant_decision:
             for dep in dependent:
-                waived = self.waived_as(dep, evidence.get(dep))
-                if waived is not None:
-                    self.failures.append(
-                        f"{dep} stands down on {waived!r} but {key} decision is {variant_decision!r}: "
-                        f"a selected variant was built, so this key carries real evidence")
+                value = evidence.get(dep)
+                if isinstance(value, dict) and value.get("applicable") is False:
+                    wording = value.get("reason")
+                elif self.fallback_match(dep, value):
+                    wording = value if isinstance(value, str) else value[0]
+                else:
+                    continue
+                self.failures.append(
+                    f"{dep} stands down on {wording!r} but {key} decision is {variant_decision!r}: "
+                    f"a selected variant was built, so this key carries real evidence")
             built_key = str(params.get("built_key") or "")
             built_ids = self.set_ids(built_key) if built_key else None
             chosen = record.get("chosen")

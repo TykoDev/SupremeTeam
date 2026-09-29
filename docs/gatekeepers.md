@@ -66,8 +66,10 @@ Fifteen keys may instead carry a typed applicability record naming `reason`,
 `fixes_applied`, `team_manifest`, `before_revision`, `consumer_handoff`,
 `residual_uncertainty`, and — at `redesign-review` only, and only when the
 selection named no variant — `selected_variant`, `parity_evidence`, and
-`accessibility_evidence`. Any other bare string is rejected. `confirmation` has no
-fallback: inferred preferences and global writes, promotions, resets, or
+`accessibility_evidence`. Any other bare string is rejected, and so is a record
+whose `reason` is anything but one of those exact wordings for that key at that
+boundary (`applicability reason not sanctioned`): a waiver in the submitter's own
+words is not a waiver. `confirmation` has no fallback: inferred preferences and global writes, promotions, resets, or
 revocations always require an explicit confirmation record. A boundary can also
 refuse a fallback for a key it requires (`no_fallback`): at `redesign-review`,
 `mock_rendering` accepts neither the fallback string nor an applicability
@@ -78,8 +80,8 @@ a deferral leaves no living prototype to render; instead it, `selected_variant`,
 one sanctioned wording for the recorded decision — `selection deferred - no
 variant built` or `merge brief recorded - implemented as a fifth direction in
 the design pipeline`. The validator enforces both directions: a decision naming
-a variant may not stand any of the four down, and any other decision must stand
-all four down on the wording that matches it.
+a variant may not stand any of the four down in any wording, and any other
+decision must stand all four down on the wording that matches it.
 
 ## Typed evidence records
 

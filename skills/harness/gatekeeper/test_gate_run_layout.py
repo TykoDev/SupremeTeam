@@ -32,6 +32,18 @@ def registry_entry() -> dict:
     return load_data(SKILLS / "tech-stacks" / "registry.yaml")["overlays"][0]
 
 
+SPEC = load_data(GATE_SPEC)
+
+
+def waiver(key: str, scope: str = "whole run", decided_by: str = "commander") -> dict:
+    """An applicability record whose reason is the wording the gate spec sanctions for `key`.
+
+    Read from the spec rather than spelled out, so a fixture can never drift back
+    to a paraphrase the gate would now refuse.
+    """
+    return {"applicable": False, "reason": SPEC["fallback_values"][key][0], "scope": scope, "decided_by": decided_by}
+
+
 class RunLayoutFixture:
     """A canonical skillset-saves run with an intake grilling log."""
 
@@ -92,9 +104,9 @@ class EvidenceRootTests(unittest.TestCase):
                 "decisions": decisions, "architecture": "reports/architecture.md", "interfaces": "REST",
                 "plan": "reports/plan.md", "acceptance": "smoke + contract tests",
                 "security_seed": "no external trust boundary",
-                "stack_lock": {"applicable": False, "reason": "no new runtime", "scope": "whole run", "decided_by": "commander"},
+                "stack_lock": waiver("stack_lock"),
                 "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
-                "ui_evidence": {"applicable": False, "reason": "no user-facing surface", "scope": "whole run", "decided_by": "architect"},
+                "ui_evidence": waiver("ui_evidence", decided_by="architect"),
             },
             "artifact_hashes": {"../intake/report_grilling.md": sha256(self.fx.grilling),
                                 "reports/architecture.md": sha256(architecture), "reports/plan.md": sha256(plan)},
@@ -198,8 +210,7 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
             "evidence": {
                 "review_verdict": "APPROVED", "findings": {"items": []},
                 "executed_probes": {"artifacts": ["proof.md"], "result": {"status": "pass"}},
-                "rendered_verification": {"applicable": False, "reason": "no visible surface changed",
-                                          "scope": "api only", "decided_by": "design-qa"},
+                "rendered_verification": waiver("rendered_verification", "api only", "design-qa"),
                 "residual_risk": "none", "revision_lineage": "r1 <- design r1",
             },
             "artifact_hashes": {"proof.md": sha256(proof)},
@@ -341,6 +352,9 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
         _, out = self.check(base, "build-to-review", "build")
         self.assertTrue(any("bare fallback string not accepted at schema 2" in f for f in out["failures"]))
         base["evidence"]["security_evidence"] = {"applicable": False, "reason": "no trust boundary touched", "scope": "src/ui only", "decided_by": "security-builder"}
+        _, out = self.check(base, "build-to-review", "build")
+        self.assertTrue(any(f.startswith("applicability reason not sanctioned: security_evidence") for f in out["failures"]), out["failures"])
+        base["evidence"]["security_evidence"] = waiver("security_evidence", "src/ui only", "security-builder")
         proc, out = self.check(base, "build-to-review", "build")
         self.assertEqual(proc.returncode, 0, out)
         base["evidence"]["implementation"] = {"applicable": False, "reason": "x", "scope": "y", "decided_by": "z"}
@@ -360,7 +374,7 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
                 "security_seed": "no external trust boundary",
                 "stack_lock": {"slug": entry["slug"], "versions": entry["versions"], "overlay_sha256": entry["sha256"]},
                 "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
-                "ui_evidence": {"applicable": False, "reason": "no user-facing surface", "scope": "whole run", "decided_by": "architect"},
+                "ui_evidence": waiver("ui_evidence", decided_by="architect"),
             },
             "artifact_hashes": {"../intake/report_grilling.md": sha256(self.fx.grilling),
                                 "reports/architecture.md": sha256(architecture), "reports/plan.md": sha256(plan)},
@@ -482,7 +496,7 @@ class OverlayDigestPortabilityTests(unittest.TestCase):
                     "security_seed": "no external trust boundary",
                     "stack_lock": {"slug": entry["slug"], "versions": entry["versions"], "overlay_sha256": lf_digest},
                     "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
-                    "ui_evidence": {"applicable": False, "reason": "no user-facing surface", "scope": "whole run", "decided_by": "architect"},
+                    "ui_evidence": waiver("ui_evidence", decided_by="architect"),
                 },
                 "artifact_hashes": {"../intake/report_grilling.md": sha256(fx.grilling),
                                     "reports/architecture.md": sha256(architecture), "reports/plan.md": sha256(plan)},
@@ -516,7 +530,7 @@ class ArtifactHashPortabilityTests(unittest.TestCase):
                 "security_seed": "no external trust boundary",
                 "stack_lock": {"slug": entry["slug"], "versions": entry["versions"], "overlay_sha256": entry["sha256"]},
                 "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
-                "ui_evidence": {"applicable": False, "reason": "no user-facing surface", "scope": "whole run", "decided_by": "architect"},
+                "ui_evidence": waiver("ui_evidence", decided_by="architect"),
             },
             "artifact_hashes": hashes,
         }

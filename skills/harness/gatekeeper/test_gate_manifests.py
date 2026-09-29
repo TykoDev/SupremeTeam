@@ -6,7 +6,7 @@ evidence root is the manifest's own directory. Run-layout behaviour (sibling
 evidence, typed records, verdict reuse) lives in test_gate_run_layout.py.
 """
 from __future__ import annotations
-import hashlib, json, re, subprocess, sys, tempfile, unittest
+import json, re, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 SKILLS = Path(__file__).resolve().parents[2]
@@ -156,6 +156,11 @@ class BoundaryManifestTests(unittest.TestCase):
         p["evidence"]["tests"] = {"artifacts": [ARTIFACT], "result": {"status": "pass"}}
         p["evidence"]["runtime"] = {"artifacts": [ARTIFACT], "result": {"status": "pass"}}
         p["evidence"]["approved_design_revision"] = "r0"
+        r = self.run_check("build-to-review", p)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertTrue(any(f.startswith("applicability reason not sanctioned: security_evidence")
+                            for f in json.loads(r.stdout)["failures"]), r.stdout)
+        p["evidence"]["security_evidence"]["reason"] = sanctioned
         r = self.run_check("build-to-review", p)
         self.assertEqual(r.returncode, 0, r.stdout)
 

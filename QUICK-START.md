@@ -14,12 +14,14 @@ Pick one of the two setup options below.
 Read Install.md and install Supreme Team for this assistant.
 Use the default all-teams install unless a safer local target is obvious.
 Register the runtime hooks as part of the install.
-If Install.md came from a GitHub URL, download the repo archive and copy skills/.
+If Install.md came from a GitHub URL, download the archive of a pinned release tag
+or full commit SHA and run the installer from inside it.
 ```
 
 That last line matters. If the agent is reading `Install.md` straight from a
 GitHub URL, there is no checkout on disk yet, so it has to download the archive
-first instead of trying to run scripts that are not there.
+first instead of trying to run scripts that are not there. The archive must be a
+tag or commit, not a branch, so what runs is what you reviewed.
 
 ### Option B — Run the installer yourself
 
@@ -37,6 +39,12 @@ It installs to the common `~/.agents/skills` target and refreshes any host-nativ
 mirror it finds. Codex and Cursor mirrors are only created when you ask for them
 by name, or when one already exists.
 
+The installer only replaces or removes what it installed. Anything of yours that
+shares a name with an installed item (`review`, `qa`, `scripts`, ...) is moved,
+never deleted, to `<target>.supremeteam-backup/<timestamp>/` and listed in the
+summary. Run it with `--dry-run` first to see what it would do without writing
+anything. [Install.md](Install.md) has the details.
+
 ### Installer options
 
 | Goal | Windows | macOS / Linux |
@@ -45,6 +53,7 @@ by name, or when one already exists.
 | Pick hosts | `-Target Codex,Claude` | `--target codex --target claude` |
 | Register hooks | `-RegisterHooks` | `--register-hooks` |
 | Custom path | `-Destination "path"` | `--destination "path"` |
+| Preview only | `-DryRun` | `--dry-run` |
 
 Teams: `Design`, `Build`, `Review`, `Browser`, `Release`, `Safety`, `Testing`,
 `All`. Hosts: `auto`, `codex`, `claude`, `cursor`, `opencode`. Per-host
@@ -60,8 +69,14 @@ Target: ...
 Host targets: ...
 Host mirrors: ...
 Teams: ...
+Installed items: ...
+Moved aside: ...
 Hook registration: ...
 ```
+
+`Moved aside` names any of your items that shared a name with an installed one and
+where they are now. `Hook registration` reads `not requested`, `skipped (no host
+detected)` or `completed`; only `completed` means registration ran.
 
 ## 2. Register the hooks (optional, recommended)
 
@@ -169,8 +184,11 @@ Security, deployment, and production changes never qualify, however small.
 ## Manual install
 
 Copy the skills folder content into the common target, then register the hooks.
-Needs **Python 3.13 or newer** for the hook step. For upgrades, follow
-[Install.md](Install.md) instead so existing host mirrors get refreshed too.
+Needs **Python 3.13 or newer** for the hook step. A hand copy merges into any
+existing directory of the same name and overwrites files in it, so move your own
+`review/`, `design/`, `scripts/` and similar folders out of the way first. For
+upgrades, follow [Install.md](Install.md) instead so existing host mirrors get
+refreshed too.
 
 ```bash
 cd /path/to/SupremeTeam

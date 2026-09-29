@@ -4,7 +4,7 @@ Installing means one thing: copy the `skills/` tree into the skill directory you
 assistant reads from. **Do not flatten, rename, or cherry-pick skill folders** —
 skills resolve shared doctrine and scripts by relative path, so a flattened tree
 is a broken tree. The bundled installers handle target selection, host mirrors,
-and stale-file cleanup for you.
+and upgrades for you, and only ever replace or remove what they installed.
 
 ## From a local checkout
 
@@ -17,9 +17,30 @@ bash ./scripts/install.sh
 ```
 
 Installs the common `~/.agents/skills` target, refreshes any host mirror it finds,
-and clears files from older layouts. Codex and Cursor mirrors are created only
-when named or already present. Re-run the same command to upgrade — it overwrites
-current files and removes stale ones while leaving unrelated sibling skills alone.
+and retires directories left by older layouts. Codex and Cursor mirrors are created
+only when named or already present. Re-run the same command to upgrade, and add
+`--dry-run` (`-DryRun`) first to see what it would do without writing anything.
+
+The installer only replaces or removes what it installed. Each target gets a
+`.supremeteam-manifest` listing the items it put there, and every directory it
+creates carries a `.supremeteam-managed` marker. On an upgrade:
+
+- Items it installed are replaced. Each new copy is staged first and swapped in,
+  so an interrupted run never leaves a half-copied item and puts back anything it
+  had moved aside, and items that are no longer shipped are removed. Edits inside
+  an installed directory are replaced too, so keep your own skills in directories
+  of their own.
+- Anything else in the folder is left alone, including your own skills.
+- If something of yours has the same name as an installed item (`review`, `qa`,
+  `scripts`, ...), it is moved, never deleted, to
+  `<target>.supremeteam-backup/<timestamp>/` beside the target, and the summary
+  lists it. The first upgrade over an install made before these records existed
+  moves that whole old install there once; delete the folder when you have checked
+  that nothing in it is yours.
+- `mcp-tools.md` is the tool registry your assistant fills in, so an existing copy
+  is never replaced. Delete it and re-run to get the blank template back.
+- `--destination` refuses the filesystem root, your home directory or one of its
+  parents, and any folder that overlaps the checkout.
 
 Common flags (full list in [QUICK-START.md](QUICK-START.md)):
 
@@ -29,38 +50,61 @@ Common flags (full list in [QUICK-START.md](QUICK-START.md)):
 | Pick hosts | `-Target Codex,Claude` | `--target codex --target claude` |
 | Register hooks | `-RegisterHooks` | `--register-hooks` |
 | Custom path | `-Destination "path"` | `--destination "path"` |
+| Preview only | `-DryRun` | `--dry-run` |
 
 ## From a GitHub URL
 
 When handed the `Install.md` URL with no checkout on disk, **do not run
-`scripts/install.*`** — they are not there yet. Download the archive, then run the
-installer from inside it. Derive `<owner>`, `<repo>`, `<branch>` from the URL you
-were given, trying the branch in the URL before asking.
+`scripts/install.*`** — they are not there yet. Download the archive of a pinned
+version, check it, then run the installer from inside it. Derive `<owner>` and
+`<repo>` from the URL you were given.
+
+**Pin the version.** `<ref>` is a release tag or a full 40-character commit SHA,
+never a branch or a short SHA: a branch moves, and the installer runs with the
+user's permissions and writes code that assistants load automatically. If the URL
+names a branch, resolve it once with `git ls-remote https://github.com/<owner>/<repo> <branch>`,
+show the user the commit it points to, and install that commit.
+
+**Verify it.** The recipes below fail on an HTTP error, expect exactly one extracted
+folder, require that its name ends in the ref you asked for (GitHub names it
+`<repo>-<ref>`), and run the installer from that folder only. If the maintainers
+publish a SHA-256 for the archive, compare it before extracting (`sha256sum`,
+`shasum -a 256`, or `(Get-FileHash <file> -Algorithm SHA256).Hash`). GitHub does not
+promise byte-identical generated archives, so the commit SHA is the durable pin and
+a digest is an extra check.
 
 ```powershell
-$archiveUrl = "https://github.com/<owner>/<repo>/archive/refs/heads/<branch>.zip"
+$repo = "<owner>/<repo>"
+$ref = "<release tag or full commit SHA>"
 $work = Join-Path $env:TEMP ("supremeteam-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $work | Out-Null
-Invoke-WebRequest -Uri $archiveUrl -OutFile (Join-Path $work "repo.zip")
+Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri "https://github.com/$repo/archive/$ref.zip" -OutFile (Join-Path $work "repo.zip")
 Expand-Archive -LiteralPath (Join-Path $work "repo.zip") -DestinationPath $work
-$repoRoot = Get-ChildItem $work -Directory -Recurse |
-  Where-Object { Test-Path (Join-Path $_.FullName "scripts\install.ps1") } |
-  Select-Object -First 1
-if (-not $repoRoot) { throw "No Supreme Team checkout in the archive." }
-powershell -ExecutionPolicy Bypass -File (Join-Path $repoRoot.FullName "scripts\install.ps1")
+$roots = @(Get-ChildItem -LiteralPath $work -Directory)
+if ($roots.Count -ne 1 -or -not (Test-Path (Join-Path $roots[0].FullName "scripts\install.ps1"))) { throw "No Supreme Team checkout in the archive." }
+if (-not $roots[0].Name.EndsWith($ref.TrimStart("v"))) { throw "The archive folder does not match $ref." }
+powershell -ExecutionPolicy Bypass -File (Join-Path $roots[0].FullName "scripts\install.ps1")
 Remove-Item -Recurse -Force $work
 ```
 
 ```bash
-archive_url="https://github.com/<owner>/<repo>/archive/refs/heads/<branch>.zip"
+repo="<owner>/<repo>"
+ref="<release tag or full commit SHA>"
 work="$(mktemp -d)"
-curl -L "$archive_url" -o "$work/repo.zip"
+curl --proto '=https' --tlsv1.2 -fsSL "https://github.com/$repo/archive/$ref.zip" -o "$work/repo.zip"
 unzip -q "$work/repo.zip" -d "$work"
-script="$(find "$work" -path '*/scripts/install.sh' -print -quit)"
-test -n "$script" || { echo "No Supreme Team checkout in the archive." >&2; exit 1; }
-bash "$script"
+set -- "$work"/*/
+[ "$#" -eq 1 ] && [ -f "${1}scripts/install.sh" ] || { echo "No Supreme Team checkout in the archive." >&2; exit 1; }
+case "$1" in *"${ref#v}"/) ;; *) echo "The archive folder does not match $ref." >&2; exit 1 ;; esac
+bash "${1}scripts/install.sh"
 rm -rf "$work"
 ```
+
+The archive is deleted at the end, and hook registration needs
+`scripts/install_hooks.py` from it. Add `--register-hooks` (`-RegisterHooks`) to the
+installer line to register hooks in the same run, or register later from the
+installed tree with `harness/hooks/repair_registration.py` (preview first, see
+[Runtime hooks](#runtime-hooks)).
 
 ## Where it goes
 
@@ -128,9 +172,12 @@ python skills/harness/hooks/check_readiness.py --host auto --require-active-run
 ## Manual install (fallback)
 
 If the scripts will not run, copy the skills folder content into the common target
-by hand, then register the hooks. This skips host-mirror refresh and stale-file
-cleanup, so prefer the installer for upgrades. Needs **Python 3.13 or newer** for
-the hook step.
+by hand, then register the hooks. This skips host-mirror refresh, the ownership
+records, and the removal of retired items, so prefer the installer for upgrades. A
+hand copy also merges into any existing directory of the same name and overwrites
+files in it, so move your own `review/`, `design/`, `scripts/` and similar folders
+out of the way first; the installer treats a hand-copied tree as not its own and
+moves it aside on its next run. Needs **Python 3.13 or newer** for the hook step.
 
 ```powershell
 $destination = Join-Path $env:USERPROFILE ".agents\skills"
@@ -155,6 +202,9 @@ write a plugin package). Skip the hook line to leave routing and guards advisory
 | Skills not discovered | Wrong target path, or a stale session | Check the path, restart the assistant |
 | `admiral` missing | Tree flattened or copied from the wrong source | Copy `skills/` again, preserving directories |
 | Remote install fails | Ran local scripts from a raw URL | Download and extract the archive first |
+| Download stops with an HTTP error | `<ref>` is not an existing release tag or full commit SHA | Use a real tag or the full 40-character SHA, not a branch or a short SHA |
+| A skill of mine stopped working | Its folder shared a name with an installed item and was moved aside | It is unchanged in `<target>.supremeteam-backup/<timestamp>/`; move it back under a name the catalog does not use |
+| `Refusing to install into ...` | `--destination` is the filesystem root, your home directory or a parent of it, or overlaps the checkout | Pass the skills folder itself |
 | Python commands fail | Python missing or below the manifest floor | Install a supported Python, re-check |
 | Gatekeepers can't find `_gatecheck.py` | `harness/` was skipped | Use the installer or copy every core component |
 | Resume and saves broken | `save-protocol.md` was skipped | Copy the root doctrine files |

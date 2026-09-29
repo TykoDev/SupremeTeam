@@ -1143,5 +1143,34 @@ class PowerShellParityTests(unittest.TestCase):
                               f"'${variable.group(1)}:' in a string is read as a drive-qualified variable; use ${{{variable.group(1)}}}:")
 
 
+class DocumentationTests(unittest.TestCase):
+    def setUp(self):
+        self.install = (REPO / "Install.md").read_text(encoding="utf-8")
+        self.quick = (REPO / "QUICK-START.md").read_text(encoding="utf-8")
+
+    def test_the_install_guide_describes_the_ownership_rules_the_installer_enforces(self):
+        for term in (MANIFEST, MARKER, BACKUP_SUFFIX, "--dry-run", "-DryRun", "mcp-tools.md", "never deleted"):
+            self.assertTrue(term in self.install, f"Install.md does not mention {term}")
+
+    def test_the_remote_recipe_pins_a_ref_and_fails_on_http_errors(self):
+        self.assertFalse("refs/heads" in self.install, "a branch archive moves; the recipe must download a tag or commit")
+        self.assertEqual(self.install.count("/archive/$ref.zip"), 2, "both recipes download the pinned ref")
+        self.assertRegex(self.install, r"curl\s[^\n]*--proto '=https'[^\n]* -[A-Za-z]*f")
+        self.assertTrue("-ErrorAction Stop" in self.install, "the PowerShell download must stop on an HTTP error")
+        self.assertFalse("-print -quit" in self.install, "the recipe must run the directory it verified, not the first match of find")
+
+    def test_the_quick_start_sample_summary_matches_what_the_installer_prints(self):
+        printed = INSTALL_SH.read_text(encoding="utf-8")
+        for label in ("Supreme Team installation complete.", "Target:", "Host targets:", "Host mirrors:", "Teams:",
+                      "Installed items:", "Moved aside", "Hook registration:"):
+            self.assertTrue(label in self.quick, f"QUICK-START.md does not show {label!r}")
+            self.assertTrue(label in printed, f"install.sh does not print {label!r}")
+        for flag in ("--dry-run", "-DryRun"):
+            self.assertTrue(flag in self.quick, f"QUICK-START.md does not document {flag}")
+
+    def test_the_quick_start_no_longer_tells_an_agent_to_copy_skills_over_an_existing_folder(self):
+        self.assertFalse("download the repo archive and copy skills/" in self.quick)
+
+
 if __name__ == "__main__":
     unittest.main()

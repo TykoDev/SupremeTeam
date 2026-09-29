@@ -421,13 +421,13 @@ class Package:
             self.failures.append(f"evidence not waivable: {key}")
             return True
         for field in ("reason", "scope", "decided_by"):
-            if not isinstance(value.get(field), str) or not value.get(field).strip():
+            if not filled(value.get(field)):
                 self.failures.append(f"applicability record incomplete: {key} requires {field}")
         # The sanctioned wording is the whole waiver; any other reason would let
         # a submitter waive a scan or a stack lock in its own words.
         reason = value.get("reason")
         allowed = self.sanctioned_values(key)
-        if isinstance(reason, str) and reason.strip() and reason not in allowed:
+        if filled(reason) and reason not in allowed:
             self.failures.append(
                 f"applicability reason not sanctioned: {key} reason {reason!r} is not one of {sorted(allowed)}")
         return True
@@ -616,11 +616,11 @@ class Package:
         if decision not in decisions:
             self.failures.append(f"{key} decision must be one of {sorted(decisions)}")
         for field in ("recommended", "decided_by", "decided_at", "basis"):
-            if not isinstance(value.get(field), str) or not value.get(field).strip():
+            if not filled(value.get(field)):
                 self.failures.append(f"{key} record requires {field}")
         chosen = value.get("chosen")
         if decision == variant_decision:
-            if not isinstance(chosen, str) or not chosen.strip():
+            if not filled(chosen):
                 self.failures.append(f"{key} decision {variant_decision!r} requires a chosen id")
         elif decision in decisions and chosen is not None:
             self.failures.append(f"{key} decision {decision!r} requires chosen: null")
@@ -629,7 +629,7 @@ class Package:
         if option_ids:
             for field in ("recommended", "chosen"):
                 ident = value.get(field)
-                if isinstance(ident, str) and ident.strip() and ident not in option_ids:
+                if filled(ident) and ident not in option_ids:
                     self.failures.append(
                         f"{key} {field} {ident!r} is not one of the {option_key} ids {sorted(option_ids)}")
 
@@ -674,13 +674,13 @@ class Package:
             list_field = str(self.type_params(built_key, "variant_set").get("list_field") or "variants")
             entries = built.get(list_field) if isinstance(built, dict) else None
             first = entries[0] if isinstance(entries, list) and entries and isinstance(entries[0], dict) else None
-            if first is not None and isinstance(chosen, str) and chosen.strip():
+            if first is not None and filled(chosen):
                 ident = first["id"].strip() if filled(first.get("id")) else ""
                 if ident != chosen.strip():
                     self.failures.append(
                         f"{built_key} was built for {ident!r} but {key} chose {chosen.strip()!r}: "
                         f"the built variant must be the selected one")
-            elif built_ids is None and isinstance(chosen, str) and chosen.strip():
+            elif built_ids is None and filled(chosen):
                 self.failures.append(
                     f"{built_key} declares no {list_field} to compare against the {key} decision")
         elif decision in decisions:
@@ -722,8 +722,7 @@ class Package:
         for field in scalar_fields:
             if field == "hashes":
                 continue
-            item = value.get(field)
-            if not isinstance(item, str) or not item.strip():
+            if not filled(value.get(field)):
                 self.failures.append(f"{key} record requires {field}")
         id_fields = {
             "preference_diff": list_fields,
@@ -732,8 +731,7 @@ class Package:
         }.get(kind, ())
         for field in id_fields:
             items = value.get(field)
-            if isinstance(items, list) and any(not isinstance(item, str) or not item.strip()
-                                               for item in items):
+            if isinstance(items, list) and any(not filled(item) for item in items):
                 self.failures.append(f"{key} record requires string ids in {field}")
         digest_fields = {
             "preference_diff": ("before_digest", "after_digest"),

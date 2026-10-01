@@ -312,8 +312,8 @@ def stale_reason(path: Path, holder: dict[str, Any]) -> str | None:
 def retrying(action: Any, attempts: int = 8) -> None:
     """Run a file operation with short retries: on Windows a reader holding the file open (host
     hook, indexer, antivirus, another writer checking the lock) makes a rename or delete fail
-    transiently with PermissionError. The same policy as save_run._replace_with_retry,
-    repeated because this module stays standalone."""
+    transiently with PermissionError. The same policy as _fsutil.replace_with_retry in the
+    hooks directory, repeated because this module stays standalone."""
     delay = 0.05
     for attempt in range(attempts):
         try:

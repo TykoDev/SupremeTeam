@@ -9,6 +9,10 @@ verification: >-
   support_ends yet, so a stale date is visible to a reader and to no gate.
   astro is marked in its own overlay as a historical, unmaintained snapshot with no
   end date, so it has no support_ends entry.
+  vue-nuxt locks Nuxt 3 (versions 3 and 3.14), whose end of life passed on
+  2026-07-31, the date support_ends records. The pin is unchanged on purpose:
+  choosing a supported major for it is an owner decision, and neither this file nor
+  the gate makes it.
 support_ends:
   vue-nuxt: "2026-07-31"
 provenance: >-

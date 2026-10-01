@@ -23,6 +23,7 @@ from unittest import mock
 
 HOOK_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOK_DIR))
+import _bootstrap  # noqa: E402
 import _testkit as kit  # noqa: E402
 import pre_tool_use  # noqa: E402
 
@@ -128,18 +129,33 @@ class ImportabilityTests(unittest.TestCase):
 
     def test_no_unquoted_union_annotation_without_the_future_import(self):
         for name in OWNED_MODULES:
-            tree = ast.parse((HOOK_DIR / f"{name}.py").read_text(encoding="utf-8"))
-            future = any(isinstance(node, ast.ImportFrom) and node.module == "__future__"
-                         and any(alias.name == "annotations" for alias in node.names) for node in tree.body)
-            unions = [line for annotation, line in _annotations(tree)
-                      if any(isinstance(part, ast.BinOp) and isinstance(part.op, ast.BitOr) for part in ast.walk(annotation))]
+            unions = _union_annotations_at_import((HOOK_DIR / f"{name}.py").read_text(encoding="utf-8"))
             with self.subTest(module=name):
-                self.assertTrue(future or not unions, f"{name}.py evaluates `X | Y` annotations at import (line {unions[:3]}) without `from __future__ import annotations`")
+                self.assertEqual(unions, [], f"{name}.py evaluates `X | Y` annotations at import (line {unions[:3]}) without `from __future__ import annotations`")
 
-    def test_every_owned_module_parses_for_python_3_9(self):
-        for name in OWNED_MODULES:
-            with self.subTest(module=name):
-                ast.parse((HOOK_DIR / f"{name}.py").read_text(encoding="utf-8"), feature_version=(3, 9))
+    def test_no_file_a_registered_hook_runs_evaluates_a_union_annotation_at_import(self):
+        """The three entry scripts import `_state` at module level and `_state` imports `save_taxonomy` from `skills/scripts`,
+        so the files a Python 3.9 would have to import are the ones `enforcement_files()` lists, not only this directory's."""
+        for path in _bootstrap.enforcement_files():
+            unions = _union_annotations_at_import(path.read_text(encoding="utf-8"))
+            with self.subTest(file=path.name):
+                self.assertEqual(unions, [], f"{path.name} evaluates `X | Y` annotations at import (line {unions[:3]}) without `from __future__ import annotations`")
+
+    def test_the_scan_finds_the_annotation_that_broke_state_on_python_3_9(self):
+        """`def refresh_run_heartbeat(data: dict, event: str) -> dict | None` stood in `_state.py` without the future import until round 2."""
+        broken = "def refresh_run_heartbeat(data: dict, event: str) -> dict | None:\n    return None\n"
+        self.assertEqual(_union_annotations_at_import(broken), [1])
+        self.assertEqual(_union_annotations_at_import("class C:\n    field: int | None = None\n"), [2])
+        self.assertEqual(_union_annotations_at_import("def f(a: int | str) -> None:\n    return None\n"), [1])
+        self.assertEqual(_union_annotations_at_import("from __future__ import annotations\n" + broken), [])
+        self.assertEqual(_union_annotations_at_import('def f() -> "dict | None":\n    return None\n'), [])
+        self.assertEqual(_union_annotations_at_import("def f() -> dict:\n    return {}\n"), [])
+
+    def test_every_file_a_registered_hook_runs_parses_for_python_3_9(self):
+        paths = {HOOK_DIR / f"{name}.py" for name in OWNED_MODULES} | set(_bootstrap.enforcement_files())
+        for path in sorted(paths):
+            with self.subTest(file=path.name):
+                ast.parse(path.read_text(encoding="utf-8"), feature_version=(3, 9))
 
     @unittest.skipUnless(OLDER, "no interpreter below the running one is installed")
     def test_every_owned_module_imports_under_each_older_interpreter(self):
@@ -199,6 +215,16 @@ class OlderInterpreterTests(unittest.TestCase):
                 record = _observation(self.root)
                 self.assertEqual((record["faults"], record["last_fault"]["type"]), (1, "SyntaxError"))
                 (self.root / ".harness-state" / "observations" / "PreToolUse.json").unlink()
+
+
+def _union_annotations_at_import(source: str) -> list:
+    """The lines of annotations written as `X | Y` that a Python below 3.10 would evaluate; none when the module defers them all."""
+    tree = ast.parse(source)
+    if any(isinstance(node, ast.ImportFrom) and node.module == "__future__" and any(alias.name == "annotations" for alias in node.names)
+           for node in tree.body):
+        return []
+    return [line for annotation, line in _annotations(tree)
+            if any(isinstance(part, ast.BinOp) and isinstance(part.op, ast.BitOr) for part in ast.walk(annotation))]
 
 
 def _annotations(tree):

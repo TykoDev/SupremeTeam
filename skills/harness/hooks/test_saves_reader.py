@@ -437,6 +437,32 @@ class RefusedRecordTests(unittest.TestCase):
                     self.assertEqual(full["status"] in {"active", "orphaned"} or bool(full.get("access_denied")), expected, full)
 
 
+class AccessDeniedWayForwardTests(unittest.TestCase):
+    """RR3-state-7: the way forward named for a record this account cannot read was the owner completing or releasing the
+    run, which changes nothing for a second account: the records of a closed run are as owner-only as a held run's."""
+
+    DOCUMENTS = ("docs/persistent-saves.md", "skills/save-protocol.md", "skills/session-memory/SKILL.md",
+                 "skills/session-memory/references/run-record.md")
+
+    def test_the_step_says_closing_the_run_is_not_the_way_forward(self):
+        step = _saves.ACCESS_DENIED_STEP
+        self.assertIn("completing or releasing the run only ends its claim and leaves its records unreadable here", step)
+        self.assertIn("readable to this account", step)
+        self.assertIn("never overwrite them", step)
+        self.assertNotIn("ask the account that owns the run", step)
+
+    def test_every_document_that_repeats_it_says_the_same_and_none_keeps_the_old_remedy(self):
+        for relative in self.DOCUMENTS:
+            with self.subTest(relative):
+                path = HOOK_DIR.parents[2] / relative
+                if not path.is_file():
+                    self.skipTest(f"{relative} is not part of this copy")
+                text = " ".join(path.read_text(encoding="utf-8").split())
+                self.assertRegex(text, r"(?i)completing or releasing the run (only ends|does not change)")
+                self.assertNotRegex(text, r"(?i)(owns the run|its owner|first account) (completes|to complete) or releas"
+                                          r"|way forward is the first account")
+
+
 class SharedConstantsTests(unittest.TestCase):
     def test_reader_and_writer_import_the_taxonomy_instead_of_restating_it(self):
         import save_run

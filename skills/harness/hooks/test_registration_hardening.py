@@ -22,6 +22,7 @@ from unittest import mock
 HOOK_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOK_DIR))
 import _bootstrap  # noqa: E402
+import _saves  # noqa: E402
 import repair_registration as repair  # noqa: E402
 import verify_registration as verify  # noqa: E402
 import test_run_state as fixtures  # noqa: E402
@@ -246,13 +247,13 @@ class ReadinessSemanticsTests(Scratch):
         saves = data["saves"]
         self.assertEqual((saves["status"], saves["access_denied"]), ("corrupt", [path]), saves)
         self.assertIn(f"{path} exists but this account cannot read it (permission denied)", saves["detail"])
-        self.assertIn("ask the account that owns the run", saves["next_step"])
+        self.assertEqual(saves["next_step"], _saves.ACCESS_DENIED_STEP)
         self.assertFalse(data["capabilities"]["saves_readable"])
         self.assertFalse(data["capabilities"]["active_run"])
         self.assertTrue(any("cannot read it (permission denied)" in blocker for blocker in data["blockers"]), data["blockers"])
         text = self.run_tool("check_readiness.py", "--host", "auto").stdout
         self.assertIn(f"Saves: corrupt - {path} exists but this account cannot read it (permission denied)", text)
-        self.assertIn("  next: ask the account that owns the run", text)
+        self.assertIn(f"  next: {_saves.ACCESS_DENIED_STEP}", text)
 
     def test_project_root_reaches_the_hook_inspection(self):
         # BUGH-19: the hooks live in the other project; the working directory is a bare one.

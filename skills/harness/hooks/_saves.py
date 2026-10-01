@@ -41,9 +41,11 @@ NEXT_STEPS = {
     "complete": "start a new run, or revise this one with checkpoint --reopen",
     "unreadable": "confirm skillset-saves/runs holds readable run records, then escalate",
 }
-# `corrupt` with `access_denied`: the record is there and this account may not read it, which is not damage.
-ACCESS_DENIED_STEP = ("ask the account that owns the run to complete or release it, or make its records readable to this "
-                      "account; never overwrite them")
+# `corrupt` with `access_denied`: the record is there and this account may not read it, which is not damage. Closing a run
+# does not change who may read its records, so the owner completing or releasing it is not the way forward.
+ACCESS_DENIED_STEP = ("make the records readable to this account (a mode or an ACL on them and the directories above them), or, "
+                      "once the run is closed, have an account that may delete them remove them; completing or releasing the "
+                      "run only ends its claim and leaves its records unreadable here; never overwrite them")
 
 
 @dataclass(frozen=True)

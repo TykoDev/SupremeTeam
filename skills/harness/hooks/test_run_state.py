@@ -910,7 +910,22 @@ class SecondAccountTests(RunStateCase):
                 with refusing(tail), self.assertRaises(save_run.Refused) as caught:
                     self.store("run-2").create("admiral", ["README.md"], "agent", "next", {})
                 self.assertIn(f"skillset-saves/{path} exists but this account cannot read it", str(caught.exception))
-                self.assertIn("ask the account that owns the run", str(caught.exception))
+                self.assertIn(_saves.ACCESS_DENIED_STEP, str(caught.exception))
+                self.setUp()
+
+    def test_closing_the_run_does_not_lift_the_refusal_because_its_records_stay_unreadable(self):
+        """RR3-state-7: the step used to name the owner completing or releasing the run as the way forward, and the second
+        account met the same refusal afterwards: a closed run's records are as owner-only as a held one's."""
+        for close in ("complete", "release"):
+            with self.subTest(close):
+                self.create()
+                self.assertEqual(self.save(close)[0], 0)
+                with refusing(*self.OWNER_ONLY):
+                    code, out = self.in_process("create", "--evidence", "README.md", run_id="run-2")
+                self.assertEqual(code, 1, out)
+                self.assertIn("this account cannot read it (permission denied)", out["reason"])
+                self.assertIn("completing or releasing the run only ends its claim", out["reason"])
+                self.assertFalse((self.project / "skillset-saves" / "runs" / "run-2").exists())
                 self.setUp()
 
     def test_resuming_or_recovering_beside_a_record_it_cannot_read_is_refused_too(self):

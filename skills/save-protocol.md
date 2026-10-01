@@ -423,8 +423,11 @@ so deleting any of those three pointers fails the suite.
   the reason `permission denied`): the first account's owner-only records, seen
   from a second account. `create`, a resume of a released run and `recover` are
   refused with the path and the reason, and every other operation on that run says
-  the same. It is not damage and not a run to recover: the account that owns the
-  run completes or releases it, or its records are made readable to this one.
+  the same. It is not damage and not a run to recover. Completing or releasing the
+  run only ends its claim and leaves its records unreadable here, so the way
+  forward is to make them readable to this account (a mode or an ACL) or, once the
+  run is closed, to have an account that may delete them remove them; never
+  overwrite them.
 - The write lock is busy: `refused`, with a message to retry, after waiting
   `--lock-timeout` seconds. Another `save_run.py` process holds
   `skillset-saves/_write.lock`; the operating system releases it when that

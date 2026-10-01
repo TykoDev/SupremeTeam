@@ -140,9 +140,14 @@ malformed one. `create`, resuming a released run and `recover` refuse beside it 
 that path and reason; every other operation on that run says the same instead of
 "no lock"; the readiness diagnostic prints it under `Saves:` with its next step; and
 the hook-file gate and the session-pin reminder count it as a held run, because it
-may be one and the second account cannot tell. The way forward is the first account
-completing or releasing the run, or the records being made readable to the second.
-Nothing changes for an account that can read them.
+may be one and the second account cannot tell. A directory on the way that the second
+account may not search is classified and refused in the same words. Completing or
+releasing the run only ends the first account's claim of it: the records of a closed
+run are owner-only too, so the second account cannot read them either and the refusal
+repeats. It can create a run again only once those records are readable to it (a mode
+or an ACL on them and the directories above them) or, once the run is closed, an
+account that may delete them has removed them; never overwrite them. Nothing changes
+for an account that can read them.
 
 Reclaiming a stale lock requires `recover --reason`, which writes the stale lock's
 path, heartbeat, owner, and sha256 into the audit trail before taking it. Nothing

@@ -3,7 +3,7 @@ param(
     [ValidateSet("All", "Design", "Build", "Review", "Browser", "Release", "Safety", "Testing")]
     [string[]]$Team = @("All"),
 
-    [ValidateSet("Auto", "Codex", "Claude", "Cursor", "OpenCode")]
+    [ValidateSet("Auto", "Codex", "Claude", "Cursor", "OpenCode", "Copilot")]
     [string[]]$Target = @("Auto"),
 
     [string]$Destination = (Join-Path $env:USERPROFILE ".agents\skills"),
@@ -818,7 +818,9 @@ function Find-CompatiblePythonCommand {
     $candidates = @(
         @{ Command = "py"; Arguments = @("-3") },
         @{ Command = "python"; Arguments = @() },
-        @{ Command = "python3"; Arguments = @() }
+        @{ Command = "python3"; Arguments = @() },
+        @{ Command = "python3.14"; Arguments = @() },
+        @{ Command = "python3.13"; Arguments = @() }
     )
 
     foreach ($candidate in $candidates) {
@@ -914,7 +916,7 @@ function Register-HarnessHooks {
     )
 
     if ($HostTargets.Count -eq 0) {
-        Write-Host "Hook registration skipped: no host targets were detected. Pass -Target Codex,Claude,Cursor,OpenCode to choose explicitly."
+        Write-Host "Hook registration skipped: no host targets were detected. Pass -Target Codex,Claude,Cursor,OpenCode,Copilot to choose explicitly."
         return
     }
 

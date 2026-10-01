@@ -43,7 +43,7 @@ block, an active run lock with `session_pin: true` exists under
 `design/redesign` as the delegating owner.
 
 Reached cold — "design the architecture" with no handoff — decide nothing and
-write nothing. The requirements brief, the locked stack, the revision the
+write nothing. The requirements brief, the stack constraints, the revision the
 decisions are recorded against, and the save path all arrive with the handoff;
 none can be reconstructed from the request. Route the user to `admiral`, which
 runs intake and persistence before any specialist is delegated.
@@ -65,7 +65,7 @@ Route elsewhere when the need is requirement evidence and a grounded problem sta
 
 - The `requirements-brief` from `design/researcher`: requirements evidence, non-functional targets, and constraints the architecture must satisfy. The delivery plan is downstream, not an input; a request that arrives with a plan but no requirements evidence returns to `design/commander`.
 - API consumers, authentication/authorization model, data sensitivity, and endpoint compatibility constraints when an API surface is in scope.
-- Locked stack choices, platform constraints, runtime requirements, and integration commitments from prior phases.
+- Stack choices the project or brief already fixes (the stack lock itself comes later in the design pipeline), platform constraints, runtime requirements, and integration commitments from prior phases.
 - Trust boundaries, high-value assets, external data sources, LLM/tool surfaces, and dependency or migration constraints that shape secure architecture.
 - Questions that still affect ownership boundaries, data flow, or non-functional targets.
 - Brand and personality keywords, target users, layout intent, and dark-mode requirement when the surface is user-facing.

@@ -442,9 +442,29 @@ function Get-ItemState {
     return "foreign"
 }
 
-# True when $Root\$Name is a regular file that is byte for byte a copy an earlier
-# release shipped (install-items.txt, supersedes): it was never edited, so it is the
-# installer's own. Hashes are compared, the same proof install.sh gets from cmp.
+# SHA-256 of a file's bytes with the CR of every CRLF dropped, the fold the catalog's
+# own hashes use and install.sh's same_text applies. Latin-1 turns each byte into one
+# character and back, so nothing but the CRLF pairs changes.
+function Get-FoldedHash {
+    param(
+        [string]$Path
+    )
+
+    $latin1 = [System.Text.Encoding]::GetEncoding("iso-8859-1")
+    $folded = $latin1.GetString([System.IO.File]::ReadAllBytes($Path)).Replace("`r`n", "`n")
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [System.BitConverter]::ToString($sha.ComputeHash($latin1.GetBytes($folded)))
+    }
+    finally {
+        $sha.Dispose()
+    }
+}
+
+# True when $Root\$Name is a regular file that is a copy an earlier release shipped
+# (install-items.txt, supersedes), whichever line endings its checkout gave it: it was
+# never edited, so it is the installer's own. Folded hashes are compared, the same
+# proof install.sh gets from cmp.
 function Test-SupersededSeed {
     param(
         [string]$Root,
@@ -460,10 +480,10 @@ function Test-SupersededSeed {
         return $false
     }
 
-    $installed = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash
+    $installed = Get-FoldedHash -Path $item.FullName
     foreach ($copyName in $script:supersededItems[$Name]) {
         $copy = Join-Path (Join-Path $PSScriptRoot "superseded") $copyName
-        if ((Get-FileHash -LiteralPath $copy -Algorithm SHA256).Hash -eq $installed) {
+        if ((Get-FoldedHash -Path $copy) -eq $installed) {
             return $true
         }
     }

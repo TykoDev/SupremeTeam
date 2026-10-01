@@ -520,31 +520,37 @@ class InstallerBehaviourTests(unittest.TestCase):
         box.install()
         self.assertEqual(registry.read_text(encoding="utf-8"), "mcp-tools.md v2\n")
 
-    def superseded_copy(self, index: int = 0) -> bytes:
-        return (SUPERSEDED / ITEMS.superseded["mcp-tools.md"][index]).read_bytes()
+    def superseded_copy(self, index: int = 0, newline: bytes = b"\n") -> bytes:
+        return (SUPERSEDED / ITEMS.superseded["mcp-tools.md"][index]).read_bytes().replace(b"\n", newline)
 
     def test_an_untouched_registry_from_an_earlier_release_is_replaced_by_the_template(self):
-        """An upgrade kept the Codex snapshot an earlier installer wrote, as "kept, yours", for ever."""
+        """An upgrade kept the Codex snapshot an earlier installer wrote, as "kept, yours", for ever.
+
+        RR3-state-2: the three releases predate .gitattributes, so an install made from a checkout with CRLF line endings
+        (Git for Windows' default) holds a CRLF copy, which is no less the installer's own."""
         for index, name in enumerate(ITEMS.superseded["mcp-tools.md"]):
-            with self.subTest(copy=name):
-                box = Sandbox(self)
-                box.install()
-                registry = box.dest / "mcp-tools.md"
-                registry.write_bytes(self.superseded_copy(index))
-                result = box.install()
-                self.assertEqual(result.returncode, 0, listing(result))
-                self.assertEqual(registry.read_text(encoding="utf-8"), "mcp-tools.md v1\n")
-                self.assertIn("replaced, an unedited copy from an earlier release: mcp-tools.md", result.stdout)
-                self.assertNotIn("kept, yours: mcp-tools.md", result.stdout)
-                self.assertEqual(box.backups(), [], "an unedited copy of a shipped file is not the user's to keep")
-                self.assertEqual(box.stages(), [])
+            for label, newline in (("LF", b"\n"), ("CRLF", b"\r\n")):
+                with self.subTest(copy=name, endings=label):
+                    box = Sandbox(self)
+                    box.install()
+                    registry = box.dest / "mcp-tools.md"
+                    registry.write_bytes(self.superseded_copy(index, newline))
+                    result = box.install()
+                    self.assertEqual(result.returncode, 0, listing(result))
+                    self.assertEqual(registry.read_text(encoding="utf-8"), "mcp-tools.md v1\n")
+                    self.assertIn("replaced, an unedited copy from an earlier release: mcp-tools.md", result.stdout)
+                    self.assertNotIn("kept, yours: mcp-tools.md", result.stdout)
+                    self.assertEqual(box.backups(), [], "an unedited copy of a shipped file is not the user's to keep")
+                    self.assertEqual(box.stages(), [])
 
     def test_a_registry_that_differs_by_a_single_byte_from_a_shipped_copy_stays_the_users(self):
         box = Sandbox(self)
         box.install()
         registry = box.dest / "mcp-tools.md"
         for label, content in (("an annotation", self.superseded_copy() + b"my note\n"), ("one byte changed", b"X" + self.superseded_copy()[1:]),
-                               ("empty", b"")):
+                               ("empty", b""), ("an annotation in a CRLF copy", self.superseded_copy(0, b"\r\n") + b"my note\r\n"),
+                               ("one byte changed in a CRLF copy", b"X" + self.superseded_copy(0, b"\r\n")[1:]),
+                               ("a carriage return that ends no line", self.superseded_copy().replace(b" ", b"\r ", 1))):
             with self.subTest(label):
                 registry.write_bytes(content)
                 result = box.install()
@@ -579,12 +585,14 @@ class InstallerBehaviourTests(unittest.TestCase):
     def test_a_dry_run_names_the_registry_it_would_replace(self):
         box = Sandbox(self)
         box.install()
-        (box.dest / "mcp-tools.md").write_bytes(self.superseded_copy())
-        before = snapshot(box.root)
-        result = box.install("--dry-run")
-        self.assertEqual(snapshot(box.root), before)
-        self.assertIn("would replace, an unedited copy from an earlier release: mcp-tools.md", result.stdout)
-        self.assertNotIn("would keep, yours", result.stdout)
+        for newline in (b"\n", b"\r\n"):
+            with self.subTest(newline=newline):
+                (box.dest / "mcp-tools.md").write_bytes(self.superseded_copy(0, newline))
+                before = snapshot(box.root)
+                result = box.install("--dry-run")
+                self.assertEqual(snapshot(box.root), before)
+                self.assertIn("would replace, an unedited copy from an earlier release: mcp-tools.md", result.stdout)
+                self.assertNotIn("would keep, yours", result.stdout)
 
     def test_the_summary_says_whether_an_item_left_because_it_was_not_selected_or_is_no_longer_shipped(self):
         box = Sandbox(self)
@@ -1342,12 +1350,54 @@ class PowerShellParityTests(unittest.TestCase):
         self.assertIn("$script_dir/superseded/", self.sh)
         self.assertIn('(Join-Path $PSScriptRoot "superseded")', self.ps)
         self.assertIn("cmp -s", self.sh)
-        self.assertIn("Get-FileHash", self.ps)
+        self.assertIn("Get-FoldedHash", self.ps)
         for text, fail_loud in ((self.sh, "is not a seed"), (self.ps, "is not a seed")):
             self.assertIn(fail_loud, text, "a record naming a file that is not a seed stops the install")
         body = re.search(r"function Test-SupersededSeed \{\n(.*?)\n\}\n", self.ps, re.S).group(1)
         self.assertIn("Test-ReparsePoint", body, "a link is never an unedited copy")
         self.assertIn("PSIsContainer", body)
+
+    def test_both_fold_line_endings_before_they_compare_a_superseded_copy(self):
+        """RR3-state-2: a CRLF copy of an earlier release is still that release's file. install.ps1 is not run here; the
+        fold it applies is written out below and compared with the real `same_text` of install.sh on the same inputs."""
+        shell = re.search(r"\nsame_text\(\) \{\n.*?\n\}\n", self.sh, re.S).group(0)
+        self.assertIn("cmp -s", shell)
+        seeded = re.search(r"\nsuperseded_seed\(\) \{\n.*?\n\}\n", self.sh, re.S).group(0)
+        self.assertIn('same_text "$path"', seeded)
+        self.assertNotIn("cmp -s", seeded, "the registry is compared through the fold, not as it is on disk")
+        fold = re.search(r"function Get-FoldedHash \{\n(.*?)\n\}\n", self.ps, re.S).group(1)
+        self.assertIn('.Replace("`r`n", "`n")', fold)
+        self.assertIn("iso-8859-1", fold, "a byte-for-byte text, so a BOM or an odd byte is not folded away")
+        self.assertIn("SHA256", fold)
+        self.assertIn("Get-FoldedHash", re.search(r"function Test-SupersededSeed \{\n(.*?)\n\}\n", self.ps, re.S).group(1))
+        self.assertNotIn("Get-FileHash", strip_comments(self.ps))
+        if not RUNS_BASH:
+            self.skipTest("bash is not available")
+
+        def powershell_fold(data: bytes) -> bytes:
+            return data.decode("iso-8859-1").replace("\r\n", "\n").encode("iso-8859-1")
+
+        original = (SUPERSEDED / ITEMS.superseded["mcp-tools.md"][0]).read_bytes()
+        pairs = {
+            "the same bytes": (original, original),
+            "CRLF against LF": (original.replace(b"\n", b"\r\n"), original),
+            "LF against CRLF": (original, original.replace(b"\n", b"\r\n")),
+            "a mixed file": (original.replace(b"\n", b"\r\n", 3), original),
+            "an annotation": (original + b"note\n", original),
+            "an annotated CRLF copy": (original.replace(b"\n", b"\r\n") + b"note\r\n", original),
+            "a carriage return inside a line": (original.replace(b" ", b"\r ", 1), original),
+            "a byte-order mark": (b"\xef\xbb\xbf" + original, original),
+            "empty": (b"", original),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            for label, (left, right) in pairs.items():
+                with self.subTest(label):
+                    first, second = Path(tmp) / "first", Path(tmp) / "second"
+                    first.write_bytes(left)
+                    second.write_bytes(right)
+                    run = subprocess.run([BASH, "-c", shell + '\nsame_text "$1" "$2"', "bash", str(first), str(second)],
+                                         capture_output=True, text=True)
+                    self.assertEqual(run.returncode == 0, powershell_fold(left) == powershell_fold(right), label)
 
     def test_powershell_follows_links_before_it_judges_a_destination(self):
         """RR-V3-8: install.sh judges the physical path (cd -P); a junction to the profile directory passed Assert-SafeRoot here.

@@ -101,7 +101,7 @@ class SizeAuditTests(unittest.TestCase):
     def test_cli_emits_post_tool_advisory(self):
         self._sparse("skillset-saves/package.zip", 2 * 1024 * 1024)
         proc = subprocess.run([sys.executable, str(Path(size_audit.__file__)), "--project-root", str(self.root),
-                               "--force"], capture_output=True, text=True, check=False,
+                               "--force"], capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL,
                               env={**os.environ, "SUPREMETEAM_SIZE_AUDIT_THRESHOLD_BYTES": str(1024 * 1024)})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         envelope = json.loads(proc.stdout)
@@ -109,8 +109,25 @@ class SizeAuditTests(unittest.TestCase):
         self.assertIn("skillset-saves/package.zip", envelope["hookSpecificOutput"]["additionalContext"])
         result = json.loads(subprocess.run([sys.executable, str(Path(size_audit.__file__)),
                                             "--project-root", str(self.root), "--json"],
-                                           capture_output=True, text=True, check=False).stdout)
+                                           capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL).stdout)
         self.assertEqual(result, {"skipped": "not-due"})
+
+
+class LiveStdinTests(unittest.TestCase):
+    def test_the_cli_test_finishes_when_the_runners_stdin_is_a_pipe_that_never_closes(self):
+        """size_audit drains a piped stdin, so a child that inherits one waits for an end that never comes."""
+        runner = subprocess.Popen(
+            [sys.executable, "-m", "unittest", "test_size_audit.SizeAuditTests.test_cli_emits_post_tool_advisory"],
+            cwd=Path(__file__).resolve().parent, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.addCleanup(runner.stdout.close)
+        self.addCleanup(runner.stdin.close)
+        try:
+            runner.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            runner.kill()
+            runner.wait()
+            self.fail("the CLI test hangs while the runner's stdin is an open pipe")
+        self.assertEqual(runner.returncode, 0, runner.stdout.read().decode(errors="replace"))
 
 
 if __name__ == "__main__":

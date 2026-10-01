@@ -203,6 +203,15 @@ class OlderInterpreterTests(unittest.TestCase):
                                     self.root, python=python)
                 self.assertEqual((post.returncode, post.stderr), (0, b""))
 
+    def test_the_writer_mutex_is_guarded_and_the_writer_command_passes(self):
+        for label, python in OLDER:
+            with self.subTest(python=label):
+                for payload in (kit.edit("skillset-saves/_write.lock"), kit.bash("rm skillset-saves/_write.lock")):
+                    refused = kit.run_hook("pre_tool_use.py", payload, self.root, python=python)
+                    self.assertTrue(kit.denied(refused.stdout.decode("utf-8")), refused.stdout)
+                passed = kit.run_hook("pre_tool_use.py", kit.bash("python skills/harness/hooks/save_run.py checkpoint --run-id r1"), self.root, python=python)
+                self.assertEqual((passed.returncode, passed.stdout, passed.stderr), (0, b"", b""))
+
     def test_every_entry_refreshes_a_due_heartbeat_under_each_older_interpreter(self):
         """The refresh moved out of `_state` into `run_heartbeat` (QR-PY-14); the three entries still reach the real writer from it."""
         (self.root / "README.md").write_text("# fixture\n", encoding="utf-8")

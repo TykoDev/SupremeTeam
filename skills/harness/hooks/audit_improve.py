@@ -19,7 +19,13 @@ import time
 from collections import Counter
 from pathlib import Path
 
-from _saves import ACTIVE_STATUSES, TERMINAL_STATUSES, DataFormatError, parse_yaml
+import _bootstrap
+import _fsutil
+import _state
+
+_bootstrap.ensure_paths()
+from data_formats import DataFormatError, parse_yaml  # noqa: E402
+from save_taxonomy import ACTIVE_STATUSES, TERMINAL_STATUSES  # noqa: E402
 
 MAX_FILES = 240
 MAX_DIRS = 80
@@ -158,213 +164,288 @@ def _run_dirs(root: Path, deadline: float) -> tuple[list[Path], bool]:
     return sorted(result, key=lambda p: p.name), truncated
 
 
-def audit(root: Path) -> dict:
-    """Return bounded, content-redacted evidence from the two runtime roots."""
-    root = root.resolve()
-    deadline = time.monotonic() + AUDIT_TIME_BUDGET_SECONDS
-    findings: list[dict] = []
-    coverage: dict[str, object] = {"run_limit": MAX_RUNS, "phase_file_limit_per_run": MAX_PHASE_FILES,
-                                   "trajectory_file_limit": MAX_TRAJECTORIES, "record_byte_limit": MAX_RECORD,
-                                   "time_budget_seconds": AUDIT_TIME_BUDGET_SECONDS}
-    saves = root / "skillset-saves"
-    harness = root / ".harness-state"
-    saves_ok = saves.is_dir() and not _is_link(saves)
-    harness_ok = harness.is_dir() and not _is_link(harness)
-    if not saves_ok:
-        findings.append({"code": "save_root_missing", "severity": "Info", "count": 1})
-    if not harness_ok:
-        findings.append({"code": "harness_root_missing", "severity": "Info", "count": 1})
+class AuditScan:
+    """Everything one audit collects, so each record class is read by a function of its own (CR-18).
 
-    pointer, pointer_error = _mapping_record(saves / "_latest.md") if saves_ok else (None, "missing_or_symlink")
-    if saves_ok and (saves / "_latest.md").exists() and pointer_error:
-        findings.append({"code": "pointer_unreadable", "severity": "Major", "reason": pointer_error})
-    pointer_id = pointer.get("run_id") if isinstance(pointer, dict) else None
-    if pointer_id is not None and (not isinstance(pointer_id, str) or Path(pointer_id).name != pointer_id or pointer_id in {".", ".."}):
-        findings.append({"code": "pointer_run_id_invalid", "severity": "Major", "count": 1})
-        pointer_id = None
-    run_dirs, runs_truncated = _run_dirs(root, deadline) if saves_ok else ([], False)
-    coverage["runs_scanned"] = 0
-    coverage["runs_truncated"] = runs_truncated
-    if runs_truncated:
-        findings.append({"code": "run_scan_truncated", "severity": "Info", "count": 1})
-    if pointer_id and not any(path.name == pointer_id for path in run_dirs) and not runs_truncated:
-        findings.append({"code": "pointer_target_missing", "severity": "Major", "count": 1})
+    The parts below (``_audit_roots`` to ``_audit_trajectories``) each read one class of
+    record and add to this object; ``_assemble`` turns it into the report. Nothing here
+    writes: every read is bounded and a damaged record is noted by class and reason,
+    never echoed."""
 
-    run_statuses: Counter[str] = Counter()
-    audit_events: Counter[str] = Counter()
-    verdicts: Counter[str] = Counter()
-    unreadable: Counter[str] = Counter()
-    record_errors: list[dict] = []
-    def note_unreadable(kind: str, error: str, *, run: str | None = None,
-                        trajectory: str | None = None) -> None:
-        unreadable[kind + ":" + error] += 1
-        if len(record_errors) >= MAX_FILES:
-            coverage["record_errors_truncated"] = True
+    def __init__(self, root: Path):
+        self.root = Path(root).resolve()
+        self.deadline = time.monotonic() + AUDIT_TIME_BUDGET_SECONDS
+        self.findings: list[dict] = []
+        self.coverage: dict[str, object] = {"run_limit": MAX_RUNS, "phase_file_limit_per_run": MAX_PHASE_FILES,
+                                            "trajectory_file_limit": MAX_TRAJECTORIES, "record_byte_limit": MAX_RECORD,
+                                            "time_budget_seconds": AUDIT_TIME_BUDGET_SECONDS}
+        self.saves = self.root / "skillset-saves"
+        self.harness = self.root / ".harness-state"
+        self.saves_ok = False
+        self.harness_ok = False
+        self.pointer_id: str | None = None
+        self.run_dirs: list[Path] = []
+        self.run_statuses: Counter[str] = Counter()
+        self.audit_events: Counter[str] = Counter()
+        self.verdicts: Counter[str] = Counter()
+        self.unreadable: Counter[str] = Counter()
+        self.record_errors: list[dict] = []
+        self.run_history: list[dict] = []
+        self.journal_count = 0
+        self.truncated_audit_tails = 0
+        self.guard_summary: dict[str, int] = {}
+        self.observation_counts: dict[str, int] = {}
+        self.trajectories_truncated = False
+        self.failed_steps = 0
+        self.empty_steps = 0
+        self.repeated_failures = 0
+        self.trajectory_history: list[dict] = []
+
+    def expired(self) -> bool:
+        return time.monotonic() >= self.deadline
+
+    def note_unreadable(self, kind: str, error: str, *, run: str | None = None, trajectory: str | None = None) -> None:
+        self.unreadable[kind + ":" + error] += 1
+        if len(self.record_errors) >= MAX_FILES:
+            self.coverage["record_errors_truncated"] = True
             return
         item = {"record": kind, "reason": error}
         if run is not None:
             item["run"] = run
         if trajectory is not None:
             item["trajectory"] = trajectory
-        record_errors.append(item)
-    run_history: list[dict] = []
-    journal_count = 0
-    truncated_audit_tails = 0
-    for run in run_dirs:
-        if time.monotonic() >= deadline:
-            coverage["time_truncated"] = True
-            break
-        coverage["runs_scanned"] += 1
-        run_key = _id(run.name)
-        run_events: Counter[str] = Counter()
-        run_verdicts: Counter[str] = Counter()
-        run_record: dict[str, object] = {"run": run_key}
-        state, state_error = _mapping_record(run / "_state.md")
-        lock, lock_error = _mapping_record(run / "_lock.md")
-        for kind, error in (("state", state_error), ("lock", lock_error)):
-            if error:
-                note_unreadable(kind, error, run=run_key)
-        if isinstance(state, dict):
-            status = state.get("status")
-            if isinstance(status, str) and status in ACTIVE_STATUSES | TERMINAL_STATUSES:
-                run_statuses[status] += 1
-            else:
-                unreadable["state:invalid_status"] += 1
-            if isinstance(lock, dict) and state.get("revision") != lock.get("revision"):
-                findings.append({"code": "revision_mismatch", "severity": "Major", "run": run_key})
-        if (run / "_journal.json").exists():
-            journal_count += 1
-            run_record["publish_journal"] = True
-            findings.append({"code": "publish_journal_present", "severity": "Major", "run": run_key})
-        lines, error, tail_truncated = _tail_lines(run / "_audit-trail.md")
-        truncated_audit_tails += int(tail_truncated)
-        if error:
-            note_unreadable("audit", error, run=run_key)
-        else:
-            for line in lines:
-                try:
-                    event = json.loads(line).get("event")
-                    if isinstance(event, str) and event in AUDIT_EVENTS:
-                        audit_events[event] += 1
-                        run_events[event] += 1
-                except (ValueError, AttributeError):
-                    note_unreadable("audit", "invalid_line", run=run_key)
-        phase_files, truncated = _files(run, max_files=MAX_PHASE_FILES, max_dirs=MAX_PHASE_DIRS, deadline=deadline)
-        if truncated:
-            coverage["phase_files_truncated"] = True
-        for path in phase_files:
-            if time.monotonic() >= deadline:
-                coverage["time_truncated"] = True
-                break
-            if not path.name.startswith("verdict_") or path.suffix != ".json":
-                continue
-            value, error = _json_record(path)
-            if error:
-                note_unreadable("verdict", error, run=run_key)
-            elif isinstance(value, dict):
-                verdict = value.get("verdict") or value.get("decision")
-                if isinstance(verdict, str) and verdict.upper() in FAIL_VERDICTS:
-                    verdicts[verdict.upper()] += 1
-                    run_verdicts[verdict.upper()] += 1
-        if run_events:
-            run_record["audit_events"] = dict(sorted(run_events.items()))
-        if run_verdicts:
-            run_record["gate_verdicts"] = dict(sorted(run_verdicts.items()))
-        if len(run_record) > 1:
-            run_history.append(run_record)
+        self.record_errors.append(item)
 
-    guard_summary: dict[str, int] = {}
-    guard_path = harness / "guard-state.json"
-    if harness_ok and guard_path.exists():
-        guard, error = _json_record(guard_path)
-        if error or not isinstance(guard, dict):
-            note_unreadable("guard", error or "wrong_shape")
+
+def _audit_roots(scan: AuditScan) -> None:
+    """The two runtime roots: present, a directory, and not a link."""
+    scan.saves_ok = scan.saves.is_dir() and not _is_link(scan.saves)
+    scan.harness_ok = scan.harness.is_dir() and not _is_link(scan.harness)
+    if not scan.saves_ok:
+        scan.findings.append({"code": "save_root_missing", "severity": "Info", "count": 1})
+    if not scan.harness_ok:
+        scan.findings.append({"code": "harness_root_missing", "severity": "Info", "count": 1})
+
+
+def _audit_pointer(scan: AuditScan) -> None:
+    """The latest-run pointer, and the run list it has to point into."""
+    saves = scan.saves
+    pointer, pointer_error = _mapping_record(saves / "_latest.md") if scan.saves_ok else (None, "missing_or_symlink")
+    if scan.saves_ok and (saves / "_latest.md").exists() and pointer_error:
+        scan.findings.append({"code": "pointer_unreadable", "severity": "Major", "reason": pointer_error})
+    pointer_id = pointer.get("run_id") if isinstance(pointer, dict) else None
+    if pointer_id is not None and (not isinstance(pointer_id, str) or Path(pointer_id).name != pointer_id or pointer_id in {".", ".."}):
+        scan.findings.append({"code": "pointer_run_id_invalid", "severity": "Major", "count": 1})
+        pointer_id = None
+    scan.pointer_id = pointer_id
+    scan.run_dirs, runs_truncated = _run_dirs(scan.root, scan.deadline) if scan.saves_ok else ([], False)
+    scan.coverage["runs_scanned"] = 0
+    scan.coverage["runs_truncated"] = runs_truncated
+    if runs_truncated:
+        scan.findings.append({"code": "run_scan_truncated", "severity": "Info", "count": 1})
+    if pointer_id and not any(path.name == pointer_id for path in scan.run_dirs) and not runs_truncated:
+        scan.findings.append({"code": "pointer_target_missing", "severity": "Major", "count": 1})
+
+
+def _audit_run_state(scan: AuditScan, run: Path, run_key: str) -> None:
+    """A run's state and lock records: readable, a known status, the same revision."""
+    state, state_error = _mapping_record(run / "_state.md")
+    lock, lock_error = _mapping_record(run / "_lock.md")
+    for kind, error in (("state", state_error), ("lock", lock_error)):
+        if error:
+            scan.note_unreadable(kind, error, run=run_key)
+    if isinstance(state, dict):
+        status = state.get("status")
+        if isinstance(status, str) and status in ACTIVE_STATUSES | TERMINAL_STATUSES:
+            scan.run_statuses[status] += 1
         else:
-            for key in ("frozen_globs", "blocked_globs", "read_only"):
-                entries = guard.get(key)
-                if isinstance(entries, list):
-                    guard_summary[key] = sum(1 for item in entries if isinstance(item, (str, dict))
-                                             and not (isinstance(item, dict) and item.get("released_at")))
-    observation_counts: dict[str, int] = {}
-    observations_dir = harness / "observations"
-    observations_ok = harness_ok and not _is_link(observations_dir)
-    if harness_ok and _is_link(observations_dir):
-        findings.append({"code": "observation_root_symlink", "severity": "Major", "count": 1})
+            scan.unreadable["state:invalid_status"] += 1
+        if isinstance(lock, dict) and state.get("revision") != lock.get("revision"):
+            scan.findings.append({"code": "revision_mismatch", "severity": "Major", "run": run_key})
+
+
+def _audit_run_trail(scan: AuditScan, run: Path, run_key: str, run_events: Counter) -> None:
+    """A run's audit trail, read from its tail: only failure-shaped event names are counted."""
+    lines, error, tail_truncated = _tail_lines(run / "_audit-trail.md")
+    scan.truncated_audit_tails += int(tail_truncated)
+    if error:
+        scan.note_unreadable("audit", error, run=run_key)
+        return
+    for line in lines:
+        try:
+            event = json.loads(line).get("event")
+            if isinstance(event, str) and event in AUDIT_EVENTS:
+                scan.audit_events[event] += 1
+                run_events[event] += 1
+        except (ValueError, AttributeError):
+            scan.note_unreadable("audit", "invalid_line", run=run_key)
+
+
+def _audit_run_verdicts(scan: AuditScan, run: Path, run_key: str, run_verdicts: Counter) -> None:
+    """A run's gate verdict files: only the failing verdict names are counted."""
+    phase_files, truncated = _files(run, max_files=MAX_PHASE_FILES, max_dirs=MAX_PHASE_DIRS, deadline=scan.deadline)
+    if truncated:
+        scan.coverage["phase_files_truncated"] = True
+    for path in phase_files:
+        if scan.expired():
+            scan.coverage["time_truncated"] = True
+            break
+        if not path.name.startswith("verdict_") or path.suffix != ".json":
+            continue
+        value, error = _json_record(path)
+        if error:
+            scan.note_unreadable("verdict", error, run=run_key)
+        elif isinstance(value, dict):
+            verdict = value.get("verdict") or value.get("decision")
+            if isinstance(verdict, str) and verdict.upper() in FAIL_VERDICTS:
+                scan.verdicts[verdict.upper()] += 1
+                run_verdicts[verdict.upper()] += 1
+
+
+def _audit_run(scan: AuditScan, run: Path) -> None:
+    """One run: its records, its publish journal, its audit trail and its verdicts."""
+    scan.coverage["runs_scanned"] += 1
+    run_key = _id(run.name)
+    run_events: Counter[str] = Counter()
+    run_verdicts: Counter[str] = Counter()
+    run_record: dict[str, object] = {"run": run_key}
+    _audit_run_state(scan, run, run_key)
+    if (run / "_journal.json").exists():
+        scan.journal_count += 1
+        run_record["publish_journal"] = True
+        scan.findings.append({"code": "publish_journal_present", "severity": "Major", "run": run_key})
+    _audit_run_trail(scan, run, run_key, run_events)
+    _audit_run_verdicts(scan, run, run_key, run_verdicts)
+    if run_events:
+        run_record["audit_events"] = dict(sorted(run_events.items()))
+    if run_verdicts:
+        run_record["gate_verdicts"] = dict(sorted(run_verdicts.items()))
+    if len(run_record) > 1:
+        scan.run_history.append(run_record)
+
+
+def _audit_runs(scan: AuditScan) -> None:
+    """Every listed run, until the time budget runs out."""
+    for run in scan.run_dirs:
+        if scan.expired():
+            scan.coverage["time_truncated"] = True
+            break
+        _audit_run(scan, run)
+
+
+def _audit_guard(scan: AuditScan) -> None:
+    """The guard record, summarised as counts of live entries per boundary kind (never the globs)."""
+    guard_path = scan.harness / "guard-state.json"
+    if not (scan.harness_ok and guard_path.exists()):
+        return
+    guard, error = _json_record(guard_path)
+    if error or not isinstance(guard, dict):
+        scan.note_unreadable("guard", error or "wrong_shape")
+        return
+    for key in ("frozen_globs", "blocked_globs", "read_only"):
+        entries = guard.get(key)
+        if isinstance(entries, list):
+            scan.guard_summary[key] = sum(1 for item in entries if isinstance(item, (str, dict))
+                                          and not (isinstance(item, dict) and _state.is_released(item)))
+
+
+def _audit_observations(scan: AuditScan) -> None:
+    """The per-event hook observation counts; a linked observation directory is reported, not followed."""
+    observations_dir = scan.harness / "observations"
+    observations_ok = scan.harness_ok and not _is_link(observations_dir)
+    if scan.harness_ok and _is_link(observations_dir):
+        scan.findings.append({"code": "observation_root_symlink", "severity": "Major", "count": 1})
     for event in ("PreToolUse", "PostToolUse", "UserPromptSubmit"):
         path = observations_dir / (event + ".json")
         if not observations_ok or not path.exists():
             continue
         value, error = _json_record(path)
         if error or not isinstance(value, dict):
-            note_unreadable("observation", error or "wrong_shape")
+            scan.note_unreadable("observation", error or "wrong_shape")
             continue
         observed = value.get("observed")
         if isinstance(observed, dict) and isinstance(observed.get("count"), int):
-            observation_counts[event] = max(0, observed["count"])
+            scan.observation_counts[event] = max(0, observed["count"])
 
-    trajectories = harness / "trajectories"
-    trajectory_files, trajectories_truncated = (
-        _files(trajectories, max_files=MAX_TRAJECTORIES, deadline=deadline) if harness_ok else ([], False))
-    failed_steps = empty_steps = repeated_failures = 0
-    trajectory_history: list[dict] = []
+
+def _audit_trajectory(scan: AuditScan, path: Path) -> None:
+    """One trajectory file: its last 40 steps, counted as failed, empty and repeatedly failing."""
+    value, error = _json_record(path)
+    if error or not isinstance(value, list):
+        scan.note_unreadable("trajectory", error or "wrong_shape", run=_id(path.parent.name), trajectory=_id(path.name))
+        return
+    previous = None
+    file_failed = file_empty = file_repeated = 0
+    for entry in value[-40:]:
+        if not isinstance(entry, dict):
+            continue
+        failed = entry.get("failed") is True
+        scan.failed_steps += int(failed)
+        scan.empty_steps += int(entry.get("empty") is True)
+        file_failed += int(failed)
+        file_empty += int(entry.get("empty") is True)
+        sig = entry.get("sig") if isinstance(entry.get("sig"), str) else None
+        if failed and sig and sig == previous:
+            scan.repeated_failures += 1
+            file_repeated += 1
+        previous = sig if failed else None
+    if file_failed or file_repeated:
+        scan.trajectory_history.append({"run": _id(path.parent.name), "trajectory": _id(path.name), "failed_steps": file_failed,
+                                        "empty_steps": file_empty, "consecutive_failed_signatures": file_repeated})
+
+
+def _audit_trajectories(scan: AuditScan) -> None:
+    """The per-session trajectory files, bounded in count and time."""
+    trajectory_files, scan.trajectories_truncated = (
+        _files(scan.harness / "trajectories", max_files=MAX_TRAJECTORIES, deadline=scan.deadline) if scan.harness_ok else ([], False))
     for path in trajectory_files:
-        if time.monotonic() >= deadline:
-            coverage["time_truncated"] = True
+        if scan.expired():
+            scan.coverage["time_truncated"] = True
             break
-        if path.suffix != ".json":
-            continue
-        value, error = _json_record(path)
-        if error or not isinstance(value, list):
-            note_unreadable("trajectory", error or "wrong_shape", run=_id(path.parent.name),
-                            trajectory=_id(path.name))
-            continue
-        previous = None
-        file_failed = file_empty = file_repeated = 0
-        for entry in value[-40:]:
-            if not isinstance(entry, dict):
-                continue
-            failed = entry.get("failed") is True
-            failed_steps += int(failed)
-            empty_steps += int(entry.get("empty") is True)
-            file_failed += int(failed)
-            file_empty += int(entry.get("empty") is True)
-            sig = entry.get("sig") if isinstance(entry.get("sig"), str) else None
-            if failed and sig and sig == previous:
-                repeated_failures += 1
-                file_repeated += 1
-            previous = sig if failed else None
-        if file_failed or file_repeated:
-            trajectory_history.append({"run": _id(path.parent.name),
-                                       "trajectory": _id(path.name),
-                                       "failed_steps": file_failed,
-                                       "empty_steps": file_empty,
-                                       "consecutive_failed_signatures": file_repeated})
-    coverage["trajectory_files_scanned"] = len(trajectory_files)
-    coverage["trajectories_truncated"] = trajectories_truncated
-    if time.monotonic() >= deadline:
-        coverage["time_truncated"] = True
-    if coverage.get("time_truncated"):
-        findings.append({"code": "audit_time_truncated", "severity": "Info", "count": 1})
-    if trajectories_truncated:
-        findings.append({"code": "trajectory_scan_truncated", "severity": "Info", "count": 1})
-    if unreadable:
-        findings.append({"code": "unreadable_records", "severity": "Major", "counts": dict(sorted(unreadable.items()))})
-    if audit_events or verdicts or failed_steps:
-        findings.append({"code": "failure_history", "severity": "Info", "audit_events": dict(sorted(audit_events.items())),
-                         "gate_verdicts": dict(sorted(verdicts.items())), "failed_steps": failed_steps,
-                         "empty_steps": empty_steps, "consecutive_failed_signatures": repeated_failures})
-    if journal_count:
-        coverage["publish_journals"] = journal_count
-    if truncated_audit_tails:
-        coverage["audit_tails_truncated"] = truncated_audit_tails
-        findings.append({"code": "audit_tail_truncated", "severity": "Info", "count": truncated_audit_tails})
+        if path.suffix == ".json":
+            _audit_trajectory(scan, path)
+    scan.coverage["trajectory_files_scanned"] = len(trajectory_files)
+    scan.coverage["trajectories_truncated"] = scan.trajectories_truncated
+
+
+def _assemble(scan: AuditScan) -> dict:
+    """The report: the findings the whole scan implies, in a fixed order, and the fixed envelope."""
+    if scan.expired():
+        scan.coverage["time_truncated"] = True
+    if scan.coverage.get("time_truncated"):
+        scan.findings.append({"code": "audit_time_truncated", "severity": "Info", "count": 1})
+    if scan.trajectories_truncated:
+        scan.findings.append({"code": "trajectory_scan_truncated", "severity": "Info", "count": 1})
+    if scan.unreadable:
+        scan.findings.append({"code": "unreadable_records", "severity": "Major", "counts": dict(sorted(scan.unreadable.items()))})
+    if scan.audit_events or scan.verdicts or scan.failed_steps:
+        scan.findings.append({"code": "failure_history", "severity": "Info", "audit_events": dict(sorted(scan.audit_events.items())),
+                              "gate_verdicts": dict(sorted(scan.verdicts.items())), "failed_steps": scan.failed_steps,
+                              "empty_steps": scan.empty_steps, "consecutive_failed_signatures": scan.repeated_failures})
+    if scan.journal_count:
+        scan.coverage["publish_journals"] = scan.journal_count
+    if scan.truncated_audit_tails:
+        scan.coverage["audit_tails_truncated"] = scan.truncated_audit_tails
+        scan.findings.append({"code": "audit_tail_truncated", "severity": "Info", "count": scan.truncated_audit_tails})
     return {"schema_version": 1, "kind": "supremeteam-audit-improve", "read_only": True,
-            "coverage": coverage, "run_statuses": dict(sorted(run_statuses.items())),
-            "guard_state": guard_summary, "hook_observations": observation_counts,
-            "run_history": run_history, "trajectory_history": trajectory_history,
-            "record_errors": record_errors,
-            "findings": findings,
+            "coverage": scan.coverage, "run_statuses": dict(sorted(scan.run_statuses.items())),
+            "guard_state": scan.guard_summary, "hook_observations": scan.observation_counts,
+            "run_history": scan.run_history, "trajectory_history": scan.trajectory_history,
+            "record_errors": scan.record_errors,
+            "findings": scan.findings,
             "handoff": "The read-only audit may run directly. Correlate these counts with source and run evidence. Route a supported improvement through admiral and skill-maker for a reviewed proposal. Do not infer a defective skill from a count alone or mutate saved state from this report."}
+
+
+def audit(root: Path) -> dict:
+    """Return bounded, content-redacted evidence from the two runtime roots."""
+    scan = AuditScan(root)
+    _audit_roots(scan)
+    _audit_pointer(scan)
+    _audit_runs(scan)
+    _audit_guard(scan)
+    _audit_observations(scan)
+    _audit_trajectories(scan)
+    return _assemble(scan)
 
 
 def maybe_audit(root: Path | None = None, *, force: bool = False, now: float | None = None) -> dict | None:
@@ -375,7 +456,6 @@ def maybe_audit(root: Path | None = None, *, force: bool = False, now: float | N
     harness-observations ownership class, never a run or skill record.
     """
     if root is None:
-        import _state
         root = _state.project_root()
     root = Path(root).resolve()
     moment = time.time() if now is None else now
@@ -403,11 +483,9 @@ def maybe_audit(root: Path | None = None, *, force: bool = False, now: float | N
             marker.parent.mkdir(parents=True, exist_ok=True)
             if _is_link(marker):
                 return report
-            temp = marker.with_name(marker.name + f".{os.getpid()}.tmp")
-            temp.write_text(json.dumps({"last_at": moment}), encoding="utf-8")
-            os.replace(temp, marker)
+            _fsutil.atomic_write(marker, json.dumps({"last_at": moment}))
         except OSError:
-            pass
+            pass  # no marker only means the next call may audit again
     return report
 
 
@@ -429,7 +507,6 @@ def main() -> None:
     if args.project_root:
         root = args.project_root
     else:
-        import _state
         root = _state.project_root()
     if args.run:
         print(json.dumps(audit(root), sort_keys=True))

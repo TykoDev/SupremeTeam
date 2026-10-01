@@ -62,11 +62,9 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import errno
 import json
-import os
+import os  # noqa: F401  (run-state tests patch os.replace through this name)
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -89,6 +87,7 @@ from save_taxonomy import ACTIVE_STATUSES, HISTORY, JOURNAL, POINTER, SCHEMA_VER
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _saves import NEXT_STEPS, heartbeat_is_stale, inspect_run, inspect_saves, parse_timestamp  # noqa: E402
+import _fsutil  # noqa: E402
 import _state  # noqa: E402
 
 EXIT_OK, EXIT_REFUSED, EXIT_DEGRADED, EXIT_ENGINE = 0, 1, 2, 3
@@ -146,67 +145,13 @@ def _as_int(value: Any, default: int = 0) -> int:
         return default
 
 
-def _why(exc: OSError) -> str:
-    """The operating system's reason without the path, which would put an absolute path in the trail."""
-    return exc.strerror or type(exc).__name__
-
-
-def _replace_with_retry(tmp: Path, path: Path, attempts: int = 8) -> None:
-    """os.replace with short retries: on Windows a reader (host hook, indexer,
-    antivirus) holding the target open makes replace fail transiently with
-    PermissionError / WinError 5."""
-    delay = 0.05
-    for attempt in range(attempts):
-        try:
-            os.replace(tmp, path)
-            return
-        except PermissionError:
-            if attempt == attempts - 1:
-                raise
-            time.sleep(delay)
-            delay = min(delay * 2, 0.8)
+_why = _fsutil.why
 
 
 def atomic_write(path: Path, data: str | bytes) -> None:
-    payload = data.encode("utf-8") if isinstance(data, str) else data
-    # One staging name per process: writers that overlap must not truncate each
-    # other's half-written file.
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
-        with open(tmp, "wb") as handle:
-            handle.write(payload)
-            handle.flush()
-            try:
-                os.fsync(handle.fileno())
-            except OSError:
-                pass
-        try:
-            _replace_with_retry(tmp, path)
-        except PermissionError as exc:
-            # Windows: an existing target whose ACL denies DELETE (for example a
-            # file created by another sandbox user) cannot be replaced, yet it can
-            # be overwritten. Fall back to an in-place overwrite of the already
-            # fsynced bytes and record the degradation in the write log so the
-            # non-atomic step is visible rather than silent.
-            if not path.exists():
-                raise
-            with open(path, "wb") as handle:
-                handle.write(payload)
-                handle.flush()
-                try:
-                    os.fsync(handle.fileno())
-                except OSError:
-                    pass
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
-            WRITE_NOTES.append(f"{path.name}: replaced in place (target ACL denies rename: {exc.__class__.__name__})")
+        _fsutil.atomic_write(path, data, notes=WRITE_NOTES)
     except OSError as exc:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
         raise Degraded(f"write failed for {path.name}: {_why(exc)}") from exc
 
 
@@ -214,90 +159,23 @@ def dump(obj: dict[str, Any]) -> str:
     return json.dumps(obj, indent=2, sort_keys=True) + "\n"
 
 
-def _try_lock(fd: int) -> bool:
-    """Take the exclusive lock without waiting: True if taken, False if another
-    process holds it. Raises OSError when the file system cannot lock at all."""
-    if fcntl is None and msvcrt is None:
-        raise OSError(errno.ENOSYS, "no file locking on this platform")
-    try:
-        if fcntl is not None:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        else:
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-    except OSError as exc:
-        if exc.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
-            return False
-        raise
-    return True
-
-
-def _unlock(fd: int) -> None:
-    try:
-        if fcntl is not None:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        else:
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-    except OSError:
-        pass  # closing the descriptor releases the lock either way
-
-
-class WriteLock:
+class WriteLock(_fsutil.AdvisoryLock):
     """Exclusive advisory lock on the save root's writer mutex.
 
     The operating system drops the lock when its holder exits, so a killed
     writer cannot wedge the run, and no stale-owner guess is ever needed. A file
     system that offers no locking degrades to the unlocked behaviour with a note
     in the result; only a lock another process actually holds past ``wait``
-    seconds raises LockBusy."""
+    seconds raises LockBusy. The ``fcntl`` and ``msvcrt`` names stay here so the
+    backend a test or a platform supplies is the one that locks."""
 
     def __init__(self, path: Path, wait: float, label: str, *, create_dir: bool = False) -> None:
-        self.path, self.wait, self.label, self.create_dir = path, wait, label, create_dir
-        self.fd: int | None = None
-        self.held = False
+        super().__init__(path, wait, label=label, kind="writer lock", create_dir=create_dir, notes=WRITE_NOTES,
+                         backends=lambda: (fcntl, msvcrt))
 
-    def __enter__(self) -> "WriteLock":
-        try:
-            if self.create_dir:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
-        except OSError as exc:
-            WRITE_NOTES.append(f"writer lock unavailable ({_why(exc)}); this operation ran without mutual exclusion")
-            return self
-        deadline = time.monotonic() + self.wait
-        delay = 0.005
-        while True:
-            try:
-                self.held = _try_lock(self.fd)
-            except OSError as exc:
-                WRITE_NOTES.append(f"writer lock unsupported here ({_why(exc)}); this operation ran without mutual exclusion")
-                break
-            if self.held:
-                return self
-            if time.monotonic() >= deadline:
-                self._close()
-                raise LockBusy(f"another process holds the save write lock ({self.label}) after waiting {self.wait:g}s; "
-                               f"retry, or look for a stuck save_run.py process")
-            time.sleep(delay)
-            delay = min(delay * 2, 0.05)
-        self._close()
-        return self
-
-    def __exit__(self, *exc_info: object) -> bool:
-        if self.fd is not None:
-            if self.held:
-                _unlock(self.fd)
-            self._close()
-        return False
-
-    def _close(self) -> None:
-        if self.fd is not None:
-            try:
-                os.close(self.fd)
-            except OSError:
-                pass
-            self.fd = None
+    def _timed_out(self) -> None:
+        raise LockBusy(f"another process holds the save write lock ({self.label}) after waiting {self.wait:g}s; "
+                       f"retry, or look for a stuck save_run.py process")
 
 
 class RunStore:
@@ -739,7 +617,7 @@ class RunStore:
             for path, kind in ((self.lock_path, "lock"), (self.state_path, "state")):
                 if path.exists():
                     digest = sha256_file(path)
-                    _replace_with_retry(path, self.history / f"rev-1.{kind}.unpublished-{stamp}.json")
+                    _fsutil.replace_with_retry(path, self.history / f"rev-1.{kind}.unpublished-{stamp}.json")
                     retired[kind] = digest
         except OSError as exc:
             raise Degraded(f"could not retire the unpublished first revision: {_why(exc)}") from exc

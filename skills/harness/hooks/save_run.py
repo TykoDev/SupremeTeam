@@ -704,6 +704,9 @@ def main() -> int:
         store = RunStore(Path(args.project_root) if args.project_root else _state.project_root(), args.run_id,
                          lock_timeout=max(0.0, args.lock_timeout))
         extra = parse_extra(args.set)
+        if args.operation == "block" and args.reason:
+            raise Refused("block does not record a reason, so --reason is refused instead of dropped; it belongs to recover "
+                          "and checkpoint --drop-evidence. Say why the run is blocked with --next-action or --set key=value")
         if args.operation == "create":
             result = store.create(args.owner, args.evidence, args.execution_mode, args.next_action or "select earliest incomplete boundary", extra)
         elif args.operation == "checkpoint":

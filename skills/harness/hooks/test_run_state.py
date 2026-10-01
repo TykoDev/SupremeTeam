@@ -450,6 +450,24 @@ class ClosedRunTests(RunStateCase):
         self.assertEqual(self.save("complete")[0], 0)
 
 
+class BlockReasonTests(RunStateCase):
+    def test_block_refuses_a_reason_it_would_discard(self):
+        """`--reason` belongs to recover and checkpoint --drop-evidence; block accepted it and recorded nothing."""
+        self.create()
+        code, out = self.save("block", "--reason", "waiting on the owner")
+        self.assertEqual((code, out["result"]), (1, "refused"), out)
+        self.assertIn("--reason", out["reason"])
+        self.assertIn("recover", out["reason"])
+        self.assertEqual((self.state()["status"], self.state()["revision"]), ("active", 1))
+        self.assertEqual(self.events()[-1]["event"], "refused")
+
+    def test_block_without_a_reason_still_blocks_and_says_why_through_next_action(self):
+        self.create()
+        code, out = self.save("block", "--next-action", "waiting on the owner")
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.state()["status"], self.state()["next_action"]), ("blocked", "waiting on the owner"))
+
+
 class RecoveryTests(RunStateCase):
     def crash_second_checkpoint(self) -> None:
         """Revision 3 dies after its lock was written and before its state was; revision 2 is the last coherent one."""

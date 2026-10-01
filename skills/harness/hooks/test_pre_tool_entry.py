@@ -34,7 +34,7 @@ BELOW_FLOOR = (3, 10, 12, "final", 0)
 
 # What a real failure to import the guard looks like to the entry, run under another interpreter.
 _BROKEN_GUARD = (
-    "import builtins, runpy, sys\nreal = builtins.__import__\n"
+    f"import builtins, runpy, sys\nsys.path.insert(0, {str(HOOK_DIR)!r})\nreal = builtins.__import__\n"
     "def broken(name, *a, **k):\n    if name == 'guard_hook':\n        raise SyntaxError('boom')\n    return real(name, *a, **k)\n"
     "builtins.__import__ = broken\nsys.argv = ['pre_tool_use.py']\n"
     f"runpy.run_path({str(HOOK_DIR / 'pre_tool_use.py')!r}, run_name='__main__')\n"

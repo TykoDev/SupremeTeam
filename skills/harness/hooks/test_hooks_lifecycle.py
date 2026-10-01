@@ -312,11 +312,14 @@ class ReadOnlyRunTests(unittest.TestCase):
         self.assertEqual(self.write("src/app/main.py"), "")
         self.assertIn("frozen boundary", self.write("src/legacy/old.py"))
 
-    def test_malformed_guard_state_fails_open(self):
+    def test_malformed_guard_state_fails_open_and_says_so(self):
+        """It still allows the write (no boundary can be read from it), but no longer silently (RR-guard-3)."""
         state = self.project / ".harness-state"
         state.mkdir(parents=True, exist_ok=True)
         (state / "guard-state.json").write_text("{not json", encoding="utf-8")
-        self.assertEqual(self.write("src/app/main.py"), "")
+        output = self.write("src/app/main.py")
+        self.assertNotIn("permissionDecision", output)
+        self.assertIn("[harness:guard-state]", output)
 
 
 if __name__ == "__main__":

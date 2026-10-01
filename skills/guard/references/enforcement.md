@@ -126,7 +126,9 @@ boundary file instead of starting a second one beside it.
   `allow` globs or the harness state directory (`.harness-state/**`). Naming one
   allowed path in a command that also writes somewhere else does not satisfy it,
   and a git command that changes the repository without naming a path
-  (`git add -A`, `git push`, `git merge`) is denied. Reads pass untouched.
+  (`git add -A`, `git push`, `git merge`, `git restore --staged .`) is denied, as is a
+  package manager installing, removing or updating (`npm install`, `pip install`,
+  `apt-get install`: a table of the usual ones, not every tool). Reads pass untouched.
 - `allow_dangerous` — `false`, or an owned grant that lifts the built-in
   destructive-command block (see the next section).
 

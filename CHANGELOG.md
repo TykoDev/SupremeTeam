@@ -355,6 +355,14 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   or runs a command that mutates now read as writes with no named target, and Rule D refuses
   them with a reason that says to name each target in the command. Round 1 refused them by
   substring; since round 2 they passed. `awk '$1 > 5'` and every read still pass.
+- A freeze, a block and the single-writer rule read what a launcher or script block runs
+  (`watch`, `entr`, `parallel`, a PowerShell `{ ... }`) like the command line, and refuse a write
+  whose target the guard cannot place (a program read from a pipe, operands from `xargs`, a
+  diff fed to `patch`, a path built at run time) when the command also names a protected path,
+  as the substring rule they replaced did: `echo 'rm src/payments/a' | sh` is refused under a
+  freeze of `src/payments/**`, while `cat list | xargs rm` and `git checkout main` still pass.
+  An abbreviated PowerShell parameter that fits a value parameter and a switch
+  (`rm -f src/payments/a`) is a switch, so the path after it is a write target.
 - `guard_state.py` warns on stderr (exit status unchanged) about any leading-slash glob that is
   not under the project root, whether or not its first directory exists on the machine:
   `freeze --glob /lib/payments/**` guards the file system's `/lib/payments`, not the project's

@@ -532,6 +532,33 @@ class DocumentationMirrorTests(unittest.TestCase):
                 self.assertTrue((REPO / name).is_file())
 
 
+class CommandLineTests(unittest.TestCase):
+    """CR-23: three scripts take a directory and each means a different one, so this one says which."""
+
+    def run_validator(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, str(VALIDATOR), *args], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+
+    def test_help_says_what_the_argument_is(self):
+        proc = self.run_validator("--help")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        flat = " ".join(proc.stdout.split())
+        self.assertIn("usage:", flat)
+        self.assertIn("the skills/ directory to validate", flat)
+        self.assertIn("not the repository root", flat)
+        self.assertNotIn('"errors"', proc.stdout, "--help was read as a directory to validate")
+
+    def test_the_argument_is_still_the_catalog_directory_and_defaults_to_this_one(self):
+        explicit, default = self.run_validator(str(SKILLS)), self.run_validator()
+        self.assertEqual((0, 0), (explicit.returncode, default.returncode), explicit.stdout + default.stdout)
+        self.assertEqual(json.loads(default.stdout), json.loads(explicit.stdout))
+
+    def test_a_flag_it_does_not_have_is_refused_not_read_as_a_directory(self):
+        proc = self.run_validator("--root", str(SKILLS))
+        self.assertEqual(2, proc.returncode, proc.stdout)
+        self.assertIn("unrecognized arguments", proc.stderr)
+
+
 class LayoutTests(unittest.TestCase):
     """A repository checkout runs the repository checks; an installed copy skips them, visibly."""
 

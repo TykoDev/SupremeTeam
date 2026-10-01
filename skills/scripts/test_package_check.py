@@ -26,6 +26,17 @@ def residue_class(relative: str) -> str | None:
     return next((klass for klass, patterns in RESIDUE_CLASSES.items() if matches(relative, patterns)), None)
 
 
+class HelpTests(unittest.TestCase):
+    """CR-23: `--root` is the repository root here, the catalog directory in the other two scripts."""
+
+    def test_the_help_names_the_directory_root_takes_and_the_one_it_does_not(self):
+        proc = subprocess.run([sys.executable, str(PACKAGE_CHECK), "--help"], capture_output=True, text=True, check=False)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        flat = " ".join(proc.stdout.split())
+        self.assertIn("the directory to package: the repository root, the directory that contains skills/", flat)
+        self.assertIn("not skills/ itself", flat)
+
+
 class ResidueClassTests(unittest.TestCase):
     def test_matching_folds_case_so_an_upper_case_secret_is_the_same_secret(self):
         for relative in (".ENV", ".Env.local", "app/.ENV.production", "deploy/KEY.PEM", "keys/Server.Key", "x/ID_RSA",

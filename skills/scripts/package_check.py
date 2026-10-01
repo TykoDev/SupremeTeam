@@ -95,7 +95,9 @@ def manifest_globs(manifest: object) -> tuple[list[str], list[str]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Enumerate and verify the Supreme Team package.")
-    parser.add_argument("--root", default=".", help="delivery root (the directory containing skills/)")
+    parser.add_argument("--root", default=".",
+                        help="the directory to package: the repository root, the directory that contains skills/, "
+                             "not skills/ itself (default: the current directory)")
     parser.add_argument("--manifest", default=str(SKILLS / "package-manifest.yaml"))
     parser.add_argument("--out", help="write a zip archive here after a clean enumeration")
     args = parser.parse_args()

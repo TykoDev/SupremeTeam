@@ -3,9 +3,10 @@
 Deterministic gate check for ``gatekeeper-build`` — the build→review boundary.
 
 Validates that a build-phase packet attaches the implementation diff, test
-evidence, security outcome, cross-check completeness certification, and the
-build-gate verdict for one coherent revision — plus the shared lineage,
-skip-record, blocked-phrase, idempotency, and harness-doctrine §5 checks.
+evidence, security outcome (when the build touched a trust boundary),
+cross-check completeness certification, and the build-gate verdict for one
+coherent revision — plus the shared lineage, skip-record, blocked-phrase,
+idempotency, and harness-doctrine §5 checks.
 
 Reports PASS / FAIL / UNCHECKED facts only; the skill issues the verdict.
 See ../SKILL.md and ../references/workflow.md.
@@ -18,117 +19,66 @@ import sys
 from pathlib import Path
 
 
-# A project root is recognised by one of these markers, matching
-# harness/hooks/_state.py ``_ROOT_MARKERS`` so both locate the same directory.
-_ROOT_MARKERS = ("skillset-saves", ".harness-state", ".git")
-
-
-def _find_catalog_root():
-    """Nearest ancestor holding harness/gatekeeper/_gatecheck.py, else None.
-
-    This is where the shared engine lives, which is not necessarily where
-    packages live: the catalog can be vendored inside a larger project.
-    """
+def _engine():
+    """Import the shared engine from the nearest ancestor that holds it. The
+    engine owns everything else: the project root, the package-directory guard,
+    and the arguments."""
     here = Path(__file__).resolve()
     for parent in here.parents:
-        if (parent / "harness" / "gatekeeper" / "_gatecheck.py").exists():
-            return parent
-    return None
-
-
-def _find_repo_root():
-    """Return the root a package may live under.
-
-    Packages are written to ``<project>/skillset-saves/runs/<id>/<phase>``,
-    which is a *sibling* of the catalog when the catalog is vendored as
-    ``<project>/skills``. Confining to the catalog root therefore refused every
-    path the save protocol actually produces, so containment is checked against
-    the nearest project marker at or above the catalog, and falls back to the
-    catalog itself for a standalone checkout.
-    """
-    catalog = _find_catalog_root()
-    if catalog is None:
-        return None
-    for candidate in (catalog, *catalog.parents):
-        try:
-            if any((candidate / marker).exists() for marker in _ROOT_MARKERS):
-                return candidate
-        except OSError:
-            continue
-    return catalog
-
-
-_CATALOG_ROOT = _find_catalog_root()
-_REPO_ROOT = _find_repo_root()
-
-
-def _load_engine():
-    if _CATALOG_ROOT is not None:
-        sys.path.insert(0, str(_CATALOG_ROOT / "harness" / "gatekeeper"))
-        import _gatecheck  # type: ignore
-        return _gatecheck
+        directory = parent / "harness" / "gatekeeper"
+        if (directory / "_gatecheck.py").is_file():
+            sys.path.insert(0, str(directory))
+            import _gatecheck  # type: ignore
+            return _gatecheck
     sys.stderr.write(
         "ERROR: could not locate harness/gatekeeper/_gatecheck.py above "
-        f"{Path(__file__).resolve()}. Gate cannot run; validate by hand.\n")
+        f"{here}. Gate cannot run; validate by hand.\n")
     sys.exit(2)
 
 
-def _validate_package_dir(raw):
-    """Confine the untrusted <package-dir> argument to an existing directory
-    inside the working tree before the engine reads it. Enforcing this in code
-    (not only in SKILL.md prose) stops a malformed or manipulated build context
-    from pointing the gate at a non-existent path or arbitrary files outside the
-    tree. Exits 2 — the 'cannot run, validate by hand' code — on any violation."""
-    resolved = Path(raw).resolve()
-    if not resolved.is_dir():
-        sys.stderr.write(
-            f"ERROR: <package-dir> does not exist or is not a directory: {raw!r}\n")
-        sys.exit(2)
-    if _REPO_ROOT is None:
-        sys.stderr.write(
-            "ERROR: cannot locate the working-tree root, so <package-dir> containment "
-            "cannot be verified; refusing to read it.\n")
-        sys.exit(2)
-    if _REPO_ROOT not in (resolved, *resolved.parents):
-        sys.stderr.write(
-            f"ERROR: <package-dir> {resolved} is outside the working tree "
-            f"{_REPO_ROOT}; refusing to read it.\n")
-        sys.exit(2)
-    return resolved
+gc = _engine()
 
+# `diff` as a part of a file name, not the start of "different".
+_DIFF_NAMES = ("diff.md", "diff[-_.]*.md", "*[-_.]diff.md", "*[-_.]diff[-_.]*.md")
 
-gc = _load_engine()
-
-# Required build-to-review evidence set (SKILL.md workflow step 1). Matched by
-# filename pattern and/or a content marker so a deliverable named
-# deliverable_implementation.md or review-packet.md is recognized either way.
+# Required build-to-review evidence set (SKILL.md workflow step 1), matched by
+# file name and proved by a whole-word marker in the file. The security outcome is
+# not declared optional here: gates.yaml lets a submitter waive security_evidence
+# and pipelines.yaml runs security-checkpoint only on a trust-boundary change, so
+# the engine reads both and reports an absent outcome UNCHECKED.
 MANIFEST = gc.Manifest(
     boundary="build-to-review",
     sub_orchestrator="build/build-management",
+    pipeline="build",
     artifacts=(
         gc.ArtifactSpec(
             key="implementation",
             label="implementation diff / change summary",
-            patterns=("*implementation*.md", "deliverable_*build*.md", "*diff*.md"),
-            content_marker=r"implementation|changed file|diff|module",
+            patterns=("*implementation*.md", "deliverable_*build*.md", *_DIFF_NAMES),
+            content_marker=r"implement\w*|changed files?|diff|modules?",
+            stages=("implementation",),
         ),
         gc.ArtifactSpec(
             key="tests",
             label="test-builder evidence (execution results)",
             patterns=("*test*.md", "deliverable_*test*.md"),
-            content_marker=r"test|coverage|pass|fail|suite",
+            content_marker=r"tests?|testing|coverage|pass(?:ed|es)?|fail(?:ed|s|ures?)?|suites?",
+            stages=("test-surface",),
         ),
         gc.ArtifactSpec(
             key="security",
             label="security-builder outcome (findings or clean bill)",
             patterns=("*security*.md", "deliverable_*security*.md"),
-            content_marker=r"security|vulnerab|clean bill|finding",
+            content_marker=r"security|vulnerab\w*|clean bill|findings?",
+            evidence_key="security_evidence",
+            stages=("security-checkpoint",),
         ),
         gc.ArtifactSpec(
             key="completeness",
             label="cross-check-build-confirm completeness certification",
             patterns=("*cross-check*.md", "*completeness*.md", "*confirm*.md"),
-            content_marker=r"complete|certif|confirm",
+            content_marker=r"complet\w*|certif\w*|confirm\w*",
+            stages=("completeness-cross-check",),
         ),
         gc.ArtifactSpec(
             key="build_verdict",
@@ -141,28 +91,4 @@ MANIFEST = gc.Manifest(
 
 
 if __name__ == "__main__":
-    _args = sys.argv[1:]
-    # Options that consume the following argument. Without this, the value of
-    # such a flag is the first non-dash token, so `--prior <file> <pkg>` would
-    # validate <file> as the package directory and check the wrong tree.
-    _VALUE_OPTS = ("--prior", "--blocked-phrases")
-    _pkg_idx, _skip = None, False
-    for _i, _a in enumerate(_args):
-        if _skip:
-            _skip = False
-            continue
-        if _a in _VALUE_OPTS:
-            _skip = True
-            continue
-        if _a.startswith("-"):
-            continue
-        _pkg_idx = _i
-        break
-    if _pkg_idx is None:
-        sys.stderr.write(
-            "ERROR: <package-dir> is required. "
-            "Usage: python check.py <package-dir> [--prior <verdict-file>] [--json]\n")
-        sys.exit(2)
-    # Validate and normalize the untrusted path before the engine consumes it.
-    sys.argv[1 + _pkg_idx] = str(_validate_package_dir(_args[_pkg_idx]))
     sys.exit(gc.main_with_manifest(MANIFEST))

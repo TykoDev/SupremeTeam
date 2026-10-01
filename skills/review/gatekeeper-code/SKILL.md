@@ -109,24 +109,44 @@ holds:
 python scripts/check.py <package-dir> [--prior <prior-verdict-file>] [--json]
 ```
 
-It declares this boundary's required-artifact manifest — the five core lenses:
-bug, code, quality, security, adversarial/frontier — and calls the shared engine
-at `../../harness/gatekeeper/_gatecheck.py`, which also mechanizes:
+It declares this boundary's required-artifact manifest — the three lenses that
+run on every review, bug, code, and quality, each filed as its own packet that
+carries the `Outcome:` and `Findings:` fields the lens skills fix — and calls the
+shared engine at `../../harness/gatekeeper/_gatecheck.py`, which also mechanizes:
 
 - single-revision lineage
 - skip-record completeness
 - the blocked-phrase scan
 - idempotency drift, and harness-doctrine §5 structure
+- links out of the package: a symlink whose target leaves the package directory
+  is never read and is reported as `LINK_ESCAPES_PACKAGE`
+
+A file fills at most one lens: one stand-in that names several lenses fills one,
+and a file whose name fits but that lacks the packet fields is named in the
+failure as a near miss.
 
 It returns `PASS` / `FAIL` / `UNCHECKED` findings plus a `gate_status`, **never
 a verdict**, and never adjudicates conflicting specialist findings. It fails
 loud — a blocking failure exits non-zero, an internal error exits 2. See
 `../../harness/gatekeeper/README.md`.
 
-The CSO lens is **conditional**: the script cannot know whether a
-security-leadership, accepted-risk, or release-posture claim is in scope, so it
-reports the lens's absence as `UNCHECKED` — to be resolved, or accepted via an
-explicit `_skip-record.md` whose required fields the engine validates.
+The security, adversarial/frontier, and CSO lenses are **conditional**. For the
+first two the manifest does not restate the condition: `../../pipelines.yaml`
+gives their stages a `when` (a trust boundary changed, an exploitable surface
+exists, visible behavior changed), `review/code-chief` schedules them by it, and
+the engine reads it, so a lens absent from the package is reported `UNCHECKED`
+with that condition named, not failed. The CSO lens has no stage in the review
+pipeline at all: the script cannot know whether a security-leadership,
+accepted-risk, or release-posture claim is in scope. Each `UNCHECKED` lens is
+resolved against its condition, or accepted via an explicit `_skip-record.md`
+whose required fields the engine validates; the record names no lens, so the
+engine cannot retire the slot itself and the resolution is this gate's judgment.
+
+`--prior` takes Markdown frontmatter or the JSON record `check.py --verdict-out`
+writes. Two submissions are compared only when both declare a `submission_id` and
+a `revision`, in frontmatter or in the package's own `manifest.json` (lens packets
+carry no frontmatter); when either side declares none the check reports
+`IDEMPOTENCY_UNDETERMINED`, never a fresh submission.
 
 **2. The boundary validator** checks the evidence contract against
 `../../gates.yaml`:
@@ -178,9 +198,15 @@ A verdict returned without its evidence anchors is incomplete and is not a gate
 result.
 
 Clause 4 has a concrete local form here: `<package-dir>` is untrusted review
-context. `scripts/check.py` resolves it, requires an existing directory inside
-the working tree, and exits 2 without running the gate otherwise; confirm the
-same before invoking and return `ESCALATE` naming the rejected path.
+context. `scripts/check.py` resolves it (`..` and symlinks included), requires an
+existing directory inside the project, and exits 2 without running the gate
+otherwise; confirm the same before invoking and return `ESCALATE` naming the
+rejected path. The project is found from where the gate is run: the nearest
+directory at or above the working directory that holds `skillset-saves/`,
+`.harness-state/`, or `.git`, or, when the working directory is in no project,
+the same search from the package directory. Run the gate from the project, as in
+`python <catalog>/review/gatekeeper-code/scripts/check.py skillset-saves/runs/<run>/review`;
+the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 
 ## Workflow
 
@@ -221,6 +247,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | The package claims security leadership signoff, accepted-risk readiness, or release security posture without `review/cso` evidence or an explicit skip reason | Return REVISE and require `review/code-chief` to run the CSO lens or remove the unsupported leadership claim. |
 | Specialist findings conflict on severity, exploitability, or scope | Preserve the contradiction in the verdict record and return REVISE unless the conflict requires external judgment, in which case return ESCALATE. |
 | The package claims a skip without recording the reason or evidence boundary | Mark the package incomplete and require a skip justification before re-evaluating readiness. |
+| `scripts/check.py` fails a lens as `ARTIFACT_MISSING` and names a near miss — a file that lacks the `Outcome:` and `Findings:` fields, or one already counted for another lens — or reports `LINK_ESCAPES_PACKAGE` | Return `REVISE` to `review/code-chief`: each lens files its own packet in the shape its skill fixes, a file that covers several lenses fills one, and a link out of the package directory is replaced by the file itself. |
 | The package is resubmitted without a clear delta from the previous verdict | Reuse the prior reasoning where possible and reject silent re-gating until the revision summary explains what changed. |
 | `rendered_verification` carries a bare explanatory string — "UI unchanged", "no screenshots needed" — instead of a `render` record or the sanctioned waiver | Return REVISE to `design-qa`. The only admissible waiver is the typed applicability record naming reason, scope, and decided_by for "no visible surface changed - rendered verification not applicable"; any other string fails the artifact-backing check before judgment begins. |
 | `executed_probes` or `rendered_verification` carries `inputs` whose sha256 no longer matches the source file (`input hash drift`) | Return REVISE to the key's owner — `code-chief` for probes, `design-qa` for renders. The source changed after the evidence was captured, so the evidence proves a state the package no longer ships. |
@@ -255,4 +282,4 @@ inactive, return the verdict inline and preserve the run and revision.
 
 ## Packaging Notes
 
-Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which it locates by walking up to the repo root — ship the `harness/gatekeeper/` directory alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.
+Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which it locates by walking up from its own path to the catalog that holds `harness/gatekeeper/`; the engine reads `gates.yaml` and `pipelines.yaml` from that catalog and imports `scripts/data_formats.py`, so ship those alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.

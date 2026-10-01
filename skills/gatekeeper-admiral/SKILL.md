@@ -185,10 +185,17 @@ reader of the package, not the second. The script declares this gate's
 required-artifact manifest and calls the shared engine at
 `../harness/gatekeeper/_gatecheck.py`, which mechanizes:
 
-- package shape, single-revision lineage, and one submission id
+- package shape, single-revision lineage, and one submission id; the handoff
+  record is a file of its own that carries `submission_id` and `verdict`, and a
+  file that also fits the delivery-summary slot fills only one of the two
 - skip-record completeness
 - the blocked-phrase scan — this gate **owns** it
-- idempotency drift against `--prior`, and harness-doctrine §5 structure
+- idempotency drift against `--prior` (Markdown frontmatter or the JSON record
+  `check.py --verdict-out` writes, compared only when both sides declare a
+  `submission_id` and a `revision`, otherwise `IDEMPOTENCY_UNDETERMINED`), and
+  harness-doctrine §5 structure
+- links out of the package: a symlink whose target leaves the package directory
+  is never read and is reported as `LINK_ESCAPES_PACKAGE`
 
 It returns `PASS` / `FAIL` / `UNCHECKED` findings plus a `gate_status`
 (`STRUCTURE_OK` / `NEEDS_JUDGMENT` / `BLOCKERS_PRESENT`) and **never emits a
@@ -199,12 +206,18 @@ non-zero, an internal error exits 2, never a silent pass. See
 
 **Input validation (enforced in code).** `<package-dir>` arrives from run
 context, so `scripts/check.py` confines it before the engine reads a byte:
-`_validate_package_dir()` resolves the argument, requires an existing directory,
-and requires it to sit inside the located working tree. A missing path, a
-non-directory, a path outside the tree, or an unlocatable tree root exits 2
-without running the gate. Confirm the same three properties before invoking, and
-return `ESCALATE` naming the rejected path rather than retrying — a gate that
-fails open is worse than no gate.
+the engine's `resolve_package_dir()` resolves the argument (`..` and symlinks
+included), requires an existing directory, and requires it to sit inside the
+project. The project is found from where the gate is run: the nearest directory
+at or above the working directory that holds `skillset-saves/`, `.harness-state/`,
+or `.git`, or, when the working directory is in no project, the same search from
+the package directory. A missing path, a non-directory, a path outside the
+project, or an unlocatable project root exits 2 without running the gate. Confirm
+the same three properties before invoking, and return `ESCALATE` naming the
+rejected path rather than retrying — a gate that fails open is worse than no
+gate. Run the script from the project, as in
+`python <catalog>/gatekeeper-admiral/scripts/check.py skillset-saves/runs/<run>/delivery`;
+the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 
 ## Execution Contract
 
@@ -240,7 +253,7 @@ above).
 
 1. Classify the submission against `../gates.yaml`: one of the ten boundaries in the Boundary Contract above. Confirm the declared `boundary` and `owner` match the spec, and read the required-evidence list for that boundary from the spec rather than from memory.
 2. Run the boundary validator for that boundary, with `--prior` pointed at the phase gatekeeper's `verdict_<boundary>.json` when one exists.
-3. Run the package-shape validator against the `delivery/` phase directory, after confirming the path resolves inside the working tree.
+3. Run the package-shape validator against the `delivery/` phase directory, after confirming the path resolves inside the project.
 4. Judge what neither validator can: whether a present artifact is substantively adequate, whether a contradiction across artifacts is real, whether a waiver reason is honest, and whether the next-consumer contract holds.
 5. Decide `APPROVED`, `REVISE`, or `ESCALATE` with a handoff-specific rationale that names the missing package element, conflicting approval, or unresolved risk-acceptance question, grouped by the owner each failing key belongs to.
 6. Reuse an existing verdict only when the same submission id and package revision recur; otherwise record how the resubmission changed before another handoff is allowed.
@@ -285,7 +298,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | A resubmission reuses the previous submission id but changes package contents without a revision delta | Treat the prior verdict as non-transferable, require a fresh boundary summary, and flag the silent drift. |
 | A blocked phrase appears inside a generated delivery artifact or handoff narrative | Return `REVISE` and require the submitting orchestrator to clean the package before any downstream stage consumes it. |
 | The boundary validator exits 2 (missing or malformed gate spec, unknown boundary, unreadable manifest) | Return `ESCALATE`. An engine failure is never approval, and the gate spec is never bypassed to keep a run moving. |
-| `scripts/check.py` exits 2 because `<package-dir>` is missing, is not a directory, sits outside the working tree, or the tree root cannot be located | Return `ESCALATE` and name the rejected path. The guard runs before the engine reads anything, so nothing was checked; an unrun pre-check is not a clean one. |
+| `scripts/check.py` exits 2 because `<package-dir>` is missing, is not a directory, sits outside the project, or the project root cannot be located | Return `ESCALATE` and name the rejected path. The guard runs before the engine reads anything, so nothing was checked; an unrun pre-check is not a clean one. |
 | Evidence references a project file whose sha256 no longer matches (`input hash drift`) | Return `REVISE` to the evidence owner. The source changed after the evidence was captured, so the evidence no longer proves the claim. |
 | A required key carries a bare string that is not a sanctioned fallback value | Return `REVISE`. Only the exact reasons in `../gates.yaml` `fallback_values` are accepted, and at manifest schema 2 they must be typed applicability records naming reason, scope, and decided_by. |
 
@@ -315,4 +328,4 @@ the verdict inline and preserve the run and revision.
 
 ## Packaging Notes
 
-Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../harness/gatekeeper/_gatecheck.py`, which it locates by walking up to the repo root — ship the `harness/gatekeeper/` directory alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.
+Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../harness/gatekeeper/_gatecheck.py`, which it locates by walking up from its own path to the catalog that holds `harness/gatekeeper/`; the engine reads `gates.yaml` and `pipelines.yaml` from that catalog and imports `scripts/data_formats.py`, so ship those alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.

@@ -2,25 +2,33 @@
 """Regression tests for the SupremeTeam gatekeeper deterministic gate engine.
 
 Covers the mechanical checks the ``gatekeeper-*`` scripts rely on: frontmatter
-parsing, required-artifact pass/fail, conditional artifacts, mixed-revision
-detection, skip-record validation, blocked-phrase hits, idempotency drift,
-harness-doctrine §5 structure, and fail-loud behavior on a missing package.
+parsing, required-artifact pass/fail, conditional artifacts and the contracts they
+derive from, one-file-per-slot matching on names, whole words and packet fields,
+links out of the package, project-root containment, mixed-revision detection,
+skip-record validation, blocked-phrase hits, idempotency drift against Markdown and
+JSON priors, harness-doctrine §5 structure, and fail-loud behavior on a missing
+package. ``test_gate_wrappers.py`` runs the wrapper scripts themselves.
 
 Run from the repo root:
     python -m unittest discover -s SupremeTeam/harness/gatekeeper -p "test_*.py"
 """
 
+import json
 import shutil
 import sys
+import tempfile
 import unittest
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from unittest import mock
 
 ENGINE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(ENGINE_DIR))
+sys.path.insert(0, str(ENGINE_DIR.parents[1] / "scripts"))
 
 import _gatecheck as gc  # noqa: E402
+import data_formats  # noqa: E402
 
 
 def _project_root() -> Path:
@@ -346,6 +354,535 @@ class RedesignMockFirstLayoutTests(unittest.TestCase):
             report = self._report(pkg)
         self.assertIn("SELECTION_RECORDED", _codes(report))
         self.assertIn("NO_BUILD_AS_DECIDED", _codes(report))
+
+
+def _symlink(target: Path, link: Path) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=target.is_dir())
+    except (OSError, NotImplementedError) as exc:
+        raise unittest.SkipTest(f"symlinks are unavailable here: {exc}") from exc
+
+
+@contextmanager
+def _scratch():
+    with tempfile.TemporaryDirectory() as raw:
+        yield Path(raw).resolve()
+
+
+def _slot(key: str, patterns, **more) -> gc.ArtifactSpec:
+    return gc.ArtifactSpec(key=key, label=key, patterns=patterns, **more)
+
+
+def _slots(report) -> dict:
+    """Slot label -> present | missing | conditional, read off the findings."""
+    status = {}
+    for f in report.findings:
+        if f.code == "ARTIFACT_PRESENT":
+            status[f.message.removesuffix(" present.")] = "present"
+        elif f.code == "ARTIFACT_MISSING":
+            status[f.message.removeprefix("Required artifact missing: ").split(" (expected", 1)[0]] = "missing"
+        elif f.code == "ARTIFACT_CONDITIONAL":
+            status[f.message.split(" not found.", 1)[0]] = "conditional"
+    return status
+
+
+PACKET = "Outcome:     lens, r1, 0 findings\nFindings:    (none)\n"
+
+
+class ProjectRootTests(unittest.TestCase):
+    def test_the_nearest_marked_ancestor_wins_and_the_start_itself_counts(self):
+        with _scratch() as base:
+            outer, inner = base / "outer", base / "outer" / "inner"
+            (outer / ".git").mkdir(parents=True)
+            (inner / "deep").mkdir(parents=True)
+            (inner / "skillset-saves").mkdir()
+            self.assertEqual(gc.find_project_root(inner / "deep"), inner)
+            self.assertEqual(gc.find_project_root(inner), inner)
+            self.assertEqual(gc.find_project_root(outer), outer)
+
+    def test_each_marker_kind_marks_a_project(self):
+        """A worktree's .git is a file, and .harness-state alone marks a project."""
+        with _scratch() as base:
+            (base / "file-git").mkdir()
+            (base / "file-git" / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+            (base / "state").mkdir()
+            (base / "state" / ".harness-state").mkdir()
+            self.assertEqual(gc.find_project_root(base / "file-git"), base / "file-git")
+            self.assertEqual(gc.find_project_root(base / "state"), base / "state")
+
+    def test_no_marker_means_no_root(self):
+        with _scratch() as base:
+            if gc.find_project_root(base) is not None:
+                self.skipTest("a project marker exists above the temporary directory")
+            self.assertIsNone(gc.find_project_root(base))
+
+    def test_the_marker_tuple_is_the_documented_three(self):
+        self.assertEqual(set(gc.ROOT_MARKERS), {"skillset-saves", ".harness-state", ".git"})
+
+
+class PackageContainmentTests(unittest.TestCase):
+    """resolve_package_dir: the guard every wrapper shares."""
+
+    @staticmethod
+    def _project(base: Path, name: str = "project"):
+        project = base / name
+        (project / ".git").mkdir(parents=True)
+        package = project / "skillset-saves" / "runs" / "r-1" / "review"
+        package.mkdir(parents=True)
+        return project, package
+
+    def test_a_package_inside_the_working_projects_root_resolves(self):
+        with _scratch() as base:
+            project, package = self._project(base)
+            self.assertEqual(gc.resolve_package_dir(str(package), cwd=project), package)
+            self.assertEqual(gc.resolve_package_dir(str(package), cwd=package), package)
+            self.assertEqual(gc.resolve_package_dir(str(project), cwd=project), project)
+
+    def test_a_package_outside_is_refused_however_it_is_named(self):
+        with _scratch() as base:
+            project, package = self._project(base)
+            outside = base / "outside" / "pkg"
+            outside.mkdir(parents=True)
+            link = project / "skillset-saves" / "runs" / "r-2"
+            _symlink(outside, link)
+            named = {
+                "directly": str(outside),
+                "with ..": str(package / ".." / ".." / ".." / ".." / ".." / "outside" / "pkg"),
+                "through a symlink": str(link),
+            }
+            for how, raw in named.items():
+                with self.subTest(how=how):
+                    with self.assertRaisesRegex(gc.PackageRefused, "outside the project"):
+                        gc.resolve_package_dir(raw, cwd=project)
+
+    def test_the_project_is_the_working_directorys_not_the_packages(self):
+        with _scratch() as base:
+            here, _ = self._project(base, "here")
+            _, theirs = self._project(base, "theirs")
+            with self.assertRaisesRegex(gc.PackageRefused, "outside the project"):
+                gc.resolve_package_dir(str(theirs), cwd=here)
+
+    def test_a_working_directory_in_no_project_falls_back_to_the_packages_own(self):
+        with _scratch() as base:
+            _, package = self._project(base)
+            bare = base / "bare"
+            bare.mkdir()
+            if gc.find_project_root(bare) is not None:
+                self.skipTest("a project marker exists above the temporary directory")
+            self.assertEqual(gc.resolve_package_dir(str(package), cwd=bare), package)
+
+    def test_no_project_anywhere_is_refused(self):
+        with _scratch() as base:
+            loose = base / "loose"
+            loose.mkdir()
+            if gc.find_project_root(loose) is not None:
+                self.skipTest("a project marker exists above the temporary directory")
+            with self.assertRaisesRegex(gc.PackageRefused, "cannot locate a project root"):
+                gc.resolve_package_dir(str(loose), cwd=base)
+
+    def test_a_missing_path_and_a_file_are_refused(self):
+        with _scratch() as base:
+            project, package = self._project(base)
+            note = package / "note.md"
+            note.write_text("x", encoding="utf-8")
+            for raw in (str(package / "nope"), str(note)):
+                with self.assertRaisesRegex(gc.PackageRefused, "not a directory"):
+                    gc.resolve_package_dir(raw, cwd=project)
+
+    def test_a_path_the_platform_cannot_read_is_refused_not_raised(self):
+        """Exit 2 is the guard's answer; a traceback would exit 1, which reads as a package defect."""
+        with _scratch() as base:
+            project, _ = self._project(base)
+            for raw in ("a\0b", "x" * 5000):
+                with self.subTest(raw=raw[:8]):
+                    with self.assertRaises(gc.PackageRefused):
+                        gc.resolve_package_dir(raw, cwd=project)
+
+
+class PackageMatchingTests(unittest.TestCase):
+    """A slot is filled by one file whose name and structure both fit."""
+
+    def _run(self, pkg: Path, *specs) -> dict:
+        return _slots(gc.run_gate(pkg, _manifest(*specs)))
+
+    def test_directory_names_never_match_a_pattern(self):
+        with _package() as pkg:
+            _write(pkg, "x.md", "pass")
+            (pkg / "latest").mkdir()
+            (pkg / "latest" / "x.md").write_text("pass", encoding="utf-8")
+            status = self._run(pkg, _slot("tests", ("*test*.md",), content_marker="pass"))
+        self.assertEqual(status, {"tests": "missing"})
+
+    def test_a_word_inside_a_longer_one_under_a_directory_that_fits_is_not_a_test_report(self):
+        """SEC-T-06's trigger: tests/bypass-notes.md meets `*test*.md` by its directory and `pass` by "bypass"."""
+        with _package() as pkg:
+            (pkg / "tests").mkdir()
+            (pkg / "tests" / "bypass-notes.md").write_text("notes on the bypass", encoding="utf-8")
+            status = self._run(pkg, _slot("tests", ("*test*.md",), content_marker="tests?|coverage|pass|fail|suite"))
+        self.assertEqual(status, {"tests": "missing"})
+
+    def test_a_marker_matches_whole_words_only(self):
+        with _package() as pkg:
+            _write(pkg, "tests.md", "The password, the compass and a bypass are not a result.")
+            spec = _slot("tests", ("*test*.md",), content_marker="pass")
+            self.assertEqual(self._run(pkg, spec), {"tests": "missing"})
+            _write(pkg, "tests.md", "Tests ran; pass_rate 100 and pass-count 12.")
+            self.assertEqual(self._run(pkg, spec), {"tests": "present"})
+
+    def test_a_hollow_file_does_not_fill_a_packet_slot(self):
+        with _package() as pkg:
+            _write(pkg, "bug.md", "bug")
+            status = self._run(pkg, _slot("lens_bug", ("*bug*.md",), fields=("Outcome", "Findings")))
+        self.assertEqual(status, {"lens_bug": "missing"})
+
+    def test_packet_fields_are_field_lines(self):
+        spec = _slot("lens", ("*lens*.md",), fields=("Outcome", "Findings"))
+        accepted = {
+            "plain": PACKET,
+            "fenced": "```text\n" + PACKET + "```\n",
+            "bold": "- **Outcome:** ok\n- **Findings:** none\n",
+            "quoted": "> Outcome: ok\n> Findings: none\n",
+            "frontmatter": "---\nOutcome: ok\nFindings: none\n---\n",
+        }
+        for shape, body in accepted.items():
+            with self.subTest(shape=shape), _package() as pkg:
+                _write(pkg, "lens.md", body)
+                self.assertEqual(self._run(pkg, spec), {"lens": "present"})
+        with self.subTest(shape="prose"), _package() as pkg:
+            _write(pkg, "lens.md", "The Outcome: was fine and the Findings: none.\n")
+            self.assertEqual(self._run(pkg, spec), {"lens": "missing"})
+
+    def test_one_file_fills_one_slot(self):
+        """A single stand-in that names four lenses and carries the packet fields fills one."""
+        with _package() as pkg:
+            _write(pkg, "deliverable_security-bug-code-quality.md", PACKET)
+            specs = [_slot(name, (f"*{name}*.md",), fields=("Outcome", "Findings"))
+                     for name in ("bug", "code", "quality", "security")]
+            status = self._run(pkg, *specs)
+        self.assertEqual(sorted(status.values()), ["missing", "missing", "missing", "present"])
+
+    def test_overlapping_candidates_are_rerouted_so_every_slot_can_be_filled(self):
+        with _package() as pkg:
+            _write(pkg, "alpha-beta.md", "x")
+            _write(pkg, "beta.md", "x")
+            status = self._run(pkg, _slot("first", ("*alpha*.md", "*beta*.md")),
+                               _slot("second", ("*alpha*.md",)))
+        self.assertEqual(status, {"first": "present", "second": "present"})
+
+    def test_a_chain_of_overlaps_reroutes_more_than_one_slot(self):
+        with _package() as pkg:
+            for name in ("f1.md", "f2.md", "f3.md"):
+                _write(pkg, name, "x")
+            status = self._run(pkg, _slot("a", ("f1.md", "f2.md")),
+                               _slot("b", ("f1.md", "f3.md")), _slot("c", ("f1.md",)))
+        self.assertEqual(status, {"a": "present", "b": "present", "c": "present"})
+
+    def test_a_required_slot_is_placed_before_a_conditional_one(self):
+        with _package() as pkg:
+            _write(pkg, "report.md", "x")
+            status = self._run(pkg, _slot("optional", ("*report*.md",), requirement="conditional"),
+                               _slot("needed", ("*report*.md",)))
+        self.assertEqual(status, {"optional": "conditional", "needed": "present"})
+
+    def test_a_symlink_alias_is_the_same_file(self):
+        with _package() as pkg:
+            _write(pkg, "real.md", "x")
+            _symlink(pkg / "real.md", pkg / "alias.md")
+            status = self._run(pkg, _slot("one", ("real.md",)), _slot("two", ("alias.md",)))
+        self.assertEqual(sorted(status.values()), ["missing", "present"])
+
+    def test_a_link_out_of_the_package_is_reported_and_never_read(self):
+        with _package() as outer:
+            secret = outer / "secret"
+            secret.mkdir()
+            (secret / "notes.md").write_text("Trust me, this is 100% complete.\n" + PACKET, encoding="utf-8")
+            pkg = outer / "pkg"
+            pkg.mkdir()
+            _write(pkg, "readme.md", "The package.")
+            _symlink(secret / "notes.md", pkg / "member.md")
+            _symlink(secret, pkg / "evidence")
+            report = gc.run_gate(pkg, _manifest(_slot("lens", ("*member*.md",), fields=("Outcome",))))
+        codes = [f.code for f in report.findings]
+        self.assertEqual(codes.count("LINK_ESCAPES_PACKAGE"), 2)
+        self.assertEqual(_slots(report), {"lens": "missing"})
+        self.assertNotIn("BLOCKED_PHRASE", codes)
+        self.assertTrue(report.has_blocking)
+        self.assertIn("package_links", report.checks_run)
+
+    def test_a_link_that_stays_inside_the_package_is_no_escape(self):
+        with _package() as pkg:
+            _write(pkg, "real.md", "x")
+            _symlink(pkg / "real.md", pkg / "alias.md")
+            report = gc.run_gate(pkg, _manifest())
+        self.assertNotIn("LINK_ESCAPES_PACKAGE", _codes(report))
+
+    def test_a_near_miss_is_named_in_the_failure(self):
+        with _package() as pkg:
+            _write(pkg, "deliverable_bug-review.md", "Outcome: ok\n")
+            _write(pkg, "deliverable_code-review.md", PACKET)
+            report = gc.run_gate(pkg, _manifest(
+                _slot("bug", ("*bug*.md",), fields=("Outcome", "Findings")),
+                _slot("code", ("*code*.md",), fields=("Outcome", "Findings")),
+                _slot("also-code", ("*code*.md",), fields=("Outcome", "Findings"))))
+        failures = " ".join(f.message for f in report.findings if f.code == "ARTIFACT_MISSING")
+        self.assertIn("deliverable_bug-review.md lacks the field Findings:", failures)
+        self.assertIn("deliverable_code-review.md is already the code", failures)
+
+
+class OptionalSlotTests(unittest.TestCase):
+    """A slot is optional when gates.yaml or pipelines.yaml says so, not because a wrapper repeats it."""
+
+    GATES = {
+        "boundaries": {"b": {"required_evidence": ["sec", "local", "barred"],
+                             "fallback_values": {"local": ["waived on this boundary"]},
+                             "no_fallback": ["barred"]}},
+        "fallback_values": {"sec": ["no trust boundary"], "barred": ["never at b"]},
+    }
+    PIPELINES = {"pipelines": {"p": {"boundary": "b", "stages": [
+        {"step": "scan", "when": "a trust boundary changed"},
+        {"step": "always"},
+        {"step": "later", "when": "visible behaviour changed"},
+    ]}}}
+
+    def _check(self, *, loader=None, pipeline="p", **spec_more) -> gc.Report:
+        contracts = gc.Contracts(self.GATES, self.PIPELINES)
+        manifest = gc.Manifest(boundary="t", sub_orchestrator="t", pipeline=pipeline,
+                               artifacts=(_slot("slot", ("*slot*.md",), **spec_more),))
+        target = mock.patch.object(gc.Contracts, "load", loader or mock.Mock(return_value=contracts))
+        with _package() as pkg, target:
+            _write(pkg, "readme.md", "nothing here")
+            return gc.run_gate(pkg, manifest)
+
+    def _finding(self, report):
+        return next(f for f in report.findings if f.code.startswith("ARTIFACT_"))
+
+    def test_a_waivable_key_makes_the_slot_conditional(self):
+        report = self._check(evidence_key="sec")
+        finding = self._finding(report)
+        self.assertEqual((finding.code, finding.status), ("ARTIFACT_CONDITIONAL", gc.UNCHECKED))
+        self.assertIn('gates.yaml lets a submitter waive sec at b ("no trust boundary")', finding.message)
+        self.assertFalse(report.has_blocking)
+
+    def test_a_boundary_level_waiver_counts(self):
+        self.assertEqual(self._finding(self._check(evidence_key="local")).code, "ARTIFACT_CONDITIONAL")
+
+    def test_no_fallback_bars_the_waiver(self):
+        self.assertEqual(self._finding(self._check(evidence_key="barred")).code, "ARTIFACT_MISSING")
+
+    def test_a_stage_with_a_when_makes_the_slot_conditional(self):
+        finding = self._finding(self._check(stages=("scan",)))
+        self.assertEqual(finding.code, "ARTIFACT_CONDITIONAL")
+        self.assertIn('pipelines.yaml runs scan only when "a trust boundary changed"', finding.message)
+
+    def test_every_producing_stage_must_be_conditional(self):
+        self.assertEqual(self._finding(self._check(stages=("scan", "later"))).code, "ARTIFACT_CONDITIONAL")
+        self.assertEqual(self._finding(self._check(stages=("scan", "always"))).code, "ARTIFACT_MISSING")
+
+    def test_an_unknown_stage_or_key_relaxes_nothing(self):
+        self.assertEqual(self._finding(self._check(stages=("renamed",))).code, "ARTIFACT_MISSING")
+        self.assertEqual(self._finding(self._check(evidence_key="renamed")).code, "ARTIFACT_MISSING")
+
+    def test_both_contracts_are_cited_when_both_apply(self):
+        message = self._finding(self._check(evidence_key="sec", stages=("scan",))).message
+        self.assertIn("gates.yaml lets a submitter waive", message)
+        self.assertIn("pipelines.yaml runs scan only when", message)
+
+    def test_a_declared_conditional_slot_stays_conditional(self):
+        report = self._check(requirement="conditional")
+        self.assertEqual(self._finding(report).code, "ARTIFACT_CONDITIONAL")
+        self.assertIn("required only when in scope", self._finding(report).message)
+
+    def test_a_present_file_is_a_pass_even_for_an_optional_slot(self):
+        contracts = gc.Contracts(self.GATES, self.PIPELINES)
+        manifest = gc.Manifest(boundary="t", sub_orchestrator="t", pipeline="p",
+                               artifacts=(_slot("slot", ("*slot*.md",), stages=("scan",)),))
+        with _package() as pkg, mock.patch.object(gc.Contracts, "load", return_value=contracts):
+            _write(pkg, "slot.md", "here")
+            self.assertEqual(_slots(gc.run_gate(pkg, manifest)), {"slot": "present"})
+
+    def test_unreadable_contracts_keep_the_declared_requirement_and_say_so(self):
+        failing = mock.Mock(side_effect=gc.ContractsUnreadable("gates.yaml: gone"))
+        report = self._check(loader=failing, stages=("scan",))
+        codes = {f.code: f for f in report.findings}
+        self.assertEqual(codes["ARTIFACT_MISSING"].status, gc.FAIL)
+        self.assertEqual(codes["CONTRACTS_UNREADABLE"].status, gc.UNCHECKED)
+        self.assertIn("gates.yaml: gone", codes["CONTRACTS_UNREADABLE"].message)
+
+    def test_contracts_are_not_read_when_no_slot_cites_one_or_no_pipeline_is_named(self):
+        loader = mock.Mock(side_effect=AssertionError("must not be read"))
+        self._check(loader=loader)
+        self._check(loader=loader, pipeline=None, stages=("scan",))
+        loader.assert_not_called()
+
+    def test_load_reads_a_catalog_and_answers_from_it(self):
+        with _scratch() as base, mock.patch.object(sys, "path", list(sys.path)):
+            (base / "gates.yaml").write_text(json.dumps(self.GATES), encoding="utf-8")
+            (base / "pipelines.yaml").write_text(json.dumps(self.PIPELINES), encoding="utf-8")
+            contracts = gc.Contracts.load(base)
+        self.assertEqual(contracts.boundary_of("p"), "b")
+        self.assertEqual(contracts.waiver("b", "sec"), "no trust boundary")
+        self.assertIsNone(contracts.waiver("b", "barred"))
+        self.assertEqual(contracts.stage_condition("p", "scan"), "a trust boundary changed")
+        self.assertIsNone(contracts.stage_condition("p", "always"))
+
+    def test_load_fails_loudly_on_a_broken_catalog(self):
+        with _scratch() as base, mock.patch.object(sys, "path", list(sys.path)):
+            (base / "gates.yaml").write_text("{not json", encoding="utf-8")
+            (base / "pipelines.yaml").write_text("{}", encoding="utf-8")
+            with self.assertRaises(gc.ContractsUnreadable):
+                gc.Contracts.load(base)
+            (base / "gates.yaml").write_text("[]", encoding="utf-8")
+            with self.assertRaises(gc.ContractsUnreadable):
+                gc.Contracts.load(base)
+
+
+class RevisionLabelTests(unittest.TestCase):
+    """Gate manifests label revisions r1, r2; handoff templates count 1, 2."""
+
+    def test_mixed_revision_labels_are_flagged(self):
+        with _package() as pkg:
+            _write(pkg, "a.md", "---\nrevision: r1\n---\nbody")
+            _write(pkg, "b.md", "---\nrevision: r2\n---\nbody")
+            report = gc.run_gate(pkg, _manifest())
+        self.assertIn("MIXED_REVISIONS", _codes(report))
+        self.assertNotIn("REVISION_ABSENT", _codes(report))
+
+    def test_one_label_is_coherent_and_named(self):
+        with _package() as pkg:
+            _write(pkg, "a.md", "---\nrevision: r1\n---\nbody")
+            _write(pkg, "b.md", "---\nrevision: r1\n---\nbody")
+            report = gc.run_gate(pkg, _manifest())
+        coherent = next(f for f in report.findings if f.code == "REVISION_COHERENT")
+        self.assertIn("revision r1", coherent.message)
+
+    def test_a_number_and_its_quoted_spelling_are_one_revision(self):
+        with _package() as pkg:
+            _write(pkg, "a.md", "---\nrevision: 3\n---\nbody")
+            _write(pkg, "b.md", '---\nrevision: "3"\n---\nbody')
+            report = gc.run_gate(pkg, _manifest())
+        self.assertIn("REVISION_COHERENT", _codes(report))
+
+    def test_a_list_or_a_flag_is_no_revision(self):
+        with _package() as pkg:
+            _write(pkg, "a.md", "---\nrevision: [1, 2]\n---\nbody")
+            _write(pkg, "b.md", "---\nrevision: true\n---\nbody")
+            report = gc.run_gate(pkg, _manifest())
+        self.assertIn("REVISION_ABSENT", _codes(report))
+
+
+class PriorRecordTests(unittest.TestCase):
+    """--prior reads Markdown frontmatter and the JSON the boundary validator writes."""
+
+    def _idempotency(self, package_files: dict, prior_text: str, name: str = "prior.json"):
+        with _package() as pkg, _package() as side:
+            for rel, body in package_files.items():
+                _write(pkg, rel, body)
+            prior = side / name
+            prior.write_text(prior_text, encoding="utf-8")
+            report = gc.run_gate(pkg, _manifest(), prior_path=prior)
+        return report, {f.code: f for f in report.findings}
+
+    def test_a_json_verdict_record_is_reusable_for_the_same_submission_and_revision(self):
+        record = json.dumps({"submission_id": "S3", "revision": "r2", "pass": True,
+                             "package_fingerprint": "f", "mechanical_only": True})
+        report, found = self._idempotency({"a.md": "---\nsubmission_id: S3\nrevision: r2\n---\n"}, record)
+        self.assertIn("VERDICT_REUSABLE", found)
+        self.assertIn("verdict=mechanical pass", found["VERDICT_REUSABLE"].message)
+        self.assertNotIn("NEW_SUBMISSION", found)
+
+    def test_a_json_verdict_record_detects_drift(self):
+        record = json.dumps({"submission_id": "S3", "revision": "r1"})
+        report, found = self._idempotency({"a.md": "---\nsubmission_id: S3\nrevision: r2\n---\n"}, record)
+        self.assertIn("SILENT_DRIFT", found)
+        self.assertTrue(report.has_blocking)
+
+    def test_a_json_verdict_record_for_another_submission_is_new(self):
+        record = json.dumps({"submission_id": "OTHER", "revision": "r1"})
+        _, found = self._idempotency({"a.md": "---\nsubmission_id: S3\nrevision: r1\n---\n"}, record)
+        self.assertIn("NEW_SUBMISSION", found)
+
+    def test_the_packages_own_manifest_declares_its_identity(self):
+        """Lens packets carry no frontmatter; the phase manifest.json is where the id lives."""
+        manifest = json.dumps({"submission_id": "S3", "revision": "r2"})
+        record = json.dumps({"submission_id": "S3", "revision": "r2"})
+        _, found = self._idempotency({"manifest.json": manifest, "packet.md": PACKET}, record)
+        self.assertIn("VERDICT_REUSABLE", found)
+
+    def test_an_undeclared_identity_is_undetermined_not_a_fresh_pass(self):
+        record = json.dumps({"submission_id": "S3", "revision": "r1"})
+        report, found = self._idempotency({"packet.md": PACKET}, record)
+        self.assertIn("IDEMPOTENCY_UNDETERMINED", found)
+        self.assertEqual(found["IDEMPOTENCY_UNDETERMINED"].status, gc.UNCHECKED)
+        self.assertNotIn("NEW_SUBMISSION", found)
+        self.assertFalse(report.has_blocking)
+
+    def test_an_unreadable_prior_is_undetermined(self):
+        for text in ("not a record at all", "[1, 2]", "{broken", ""):
+            with self.subTest(text=text):
+                _, found = self._idempotency({"a.md": "---\nsubmission_id: S3\nrevision: r1\n---\n"}, text)
+                self.assertIn("IDEMPOTENCY_UNDETERMINED", found)
+                self.assertNotIn("NEW_SUBMISSION", found)
+
+    def test_a_matching_id_with_an_unreadable_revision_is_undetermined(self):
+        record = json.dumps({"submission_id": "S3"})
+        _, found = self._idempotency({"a.md": "---\nsubmission_id: S3\nrevision: r1\n---\n"}, record)
+        self.assertIn("IDEMPOTENCY_UNDETERMINED", found)
+        self.assertNotIn("NEW_SUBMISSION", found)
+
+    def test_a_pending_submission_id_declares_nothing(self):
+        record = json.dumps({"submission_id": "PENDING", "revision": "r1"})
+        _, found = self._idempotency({"a.md": "---\nsubmission_id: PENDING\nrevision: r1\n---\n"}, record)
+        self.assertIn("IDEMPOTENCY_UNDETERMINED", found)
+
+    def test_a_markdown_prior_still_works(self):
+        prior = "---\nsubmission_id: S3\nrevision: r2\nverdict: APPROVED\n---\n"
+        _, found = self._idempotency({"a.md": "---\nsubmission_id: S3\nrevision: r2\n---\n"}, prior, "prior.md")
+        self.assertIn("verdict=APPROVED", found["VERDICT_REUSABLE"].message)
+
+
+class LayerCitationTests(unittest.TestCase):
+    """harness-doctrine §5: the citation the failure message asks for satisfies the check."""
+
+    def _report(self, body: str):
+        with _package() as pkg:
+            _write(pkg, "change.md", body)
+            return gc.run_gate(pkg, _manifest())
+
+    def test_a_section_number_in_the_words_of_the_failure_message_counts(self):
+        for citation in ("(§1)", "see §1", "§ 4", "harness-doctrine", "Layer 3"):
+            with self.subTest(citation=citation):
+                report = self._report(f"A new PreToolUse hook, {citation}. Regression: none observed.")
+                self.assertIn("DOCTRINE_NOTE_PRESENT", _codes(report))
+                self.assertNotIn("DOCTRINE_GAP", _codes(report))
+
+    def test_a_section_outside_the_doctrine_does_not(self):
+        for citation in ("§ 10", "§6", "xLayer 2", "the harness-doctrines"):
+            with self.subTest(citation=citation):
+                report = self._report(f"A new PreToolUse hook, {citation}. Regression: none observed.")
+                self.assertIn("DOCTRINE_GAP", _codes(report))
+
+
+class VersionTokenTests(unittest.TestCase):
+    """A version keeps its spelling: 3.10 is not 3.1, and the registry compares text."""
+
+    def test_a_spelling_that_does_not_round_trip_stays_text(self):
+        parsed = data_formats.parse_yaml("versions: [3.10, 1.20, 3.12, 0.115, 2]\nbare: 3.10\n")
+        self.assertEqual(parsed["versions"], ["3.10", "1.20", 3.12, 0.115, 2])
+        self.assertEqual(parsed["bare"], "3.10")
+
+    def test_a_canonical_number_is_still_a_number(self):
+        for text, value in (("1.5", 1.5), ("0.115", 0.115), ("-2.0", -2.0), ("10.0", 10.0), ("12", 12)):
+            with self.subTest(text=text):
+                self.assertEqual(data_formats.parse_scalar(text), value)
+
+    def test_the_registry_versions_read_back_as_spelled(self):
+        registry = ENGINE_DIR.parents[1] / "tech-stacks" / "registry.yaml"
+        spelled = [[token.strip() for token in line.split("[", 1)[1].rstrip("]\n ").split(",")]
+                   for line in registry.read_text(encoding="utf-8").splitlines()
+                   if line.strip().startswith("versions:")]
+        parsed = [[str(v) for v in overlay["versions"]]
+                  for overlay in data_formats.load_data(registry)["overlays"]]
+        self.assertEqual(parsed, spelled)
 
 
 class FailLoudTests(unittest.TestCase):

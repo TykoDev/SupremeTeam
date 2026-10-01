@@ -460,6 +460,79 @@ class ReadOnlyRunTests(GuardCase):
         """BUGH-05, SEC-09 (b): `2>/dev/null` and `2>&1` made every read in a read-only run 'mutating'."""
         self.check(("grep -rn foo src 2>/dev/null", "cat README.md 2>&1", "ls -la >&2", "cmd &>/dev/null"), deny=False)
 
+    def test_a_mutating_verb_whose_operands_arrive_on_stdin_is_denied(self):
+        """RR3-guard-1: round 1 denied these by the word `rm` or `sed -i`; the analyser sees the verb with no operand."""
+        self.check((
+            "cat list | xargs rm -rf", "find . -name '*.pyc' | xargs rm", "find . -name '*.pyc' -print0 | xargs -0 rm",
+            "git ls-files | xargs sed -i s/a/b/", "xargs rm < list", "xargs -a list rm", "ls | xargs -n1 -P4 touch", "ls | xargs chmod +x",
+            "ls | xargs mv -t src", "ls | xargs gzip", "ls | xargs -r tee", "ls | xargs perl -pi -e s/a/b/", "ls | xargs truncate -s 0",
+            "ls | xargs mkdir -p", f"ls | xargs touch skillset-saves/runs/{READ_ONLY_RUN}/investigation/a", "sudo xargs rm < list",
+            "nohup xargs rm < list", "env xargs rm < list",
+        ), deny=True, fragment="is recorded read-only")
+        self.check(("cat list | xargs rm -rf",), deny=True, fragment="not in the command")
+
+    def test_xargs_that_only_reads_or_names_every_target_passes(self):
+        base = f"skillset-saves/runs/{READ_ONLY_RUN}/investigation"
+        self.check((
+            "xargs grep x", "xargs -n1 echo", "git ls-files | xargs wc -l", "git ls-files | xargs grep -n TODO",
+            "find . -type f -print0 | xargs -0 sha256sum", "git ls-files | xargs sed -n 1p", "git ls-files | xargs sed s/a/b/", "ls | xargs file",
+            f"ls | xargs cp -t {base}/", f"ls | xargs -I{{}} cp {{}} {base}/", f"ls | xargs gzip -c > {base}/all.gz",
+        ), deny=False)
+        self.check(("echo a b | xargs touch",), deny=True, fragment="is recorded read-only")
+
+    def test_a_program_that_redirects_or_opens_a_file_for_writing_is_denied(self):
+        """RR3-guard-1: `awk '{print > "out"}'` and `perl -e 'open(F, ">src/payments/a")'` were denied by the `>` in the text."""
+        self.check((
+            "awk '{print > \"out\"}' f", "awk 'BEGIN{print 1 > \"src/payments/a\"}'", "gawk '{printf \"%s\\n\", $1 >> \"out\"}' f",
+            f"awk '{{print > \"skillset-saves/runs/{READ_ONLY_RUN}/investigation/o\"}}' f", "awk '{print $1 | \"tee out\"}' f",
+            "awk '{system(\"rm \" $1)}' f", "perl -e 'open(F, \">src/payments/a\")'", "perl -E 'open my $fh, \">>\", \"x\"'",
+            "perl -e 'unlink \"x\"'", "perl -e 'system(\"rm -rf x\")'", "python3 -c \"open('x','w').write('1')\"",
+            "python3 -c \"import pathlib; pathlib.Path('x').write_text('1')\"", "python3 -c \"import os; os.system('rm -rf x')\"",
+            "python3 - <<'EOF'\nopen('f','w')\nEOF", "node -e \"require('fs').writeFileSync('x','1')\"",
+            "node -e \"require('child_process').execSync('rm -rf x')\"", "ruby -e \"File.write('x','1')\"", "ruby -e \"system('rm x')\"",
+            "php -r 'file_put_contents(\"x\",\"1\");'", "sed -n 'w out' f", "sed 's/a/b/w out' f", "sed -e 's/a/b/' -e 'w out' f",
+            "sh -c \"awk '{print > \\\"out\\\"}' f\"",
+        ), deny=True, fragment="is recorded read-only")
+        self.check(("awk '{print > \"out\"}' f",), deny=True, fragment="not in the command")
+
+    def test_a_program_that_only_reads_passes(self):
+        self.check((
+            "awk '{print $1}' f", "awk '$1 > 5' f", "awk -F, '$3 >= 10 && $2 > 0 {print $1}' f", "awk '{print ($1 > 5) ? \"a\" : \"b\"}' f",
+            "awk '/a|b/ {print}' f", "awk 'NR > 1' f", "awk '{print $1 > \"/dev/stderr\"}' f", "awk '{print $1 | \"sort\"}' f",
+            f"awk '{{print $1}}' f > skillset-saves/runs/{READ_ONLY_RUN}/investigation/out",
+            "perl -ne 'print if /x/' f", "perl -ne 'print if /x/ && $. > 3' f", "perl -e 'open(F, \"<f\"); print <F>'",
+            "python -c \"print(1)\"", "python3 -c \"print(1 > 0)\"", "python3 -c \"print(open('f').read())\"",
+            "python3 -c \"import subprocess; print(subprocess.check_output(['git','log']))\"", "node -e \"[1,2].map(x => x*2)\"",
+            "node -e \"console.log(require('fs').readFileSync('f','utf8'))\"", "ruby -e \"puts [1,2].map { |x| x > 1 }\"",
+            "sed -n 's/a/b/p' f", "sed -n '/a/,/b/p' f", "sed 's/world/x/' f", "sed -f script.sed f",
+        ), deny=False)
+
+    def test_powershell_that_takes_its_path_from_the_pipeline_is_denied(self):
+        self.check(("Get-ChildItem *.pyc | Remove-Item", "Get-ChildItem | Remove-Item -Recurse", "ls | rm", "gci | ri",
+                    "Get-ChildItem | Move-Item -Destination d", "[System.IO.File]::WriteAllText('x','y')", "[IO.File]::Delete('x')",
+                    "powershell -Command \"Get-ChildItem | Remove-Item\""),
+                   deny=True, tool="PowerShell", fragment="is recorded read-only")
+        self.check(("Get-ChildItem | Select-Object Name", "[System.IO.File]::ReadAllText('x')", "Get-ChildItem | Where-Object Length -gt 5",
+                    f"'x' | Out-File skillset-saves/runs/{READ_ONLY_RUN}/investigation/o.txt"), deny=False, tool="PowerShell")
+
+    def test_the_unnamed_write_rule_is_for_a_read_only_run_only(self):
+        """A freeze and a block judge the targets a command names; a write with no named target is not theirs to guess."""
+        commands = ("cat list | xargs rm -rf", "awk '{print > \"out\"}' f", "perl -e 'open(F, \">out\")'", "sed -n 'w out' f")
+        for state in ({}, FROZEN, {"blocked_globs": [{"glob": "**/secrets/**", "owner": "ops"}]}):
+            self.guard(state)
+            with self.subTest(state=sorted(state)):
+                self.check(commands, deny=False)
+        self.guard(READ_ONLY)
+        self.check(commands, deny=True, fragment="is recorded read-only")
+
+    def test_the_reason_for_an_unnamed_write_says_what_to_do_and_a_plain_denial_does_not(self):
+        plain = kit.reason(self.call("touch notes.md"))
+        unnamed = kit.reason(self.call("cat list | xargs rm"))
+        self.assertTrue(unnamed.startswith(plain))
+        self.assertIn("name each target in the shell command itself", unnamed)
+        self.assertNotIn("not in the command", plain)
+        self.assertNotIn("\n", unnamed)
+
     def test_a_released_record_is_inert(self):
         self.guard({"read_only": [{"run_id": "r1", "owner": "ops", "allow": [ALLOW], "released": True}]})
         self.check(("echo x > src/app.py", "git add -A"), deny=False)

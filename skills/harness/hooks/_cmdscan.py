@@ -14,7 +14,10 @@ does and returns structure the guard rules apply to:
   working directories a ``cd`` or ``git -C`` earlier in the line may have set;
 * ``code``: the text of interpreter programs (``python -c``, ``node -e``, a heredoc to
   ``python -``, an ``awk`` program), which cannot be read for what they write, so the
-  guard searches them for protected paths instead.
+  guard searches them for protected paths instead;
+* ``unnamed``: the writes whose target is not in the command at all (a mutating verb
+  that ``xargs`` feeds from standard input, an inline program that redirects or opens
+  a file), which a rule that needs every target named (a read-only run) cannot accept.
 
 It is a text analysis, not a sandbox. It does not execute, resolve a path built at run
 time, follow a script file, or know a tool it has no entry for; where it cannot tell it
@@ -59,12 +62,22 @@ class Write:
     unresolved: bool = False
 
 
+@dataclass(frozen=True)
+class Unnamed:
+    """A write the command does not name a target for: ``how`` is ``stdin`` (the verb's operands arrive on standard
+    input), ``program`` (an inline program redirects or opens a file) or ``nested`` (text below ``MAX_DEPTH``, with
+    no verb)."""
+    verb: str
+    how: str
+
+
 @dataclass
 class Analysis:
     ok: bool = True
     commands: list = field(default_factory=list)
     writes: list = field(default_factory=list)
     code: list = field(default_factory=list)
+    unnamed: list = field(default_factory=list)
     # A ``cd`` led past ``MAX_CWD`` characters: the directory of the writes after it is not known.
     lost_directory: bool = False
 
@@ -1185,6 +1198,10 @@ _CD = frozenset({"cd", "chdir", "pushd", "set-location", "sl", "push-location"})
 _DECLARE = frozenset({"export", "declare", "local", "readonly", "typeset"})
 _XARGS_ARG = frozenset({"-n", "-P", "-L", "-s", "-d", "-E", "-a", "--max-args", "--max-procs", "--max-lines",
                         "--max-chars", "--delimiter", "--eof", "--arg-file"})
+# Stands in for the operands a command reads from standard input: a path word no real command line contains.
+_STDIN = _Arg("<stdin>")
+# The cmdlets whose path parameter takes the objects of the pipeline before them (``Get-ChildItem | Remove-Item``).
+_PS_PIPED = frozenset({"remove-item", "move-item", "copy-item", "rename-item", "clear-content", "set-itemproperty", "set-acl"})
 
 
 def _skip_options(rest: list, with_arg: frozenset, positional: int, assignments: bool) -> list:
@@ -1259,7 +1276,8 @@ def _cmd(rest: list, ctx: _Ctx) -> None:
 
 
 def _xargs(rest: list, upstream: "list | None") -> list:
-    """The commands xargs runs: its command with the operands a literal upstream stage supplies appended, or one per operand for ``-I``."""
+    """``(command, fed)`` for each command xargs runs: its command with the operands a literal upstream stage supplies
+    appended, or one per operand for ``-I``. ``fed`` is true when the operands arrive on standard input, unread."""
     i = 0
     replace = None
     while i < len(rest):
@@ -1279,10 +1297,10 @@ def _xargs(rest: list, upstream: "list | None") -> list:
     nested = list(rest[i:])
     words = [_Arg(word) for word in (upstream or [])]
     if not words:
-        return [nested]
+        return [(nested, not replace)]
     if replace:
-        return [[_Arg(a.text.replace(replace, word.text), a.glob, a.unresolved) for a in nested] for word in words]
-    return [nested + words]
+        return [([_Arg(a.text.replace(replace, word.text), a.glob, a.unresolved) for a in nested], False) for word in words]
+    return [(nested + words, False)]
 
 
 def _inline_code(verb: str, rest: list, body: "str | None") -> list:
@@ -1327,10 +1345,113 @@ def _inline_code(verb: str, rest: list, body: "str | None") -> list:
         if code:
             return code
         return [body] if body is not None and not [a for a in rest if not a.text.startswith("-")] else []
-    if verb in ("awk", "gawk", "mawk", "nawk"):
+    if verb in _AWKS:
         _, operands, _, has_file = _awk_args(rest)
         return [] if has_file or not operands else [operands[0].text]
     return []
+
+
+# --- programs that write where the command line does not say --------------------------------------------
+
+_AWKS = frozenset({"awk", "gawk", "mawk", "nawk"})
+_AWK_WORD = re.compile(r"\w+")
+_AWK_CALL = re.compile(r"\s*\(")
+_AWK_NULL_SINK = re.compile(r'>?\s*"/dev/(?:null|stdout|stderr|tty)"')
+# Where a ``/`` opens a regular expression rather than divides: at the start, after an operator or a block.
+_AWK_REGEX_AFTER = frozenset("{(,;\n!~&|=<>+-*%^?:}")
+# The text of a command that writes, for a program that runs one: a mutating verb as a word (the round 1 list), a
+# git subcommand that changes the repository, or a redirect inside a string (``system("echo x > f")``).
+_MUTATING_TEXT = re.compile(
+    r"(?<![\w.-])(?:rm|mv|cp|ln|dd|tee|truncate|shred|install|mkdir|rmdir|touch|chmod|chown|unlink|rename)(?![\w-])"
+    r"|\bsed\s+-\w*i|\bgit\s+(?:add|commit|checkout|restore|reset|rm|mv|apply|stash|clean|push)\b"
+    r"""|["'`][^"'`]*\s>>?\s*[\w./~$-]""")
+
+
+def _awk_writes(program: str) -> bool:
+    """True when an awk program prints through a redirect, or runs a command (a pipe, ``system``) that mutates.
+
+    ``>`` redirects only in a ``print`` or ``printf`` statement outside parentheses (``$1 > 5`` and
+    ``print ($1 > 5)`` compare), and a single ``|`` is always a pipe to or from a command. Strings, comments and
+    regular expressions are skipped, so a ``>`` or ``|`` inside one counts for nothing."""
+    i, n = 0, len(program)
+    printing, depth, previous, runs = False, 0, "", False
+    while i < n:
+        char = program[i]
+        if char in " \t\r":
+            i += 1
+            continue
+        if char == "#":
+            while i < n and program[i] != "\n":
+                i += 1
+            continue
+        if char == '"' or (char == "/" and (not previous or previous in _AWK_REGEX_AFTER)):
+            i += 1
+            while i < n and program[i] != char:
+                i += 2 if program[i] == "\\" else 1
+            i, previous = i + 1, "x"
+            continue
+        word = _AWK_WORD.match(program, i)
+        if word:
+            i, previous = word.end(), "x"
+            if word.group() in ("print", "printf") and not printing:
+                printing, depth = True, 0
+            elif word.group() == "system" and _AWK_CALL.match(program, i):
+                runs = True
+            continue
+        if char == "|":
+            if program[i + 1:i + 2] == "|":
+                i += 1
+            else:
+                runs = True
+        elif char == ">" and printing and depth == 0 and not _AWK_NULL_SINK.match(program, i + 1):
+            return True
+        elif printing and char == "(":
+            depth += 1
+        elif printing and char == ")" and depth:
+            depth -= 1
+        elif printing and char in ";}\n" and not depth:
+            printing = False
+        previous = char
+        i += 1
+    return runs and _MUTATING_TEXT.search(program) is not None
+
+
+# What an inline program of the other interpreters does that writes a file: opens one with a write mode (or
+# perl's ``>``, ``>>``, ``+<`` and ``|``), or calls one of the usual write, remove, rename and create functions.
+# The gap between ``open`` and its mode is bounded so the search stays linear in the program.
+_OPEN_FOR_WRITE = re.compile(
+    r"""\b\w*open\w*\b[^;\n]{0,200}?,\s*(?:mode\s*=\s*)?(["'])(?:[rbtU]*[wax+][rbtwaxU+]*|\s*(?:\+?>>?|\+<|\|)[^"']*)\1""")
+_FILE_CALL = re.compile("|".join((
+    r"\b(?:unlink|rename|mkdir|rmdir|truncate|symlink|sysopen|syswrite|utime|chmod|chown)\b",
+    r"\bos\.(?:remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|truncate|chmod|chown|symlink|link|write|utime|open)\b",
+    r"\bshutil\.(?:copy\w*|move|rmtree|make_archive|unpack_archive|chown)\b",
+    r"\.(?:write_text|write_bytes|touch|mkdir|rmdir|unlink|rename|symlink_to|hardlink_to|chmod)\s*\(",
+    r"\b(?:write(?:File|Stream)\w*|appendFile\w*|createWriteStream|writeSync|(?:unlink|rmdir|mkdir|rename|copyFile|truncate|"
+    r"chmod|chown|symlink|utimes|rm|cp)(?:Sync)?)\s*\(",
+    r"\b(?:File|IO|Dir)\.(?:write|binwrite|delete|unlink|rename|chmod|chown|truncate|mkdir|rmdir|symlink|link)\b|\bFileUtils\b",
+    r"\b(?:file_put_contents|fwrite|fputs|fputcsv|touch|move_uploaded_file|writeLines|saveRDS|sink|dir\.create|"
+    r"write\.(?:csv|table)|file\.(?:remove|create|copy|rename|append))\s*\(",
+)))
+_RUNS_COMMAND = re.compile(r"\b(?:system|popen|spawn\w*|exec\w*|subprocess|child_process|shell_exec|passthru|proc_open|qx)\b|`")
+# A sed ``w`` or ``W`` command (after an address, ``;``, ``{`` or the start) or ``s`` flag, and the GNU ``e`` command.
+_SED_WRITE = re.compile(r"(?:^|[\n;{}]|[\d$!,]|[/,#|:@][gpiImMx\d]*)\s*[wW]\s+\S")
+_SED_EXEC = re.compile(r"(?:^|[\n;{}]|[\d$/!,])\s*e(?:[\s;}]|$)")
+
+
+def _sed_scripts(rest: list) -> list:
+    """The words of a sed command line that may hold its script: ``-e`` values, ``--expression=`` values, operands."""
+    return [a.text.partition("=")[2] if a.text.startswith("--expression=") else a.text
+            for a in rest if not (a.text.startswith("-") and len(a.text) > 1) or a.text.startswith("--expression=")]
+
+
+def _program_writes(verb: str, rest: list, code: list) -> bool:
+    """True when an inline program redirects or opens a file for writing, or runs a command that mutates."""
+    if verb == "sed":
+        return any(_SED_WRITE.search(text) or (_SED_EXEC.search(text) and _MUTATING_TEXT.search(text)) for text in _sed_scripts(rest))
+    if verb in _AWKS:
+        return any(_awk_writes(text) for text in code)
+    return any(_OPEN_FOR_WRITE.search(text) or _FILE_CALL.search(text) or (_RUNS_COMMAND.search(text) and _MUTATING_TEXT.search(text))
+               for text in code)
 
 
 # --- driver ------------------------------------------------------------------------
@@ -1344,6 +1465,13 @@ def _note_write(ctx: _Ctx, path: str, via: str, cwds: tuple, glob: bool, unresol
     if key not in ctx.seen:
         ctx.seen.add(key)
         ctx.out.writes.append(Write(path, via, cwds, glob, unresolved))
+
+
+def _note_unnamed(ctx: _Ctx, verb: str, how: str) -> None:
+    key = ("unnamed", verb, how)
+    if key not in ctx.seen:
+        ctx.seen.add(key)
+        ctx.out.unnamed.append(Unnamed(verb, how))
 
 
 def _recent(ctx: _Ctx) -> tuple:
@@ -1436,7 +1564,7 @@ def _literal_words(verb: str, rest: list) -> "list | None":
     return [piece for text in words for piece in text.split()]
 
 
-def _run_stage(tokens: list, ctx: _Ctx, upstream: "list | None") -> "list | None":
+def _run_stage(tokens: list, ctx: _Ctx, upstream: "list | None", piped: bool = False) -> "list | None":
     words = [value for kind, value in tokens if kind == "w"]
     redirects = [value for kind, value in tokens if kind == "r"]
     body = _record_redirects(redirects, ctx)
@@ -1457,13 +1585,16 @@ def _run_stage(tokens: list, ctx: _Ctx, upstream: "list | None") -> "list | None
     args = _strip_keywords(args)
     if not args:
         return None
-    _exec(args, ctx, body, upstream)
+    _exec(args, ctx, body, upstream, piped and ctx.ps)
     verb = _verb(args[0].text)
     return _literal_words(verb, args[1:]) if verb in ("echo", "printf", "write-output", "write-host") else None
 
 
-def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None") -> None:
-    """Unwrap launchers until the command that actually runs, then record it, its writes and its code."""
+def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None", stdin: bool = False) -> None:
+    """Unwrap launchers until the command that actually runs, then record it, its writes and its code.
+
+    ``stdin`` is true when the command's operands may arrive on standard input: what ``xargs`` runs, and a
+    PowerShell cmdlet with a pipeline stage before it."""
     for _ in range(64):
         if not args:
             return
@@ -1490,8 +1621,8 @@ def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None") ->
             _cmd(rest, ctx)
             return
         if verb == "xargs":
-            for command in _xargs(rest, upstream):
-                _exec(command, ctx, None, None)
+            for command, fed in _xargs(rest, upstream):
+                _exec(command, ctx, None, None, fed)
             return
         wrapper = _WRAPPERS.get(verb)
         if wrapper is None or (verb == "command" and rest and rest[0].text in ("-v", "-V")):
@@ -1499,7 +1630,7 @@ def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None") ->
         args = _skip_options(rest, *wrapper)
     else:
         return
-    _finish(args, ctx, body)
+    _finish(args, ctx, body, stdin)
 
 
 def _change_directory(rest: list, ctx: _Ctx) -> None:
@@ -1516,16 +1647,28 @@ def _change_directory(rest: list, ctx: _Ctx) -> None:
         ctx.cwds.append(moved)
 
 
-def _record_targets(verb: str, rest: list, ctx: _Ctx) -> None:
+def _find_targets(verb: str, rest: list, ctx: _Ctx) -> "tuple | None":
+    """``(items, via)``: what a verb with an entry in the write-target tables writes, or None for any other verb."""
     canonical = _PS_ALIASES.get(verb, verb)
     if canonical in _PS_SPECS and (ctx.ps or verb not in _TARGETS):
-        items, via = _t_powershell(canonical, rest, ctx), canonical
-    elif verb in _TARGETS:
-        items, via = _TARGETS[verb](rest, ctx), verb
-    elif verb in _CMD_VERBS:
-        items, via = _t_cmd(verb, rest, ctx), verb
-    else:
+        return _t_powershell(canonical, rest, ctx), canonical
+    if verb in _TARGETS:
+        return _TARGETS[verb](rest, ctx), verb
+    if verb in _CMD_VERBS:
+        return _t_cmd(verb, rest, ctx), verb
+    return None
+
+
+def _record_targets(verb: str, rest: list, ctx: _Ctx, stdin: bool = False) -> None:
+    found = _find_targets(verb, rest, ctx)
+    if found is None:
         return
+    items, via = found
+    if stdin and (via in _PS_PIPED or not ctx.ps):
+        # Operands on standard input are the verb's targets too: ask where a word appended to its arguments would land.
+        probe = _find_targets(verb, [*rest, _STDIN], ctx)[0]
+        if any((item[0] if isinstance(item, tuple) else item).text == _STDIN.text for item in probe):
+            _note_unnamed(ctx, verb, "stdin")
     for item in items:
         argument, directories, label = item if isinstance(item, tuple) else (item, (), via)
         if _is_null(argument):
@@ -1538,7 +1681,7 @@ def _record_targets(verb: str, rest: list, ctx: _Ctx) -> None:
         _note_write(ctx, argument.text, label, cwds, argument.glob, argument.unresolved)
 
 
-def _finish(args: list, ctx: _Ctx, body: "str | None") -> None:
+def _finish(args: list, ctx: _Ctx, body: "str | None", stdin: bool = False) -> None:
     verb = _verb(args[0].text)
     rest = args[1:]
     command = Command(verb, tuple(a.text for a in rest), _recent(ctx))
@@ -1552,10 +1695,14 @@ def _finish(args: list, ctx: _Ctx, body: "str | None") -> None:
             match = _ASSIGN.match(argument.text)
             if match and not argument.unresolved:
                 ctx.vars[match.group(1).lower() if ctx.ps else match.group(1)] = match.group(2)
-    _record_targets(verb, rest, ctx)
-    ctx.out.code.extend(_inline_code(verb, rest, body))
+    _record_targets(verb, rest, ctx, stdin)
+    code = _inline_code(verb, rest, body)
+    ctx.out.code.extend(code)
+    if _program_writes(verb, rest, code):
+        _note_unnamed(ctx, verb, "program")
     if _DOTNET_FILE.search(args[0].text):
         ctx.out.code.append(ctx.text)
+        _note_unnamed(ctx, verb, "program")
 
 
 def _run_tokens(tokens: list, ctx: _Ctx) -> None:
@@ -1563,8 +1710,8 @@ def _run_tokens(tokens: list, ctx: _Ctx) -> None:
 
     def flush() -> None:
         upstream = None
-        for stage in stages:
-            upstream = _run_stage(stage, ctx, upstream)
+        for index, stage in enumerate(stages):
+            upstream = _run_stage(stage, ctx, upstream, index > 0)
         stages[:] = [[]]
 
     marks: list = []
@@ -1590,6 +1737,7 @@ def _process(text: str, ctx: _Ctx, ps: bool, scoped: bool = True) -> None:
     ``eval`` runs in the current shell (``scoped`` false) and keeps it."""
     if ctx.depth >= MAX_DEPTH:
         ctx.out.code.append(text)
+        _note_unnamed(ctx, "", "nested")
         return
     saved_ps, saved_text, mark = ctx.ps, ctx.text, len(ctx.cwds)
     ctx.ps, ctx.text = ps, text

@@ -416,6 +416,226 @@ class OpaqueCodeTests(unittest.TestCase):
         self.assertEqual(analyse("[Math]::Max(1,2)", ps=True).code, [])
 
 
+def unnamed(text: str, ps: bool = False) -> list:
+    return [(entry.verb, entry.how) for entry in analyse(text, ps).unnamed]
+
+
+# RR3-guard-1: a write whose target is not in the command. Each entry is a command and the (verb, how) it reports.
+STDIN_FED = (
+    ("cat list | xargs rm -rf", [("rm", "stdin")]),
+    ("find . -name '*.pyc' | xargs rm", [("rm", "stdin")]),
+    ("find . -name '*.pyc' -print0 | xargs -0 rm", [("rm", "stdin")]),
+    ("git ls-files | xargs sed -i s/a/b/", [("sed", "stdin")]),
+    ("git ls-files | xargs sed -i -e s/a/b/", [("sed", "stdin")]),
+    ("xargs rm < list", [("rm", "stdin")]),
+    ("xargs -a list rm", [("rm", "stdin")]),
+    ("ls | xargs -n1 -P4 touch", [("touch", "stdin")]),
+    ("ls | xargs chmod +x", [("chmod", "stdin")]),
+    ("ls | xargs mv -t dest", [("mv", "stdin")]),
+    ("ls | xargs gzip", [("gzip", "stdin")]),
+    ("ls | xargs -r tee", [("tee", "stdin")]),
+    ("ls | xargs perl -pi -e s/a/b/", [("perl", "stdin")]),
+    ("ls | xargs truncate -s 0", [("truncate", "stdin")]),
+    ("ls | xargs ln -s", [("ln", "stdin")]),
+    ("ls | xargs mkdir -p", [("mkdir", "stdin")]),
+    ("ls | xargs cp dest", [("cp", "stdin")]),
+    ("ls | xargs git add", [("git", "stdin")]),
+    ("ls | xargs touch named", [("touch", "stdin")]),
+    ("sudo xargs rm < list", [("rm", "stdin")]),
+    ("env xargs rm < list", [("rm", "stdin")]),
+    ("nohup xargs rm < list", [("rm", "stdin")]),
+    ("echo a | xargs rm; ls | xargs rm", [("rm", "stdin")]),
+)
+STDIN_NAMED = (
+    "xargs grep x", "xargs -n1 echo", "git ls-files | xargs wc -l", "find . -type f -print0 | xargs -0 sha256sum",
+    "git ls-files | xargs sed -n 1p", "git ls-files | xargs sed s/a/b/", "ls | xargs file", "ls | xargs cat",
+    "ls | xargs cp -t dest", "ls | xargs -I{} cp {} dest/", "ls | xargs -I{} echo {}", "echo a b | xargs rm",
+    "printf 'a\\nb\\n' | xargs rm", "echo a b | xargs touch c", "ls | xargs gzip -c", "ls | xargs tar tf",
+    "ls | xargs git diff", "ls | xargs perl -ne 'print'", "ls | rm", "ls | touch f", "cat f | tee g", "ls | grep x | wc -l",
+)
+INLINE_WRITES = (
+    ("awk '{print > \"out\"}' f", "awk"),
+    ("awk '{print >> \"out\"}' f", "awk"),
+    ("awk 'BEGIN{print 1 > \"src/payments/a\"}'", "awk"),
+    ("gawk '{printf \"%s\\n\", $1 > \"out\"}' f", "gawk"),
+    ("mawk '{printf(\"%s\\n\", $1) > \"out\"}' f", "mawk"),
+    ("awk '/\"/ {print > \"x\"}' f", "awk"),
+    ("awk '{print $1 | \"tee out\"}' f", "awk"),
+    ("awk '{system(\"rm \" $1)}' f", "awk"),
+    ("awk 'BEGIN{system(\"touch x\")}'", "awk"),
+    ("perl -e 'open(F, \">src/payments/a\")'", "perl"),
+    ("perl -e 'open(F, \">>x\"); print F 1'", "perl"),
+    ("perl -e 'open F, \">\", \"x\"'", "perl"),
+    ("perl -E 'open my $fh, \">>\", \"x\"'", "perl"),
+    ("perl -e 'open(F, \"+<f\")'", "perl"),
+    ("perl -e 'open(F, \"| tee x\")'", "perl"),
+    ("perl -e 'unlink \"x\"'", "perl"),
+    ("perl -e 'rename \"a\", \"b\"'", "perl"),
+    ("perl -e 'system(\"rm -rf x\")'", "perl"),
+    ("perl -e 'system(\"echo x > out\")'", "perl"),
+    ("python3 -c \"open('x','w').write('1')\"", "python3"),
+    ("python3 -c \"open('x', mode='a')\"", "python3"),
+    ("python3 -c \"open('x','rb+')\"", "python3"),
+    ("python3 -c \"import pathlib; pathlib.Path('x').write_text('1')\"", "python3"),
+    ("python3 -c \"import os; os.remove('x')\"", "python3"),
+    ("python3 -c \"import shutil; shutil.rmtree('x')\"", "python3"),
+    ("python3 -c \"import os; os.system('rm -rf x')\"", "python3"),
+    ("python3 -c \"import subprocess; subprocess.run(['rm','x'])\"", "python3"),
+    ("python3 -c \"import subprocess; subprocess.run('echo x > f', shell=True)\"", "python3"),
+    ("python - <<'EOF'\nopen('f','w')\nEOF", "python"),
+    ("node -e \"require('fs').writeFileSync('x','1')\"", "node"),
+    ("node -e \"require('fs').appendFileSync('x','1')\"", "node"),
+    ("node -e \"require('fs').unlinkSync('x')\"", "node"),
+    ("node -e \"require('fs').mkdirSync('x')\"", "node"),
+    ("node -e \"require('fs').openSync('x','w')\"", "node"),
+    ("node -e \"require('child_process').execSync('rm -rf x')\"", "node"),
+    ("ruby -e \"File.write('x','1')\"", "ruby"),
+    ("ruby -e \"File.open('x','w') {|f| f.puts 1}\"", "ruby"),
+    ("ruby -e \"File.delete('x')\"", "ruby"),
+    ("ruby -e \"system('rm x')\"", "ruby"),
+    ("php -r 'file_put_contents(\"x\",\"1\");'", "php"),
+    ("lua -e \"io.open('x','w')\"", "lua"),
+    ("Rscript -e 'writeLines(\"a\",\"x\")'", "rscript"),
+    ("sed -n 'w out' f", "sed"),
+    ("sed -n '/x/w out' f", "sed"),
+    ("sed 's/a/b/w out' f", "sed"),
+    ("sed 's/a/b/gw out' f", "sed"),
+    ("sed -e 's/a/b/' -e 'w out' f", "sed"),
+    ("sed --expression='1w out' f", "sed"),
+    ("sed -n '1,5W out' f", "sed"),
+    ("sed 'e rm x' f", "sed"),
+    ("sudo awk '{print > \"out\"}' f", "awk"),
+    ("sh -c \"awk '{print > \\\"out\\\"}' f\"", "awk"),
+)
+INLINE_READS = (
+    "awk '{print $1}' f", "awk '$1 > 5' f", "awk -F, '$3 >= 10 && $2 > 0 {print $1}' f", "awk '{if ($1 > 5) print $1}' f",
+    "awk '{print ($1 > 5)}' f", "awk '{print ($1 > 5) ? \"a\" : \"b\"}' f", "awk '/a|b/ {print}' f", "awk '/a>b/ {print}' f",
+    "awk 'NR>1 {print}' f", "awk 'NR > 1' f", "awk '{print $1 > \"/dev/stderr\"}' f", "awk '{print $1, $2 > \"/dev/stdout\"}' f",
+    "awk 'BEGIN { while ((getline line < \"f\") > 0) n++; print n }'", "awk '{print $1 | \"sort\"}' f",
+    "awk '{\"date\" | getline d; print d}' f", "awk '{system(\"ls\")}' f", "awk 'a || b {print}' f",
+    "awk '{ a[$1]++ } END { for (k in a) print k, a[k] }' f", "awk -f prog.awk f", "awk '{print \"a > b\"}' f",
+    "perl -e 'print 1'", "perl -ne 'print if /x/' f", "perl -ne 'print if /x/ && $. > 3' f", "perl -lane 'print $F[0]' f",
+    "perl -e 'open(F, \"<f\"); print <F>'", "perl -e 'open(F, \"f\"); print <F>'", "perl -e 'open(my $fh, \"<\", \"f\")'",
+    "perl -e 'print \"a\" if 3 > 2'", "perl script.pl", "perl -e 'system(\"ls\")'", "perl -e 'print `date`'",
+    "python -c \"print(1)\"", "python3 -c \"print(1 > 0)\"", "python3 -c \"print(open('f').read())\"",
+    "python3 -c \"open('f','r').read()\"", "python3 -c \"open('f','rb').read()\"", "python3 -c \"open('f').read().split('bar')\"",
+    "python3 -c \"import sys; sys.stdout.write('x')\"", "python3 -c \"import shutil; print(shutil.which('git'))\"",
+    "python3 -c \"import subprocess; print(subprocess.check_output(['git','log']))\"", "python3 -c \"print({}.copy())\"",
+    "python3 -c \"import json,sys; print(len(json.load(open('f'))) > 3)\"", "python -m json.tool f", "python script.py",
+    "python - <<'EOF'\nprint(1)\nEOF",
+    "node -e \"console.log(1)\"", "node -e \"[1,2].map(x => x*2)\"", "node -p \"1+1\"", "node app.js",
+    "node -e \"console.log(require('fs').readFileSync('f','utf8'))\"", "node -e \"require('child_process').execSync('git log')\"",
+    "ruby -e \"puts 1\"", "ruby -e \"puts File.read('f')\"", "ruby -ne 'print if /x/' f", "ruby -e \"puts [1,2].map { |x| x > 1 }\"",
+    "php -r 'echo 1;'", "lua -e \"print(1)\"", "Rscript -e 'print(1)'",
+    "sed -n 's/a/b/p' f", "sed -n 1,5p f", "sed s/a/b/ f", "sed -n '/a/,/b/p' f", "sed -f script.sed f", "sed '1!G;h;$!d' f",
+    "sed -n '$=' f", "sed 's/world/x/' f", "sed -n '/start/,/end/p' f", "sed -e 's/a/b/' -e 's/c/d/' f", "sed 's/^\\s*//' f",
+    "sed -n 's/.*version: \\(.*\\)/\\1/p' f",
+)
+
+
+class UnnamedWriteTests(unittest.TestCase):
+    """RR3-guard-1: a write whose target the command does not name. Rule D needs every target named, so the analyser says
+    where it could not: operands that arrive on standard input, and programs that redirect or open a file."""
+
+    def test_a_mutating_verb_fed_from_standard_input_is_unnamed(self):
+        for text, expected in STDIN_FED:
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text), expected, text)
+
+    def test_a_verb_with_every_operand_named_or_that_only_reads_is_not(self):
+        for text in STDIN_NAMED:
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text), [], text)
+
+    def test_the_literal_words_of_an_upstream_stage_are_named_operands(self):
+        result = analyse("echo a b | xargs rm")
+        self.assertEqual(({w.path for w in result.writes}, result.unnamed), ({"a", "b"}, []))
+
+    def test_xargs_keeps_the_arguments_it_was_given_as_the_command(self):
+        """The marker is not an argument: the commands and writes are what they were."""
+        self.assertIn(("rm", ("-rf",)), commands("cat list | xargs rm -rf"))
+        self.assertEqual(paths("ls | xargs touch named"), {"named"})
+        self.assertNotIn("<stdin>", " ".join(" ".join(argv) for _, argv in commands("ls | xargs rm")))
+
+    def test_a_program_that_redirects_or_opens_a_file_for_writing_is_unnamed(self):
+        for text, verb in INLINE_WRITES:
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text), [(verb, "program")], text)
+
+    def test_a_program_that_only_reads_is_not(self):
+        for text in INLINE_READS:
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text), [], text)
+
+    def test_a_script_file_or_module_has_no_inline_program_to_read(self):
+        for text in ("python script.py", "python -m pytest tests", "node app.js", "perl script.pl", "bash script.sh", "make build"):
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text), [], text)
+
+    def test_the_program_is_still_returned_as_code_and_names_no_write(self):
+        self.assertIn('{print > "out"}', analyse("awk '{print > \"out\"}' f").code)
+        self.assertEqual(paths("awk '{print > \"out\"}' f"), set())
+
+    def test_powershell_cmdlets_that_take_their_path_from_the_pipeline_are_unnamed(self):
+        for text in ("Get-ChildItem *.pyc | Remove-Item", "Get-ChildItem | Remove-Item -Recurse", "ls | rm", "gci | ri",
+                     "Get-ChildItem | Move-Item -Destination d", "Get-ChildItem | Rename-Item -NewName x", "Get-Content a | Clear-Content",
+                     "powershell -Command \"Get-ChildItem | Remove-Item\""):
+            with self.subTest(command=text):
+                self.assertEqual([entry.how for entry in analyse(text, ps=True).unnamed], ["stdin"], text)
+
+    def test_powershell_that_names_its_path_or_only_reads_is_not(self):
+        for text in ("Remove-Item x", "Get-ChildItem | Remove-Item -Path x", "'x' | Out-File out.txt", "'x' | Set-Content out.txt",
+                     "Get-ChildItem | Select-Object Name", "Get-ChildItem | Where-Object Length -gt 5", "Get-ChildItem | Copy-Item -Destination d",
+                     "Get-ChildItem | Export-Csv out.csv", "Get-Content a | Add-Content b", "cmd /c dir", "[System.IO.File]::ReadAllText('x')",
+                     "[System.IO.File]::Exists('x')"):
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text, ps=True), [], text)
+
+    def test_powershell_dotnet_file_calls_are_unnamed(self):
+        for text in ("[System.IO.File]::WriteAllText('x','y')", "[IO.File]::Delete('x')", "[System.IO.Directory]::CreateDirectory('d')"):
+            with self.subTest(command=text):
+                self.assertEqual([entry.how for entry in analyse(text, ps=True).unnamed], ["program"], text)
+
+    def test_a_bash_pipe_stage_does_not_make_a_verb_stdin_fed(self):
+        self.assertEqual(unnamed("ls | rm"), [])
+        self.assertEqual(unnamed("Get-ChildItem | Remove-Item"), [])
+
+    def test_text_below_the_nesting_cap_is_unnamed_as_it_is_code(self):
+        text = "touch x"
+        for _ in range(12):
+            text = "sh -c " + "'" + text.replace("'", "'\\''") + "'"
+        self.assertEqual([entry.how for entry in analyse(text).unnamed], ["nested"])
+        self.assertEqual(unnamed("sh -c 'sh -c \"touch x\"'"), [])
+
+    def test_the_same_unnamed_write_is_reported_once(self):
+        self.assertEqual(unnamed("ls | xargs rm; ls | xargs rm; ls | xargs rm"), [("rm", "stdin")])
+        self.assertEqual(len(unnamed("awk '{print > \"a\"}' f; awk '{print > \"b\"}' f")), 1)
+
+    def test_the_awk_scanner_tells_a_comparison_from_a_redirect(self):
+        for program, writes in (
+            ('{print > "out"}', True), ('{print >> "out"}', True), ("{print $1, $2 > f}", True), ('{printf("%s", $1) > f}', True),
+            ("$1 > 5", False), ("{print ($1 > 5)}", False), ("{if ($1 > 5) print $1; else print 0}", False), ("{print a > b ? 1 : 2}", True),
+            ('{print "a > b"}', False), ("/>/ {print}", False), ("$0 ~ /a>b/ {print}", False), ("# print > f\n{print}", False),
+            ("{print; x = $1 > 5}", False), ('{print $1} END {print NR > "c"}', True), ("a || b", False), ('{print $1 > "/dev/stderr"}', False),
+            ('{print $1 >> "/dev/null"}', False), ('{print $1 | "sort"}', False), ('{print $1 | "tee f"}', True),
+            ('{system("ls")}', False), ('{system("rm " $1)}', True), ('{system ("touch x")}', True), ("{x = 4 / 2; print x}", False),
+            ('{print "\\"" > f}', True), ('{print "unterminated', False),
+        ):
+            with self.subTest(program=program):
+                self.assertEqual(_cmdscan._awk_writes(program), writes, program)
+
+    def test_hostile_program_text_is_scanned_in_linear_time(self):
+        """The searches are bounded: a 100 KB program of the shapes that make a backtracking pattern quadratic stays quick."""
+        size = 100_000
+        for text in ("python3 -c \"" + "open " * (size // 5) + "\"", "python3 -c \"" + "open(a,'b" * (size // 9) + "\"",
+                     "python3 -c \"" + "'\" " * (size // 3) + "system rm\"", "awk '" + "print ((((( " * (size // 12) + "' f",
+                     "awk '" + "/ " * (size // 2) + "' f", "sed '" + "/gggggggggggggggg" * (size // 17) + "' f", "sed '" + "; e " * (size // 4) + "' f"):
+            with self.subTest(command=text[:30]):
+                start = time.perf_counter()
+                analyse(text)
+                self.assertLess(time.perf_counter() - start, 2.0)
+
+
 class WorkingDirectoryCostTests(unittest.TestCase):
     """RR-guard-2: a chain of relative ``cd`` makes each directory the previous one plus a segment, so what the analysis
     keeps for it must stop growing, and what it cannot follow must say so."""

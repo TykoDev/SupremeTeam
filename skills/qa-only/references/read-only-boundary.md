@@ -55,6 +55,12 @@ Denied while the record is unreleased:
   So are the usual package-manager commands that install, remove or update (`npm install`,
   `pip install -r requirements.txt`, `uv pip install`, `sudo apt-get install`): a table of the common
   managers, not every tool.
+- Every write with no target in the command, because a target the hook cannot place cannot be shown to
+  lie inside the allow globs: a mutating verb whose operands arrive on standard input (`cat list | xargs rm`,
+  `xargs rm < list`, `Get-ChildItem | Remove-Item`) and an inline `awk`, `sed`, `perl`, `python`, `node` or `ruby`
+  program that redirects or opens a file for writing (`awk '{print > "out"}'`, `sed -n 'w out'`,
+  `python3 -c "open('x', 'w')"`). Name each target in the shell command itself, as an operand or a redirect, and
+  it is judged like any other: `awk '{print}' f > <allowed path>` passes.
 
 Passing untouched:
 

@@ -508,8 +508,9 @@ def rule_frozen(call: "Call") -> "str | None":
 # read-only, for an investigation or audit that must not change the product surface), the only
 # writable locations are the record's allow globs (the run's own save path) and the harness state
 # directory. EVERY write target of a command must lie inside them: naming one allowed path
-# somewhere in a mutating command proves nothing about the others. save_run.py keeps writing the run
-# records because a script's arguments are never write targets, and Rule C still protects
+# somewhere in a mutating command proves nothing about the others, and neither does a write whose target the
+# command does not name (operands on standard input, a file opened inside an inline program). save_run.py keeps
+# writing the run records because a script's arguments are never write targets, and Rule C still protects
 # guard-state.json itself.
 _GIT_REPO_WRITERS = frozenset({"add", "commit", "checkout", "restore", "reset", "rm", "mv", "apply", "stash", "clean", "push",
                                "merge", "pull", "rebase", "cherry-pick", "revert", "switch", "am"})
@@ -524,6 +525,15 @@ def _read_only_reason(records) -> str:
         "'python skills/harness/hooks/guard_state.py release-read-only --run-id <run> --requester <owner>' "
         "before changing anything else."
     )
+
+
+# A write the command names no target for is not inside the run's paths whatever it writes: the contract is that every
+# target lies inside, and one the analyser cannot place cannot satisfy it.
+_UNNAMED_REASON = (
+    " A write whose target is not in the command (operands that arrive on standard input, as with `xargs rm`, or a "
+    "redirect or file open inside an awk, sed, perl, python, ruby or node program) cannot be shown to be inside "
+    "them: name each target in the shell command itself, as an operand or a redirect."
+)
 
 
 def _unscoped_git(call: "Call") -> bool:
@@ -602,7 +612,9 @@ def rule_read_only(call: "Call") -> "str | None":
     for write, targets in call.shell_targets(strict=True):
         if write.unresolved or any(not _paths.inside_allowed(target, allow, call.root, fold=fold) for target in targets):
             return _read_only_reason(records)
-    return _read_only_reason(records) if _unscoped_git(call) or _installs_packages(call) else None
+    if _unscoped_git(call) or _installs_packages(call):
+        return _read_only_reason(records)
+    return _read_only_reason(records) + _UNNAMED_REASON if call.analysis.unnamed else None
 
 
 # --- Rule C: single writers --------------------------------------------------------------------------

@@ -128,7 +128,16 @@ boundary file instead of starting a second one beside it.
   and a git command that changes the repository without naming a path
   (`git add -A`, `git push`, `git merge`, `git restore --staged .`) is denied, as is a
   package manager installing, removing or updating (`npm install`, `pip install`,
-  `apt-get install`: a table of the usual ones, not every tool). Reads pass untouched.
+  `apt-get install`: a table of the usual ones, not every tool). So is a write with
+  no target in the command, because a target the hook cannot place cannot be shown
+  to lie inside: a mutating verb whose operands arrive on standard input
+  (`cat list | xargs rm -rf`, `xargs rm < list`, `Get-ChildItem | Remove-Item`), and an
+  inline `awk`, `sed`, `perl`, `python`, `node` or `ruby` program that redirects or
+  opens a file for writing (`awk '{print > "out"}'`, `sed -n 'w out'`,
+  `python3 -c "open('x', 'w')"`). Name each target in the shell command itself, as an
+  operand or a redirect (`awk '{print}' f > <allowed path>`), and it is judged like any
+  other. This applies to `read_only` only: a freeze or a block judges the targets a
+  command names. Reads pass untouched, including `awk '$1 > 5'` and `xargs grep`.
 - `allow_dangerous` — `false`, or an owned grant that lifts the built-in
   destructive-command block (see the next section).
 
@@ -232,7 +241,8 @@ The hook is also a text guard, not a hard lock. It analyses the command a tool i
 about to run and the path an edit tool names, and runs nothing, so a program that
 builds its path at run time, a script file, a tool it has no entry for, or a link
 made in the same command can write past it, and interpreter inline code
-(`python -c`, `node -e`) is searched for protected paths rather than understood.
+(`python -c`, `node -e`) is searched for protected paths rather than understood
+(a read-only run reads it further, for the shapes above).
 `../../harness/hooks/README.md` § What the guard cannot see lists these limits in
 full. Treat the boundary as a discipline aid that catches honest mistakes — do not
 rely on it to stop a determined or adversarial actor, and never use `blocked_globs`

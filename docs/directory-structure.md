@@ -43,7 +43,14 @@ SupremeTeam/
     ├── scripts/                          # Shared deterministic tooling
     │   ├── data_formats.py               # JSON and YAML with a stdlib fallback
     │   ├── output_paths.py               # Resolves every generated destination
-    │   ├── check_runtime.py              # Runtime contract + stack detection
+    │   ├── check_runtime.py              # Runtime contract check and the command line
+    │   ├── project_inspection.py         # Read-only inspection behind --detect-project and friends
+    │   ├── stack_detection.py            # Registry match and project classification
+    │   ├── language_entrypoints.py       # Python, Go and Rust entrypoints and start commands
+    │   ├── script_commands.py            # Package-script and Makefile command reading
+    │   ├── project_files.py              # Bounded read-only walk, text reads, path classes
+    │   ├── scaffold_scan.py              # Scaffold and placeholder marker scan
+    │   ├── redaction.py                  # Secret redaction for every check_runtime report
     │   ├── scan_record.py                # Typed scan evidence records
     │   ├── validate_manifests.py         # Manifest and cross-reference contracts
     │   └── package_check.py              # Packaging enumeration and residue check

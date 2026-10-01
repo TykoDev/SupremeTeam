@@ -42,11 +42,15 @@ enforcement under `skills/harness/hooks/`.
 
 Stdlib only. Fail open, meaning any internal error exits 0 and your action
 proceeds. Inert on the strong case, meaning each rule fires only on a
-mechanically certain signal.
+mechanically certain signal. The pre-tool hook is a text guard, not a sandbox: it
+analyses the command and the path a tool names but runs nothing, so a program that
+builds its path at run time or a script file that writes elsewhere is not seen.
+`skills/harness/hooks/README.md` lists these limits under "What the guard cannot
+see".
 
 | File | Event | Layer | What it does |
 |---|---|---|---|
-| `pre_tool_use.py` | `PreToolUse` | 3 | Blocks dangerous shell commands, writes into a frozen or guarded boundary, and direct edit-tool writes to core run files; advises (never denies) when a coverage command names no destination |
+| `pre_tool_use.py` | `PreToolUse` | 3 | Reads the shell command a tool is about to run and blocks dangerous ones, writes into a frozen or guarded boundary, writes outside a read-only run's save path, direct writes to the single-writer records (run, Taste, guard), and, while a run is pinned or a boundary is recorded, edits to the hook scripts and their registration files; advises (never denies) when a coverage command names no destination |
 | `post_tool_use.py` | `PostToolUse` | 4 | Records repeated failures, empty-output streaks, and oscillation; refreshes the pinned run's heartbeat from real activity; sweeps project-root coverage residue into the run |
 | `user_prompt_submit.py` | `UserPromptSubmit` | routing | Points lifecycle work at `admiral`, reinforces the session pin, stays quiet on slash commands |
 | `save_run.py` | CLI | persistence | The only writer of the run record |

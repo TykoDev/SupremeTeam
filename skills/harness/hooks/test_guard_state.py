@@ -330,6 +330,47 @@ class GuardStateHardeningTests(unittest.TestCase):
                 self.assertIn("cannot be matched", proc.stderr)
         self.assertFalse((self.project / ".harness-state" / "guard-state.json").exists())
 
+    MISSING = "supremeteam-no-such-top-level-directory"
+
+    def test_a_leading_slash_glob_that_names_no_directory_here_is_refused_with_the_relative_spelling(self):
+        """SEC-04: `/src/payments/**` was recorded as an active freeze, `status` listed it, and it enforced nothing."""
+        for spelling in (f"/{self.MISSING}/payments/**", f"\\{self.MISSING}\\payments\\**", f"//{self.MISSING}/payments/**", f"/{self.MISSING}"):
+            for command in ("freeze", "block"):
+                with self.subTest(spelling=spelling, command=command):
+                    proc = self.run_guard(command, "--glob", spelling, "--owner", "ops")
+                    self.assertEqual(proc.returncode, 1, proc.stdout)
+                    self.assertIn("cannot be matched", proc.stderr)
+                    self.assertIn(f"no directory /{self.MISSING} exists", proc.stderr)
+                    self.assertIn(f"relative to the project root it is {self.MISSING}", proc.stderr)
+        self.assertFalse((self.project / ".harness-state" / "guard-state.json").exists())
+
+    def test_the_other_spellings_that_match_nothing_are_refused_at_record_time(self):
+        for spelling in ("!src/payments/**", "/", "C:/"):
+            with self.subTest(spelling=spelling):
+                proc = self.run_guard("freeze", "--glob", spelling, "--owner", "ops")
+                self.assertEqual(proc.returncode, 1, proc.stdout)
+                self.assertIn("cannot be matched", proc.stderr)
+        proc = self.run_guard("read-only", "--run-id", "r1", "--owner", "ops", "--allow", f"/{self.MISSING}/**")
+        self.assertEqual(proc.returncode, 1)
+
+    def test_a_real_absolute_glob_and_a_foreign_host_path_are_still_recorded(self):
+        outside = Path(tempfile.gettempdir()).resolve().parent.as_posix().rstrip("/") + "/**"
+        for spelling in (outside, "C:/other/proj/src/**", "src/payments/**"):
+            with self.subTest(spelling=spelling):
+                self.write_record({})
+                proc = self.run_guard("freeze", "--glob", spelling, "--owner", "ops")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_status_says_why_an_unmatchable_record_already_on_disk_enforces_nothing(self):
+        self.write_record({"frozen_globs": [{"glob": f"/{self.MISSING}/payments/**", "owner": "ops"}, {"glob": "!x/**", "owner": "ops"},
+                                            {"glob": "src/ok/**", "owner": "ops"}]})
+        report = json.loads(self.run_guard("status", "--json").stdout)
+        self.assertEqual(report["unmatchable_entries"], [f"/{self.MISSING}/payments/**", "!x/**"])
+        self.assertIn(f"no directory /{self.MISSING} exists", report["unmatchable_reasons"][f"/{self.MISSING}/payments/**"])
+        text = self.run_guard("status").stdout
+        self.assertIn("WARNING unmatchable", text)
+        self.assertIn(f"relative to the project root it is {self.MISSING}/payments/**", text)
+
     def test_release_finds_the_record_by_any_spelling_including_one_written_before_normalising(self):
         self.write_record({"frozen_globs": [{"glob": "./src/legacy/**", "owner": "ops", "released_at": None}]})
         proc = self.run_guard("release", "--glob", "src/legacy/**", "--requester", "ops")

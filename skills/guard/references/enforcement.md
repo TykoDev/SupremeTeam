@@ -56,7 +56,8 @@ around by editing the record.
 
 The writer records a glob in one spelling (`./src/**`, `src//**`, `src\**` and the
 absolute form of a project path are all `src/**`), refuses one that can never match
-(empty, `.`, or climbing out of the project with `..`), and keeps one record per
+(empty, `.`, climbing out of the project with `..`, a leading `!`, a drive or file-system root, or a
+leading-slash path under a directory this machine does not have, which `/src/**` is), and keeps one record per
 glob in each key. Every command except `status` holds one lock
 (`.harness-state/guard-state.json.lock`) from reading the record to replacing it, so
 two sessions cannot lose each other's change; one that cannot take it within

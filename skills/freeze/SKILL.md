@@ -73,9 +73,11 @@ forward slashes, `./` and doubled or inner `.` segments disappear, `..` segments
 the absolute form of a path inside the project becomes the project-relative one. So `src\payments\**`,
 `./src/payments/**`, `src//payments/**` and `<project>/src/payments/**` are one boundary, one record,
 one release, and `status` prints the stored form. A relative glob is anchored at the project root
-(`src/**` does not reach `docs/src/`), and a glob that cannot name a path inside the project (empty,
-`.`, or climbing out with `..`) is refused with exit 1 and recorded as nothing, because a boundary
-that can never match would otherwise read as protection. The hook matches the same way: it resolves
+(`src/**` does not reach `docs/src/`), and a glob that can never match is refused with exit 1 and recorded as nothing, because a boundary
+that can never match would otherwise read as protection: empty, `.`, climbing out with `..`, a leading `!`,
+the root of a drive or of the file system, or an absolute path under a top-level directory this machine does not
+have. The last is the trap: `/src/payments/**` starts at the file system root, not the project root, so the
+writer refuses it and names the project-relative spelling, `src/payments/**`. The hook matches the same way: it resolves
 `..`, links and case before it compares, so a spelling of a path inside a frozen glob does not
 get around it. Prefer the forward-slash form in what you write down, because that is what you will
 read back.

@@ -123,6 +123,53 @@ class NormalizeGlobTests(PathCase):
                 self.assertTrue(self.deny(f"{self.root}/src/payments/a.py", raw))
 
 
+class GlobProblemTests(PathCase):
+    """SEC-04: a glob that normalises to something that can never match is refused with its reason, not recorded."""
+
+    MISSING = "supremeteam-no-such-top-level-directory"
+
+    def problem(self, raw: str):
+        return _paths.glob_problem(raw, self.root)
+
+    def test_a_leading_slash_that_was_meant_relative_to_the_project_is_refused_with_the_fix(self):
+        for raw in (f"/{self.MISSING}/payments/**", f"\\{self.MISSING}\\payments\\**", f"//{self.MISSING}/payments/**"):
+            with self.subTest(raw=raw):
+                reason = self.problem(raw)
+                self.assertIn(f"no directory /{self.MISSING} exists", reason)
+                self.assertIn(f"{self.MISSING}/payments/**", reason.split("relative to the project root it is ")[1])
+
+    def test_the_spelling_the_review_names_is_refused_where_the_top_level_directory_is_missing(self):
+        real = os.path.isdir
+        with mock.patch("os.path.isdir", side_effect=lambda path: False if path == "/src" else real(path)), \
+                mock.patch.object(_paths, "WINDOWS", False):
+            for raw in ("/src/payments/**", "/src/**", "/src"):
+                with self.subTest(raw=raw):
+                    self.assertIn("no directory /src exists", _paths.glob_problem(raw, self.root))
+
+    def test_the_other_spellings_that_match_nothing_are_refused(self):
+        for raw, fragment in (("!src/payments/**", "negation"), ("  !x", "negation"), ("/", "root"), ("C:/", "root"), ("c:\\", "root"),
+                              ("", "inside the project"), ("..", "inside the project"), ("../x/**", "inside the project")):
+            with self.subTest(raw=raw):
+                self.assertIn(fragment, self.problem(raw))
+
+    def test_a_glob_that_can_match_is_not_refused(self):
+        outside = Path(tempfile.gettempdir()).resolve().parent.as_posix().rstrip("/") + "/**"
+        for raw in ("src/payments/**", "./src/**", "**", "*", "**/secrets/**", "*.tf", "src/payments/", f"{self.root}/src/**",
+                    "C:/other/proj/src/**", "D:\\proj\\**", "/*/x/**", "~/x/**", outside):
+            with self.subTest(raw=raw):
+                self.assertIsNone(self.problem(raw))
+
+    @unittest.skipIf(os.name == "nt", "a top-level directory is a POSIX notion here")
+    def test_an_existing_absolute_directory_outside_the_project_is_a_real_boundary(self):
+        first = next(entry for entry in sorted(os.listdir("/")) if os.path.isdir("/" + entry))
+        self.assertIsNone(self.problem(f"/{first}/anything/**"))
+        self.assertEqual(_paths.normalize_glob(f"/{first}/anything/**", self.root), f"/{first}/anything/**")
+
+    def test_windows_judges_no_leading_slash_path(self):
+        with mock.patch.object(_paths, "WINDOWS", True):
+            self.assertIsNone(self.problem(f"/{self.MISSING}/payments/**"))
+
+
 class DenyMatchTests(PathCase):
     def test_a_leading_double_star_matches_a_top_level_directory(self):
         """BUGH-20: fnmatch('secrets/token.txt', '**/secrets/**') is False."""

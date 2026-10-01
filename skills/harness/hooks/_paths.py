@@ -235,6 +235,34 @@ def normalize_glob(glob: str, root: "str | Path | None" = None) -> "str | None":
     return text.rstrip("/") if len(text) > 1 else text
 
 
+def glob_problem(glob: str, root: "str | Path | None" = None) -> "str | None":
+    """Why ``glob`` can never match a path anything is about to write, or None when it can.
+
+    ``normalize_glob`` already refuses a glob that names no project path. These are the spellings
+    it keeps that match nothing either: a leading ``!`` (gitignore negation, which a boundary does
+    not have), the root of a drive or of the file system, and an absolute POSIX path outside the
+    project under a top-level directory that does not exist here, which is what ``/src/payments/**``
+    is when it was meant relative to the project root. An absolute path under a directory that
+    exists is a real boundary outside the project (``/etc/**``) and stays one; so does a drive
+    path, which a host on another system reports, and on Windows no leading-slash path is judged."""
+    text = clean(str(glob).strip())
+    if text.startswith("!"):
+        return "a leading '!' is gitignore negation, which a boundary does not have, so nothing can match it; record the paths to protect"
+    normal = normalize_glob(glob, root)
+    if normal is None:
+        return "a boundary glob must name a path inside the project (not '.', not empty, and not climbing out with '..')"
+    if not _is_abs(normal):
+        return None
+    if re.fullmatch(r"(?:[A-Za-z]:/?|/)", normal):
+        return "it names the root of a drive or of the file system, which no path is compared against; to freeze the whole project record '**'"
+    if not WINDOWS and normal.startswith("/"):
+        first = normal.split("/")[1]
+        if not _WILDCARD.search(first) and not os.path.isdir("/" + first):
+            return (f"it names the absolute path /{first}/..., and no directory /{first} exists on this machine, so it can never match; "
+                    f"relative to the project root it is {normal.lstrip('/')}")
+    return None
+
+
 def _variants(glob: str, fold: bool) -> list:
     """The patterns one glob stands for: itself, everything under it, and (for ``dir/**``) the directory."""
     base = glob[:-3] if glob.endswith("/**") else glob

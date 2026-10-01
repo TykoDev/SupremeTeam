@@ -31,7 +31,11 @@ Kinds and destinations (relative to the project root):
 
 Every kind except product resolves under skillset-saves/ or .harness-state/
 (GENERATED_ROOTS); a durable design specification is the run's
-<phase>/reports/design-system.md, not a file at the project root.
+<phase>/reports/design-system.md, not a file at the project root. `product` is open
+except for what naming a path "product" must not bless: the version-control
+directory (a hook there runs code), the generated roots, `skills/harness/` (the guard
+and the gate validators) and the host hook-registration files. A name under any of
+them is refused, however it is spelled or reached through a link.
 
 The phase-scoped kinds accept the phase directories save-ownership.yaml declares
 and no others. The grilling log is `--kind phase_report --phase intake --name
@@ -67,6 +71,19 @@ KINDS = {"core", "manifest", "phase_report", "reports", "artifacts", "evidence",
 PHASES = set(taxonomy.PHASE_DIRECTORIES)
 # Matched with fullmatch: `$` also accepts a trailing newline.
 SAFE_SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+# Project-relative paths a `product` name may not point at or below.
+PRODUCT_DENIED = (".git", *GENERATED_ROOTS, "skills/harness", ".claude/settings.json", ".claude/settings.local.json",
+                  ".codex/hooks.json", ".github/hooks.json")
+
+
+def denied_product_path(relative: Path) -> str | None:
+    """The ``PRODUCT_DENIED`` entry a project-relative path is at or under, compared without regard to case."""
+    parts = tuple(part.casefold() for part in relative.parts)
+    for denied in PRODUCT_DENIED:
+        wanted = tuple(part.casefold() for part in Path(denied).parts)
+        if parts[:len(wanted)] == wanted:
+            return denied
+    return None
 
 
 def global_data_root(env: dict[str, str] | None = None) -> Path:
@@ -100,6 +117,11 @@ def resolve(project_root: Path, kind: str, *, run_id: str = "", phase: str = "",
             raise ValueError(f"{label} must be a single safe path segment, got {value!r}")
         return value
 
+    def run_segment(value: str) -> str:
+        if not taxonomy.RUN_ID.fullmatch(value or ""):
+            raise ValueError(f"run_id must be {taxonomy.RUN_ID_RULE}, got {value!r}")
+        return value
+
     def rel_name(value: str) -> Path:
         candidate = Path(value or "")
         if not value or candidate.is_absolute() or candidate.drive or ".." in candidate.parts:
@@ -122,7 +144,7 @@ def resolve(project_root: Path, kind: str, *, run_id: str = "", phase: str = "",
     elif kind == "guards":
         target = root / ".harness-state" / "guard-state.json"
     elif kind == "trajectory":
-        target = root / ".harness-state" / "trajectories" / seg(run_id or "no-run", "run_id") / (seg(session, "session") + ".json")
+        target = root / ".harness-state" / "trajectories" / run_segment(run_id or "no-run") / (seg(session, "session") + ".json")
     elif kind == "product":
         target = root / rel_name(name)
     elif kind == "test_work":
@@ -134,7 +156,7 @@ def resolve(project_root: Path, kind: str, *, run_id: str = "", phase: str = "",
     elif kind == "standalone_packages":
         target = root / ".harness-state" / "packages" / rel_name(name)
     else:
-        run_dir = saves / "runs" / seg(run_id, "run_id")
+        run_dir = saves / "runs" / run_segment(run_id)
         if kind == "core":
             if name not in taxonomy.RUN_RECORD_FILES:
                 raise ValueError("core name must be " + ", ".join(taxonomy.RUN_RECORD_FILES[:-1]) + ", or " + taxonomy.RUN_RECORD_FILES[-1])
@@ -171,6 +193,10 @@ def resolve(project_root: Path, kind: str, *, run_id: str = "", phase: str = "",
         target.resolve().relative_to(root)
     except ValueError as exc:
         raise ValueError(f"resolved path escapes project root: {target}") from exc
+    if kind == "product":
+        denied = denied_product_path(Path(name)) or denied_product_path(target.resolve().relative_to(root))
+        if denied:
+            raise ValueError(f"product path {name!r} is at or under {denied}, which no product output may target")
     return target
 
 

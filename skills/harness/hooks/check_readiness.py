@@ -37,9 +37,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _saves import classify_saves
+from _saves import NEXT_STEPS, classify_saves
 import _state
-from verify_registration import HOSTS, declared_minimum, interpreter_warning, repair_command
+from verify_registration import HOSTS, MATCHERS, REQUIRED, declared_minimum, interpreter_warning, repair_command
 
 
 def run_hook_verifier(host: str, project_root: Path) -> tuple[str, int, str, dict]:
@@ -150,8 +150,9 @@ def python_status(min_major: int, min_minor: int) -> tuple[str, str]:
 def _hook_warnings(hook_states: dict) -> list[str]:
     """What is wrong with hooks that are registered, without making them unregistered."""
     warnings: list[str] = []
-    changed = sorted({name.split(":", 1)[0] + ":" + Path(state["script"]).name for name, state in hook_states.items()
-                      if state["registered"] and state["integrity"] == "changed" and state["script"]})
+    changed = sorted({f"{name.split(':', 1)[0]}:{file}" for name, state in hook_states.items()
+                      if state["registered"] and state["integrity"] == "changed" and state["script"]
+                      for file in state["changed_files"] or [Path(state["script"]).name]})
     for name, state in hook_states.items():
         if not state["registered"]:
             continue
@@ -161,8 +162,8 @@ def _hook_warnings(hook_states: dict) -> list[str]:
         if state["coverage"] == "partial":
             warnings.append(f"{name}: the registered matcher misses {', '.join(state['missing_tools'])}")
     if changed:
-        warnings.append(f"hook scripts changed since registration ({', '.join(changed)}); expected after a deliberate edit, "
-                        "re-record with repair_registration.py --host <host> --record-hashes")
+        warnings.append(f"hook files changed since registration ({', '.join(changed)}); expected after a deliberate edit or an "
+                        "upgrade, restore them if you made neither; re-record with repair_registration.py --host <host> --record-hashes")
     return warnings
 
 
@@ -189,6 +190,8 @@ def main() -> int:
     py_status, py_detail = python_status(min_major, min_minor)
     hook_status, hook_code, hook_output, hook_report = run_hook_verifier(args.host, project_root)
     saves_status, saves_detail = classify_saves(project_root)
+    # An active run needs no instruction; every other classification has a next step, the one `save_run.py status` prints.
+    saves_next = "" if saves_status == "active" else NEXT_STEPS.get(saves_status, "")
 
     # Independent capabilities: a missing hook degrades deterministic
     # enforcement; it does not remove the ability to read saves or run the
@@ -206,13 +209,23 @@ def main() -> int:
                 "missing_tools": state.get("missing_tools") or [],
                 "script": state.get("script"),
                 "integrity": state.get("integrity"),
+                "changed_files": state.get("changed_files") or [],
                 "interpreter": state.get("interpreter"),
                 "observed": state.get("observed", "unverified"),
             }
     observations = _observations_for(project_root, hook_states)
     registered = [s for s in hook_states.values() if s["registered"]]
     interpreters = [s["interpreter"] for s in registered if s["interpreter"]]
-    coverage = "partial" if any(s["coverage"] == "partial" for s in registered) else "full" if registered else "unverified"
+    # Coverage is the tool surface the hooks that need tools reach. The prompt hook has no matcher, so counting it as
+    # "full" would hide tool hooks that are missing altogether.
+    tool_keys = {key for key, script in REQUIRED if MATCHERS.get(script)}
+    tool_hooks = [s for name, s in hook_states.items() if name.rsplit(":", 1)[1] in tool_keys]
+    if not any(s["registered"] for s in tool_hooks):
+        coverage = "unverified"
+    elif all(s["registered"] and s["coverage"] == "full" for s in tool_hooks):
+        coverage = "full"
+    else:
+        coverage = "partial"
     if any(i["meets_floor"] is False for i in interpreters):
         interpreter = "too_old"
     elif any(not i["on_path"] for i in interpreters):
@@ -259,7 +272,7 @@ def main() -> int:
         "python": {"status": py_status, "detail": py_detail},
         "hooks": {"status": hook_status, "exit_code": hook_code, "detail": hook_output, "required": args.require_hooks,
                   "selected_hosts": list(hook_report), "states": hook_states, "observations": observations["events"]},
-        "saves": {"status": saves_status, "detail": saves_detail, "project_root": str(project_root)},
+        "saves": {"status": saves_status, "detail": saves_detail, "next_step": saves_next, "project_root": str(project_root)},
         "capabilities": capabilities,
         "warnings": warnings,
         "blockers": blockers,
@@ -275,6 +288,8 @@ def main() -> int:
         print(f"Python: {py_status} - {py_detail}")
         print(f"Hooks: {hook_status} - verifier exit {hook_code} (hosts: {hosts}; {'required' if args.require_hooks else 'optional'})")
         print(f"Saves: {saves_status} - {saves_detail}")
+        if saves_next:
+            print(f"  next: {saves_next}")
         print("Capabilities: " + ", ".join(f"{key}={value}" for key, value in capabilities.items()))
         if hook_status != "registered":
             print("\nHook verifier output:")

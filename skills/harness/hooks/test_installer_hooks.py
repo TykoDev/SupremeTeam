@@ -109,6 +109,8 @@ class DefaultsTests(InstallerCase):
         self.assertIn("hook hashes recorded in:", result.stdout)
         record = json.loads((self.project / ".harness-state" / verify.HASH_RECORD).read_text(encoding="utf-8"))
         self.assertEqual(len(record["hooks"]), len(verify.REQUIRED))
+        self.assertEqual(record["directories"][verify.hash_key(HOOK_DIR)]["files"], verify.module_hashes(HOOK_DIR),
+                         "every module beside the scripts is recorded too")
 
     def test_a_dry_run_records_nothing(self):
         self.install("--target", "claude", "--claude-settings", str(self.settings), "--dry-run")
@@ -168,6 +170,55 @@ class EncodingTests(InstallerCase):
         result = self.install("--target", "cursor", "--cursor-plugin", str(root))
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertNotIn("Traceback", result.stderr)
+
+
+@unittest.skipUnless(POSIX, "symbolic links need privileges on Windows")
+class ConfigLinkTests(InstallerCase):
+    """RR-V3-2: the installer replaced a config that is a symbolic link with a regular file."""
+
+    def linked(self, at: Path) -> Path:
+        target = self.tmp / "dotfiles" / "settings.json"
+        target.parent.mkdir()
+        target.write_text('{"theme": "dark"}\n', encoding="utf-8")
+        at.parent.mkdir(parents=True, exist_ok=True)
+        at.symlink_to(target)
+        return target
+
+    def test_the_user_level_config_is_written_through_its_link(self):
+        link = self.home / ".claude" / "settings.json"
+        target = self.linked(link)
+        result = self.install("--target", "claude")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(link.is_symlink())
+        self.assertIn("hooks", json.loads(target.read_text(encoding="utf-8")))
+        self.assertIn("is a symbolic link: writing through it to", result.stdout)
+        self.assertIn("status: REGISTERED", result.stdout)
+
+    def test_a_path_named_on_the_command_line_is_written_through_at_any_scope(self):
+        link = self.tmp / "named.json"
+        target = self.linked(link)
+        result = self.install("--target", "claude", "--scope", "project", "--claude-settings", str(link))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(link.is_symlink())
+        self.assertIn("hooks", json.loads(target.read_text(encoding="utf-8")))
+
+    def test_a_project_level_link_is_refused_and_the_link_and_its_target_are_untouched(self):
+        link = self.project / ".claude" / "settings.json"
+        target = self.linked(link)
+        before = target.read_bytes()
+        result = self.install("--target", "claude", "--scope", "project")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("REFUSED: ", result.stdout)
+        self.assertIn("refusing to replace it", result.stdout)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(target.read_bytes(), before)
+
+    def test_a_refused_link_does_not_stop_the_other_hosts(self):
+        link = self.project / ".claude" / "settings.json"
+        self.linked(link)
+        result = self.install("--target", "claude", "--target", "codex", "--scope", "project")
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertTrue((self.project / ".codex" / "hooks.json").is_file())
 
 
 @unittest.skipUnless(POSIX, "permission bits are POSIX")
@@ -414,6 +465,7 @@ class ShellWrapperTests(unittest.TestCase):
         (cls.repo / "scripts").mkdir(parents=True)
         shutil.copy2(INSTALL_SH, cls.repo / "scripts" / "install.sh")
         shutil.copy2(REPO / "scripts" / "install-items.txt", cls.repo / "scripts" / "install-items.txt")
+        shutil.copytree(REPO / "scripts" / "superseded", cls.repo / "scripts" / "superseded")
         (cls.repo / "scripts" / "install_hooks.py").write_text(cls.STUB, encoding="utf-8")
         shutil.copytree(REPO / "skills", cls.repo / "skills", ignore=shutil.ignore_patterns("__pycache__", ".harness-state", "skillset-saves"))
         # install.sh looks for a Python 3.13 under the name python3 or python.
@@ -458,10 +510,21 @@ class ShellWrapperTests(unittest.TestCase):
         self.assertIn("Hook registration: declined (nothing was written)", result.stdout)
         self.assertNotIn("Hook registration: completed", result.stdout)
 
-    def test_a_failed_registration_still_fails_the_installer(self):
+    def test_a_failed_registration_still_fails_the_installer_and_the_summary_says_so(self):
+        """The script stopped at the helper's exit status with no summary, after the skills were already copied."""
         result, _ = self.run_installer("--register-hooks", exit_code=2)
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertNotIn("Supreme Team installation complete.", result.stdout)
+        self.assertNotIn("Supreme Team installation complete.", result.stdout, "it did not complete")
+        self.assertIn("Supreme Team skills are installed, but hook registration failed.", result.stdout)
+        self.assertIn("Hook registration: failed (exit status 2; see the messages above)", result.stdout)
+        self.assertIn("Installed items:", result.stdout)
+        self.assertRegex(result.stdout, r"repair_registration\.py\" --host <host> --scope user")
+        self.assertNotIn("Hook registration: completed", result.stdout)
+        self.assertTrue(list(Path(result.stdout.split("Target: ", 1)[1].splitlines()[0]).glob("admiral")), "the skills are in place")
+
+    def test_a_failed_registration_names_the_scope_it_was_asked_for(self):
+        result, _ = self.run_installer("--register-hooks", "--hooks-scope", "project", exit_code=2)
+        self.assertRegex(result.stdout, r"repair_registration\.py\" --host <host> --scope project")
 
     def test_an_unknown_scope_is_refused_before_anything_is_written(self):
         result, forwarded = self.run_installer("--register-hooks", "--hooks-scope", "galaxy")
@@ -498,12 +561,20 @@ class PowerShellWrapperTests(unittest.TestCase):
         self.assertIn('$hookArgs += @("--scope", $HooksScope.ToLowerInvariant())', body)
         self.assertRegex(body, r'if \(\$HooksYes\) \{\s*\$hookArgs \+= "--yes"')
 
-    def test_exit_3_is_a_decline_and_any_other_failure_still_throws(self):
+    def test_exit_3_is_a_decline_and_any_other_failure_is_recorded_for_the_summary_and_the_exit_status(self):
         body = re.search(r"function Register-HarnessHooks \{\n(.*?)\n\}\n", self.ps, re.S).group(1)
         self.assertRegex(body, r"if \(\$LASTEXITCODE -eq 3\) \{\s*\$script:hooksDeclined = \$true\s*\}\s*"
-                               r'elseif \(\$LASTEXITCODE -ne 0\) \{\s*throw "Hook registration failed\."')
+                               r"elseif \(\$LASTEXITCODE -ne 0\) \{\s*\$script:hooksFailed = \$LASTEXITCODE")
+        self.assertNotIn("throw", body, "a failed registration is reported after the summary, not thrown before it")
         shell = re.search(r"register_harness_hooks\(\) \{\n(.*?)\n\}\n", self.sh, re.S).group(1)
         self.assertIn("-eq 3", shell)
+        self.assertIn("hooks_failed=$status", shell)
+        self.assertNotRegex(shell, r"(?m)^\s*exit\b", "a failed registration is reported after the summary, not left before it")
+        main = self.ps[self.ps.index("try {\n    Import-ItemList"):]
+        self.assertLess(main.index("Hook registration: $hookStatus"), main.index("exit $script:hooksFailed"),
+                        "the summary comes first and the failing status after it")
+        self.assertLess(self.sh.rindex("Hook registration: failed"), self.sh.rindex('exit "$hooks_failed"'))
+        self.assertLess(self.ps.index("$script:hooksFailed = 0"), self.ps.index("function Register-HarnessHooks"))
 
     def test_the_declined_flag_is_initialised_before_strict_mode_can_read_it(self):
         self.assertLess(self.ps.index("$script:hooksDeclined = $false"), self.ps.index("function Register-HarnessHooks"))

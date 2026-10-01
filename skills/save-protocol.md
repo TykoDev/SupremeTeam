@@ -162,7 +162,8 @@ prompt-submit hook, and the gate checker's run-root verification.
    written through `save_run.py`'s `heartbeat` as the lock owner with
    `heartbeat_source: hook:<event>`; it never revives a stale lock). A hook holds
    up the host for as long as it runs, so it waits a quarter of a second for the
-   writer lock and skips the refresh when another writer holds it. A lock is
+   writer lock and skips the refresh when another writer holds it; that skip is
+   the design and is not counted as a hook fault. A lock is
    stale when its heartbeat is older than 30 minutes, which with hooks
    registered means 30 minutes without any host activity in the project, or when
    it is dated more than five minutes in the future, which no clock explains.
@@ -182,7 +183,11 @@ prompt-submit hook, and the gate checker's run-root verification.
    `block`, or `release` first, because a second held run beside a stale one
    leaves both `conflicting` and neither pinnable), and publishes revision 1
    with the pointer. It proceeds in a run directory that already holds intake's
-   report, and a refusal leaves no directory behind.
+   report, and a refusal leaves no directory behind. A new run id is 1 to 128
+   letters, digits, `.`, `_` or `-`, starting with a letter, digit or `_`
+   (`save_taxonomy.RUN_ID`, which the path resolver uses too); the grammar governs
+   creation only, so a run an earlier writer made under a looser id (one path
+   segment) is still read, resumed, recovered and closed by id.
 4b. **Manual write-capability probe (agent mode).** `create`'s internal probe
    runs *inside* `create`, so it reports a read-only workspace only by failing the
    run's first write. An agent host that must know before it commits to a run —
@@ -356,7 +361,7 @@ so deleting any of those three pointers fails the suite.
 | Clause of §1–§5 | Backing | What fails |
 |-----------------|---------|------------|
 | §1 Everything generated lands under `skillset-saves/` or `.harness-state/` | Machine-checked by `validation/test_save_contracts.py` `GeneratedRootPolicyTests` and by [`scripts/validate_manifests.py`](scripts/validate_manifests.py) | `save-ownership.yaml: generated_roots must be exactly skillset-saves and .harness-state`; a resolver kind landing outside a declared root fails `test_every_project_kind_resolves_under_a_generated_root` |
-| §1 `scripts/output_paths.py` resolves every kind and rejects escapes | Machine-checked by `resolve()`; the *refusal* is pinned by `OutputPathTests`, the *kind set* by `GeneratedRootPolicyTests` | `resolve()` raises `ValueError` with `unknown output kind`, `name must be a relative path without traversal`, `run_id must be a single safe path segment`, `core name must be _state.md, _lock.md, or _audit-trail.md`, `phase must be one of [...]`, `<phase> phase-root files must be named like one of [...]`, or `resolved path escapes project root`. Read the boundary of the test carefully: `OutputPathTests.test_every_kind_resolves_inside_project` asserts only that `ValueError` is raised, for three of those six cases, and never inspects the message — so the wording above is the script's, verified by running it, not a string any test asserts. `GeneratedRootPolicyTests.test_every_project_kind_resolves_under_a_generated_root` does pin `KINDS`, and the CLI declares `--kind ... choices=sorted(KINDS)`, so the two cannot drift apart. |
+| §1 `scripts/output_paths.py` resolves every kind and rejects escapes | Machine-checked by `resolve()`; the *refusal* is pinned by `OutputPathTests`, the *kind set* by `GeneratedRootPolicyTests` | `resolve()` raises `ValueError` with `unknown output kind`, `name must be a relative path without traversal`, `run_id must be 1 to 128 letters, digits, '.', '_' or '-', starting with a letter, digit or '_'`, `core name must be _state.md, _lock.md, or _audit-trail.md`, `phase must be one of [...]`, `<phase> phase-root files must be named like one of [...]`, or `resolved path escapes project root`. Read the boundary of the test carefully: `OutputPathTests.test_every_kind_resolves_inside_project` asserts only that `ValueError` is raised, for three of those six cases, and never inspects the message — so the wording above is the script's, verified by running it, not a string any test asserts. `GeneratedRootPolicyTests.test_every_project_kind_resolves_under_a_generated_root` does pin `KINDS`, and the CLI declares `--kind ... choices=sorted(KINDS)`, so the two cannot drift apart. A `product` name at or under the version-control directory, a generated root, `skills/harness/` or a host hook-registration file is refused with `which no product output may target` (`ResolverContractTests`). |
 | §1 The taxonomy in code equals `save-ownership.yaml`, and every resolver kind and phase resolves to one class | Machine-checked by `validation/test_save_taxonomy.py` | a phase the resolver accepts and the policy does not declare, a kind whose path no class owns or two classes claim, a declared phase-root pattern no kind can produce, or a hook whose copy of the core file names or the phases disagrees with `scripts/save_taxonomy.py` |
 | §1 A script run from a subdirectory still writes at the project root | Machine-checked by `GeneratedRootPolicyTests.test_hook_state_root_walks_up_to_the_project_marker` | `_state.find_project_root` returning a subdirectory instead of the nearest marker |
 | §1 Every pipeline has a phase directory under a run | Machine-checked by `validate_manifests.py` and `OwnershipAgreementTests.test_every_pipeline_phase_has_a_save_directory` | `save-ownership.yaml: missing phase directory 'qa' for qa` — the pipeline name appears twice in the real message. The test asserts membership directly rather than matching that string. |

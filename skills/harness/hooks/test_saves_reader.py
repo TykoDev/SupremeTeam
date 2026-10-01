@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -110,6 +111,7 @@ class ClassificationTests(unittest.TestCase):
             "not a mapping": b"just words, no structure: [",
             "undecodable bytes": b"\xff\xfe\x00{",
             "nested past the parser": b"[" * 100_000 + b"]" * 100_000,
+            "integer past the interpreter's digit limit": b'{"schema_version": 1, "revision": ' + b"9" * 5000 + b"}",
         }
         for label, content in records.items():
             with self.subTest(label):
@@ -210,6 +212,78 @@ class ClassificationTests(unittest.TestCase):
                 project = SavedProject(Path(tmp).resolve(), now=datetime.now(timezone.utc))
                 build(project)
                 self.assertEqual(_saves.has_active_run(project.root), expected)
+
+
+class HasActiveRunTests(unittest.TestCase):
+    """QR-PY-07: a prompt, and a guarded write, classified every saved run to learn whether one is active.
+
+    The answer must stay the classification's, because the guard's hook-file protection and the
+    session-pin reminder both read it (a conflicting set, for one, never counts), so the saving
+    is in what is read, not in what is decided."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.project = SavedProject(Path(tmp.name).resolve(), now=datetime.now(timezone.utc))
+        for index in range(40):
+            self.project.run(f"closed-{index:02d}", status="complete", heartbeat=-600 - index)
+
+    def classified_runs(self) -> int:
+        """How many run directories the call classified in full."""
+        real = _saves._record
+        with mock.patch.object(_saves, "_record", side_effect=real) as record:
+            self.answer = _saves.has_active_run(self.project.root)
+        return record.call_count
+
+    def test_closed_runs_are_never_classified_in_full(self):
+        self.project.run("live")
+        self.project.pointer("live")
+        self.assertEqual(self.classified_runs(), 1)
+        self.assertTrue(self.answer)
+
+    def test_an_orphaned_run_is_found_among_the_closed_ones_and_the_pointed_run_is_read_too(self):
+        self.project.run("orphan")
+        self.project.pointer("closed-00")
+        self.assertEqual(self.classified_runs(), 2)
+        self.assertTrue(self.answer)
+
+    def test_no_held_run_classifies_nothing_and_is_not_active(self):
+        self.assertEqual(self.classified_runs(), 0)
+        self.assertFalse(self.answer)
+
+    def test_it_agrees_with_the_classification_in_every_arrangement(self):
+        """Each case is judged against the full classification of the same directory."""
+        cases = {
+            "one live run": lambda p: (p.run("r"), p.pointer("r")),
+            "paused": lambda p: (p.run("r", status="paused"), p.pointer("r")),
+            "awaiting input": lambda p: (p.run("r", status="awaiting-input"), p.pointer("r")),
+            "orphaned": lambda p: p.run("r"),
+            "pointer behind": lambda p: (p.run("r"), p.pointer("r", updated=-45)),
+            "stale": lambda p: (p.run("r", heartbeat=-45), p.pointer("r", updated=-45)),
+            "future heartbeat": lambda p: (p.run("r", heartbeat=120), p.pointer("r")),
+            "released": lambda p: (p.run("r", status="released"), p.pointer("r")),
+            "blocked": lambda p: (p.run("r", status="blocked"), p.pointer("r")),
+            "complete": lambda p: (p.run("r", status="complete"), p.pointer("r")),
+            "two held runs": lambda p: (p.run("a"), p.run("b"), p.pointer("a")),
+            "a stale held run beside the live pointed one": lambda p: (p.run("a"), p.run("b", heartbeat=-45), p.pointer("a")),
+            "an orphan beside a pointer to a closed run": lambda p: (p.run("a"), p.pointer("closed-03")),
+            "a stale held run only": lambda p: (p.run("a", heartbeat=-45), p.pointer("closed-03")),
+            "pointer names nothing": lambda p: (p.run("r"), p.pointer("ghost")),
+            "pointer is not a plain name": lambda p: (p.run("r"), p.pointer("../r")),
+            "pointer at another revision": lambda p: (p.run("r", revision=3), p.pointer("r", revision=2)),
+            "pointer is malformed": lambda p: (p.run("r"), (p.root / "skillset-saves" / "_latest.md").write_text("{", encoding="utf-8")),
+            "pointed run lost its evidence": lambda p: (p.run("r", evidence=("gone.md",)), p.pointer("r")),
+            "held lock, closed state": lambda p: (p.run("r", status="complete").joinpath("_lock.md").write_text(json.dumps(
+                {"schema_version": 1, "run_id": "r", "owner": "admiral", "status": "held", "session_pin": True, "revision": 1,
+                 "heartbeat": p.at(-1)}), encoding="utf-8"), p.pointer("r")),
+            "unreadable lock beside a live run": lambda p: (p.run("a"), p.pointer("a"), p.run("b").joinpath("_lock.md").write_bytes(b"\xff\xfe")),
+        }
+        for label, build in cases.items():
+            with self.subTest(label):
+                self.setUp()
+                build(self.project)
+                expected = self.project.classify()["status"] in {"active", "orphaned"}
+                self.assertEqual(_saves.has_active_run(self.project.root), expected, self.project.classify())
 
 
 class SharedConstantsTests(unittest.TestCase):

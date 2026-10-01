@@ -98,6 +98,39 @@ class TaxonomyMatchesThePolicyTests(unittest.TestCase):
                     resolve(root, "reports", run_id="r1", phase=phase, name="x.md")
 
 
+class RunIdGrammarIsStatedOnceTests(unittest.TestCase):
+    """The writer, the resolver and the hooks' run scope each had a run-id pattern, and they disagreed."""
+
+    PROBES = ("run-1", "2026-09-29_full-review-audit_k7q2xd", "_x", "_", "a.b_c-d", "x" * 128, "x" * 129, "", ".", "..", ".hidden",
+              "-dash", "my run", "a/b", "a\\b", "run\n", "a;b", "é")
+
+    def test_the_writer_the_resolver_and_the_hooks_accept_the_same_ids(self):
+        import _state
+        import save_run
+
+        root = Path(tempfile.gettempdir()) / "run-id-grammar"
+        for run_id in self.PROBES:
+            with self.subTest(run_id=run_id):
+                expected = taxonomy.RUN_ID.fullmatch(run_id) is not None
+                try:
+                    save_run.new_run_id(run_id)
+                    writer = True
+                except save_run.Refused:
+                    writer = False
+                try:
+                    resolve(root, "core", run_id=run_id, name="_state.md")
+                    resolver = True
+                except ValueError:
+                    resolver = False
+                self.assertEqual((writer, resolver, _state.RUN_ID.fullmatch(run_id) is not None), (expected,) * 3)
+
+    def test_a_new_id_is_one_the_path_resolver_can_resolve_for_every_run_scoped_kind(self):
+        root = Path(tempfile.gettempdir()) / "run-id-grammar"
+        for kind, extra in (("core", dict(name="_state.md")), ("trajectory", dict(session="s1")), ("reports", dict(phase="design", name="x.md"))):
+            with self.subTest(kind=kind):
+                self.assertTrue(resolve(root, kind, run_id="_x", **extra))
+
+
 class ResolverKindsMapToOneClassTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

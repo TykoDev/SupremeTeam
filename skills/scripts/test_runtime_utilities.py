@@ -233,6 +233,37 @@ class ResolverContractTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     resolve(self.root, kind, **arguments)
 
+    def test_a_product_name_may_not_bless_a_path_that_runs_code_or_enforces_the_guard(self):
+        """`--kind product` returned ok for the version-control hooks directory and for the guard's own scripts."""
+        for name in (".git/hooks/pre-commit", ".git", ".GIT/config", "./.git/hooks/x", "skillset-saves/runs/r1/_state.md",
+                     ".harness-state/guard-state.json", "skills/harness/hooks/pre_tool_use.py", "Skills/Harness/gatekeeper/check.py",
+                     ".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".github/hooks.json"):
+            with self.subTest(name=name):
+                with self.assertRaises(ValueError) as raised:
+                    resolve(self.root, "product", name=name)
+                self.assertIn("no product output may target", str(raised.exception))
+
+    def test_ordinary_product_names_still_resolve_including_near_misses_of_the_refused_ones(self):
+        for name in ("src/app.py", "README.md", ".github/workflows/ci.yml", ".claude/commands/review.md", ".gitignore",
+                     "docs/.git-notes.md", "skills/harness-notes.md", "skills/design/SKILL.md", "skillset-saves-old/x.md"):
+            with self.subTest(name=name):
+                self.assertEqual(resolve(self.root, "product", name=name), self.root / name)
+
+    def test_a_link_into_a_refused_directory_is_refused_as_what_it_resolves_to(self):
+        (self.root / ".git" / "hooks").mkdir(parents=True)
+        try:
+            (self.root / "innocent").symlink_to(self.root / ".git", target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("symbolic links are not available here")
+        with self.assertRaises(ValueError):
+            resolve(self.root, "product", name="innocent/hooks/pre-commit")
+
+    def test_the_cli_reports_a_refused_product_name_as_an_error(self):
+        process = subprocess.run([sys.executable, str(SCRIPTS / "output_paths.py"), "--project-root", str(self.root),
+                                  "--kind", "product", "--name", ".git/hooks/pre-commit"], capture_output=True, text=True)
+        self.assertEqual(process.returncode, 1, process.stdout + process.stderr)
+        self.assertFalse(json.loads(process.stdout)["ok"])
+
     def test_an_empty_or_relative_xdg_data_home_falls_back_to_the_home_default(self):
         """An empty value (common in containers and CI) made the data root ./supremeteam,
         inside the project when run from it."""

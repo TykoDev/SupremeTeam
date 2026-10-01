@@ -20,9 +20,13 @@ Behaviour:
   * writes atomically (per-process temp file + replace) after copying the
     previous file to ``<file>.bak-<timestamp>``. The file and its backup keep the
     permission bits the original had;
-  * records the sha256 of each registered hook script in
-    ``.harness-state/hook-hashes.json`` so verify_registration can report a script
-    that changed afterwards; ``--record-hashes`` re-records them on demand;
+  * records the sha256 of each registered hook script, and of every Python module
+    in its directory, in ``.harness-state/hook-hashes.json`` so verify_registration
+    can report a file that changed afterwards; ``--record-hashes`` re-records them
+    on demand;
+  * never replaces a symbolic link with a regular file: a user-level config that is
+    a link (a dotfiles manager's) is written through, with a note saying so, and a
+    project-level one, which a cloned repository can supply, is refused;
   * is idempotent: a second run reports "no changes".
 
 Exit 0 = nothing to do or applied, 1 = changes needed but --apply not given,
@@ -185,6 +189,36 @@ def _atomic_write(path: Path, data: bytes, mode: int | None) -> None:
         raise
 
 
+def resolve_config(path: Path, through_links: bool) -> Path:
+    """The file a registration is read from and written to.
+
+    Replacing a symbolic link with a regular file leaves its target as it was, so a
+    sync of the dotfiles that own the target would bring the old content back and the
+    registration would disappear without a word. A link the operator owns (the
+    user-level config, or a path named on the command line) is written through. A
+    project-level one is refused: a cloned repository can plant a link that points
+    anywhere, and a dangling or non-file link has nothing safe to write through to."""
+    if not path.is_symlink():
+        return path
+    try:
+        target = path.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(f"{path} is a symbolic link that does not lead to a file ({exc.strerror or type(exc).__name__}); "
+                         "refusing to replace it") from exc
+    if not target.is_file():
+        raise ValueError(f"{path} is a symbolic link to {target}, which is not a file; refusing to replace it")
+    if not through_links:
+        raise ValueError(f"{path} is a symbolic link to {target}; refusing to replace it with a regular file, which would "
+                         f"leave {target} unchanged. Add the hooks to {target} itself (a dry run prints the entries)")
+    return target
+
+
+def link_warning(link: Path, target: Path) -> str:
+    """What the operator is told before a registration is written through a link."""
+    return (f"{link} is a symbolic link: writing through it to {target}. The hook paths written are machine-absolute, "
+            "so a file that is synced to other machines has to be registered on each of them")
+
+
 def write_with_backup(path: Path, text: str, *, private: bool = False) -> Path | None:
     """Write ``text`` to ``path`` atomically, keeping a timestamped copy of the old file.
 
@@ -205,16 +239,22 @@ def write_with_backup(path: Path, text: str, *, private: bool = False) -> Path |
 
 
 def record_hashes(states: dict, host: str) -> Path:
-    """Merge the sha256 of every registered hook script into the project's hash record."""
+    """Merge the sha256 of every registered hook script, and of the modules in each script's directory, into the project's hash record."""
     path = _state.state_dir() / verify.HASH_RECORD
     current = verify._read(path)
-    hooks = dict(current["hooks"]) if isinstance(current, dict) and isinstance(current.get("hooks"), dict) else {}
+    sections = {name: dict(current[name]) if isinstance(current, dict) and isinstance(current.get(name), dict) else {}
+                for name in ("hooks", "directories")}
     recorded_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for state in states.values():
         digest = verify.hook_hash(state["script"]) if state["registered"] and state["script"] else None
         if digest:
-            hooks[verify.hash_key(state["script"])] = {"path": state["script"], "sha256": digest, "host": host, "recorded_at": recorded_at}
-    _atomic_write(path, (json.dumps({"schema_version": 1, "hooks": hooks}, indent=2, sort_keys=True) + "\n").encode("utf-8"), None)
+            directory = Path(state["script"]).parent
+            sections["hooks"][verify.hash_key(state["script"])] = {"path": state["script"], "sha256": digest, "host": host,
+                                                                   "recorded_at": recorded_at}
+            sections["directories"][verify.hash_key(directory)] = {"path": str(directory), "files": verify.module_hashes(directory),
+                                                                   "host": host, "recorded_at": recorded_at}
+    record = {"schema_version": 1, **sections}
+    _atomic_write(path, (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"), None)
     return path
 
 
@@ -248,6 +288,12 @@ def main() -> int:
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
+    link = path
+    try:
+        path = resolve_config(link, through_links=args.scope == "user")
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "path": str(link), "error": str(exc)}))
+        return 2
     before_text = ""
     config: dict = {}
     if path.exists():
@@ -273,7 +319,9 @@ def main() -> int:
     if not added:
         print(json.dumps({"ok": True, "path": str(path), "changes": [], "applied": False, "note": "no changes: every required hook is already registered and executable"}))
         return 0
-    warnings = scope_warnings(args.host, args.scope, path)
+    warnings = scope_warnings(args.host, args.scope, link)
+    if path != link:
+        warnings.append(link_warning(link, path))
     for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
     diff = "".join(difflib.unified_diff(before_text.splitlines(True), after_text.splitlines(True), fromfile=str(path), tofile=str(path) + " (proposed)"))

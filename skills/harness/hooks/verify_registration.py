@@ -22,8 +22,11 @@ turns a registration into a failure, because each has a legitimate cause:
                version against the floor in runtime-manifest.yaml. The version is
                read by running that interpreter once with ``-I -S -c``; one inside
                the project directory is never run.
-  integrity    whether the hook script still matches the sha256 recorded when it
-               was registered. ``changed`` after a deliberate edit is expected.
+  integrity    whether the hook script, and every other module in its directory,
+               still matches the sha256 recorded when it was registered. The
+               directory is listed, not named, so a module added to it later is
+               covered too. ``changed`` after a deliberate edit or an upgrade is
+               expected.
 
 Whether the host actually fires the hook is a separate, host-observed fact this
 verifier never claims; it is reported as ``observed: unverified``.
@@ -84,9 +87,15 @@ _HOST_SIGNALS = {"codex": ("CODEX_",), "claude": ("CLAUDE",), "copilot": ("COPIL
 
 RUNTIME_MANIFEST = Path(__file__).resolve().parents[2] / "runtime-manifest.yaml"
 
-# sha256 of each registered hook script, written under .harness-state/ when the
-# hook is registered. repair_registration.py is the writer.
+# sha256 of each registered hook script, and of every module beside it, written
+# under .harness-state/ when the hook is registered. repair_registration.py is the
+# writer.
 HASH_RECORD = "hook-hashes.json"
+
+# The skills folders the installers write, relative to the home directory. A host
+# runs the hooks of one of them and the others mirror it, so a registration that
+# points at any of them is a registration of this harness.
+INSTALL_ROOTS = (".agents/skills", ".codex/skills", ".claude/skills", ".cursor/skills", ".config/opencode/skills")
 
 _PROBE = "import sys; print(*sys.version_info[:3])"
 _PROBED: dict[tuple, tuple | None] = {}
@@ -113,10 +122,16 @@ def _exists(path: Path) -> bool:
 
 
 def _roots() -> list[Path]:
+    """The hook directories a registered command may name: this one, ``SUPREMETEAM_HOOK_ROOT``, and the copy in each
+    install root of the home directory, so a check run from a mirror recognises the registration the installer wrote."""
     roots = [Path(__file__).resolve().parent]
     explicit = os.environ.get("SUPREMETEAM_HOOK_ROOT")
     if explicit:
         roots.insert(0, Path(explicit).expanduser().resolve())
+    for relative in INSTALL_ROOTS:
+        installed = (Path.home() / relative / "harness" / "hooks").resolve()
+        if installed not in roots and all((installed / script).is_file() for _, script in REQUIRED):
+            roots.append(installed)
     return roots
 
 
@@ -355,7 +370,7 @@ def interpreter_warning(report: dict | None) -> str | None:
 def _blank(reason: str) -> dict:
     return {"configured": False, "resolvable": False, "executable": False, "interpreter_on_path": None, "script": None,
             "reason": reason, "command": None, "matcher": None, "missing_tools": [], "coverage": None,
-            "registered": False, "interpreter": None}
+            "registered": False, "interpreter": None, "changed_files": []}
 
 
 def hook_states(objects: list[dict], host: str) -> dict[str, dict]:
@@ -397,26 +412,70 @@ def hook_hash(path) -> str | None:
         return None
 
 
-def load_hash_record() -> dict:
-    """The recorded script hashes, read without creating the state directory."""
+def module_hashes(directory) -> dict[str, str]:
+    """sha256 of every Python module a hook can import from ``directory``, found by listing it.
+
+    Naming the modules would leave out the next one added, and the guard lives in the
+    modules the three entry scripts import, not in the entry scripts. Test modules are
+    left out: no hook loads them, and editing one is not tampering."""
+    found = {}
+    for path in sorted(Path(directory).glob("*.py")):
+        digest = None if path.name.startswith("test_") else hook_hash(path)
+        if digest:
+            found[path.name] = digest
+    return found
+
+
+def _load_record(section: str) -> dict:
     directory = _state.existing_state_dir()
     data = _read(directory / HASH_RECORD) if directory else None
-    hooks = data.get("hooks") if isinstance(data, dict) else None
-    return hooks if isinstance(hooks, dict) else {}
+    found = data.get(section) if isinstance(data, dict) else None
+    return found if isinstance(found, dict) else {}
+
+
+def load_hash_record() -> dict:
+    """The recorded script hashes, read without creating the state directory."""
+    return _load_record("hooks")
+
+
+def load_module_record() -> dict:
+    """The recorded hashes of each hook directory's modules, by directory."""
+    return _load_record("directories")
 
 
 def hash_key(script) -> str:
     return _norm(Path(script).resolve())
 
 
-def integrity_for(script: str | None, record: dict) -> str | None:
-    """``unchanged``, ``changed`` or ``unrecorded`` for one registered script."""
+def changed_files(script: str | None, record: dict, modules: dict | None = None) -> list[str] | None:
+    """Names that differ from what was recorded: the script, and each module beside it that changed, appeared or went.
+
+    None when neither the script nor its directory was recorded."""
     if not script:
         return None
-    recorded = record.get(hash_key(script))
-    if not isinstance(recorded, dict) or not recorded.get("sha256"):
-        return "unrecorded"
-    return "unchanged" if recorded["sha256"] == hook_hash(script) else "changed"
+    differing: set[str] = set()
+    recorded = False
+    own = record.get(hash_key(script))
+    if isinstance(own, dict) and own.get("sha256"):
+        recorded = True
+        if own["sha256"] != hook_hash(script):
+            differing.add(Path(script).name)
+    directory = Path(script).parent
+    beside = (modules or {}).get(hash_key(directory))
+    files = beside.get("files") if isinstance(beside, dict) else None
+    if isinstance(files, dict):
+        recorded = True
+        current = module_hashes(directory)
+        differing |= {name for name in files.keys() | current.keys() if files.get(name) != current.get(name)}
+    return sorted(differing) if recorded else None
+
+
+def integrity_for(script: str | None, record: dict, modules: dict | None = None) -> str | None:
+    """``unchanged``, ``changed`` or ``unrecorded`` for one registered script and the directory it sits in."""
+    if not script:
+        return None
+    differing = changed_files(script, record, modules)
+    return "unrecorded" if differing is None else "changed" if differing else "unchanged"
 
 
 def _paths(host: str) -> list[Path]:
@@ -433,10 +492,11 @@ def _check(host: str):
     loaded = [(p, _read(p)) for p in _paths(host)]
     objects = [value for _, value in loaded if isinstance(value, dict)]
     result = hook_states(objects, host)
-    record = load_hash_record()
+    record, modules = load_hash_record(), load_module_record()
     for state in result.values():
         state["observed"] = "unverified"
-        state["integrity"] = integrity_for(state["script"], record) if state["registered"] else None
+        state["integrity"] = integrity_for(state["script"], record, modules) if state["registered"] else None
+        state["changed_files"] = (changed_files(state["script"], record, modules) or []) if state["registered"] else []
     return host, loaded, result, list(REQUIRED)
 
 
@@ -491,12 +551,12 @@ def _print(host, loaded, result, required, absent_is_missing=False):
         if warning and warning not in warnings:
             warnings.append(warning)
         if state["integrity"] == "changed":
-            changed.append(script)
+            changed.extend(name for name in state["changed_files"] or [script] if name not in changed)
     for warning in warnings:
         print(f"  warning: {warning}")
     if changed:
-        print(f"  note: {', '.join(changed)} changed since registration (expected after a deliberate edit); "
-              f"record the new hash with: {repair_command(host, '--record-hashes')}")
+        print(f"  note: {', '.join(sorted(changed))} changed since registration (expected after a deliberate edit or an upgrade; "
+              f"if you made neither, restore the files). Record the new hashes with: {repair_command(host, '--record-hashes')}")
     print("  observed: unverified - host firing is not proven by config inspection")
     warned = warnings or any(result[key]["coverage"] == "partial" for key, _ in required)
     print(f"  status: {'REGISTERED' if ok else 'MISSING'}{' (with warnings)' if ok and warned else ''}")

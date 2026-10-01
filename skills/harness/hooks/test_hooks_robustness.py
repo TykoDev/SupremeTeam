@@ -471,18 +471,22 @@ class RunIdTests(Project):
             with self.subTest(run_id=run_id):
                 self.assertEqual(save_run.safe_run_id(run_id), run_id)
 
-    def test_the_writer_refuses_every_id_the_reader_would_never_find(self):
-        """The writer allowed ids that `_state.active_run_id` ignores, so such a run was written and then invisible to the hooks."""
+    def test_a_new_run_is_never_created_under_an_id_the_reader_would_never_find(self):
+        """The writer allowed ids that `_state.active_run_id` ignores, so such a run was written and then invisible to the hooks.
+
+        Only creation is held to the grammar: every other operation takes a run an earlier writer made under a
+        looser id (`LegacyRunIdTests` in test_run_state.py), so the same ids pass `safe_run_id`."""
         import _state
         import save_run
 
         for run_id in ("a b", "x" * 129, ".hidden", "-flag", "a\nb", "r1\n", "naïve", "r;1", "r$HOME", "r'1", "r(1)", "r~1"):
             with self.subTest(run_id=run_id):
                 with self.assertRaises(save_run.Refused) as raised:
-                    save_run.safe_run_id(run_id)
+                    save_run.new_run_id(run_id)
                 self.assertIn("letters, digits", str(raised.exception))
         for run_id in ("x" * 128, "_r1", "0", "a.b-c_d", "2026-09-29_full-review-audit_k7q2xd"):
             with self.subTest(run_id=run_id):
+                self.assertEqual(save_run.new_run_id(run_id), run_id)
                 self.assertEqual(save_run.safe_run_id(run_id), run_id)
                 self.assertIsNotNone(_state.RUN_ID.match(run_id))
 

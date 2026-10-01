@@ -28,18 +28,23 @@ creates carries a `.supremeteam-managed` marker. On an upgrade:
 
 - Items it installed are replaced. Each new copy is staged first and swapped in,
   so an interrupted run never leaves a half-copied item and puts back anything it
-  had moved aside, and items that are no longer shipped are removed. Edits inside
-  an installed directory are replaced too, so keep your own skills in directories
-  of their own.
+  had moved aside, and items that are no longer shipped, or that a narrower
+  `--team` choice leaves out this time, are removed (the summary says which). Edits
+  inside an installed directory are replaced too, so keep your own skills in
+  directories of their own.
 - Anything else in the folder is left alone, including your own skills.
 - If something of yours has the same name as an installed item (`review`, `qa`,
   `scripts`, ...), it is moved, never deleted, to
   `<target>.supremeteam-backup/<timestamp>/` beside the target, and the summary
-  lists it. The first upgrade over an install made before these records existed
-  moves that whole old install there once; delete the folder when you have checked
-  that nothing in it is yours.
-- `mcp-tools.md` is the tool registry your assistant fills in, so an existing copy
-  is never replaced. Delete it and re-run to get the blank template back.
+  lists it as not recorded as installed by Supreme Team. The first upgrade over an
+  install made before these records existed moves that whole old install there once,
+  so that list is long and includes copies an earlier Supreme Team installer wrote;
+  delete the folder when you have checked that nothing in it is yours.
+- `mcp-tools.md` is the tool registry your assistant fills in, so a registry you
+  changed is never replaced; delete it and re-run to get the blank template back. An
+  unedited copy of a registry an earlier release shipped is replaced by the blank
+  template, because it is the installer's own file: the older releases shipped one
+  machine's tool list, and the summary names the file when it swaps one out.
 - `--destination` refuses the filesystem root, your home directory or one of its
   parents, any folder that overlaps the checkout, and `.` unless the current
   directory already holds an install (a full path to it is always accepted).
@@ -222,9 +227,14 @@ with no terminal it writes straight away. It writes atomically, keeps a timestam
 `.bak-` copy with the original's permissions, refuses a file that is not UTF-8 JSON,
 is idempotent, and leaves unrelated keys alone. It registers the Python that runs
 it (`--python-command` names another), started with `-X utf8`, and records the
-sha256 of the hook scripts in `.harness-state/hook-hashes.json` so a later edit to
-one shows up in `verify_registration.py`. Afterward open `/hooks` or restart the
-host. Without hooks, entry routing and tool guards are advisory only.
+sha256 of the hook scripts, and of every Python module beside them, in
+`.harness-state/hook-hashes.json` of the project it ran from, so a later edit to any
+of them shows up in `verify_registration.py` (a note, expected after an edit or an
+upgrade, never a failure). A host config that is a symbolic link, as a dotfiles
+manager leaves it, is never replaced by a regular file: the user-level one is
+written through to its target and a project-level one is refused. Afterward open
+`/hooks` or restart the host. Without hooks, entry routing and tool guards are
+advisory only.
 
 ## Verify
 
@@ -297,9 +307,10 @@ stops calling scripts you are about to delete.
    the host; `verify_registration.py --host auto` then reports `MISSING`.
 2. **Remove the skills.** In each target from [Where it goes](#where-it-goes) that
    holds an install, delete every item named on an `item <name>` line of its
-   `.supremeteam-manifest`, then the manifest. Leave everything else: `mcp-tools.md`
-   is your tool registry, and `<target>.supremeteam-backup/` holds anything of yours
-   the installer moved aside.
+   `.supremeteam-manifest` except `mcp-tools.md`, then the manifest. Leave
+   everything else: `mcp-tools.md` is your tool registry (the manifest lists it, but
+   the file is yours), and `<target>.supremeteam-backup/` holds anything of yours the
+   installer moved aside.
 3. **Project leftovers**, if you want them gone: `.harness-state/` holds hook state
    and the hash record, and `skillset-saves/` holds your run history, so keep that
    one unless you are sure.

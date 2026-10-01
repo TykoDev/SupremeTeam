@@ -74,7 +74,7 @@ Options:
                             project or local. The last two belong to the project around
                             the directory you run this from.
   --hooks-yes               Do not ask before --register-hooks writes.
-  --install-claude         Mirror the install into ~/.claude/skills.
+  --install-claude          Mirror the install into ~/.claude/skills.
   --claude-destination PATH Override the Claude Code skill path.
   --cursor-destination PATH Override the Cursor skill path.
   --opencode-destination PATH Override the OpenCode skill path.

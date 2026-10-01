@@ -82,6 +82,28 @@ class DefaultsTests(InstallerCase):
             command = groups[0]["hooks"][0]["command"]
             self.assertTrue(command.startswith(repair.launcher_token(sys.executable) + " -X utf8 "), command)
 
+    def test_an_interpreter_that_cannot_start_the_hooks_is_named_before_and_after_the_write(self):
+        missing = "/nonexistent/python3.13" if POSIX else "C:/nonexistent/python3.13.exe"
+        for extra in (("--dry-run",), ()):
+            with self.subTest(extra=extra):
+                result = self.install("--target", "claude", "--claude-settings", str(self.settings), "--python-command", missing, *extra)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("note: interpreter", result.stdout)
+                self.assertIn("was not found on this PATH", result.stdout)
+
+    @unittest.skipUnless(POSIX, "needs a shell script to stand in for an interpreter")
+    def test_an_interpreter_below_the_floor_is_named(self):
+        old = self.tmp / "bin" / "python3.11"
+        old.parent.mkdir()
+        old.write_text('#!/bin/sh\necho "3 11 4"\n', encoding="utf-8")
+        old.chmod(0o755)
+        result = self.install("--target", "claude", "--claude-settings", str(self.settings), "--python-command", str(old), "--dry-run")
+        self.assertIn("is Python 3.11.4, below the 3.13 floor", result.stdout)
+
+    def test_a_usable_interpreter_gets_no_note(self):
+        result = self.install("--target", "claude", "--claude-settings", str(self.settings), "--dry-run")
+        self.assertNotIn("note:", result.stdout)
+
     def test_the_hash_of_every_registered_script_is_recorded_in_the_project(self):
         result = self.install("--target", "claude", "--claude-settings", str(self.settings))
         self.assertIn("hook hashes recorded in:", result.stdout)

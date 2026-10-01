@@ -415,8 +415,10 @@ def _run_targets(args: argparse.Namespace, targets: list[str], verify, repair) -
             continue
         results.append(result)
 
+        # The interpreter is registered as given, so say now if it cannot run the hooks.
+        warning = verify.interpreter_warning(verify.interpreter_report(repair.command_for("pre_tool_use.py", args.python_command)))
         print(f"  config: {result['path']}")
-        for note in result.get("notes", []):
+        for note in [*result.get("notes", []), *([warning] if warning else [])]:
             print(f"  note: {note}")
         if result.get("backup"):
             print(f"  backup: {result['backup']}")
@@ -436,6 +438,13 @@ def _run_targets(args: argparse.Namespace, targets: list[str], verify, repair) -
         else:
             print(f"  written, but not machine-verifiable. {result['note']}")
     return results
+
+
+def _interactive() -> bool:
+    try:
+        return bool(sys.stdin and sys.stdout and sys.stdin.isatty() and sys.stdout.isatty())
+    except ValueError:
+        return False
 
 
 def _confirm(question: str) -> bool:
@@ -459,7 +468,7 @@ def main() -> int:
         if target not in targets:
             targets.append(target)
 
-    if not args.dry_run and not args.yes and sys.stdin.isatty() and sys.stdout.isatty():
+    if not args.dry_run and not args.yes and _interactive():
         print("Preview of the changes. Nothing is written until you confirm.")
         preview = argparse.Namespace(**{**vars(args), "dry_run": True})
         if any(r.get("added") for r in _run_targets(preview, targets, verify, repair)):

@@ -191,18 +191,24 @@ class ReadinessSemanticsTests(Scratch):
         self.assertTrue(data["capabilities"]["hooks_configured"])
         self.assertEqual(data["saves"]["project_root"], str(other))
 
+    def tree(self) -> list[str]:
+        return sorted(str(path.relative_to(self.tmp)) for path in self.tmp.rglob("*"))
+
     def test_readiness_creates_no_state_directory(self):
         # BUGH-27: a diagnostic reads; it does not leave a .harness-state behind.
         self.claude_settings(self.registered())
+        before = self.tree()
         for args in (("--host", "auto"), ("--host", "auto", "--json"), ("--host", "claude", "--project-root", str(self.project))):
             with self.subTest(args=args):
                 self.run_tool("check_readiness.py", *args)
                 self.assertFalse((self.project / ".harness-state").exists())
+                self.assertEqual(self.tree(), before, "readiness wrote something")
 
-    def test_the_verifier_creates_no_state_directory_either(self):
+    def test_the_verifier_creates_nothing_either(self):
         self.claude_settings(self.registered())
+        before = self.tree()
         self.run_tool("verify_registration.py", "--host", "auto")
-        self.assertFalse((self.project / ".harness-state").exists())
+        self.assertEqual(self.tree(), before)
 
     def test_observations_are_still_read_when_they_exist(self):
         self.claude_settings(self.registered())

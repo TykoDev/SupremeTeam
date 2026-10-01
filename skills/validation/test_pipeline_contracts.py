@@ -81,6 +81,32 @@ class PipelineContractTests(unittest.TestCase):
                     self.assertTrue(script.startswith("skills/"), script)
                     self.assertTrue((ROOT.parent / script).is_file(), script)
 
+    def test_stage_dependencies_are_available_in_declared_order(self):
+        """A stage cannot consume an artifact that only a later stage produces."""
+        checked = 0
+        for name, pipeline in self.spec["pipelines"].items():
+            available = set(pipeline.get("external_inputs", []))
+            for stage in pipeline["stages"]:
+                required = set(stage.get("requires", []))
+                with self.subTest(pipeline=name, step=stage.get("step")):
+                    self.assertLessEqual(required, available)
+                    self.assertTrue(set(stage.get("produces", [])).isdisjoint(available))
+                checked += len(required)
+                available.update(stage.get("produces", []))
+        self.assertGreater(checked, 0, "expected at least one machine-readable stage dependency")
+
+    def test_validator_rejects_a_forward_dependency(self):
+        pipeline = {
+            "external_inputs": ["request"],
+            "stages": [
+                {"step": "spec", "requires": ["stack-lock"], "produces": ["implementation-spec"]},
+                {"step": "lock", "requires": ["implementation-spec"], "produces": ["stack-lock"]},
+            ],
+        }
+        errors = validate_manifests.pipeline_dependency_errors("design", pipeline)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("design/spec requires unavailable inputs ['stack-lock']", errors[0])
+
     def test_gate_spec_submitters_are_team_members(self):
         for name, boundary in self.gates["boundaries"].items():
             with self.subTest(boundary=name):

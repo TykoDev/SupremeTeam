@@ -10,16 +10,18 @@
     "artifact": "Optional. Must be an ownership.yaml artifact id. The stage owner keeps the write even when the work is delegated.",
     "when": "Optional. A prose condition selecting the stage. No comparator evaluates the condition against a live run - that stays judgement, and failure_paths.when_condition_ambiguous governs it. What is checked is that the condition is stated somewhere on the handoff: validation/test_orchestration.py StageConditionTests requires the condition, minus any parenthetical gloss, to appear verbatim in the SKILL.md of the stage owner or of the pipeline owner, within a sentence of a word that frames it as a condition. Twenty-one stages carry a `when`; the four added when redesign became mock-first all state the same condition, `a variant was selected`. Sixteen are documented by the stage owner itself and five only by the orchestrator that invokes the stage, so either end satisfies the rule and a floor keeps the specialist-side share from eroding.",
     "delegate": "Optional. The skill the stage owner hands the work to while keeping the write. Declared by qa/evidence-capture (browse), qa/defect-record (qa-only, on a report-only run, which routing-doctrine.md and qa-only/SKILL.md both describe; qa remains the only qa-review submitter), and skill-creation/package (skill-creator, whose Package mode skill-maker Stage 5 calls). validation/test_orchestration.py PipelineOwnerRoleTests resolves the name: a delegate must be a skill on the team-manifest.yaml roster. Whether it is reachable from that stage is still judgement.",
+    "requires": "Optional list of dependency ids that must be present in pipeline external_inputs or produced by an earlier stage. scripts/validate_manifests.py and validation/test_pipeline_contracts.py reject missing and forward dependencies.",
+    "produces": "Optional list of dependency ids made available to later stages. An id may be produced only once in a pipeline.",
     "then": "Optional. The pipeline or sub-pipeline the stage output continues into. Judgement.",
     "fan_out": "Optional. Parallel instances of the stage; a stage that declares none runs once. redesign/mock-build declares 4, matching mock_set.required_count in gates.yaml, which check.py does enforce on the submitted record. The numbers are compared: validation/test_orchestration.py StageConditionTests pairs the counted evidence keys gates.yaml evidence_owners assigns to a stage owner at the pipeline's boundary, in required_evidence order, with that owner's artifact-bearing stages in pipeline order, and requires each stage's fan-out to equal the required_count of the key it produces. prototyper owns two of them at redesign-review, so mock-build must fan out four ways for mock_set and selected-build must not fan out at all for selected_variant. design/redesign/agent/agent-manifest.yaml states the fanned-out number a third time for the same delegate and is compared too. A fan-out that stops producing the number the gate counts is a pipeline that cannot close."
   },
   "enforcement": {
     "scripts/validate_manifests.py": "check_pipeline_mirrors: every pipeline owner and stage owner is a team member; an artifact-bearing stage matches ownership.yaml's writer; every declared script exists under skills/; the boundary set equals gates.yaml's; exactly one pipeline owns each boundary; every pipeline name is a declared phase directory in save-ownership.yaml.",
-    "validation/test_pipeline_contracts.py": "The same owner, boundary, artifact, and script facts as independent assertions, plus StageArtifactOwnershipTests and a taste-specific completeness test.",
+    "validation/test_pipeline_contracts.py": "The same owner, boundary, artifact, script, and requires/produces ordering facts as independent assertions, plus StageArtifactOwnershipTests and a taste-specific completeness test.",
     "validation/test_save_contracts.py": "Every pipeline name has a save phase directory, and the security and taste script declarations are present.",
     "validation/test_catalog_contracts.py": "StageDelegationTests: a pipeline owner's own documents must name every stage owner it delegates to.",
     "validation/test_orchestration.py": "PipelineOwnerRoleTests: every pipeline owner holds an orchestrator role and every delegate resolves to a roster skill. StageConditionTests: every `fan_out` equals the count its boundary requires, agent manifests restate it correctly, and every `when` condition is stated in the stage owner's or the pipeline owner's SKILL.md. DelegationGraphTests and SpecialistEntryRoutingTests traverse the delegation graph these stages define.",
-    "judgement_only": "purpose, scripts_rule, gate_model, stage_fields, this enforcement map, failure_paths, and every then value. A when value is judgement as a run-time selector but its wording is compared against the owning prose, a fan_out value is compared against the gate spec, and a delegate name is resolved against the roster - see stage_fields for each. Stage order is judgement: no comparator checks that stages run in the declared sequence."
+    "judgement_only": "purpose, scripts_rule, gate_model, stage_fields, this enforcement map, failure_paths, and every then value. A when value is judgement as a run-time selector but its wording is compared against the owning prose, a fan_out value is compared against the gate spec, and a delegate name is resolved against the roster - see stage_fields for each. Stage execution remains an orchestrator responsibility, but declared requires/produces dependencies are mechanically checked against the listed order."
   },
   "failure_paths": {
     "declared_script_missing": "validate_manifests.py and test_pipeline_contracts.py both fail with the path. The pipeline does not run with the script silently skipped; either restore the script or remove the declaration as a recorded decision.",
@@ -33,46 +35,67 @@
     "design": {
       "owner": "commander",
       "boundary": "design-to-build",
+      "external_inputs": [
+        "request"
+      ],
       "stages": [
         {
           "step": "intake-grilling",
           "owner": "admiral",
-          "artifact": "grilling-log"
+          "artifact": "grilling-log",
+          "requires": ["request"],
+          "produces": ["decisions"]
         },
         {
           "step": "research",
-          "owner": "researcher"
+          "owner": "researcher",
+          "requires": ["decisions"],
+          "produces": ["research"]
         },
         {
           "step": "architecture",
-          "owner": "architect"
+          "owner": "architect",
+          "requires": ["decisions", "research"],
+          "produces": ["architecture", "interface-contracts", "detected-stack"]
         },
         {
           "step": "interface-and-design-system",
           "owner": "architect",
           "when": "user-facing surface",
-          "artifact": "design-system"
+          "artifact": "design-system",
+          "requires": ["architecture"],
+          "produces": ["design-system"]
         },
         {
           "step": "security-seed",
           "owner": "security-builder",
-          "when": "trust boundary"
+          "when": "trust boundary",
+          "requires": ["architecture"],
+          "produces": ["security-seed"]
         },
         {
           "step": "plan",
-          "owner": "planner"
+          "owner": "planner",
+          "requires": ["architecture", "decisions"],
+          "produces": ["plan"]
         },
         {
           "step": "implementation-spec",
-          "owner": "engineer"
+          "owner": "engineer",
+          "requires": ["architecture", "interface-contracts", "plan", "detected-stack"],
+          "produces": ["implementation-spec"]
         },
         {
           "step": "stack-lock",
-          "owner": "commander"
+          "owner": "commander",
+          "requires": ["architecture", "detected-stack", "implementation-spec"],
+          "produces": ["stack-lock"]
         },
         {
           "step": "phase-gate",
-          "owner": "gatekeeper-design"
+          "owner": "gatekeeper-design",
+          "requires": ["decisions", "architecture", "plan", "implementation-spec", "stack-lock"],
+          "produces": ["design-gate-verdict"]
         }
       ],
       "scripts": [

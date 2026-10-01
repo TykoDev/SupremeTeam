@@ -461,6 +461,26 @@ def check_package(package: dict[str, Any], errors: list[str]) -> None:
             errors.append(f"package-manifest.yaml: exclude must contain {required}")
 
 
+def pipeline_dependency_errors(name: str, pipeline: dict[str, Any]) -> list[str]:
+    """Return ordering errors for one pipeline's declared data dependencies."""
+    errors: list[str] = []
+    produced = set(_names(pipeline.get("external_inputs", [])))
+    for stage in pipeline.get("stages", []):
+        requires = _names(stage.get("requires", []))
+        creates = _names(stage.get("produces", []))
+        unavailable = sorted(requires - produced)
+        if unavailable:
+            errors.append(
+                f"pipelines.yaml: {name}/{stage.get('step')} requires unavailable inputs "
+                f"{unavailable}; declare them in external_inputs or produce them in an earlier stage")
+        repeated = sorted(creates & produced)
+        if repeated:
+            errors.append(
+                f"pipelines.yaml: {name}/{stage.get('step')} produces inputs already available {repeated}")
+        produced.update(creates)
+    return errors
+
+
 def check_pipeline_mirrors(root: Path, team: dict[str, Any], ownership: dict[str, Any],
                            gates: dict[str, Any], errors: list[str]) -> int:
     pipelines = _load(root / "pipelines.yaml", errors).get("pipelines", {})
@@ -477,6 +497,7 @@ def check_pipeline_mirrors(root: Path, team: dict[str, Any], ownership: dict[str
             errors.append(f"pipelines.yaml: {name} owner is not a team member")
         boundary = str(pipeline.get("boundary", ""))
         boundary_owners.setdefault(boundary, []).append(name)
+        errors.extend(pipeline_dependency_errors(name, pipeline))
         for stage in pipeline.get("stages", []):
             owner, artifact = stage.get("owner"), stage.get("artifact")
             if owner not in members:

@@ -32,6 +32,14 @@ directly without restarting intake.
 > iterating until it works on real tasks. Leave structural scoring to the reviewer —
 > focus on making the skill *do the right thing*."
 
+## Operator index
+
+Read `Entry Routing`, identify the delegated mode in `Modes`, and execute only
+its matching phase: Create uses Phases 1–2, Eval uses Phase 3, Improve uses
+Phase 4, Optimize uses Phase 5, and Package uses Phase 6. Consult `Failure
+Modes` on an exception and `Script and Path Safety` before running bundled
+tools. Load a reference file only when the selected phase names it.
+
 ## Use This Skill When
 
 `skill-maker` selects the mode; this is the only skill in the loop where a file actually changes:

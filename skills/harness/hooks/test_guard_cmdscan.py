@@ -949,6 +949,12 @@ class PowerShellBlockTests(unittest.TestCase):
                 analyse(text, ps)
                 self.assertLess(time.perf_counter() - start, 4.0)
 
+    def test_a_deep_powershell_block_still_exposes_its_mutating_command(self):
+        text = "{ " * 1_000 + "Remove-Item x" + " }" * 1_000
+        result = analyse(text, ps=True)
+        self.assertIn("remove-item", {command.verb for command in result.commands})
+        self.assertEqual(result.hidden, [])
+
 
 class PowerShellAbbreviationTests(unittest.TestCase):
     """An abbreviated parameter that fits a value parameter and a switch (`-f`: `-Filter` or `-Force`) is a switch, so the word

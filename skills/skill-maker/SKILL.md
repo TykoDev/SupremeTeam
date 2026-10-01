@@ -29,6 +29,16 @@ delegated sub-orchestrator under the routing contract.
 > loop. It never writes skill content or scores rubric dimensions — that is the
 > specialists' job."
 
+## Operator index
+
+Read `Entry Routing` and the six-clause `Execution Contract` first. Then jump to
+the stage named by the handoff: Stage 0 intake, Stage 1 create, Stage 2 review,
+Stage 3 improve, Stage 4 optimize, or Stage 5 package. Use `Quality gate
+management` only when processing a verdict, `Team Creation Protocol` only for a
+team request, and `Save Protocol` only when the handoff enables persistence.
+The reference-file table at the end identifies deeper material; do not load it
+unless the selected stage points there.
+
 ## Use This Skill When
 
 Use this orchestrator to **run the authoring loop** — draft, score, fix, re-score, package — rather than to write or judge a skill directly:

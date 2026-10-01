@@ -178,7 +178,7 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
         "backup": str(backup) if backup else None,
         "applied": bool(added) and not args.dry_run,
         "notes": ([] if overridden else repair.scope_warnings(host, args.scope, link))
-        + ([f"{link} is a symbolic link: writing through it to {path}"] if path != link else []),
+        + ([repair.link_warning(link, path)] if path != link else []),
     }
     if args.dry_run:
         result["hooks"] = {}

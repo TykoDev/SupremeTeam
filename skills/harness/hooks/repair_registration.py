@@ -213,6 +213,12 @@ def resolve_config(path: Path, through_links: bool) -> Path:
     return target
 
 
+def link_warning(link: Path, target: Path) -> str:
+    """What the operator is told before a registration is written through a link."""
+    return (f"{link} is a symbolic link: writing through it to {target}. The hook paths written are machine-absolute, "
+            "so a file that is synced to other machines has to be registered on each of them")
+
+
 def write_with_backup(path: Path, text: str, *, private: bool = False) -> Path | None:
     """Write ``text`` to ``path`` atomically, keeping a timestamped copy of the old file.
 
@@ -315,7 +321,7 @@ def main() -> int:
         return 0
     warnings = scope_warnings(args.host, args.scope, link)
     if path != link:
-        warnings.append(f"{link} is a symbolic link: writing through it to {path}")
+        warnings.append(link_warning(link, path))
     for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
     diff = "".join(difflib.unified_diff(before_text.splitlines(True), after_text.splitlines(True), fromfile=str(path), tofile=str(path) + " (proposed)"))

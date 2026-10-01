@@ -637,6 +637,7 @@ class ConfigLinkTests(Scratch):
         self.assertEqual(sorted(written["hooks"]), ["PostToolUse", "PreToolUse", "UserPromptSubmit"])
         self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o640, "the target keeps its own mode")
         self.assertIn("symbolic link", out.stderr)
+        self.assertIn("machine-absolute", out.stderr, "a file synced to other machines needs its own registration there")
         self.assertEqual(json.loads(out.stdout)["path"], str(target))
         self.assertEqual(len(list(target.parent.glob("settings.json.bak-*"))), 1, "the backup sits beside the file it backs up")
 

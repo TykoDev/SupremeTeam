@@ -127,7 +127,7 @@ Every later message in the session belongs to that run, even when you never say
 "admiral", and gets routed to the active sub-orchestrator.
 
 The pin clears on `RUN_COMPLETE`, on `release admiral` or `/exit-admiral`, or when
-the lock is verified stale. Every release is appended to the audit trail.
+the lock is verified stale. Every release is recorded by the `save_run.py` call that makes it.
 
 ## Making it reliable
 

@@ -28,6 +28,8 @@ from data_formats import load_data  # noqa: E402
 
 # An upper-case event name ordered appended: "append `SESSION_PIN_RELEASE`", "appends the `X`".
 ORDERED_APPEND = re.compile(r"\bappend(?:s|ed)?\s+(?:the\s+)?`([A-Z][A-Z_]{5,})`")
+# The same order without a name: "Append every release to the audit trail", "the release is appended".
+RELEASE_APPEND = re.compile(r"\bappend(?:s|ed)?\s+(?:every|each)\s+release\b|\brelease\s+is\s+appended\b", re.I)
 OWNED = ("admiral/SKILL.md", "admiral/references/contracts.md", "admiral/agent/agent-protocol.md", "mcp-tools.md",
          "routing-doctrine.md", "save-protocol.md")
 
@@ -35,8 +37,8 @@ OWNED = ("admiral/SKILL.md", "admiral/references/contracts.md", "admiral/agent/a
 class ProseMatchesTheWriterTests(unittest.TestCase):
     def owned_files(self) -> list[Path]:
         files = [SKILLS / name for name in OWNED] + sorted((SKILLS / "session-memory").rglob("*.md"))
-        saves = SKILLS.parent / "docs" / "persistent-saves.md"
-        return files + ([saves] if saves.is_file() else [])
+        docs = [SKILLS.parent / "docs" / name for name in ("persistent-saves.md", "routing.md")]
+        return files + [path for path in docs if path.is_file()]
 
     def test_no_contract_orders_an_audit_line_the_writer_cannot_emit(self):
         offenders = []
@@ -45,6 +47,9 @@ class ProseMatchesTheWriterTests(unittest.TestCase):
             for match in ORDERED_APPEND.finditer(text):
                 line = text.count("\n", 0, match.start()) + 1
                 offenders.append(f"{path.relative_to(SKILLS.parent).as_posix()}:{line} orders `{match.group(1)}` appended")
+            for match in RELEASE_APPEND.finditer(text):
+                line = text.count("\n", 0, match.start()) + 1
+                offenders.append(f"{path.relative_to(SKILLS.parent).as_posix()}:{line} orders a release appended to the trail")
         self.assertEqual(offenders, [], "the trail's events are fixed by save_run.py; carry a fact as `--set key=value` on "
                                         "create or checkpoint instead:\n  " + "\n  ".join(offenders))
 

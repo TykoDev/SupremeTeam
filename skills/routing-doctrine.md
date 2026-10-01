@@ -301,7 +301,7 @@ skill carries it, not because a validator enforces it.
 
 Set `session_pin: true` while a coherent run is active or gate-pending. Release
 it on `RUN_COMPLETE`, the explicit command `release admiral` or `/exit-admiral`,
-or verified lock staleness. Append every release to the audit trail.
+or verified lock staleness. The `complete`, `block` or `release` call records it.
 
 The pin lives in the run lock, whose only writer is
 `harness/hooks/save_run.py`. Whether a lock is held, fresh, coherent, and
@@ -349,7 +349,7 @@ enforcement table exists to prevent.
   new work.
 - **A lock exists but is stale.** Staleness must be verified, not assumed from
   age alone where a heartbeat is available. A verified-stale lock may be
-  released, and the release is appended to the audit trail.
+  released, and the `complete`, `block` or `release` call records it in the audit trail.
 - **Two precedence rules both match.** Apply the tie-break in
   [Precedence](#precedence). If the tie-break's three conditions cannot all be
   met, the turn is not a standalone-tool request and belongs to the active run.

@@ -25,7 +25,6 @@ stdout and exits 0. On any internal error it exits 0 silently (fail open). It
 never blocks — by definition the action already executed.
 """
 
-import fnmatch
 import hashlib
 import json
 import os
@@ -35,6 +34,7 @@ import sys
 import time
 from pathlib import Path
 
+import _paths
 import _state
 
 _REPEAT_FAIL_THRESHOLD = 3
@@ -184,35 +184,17 @@ def _is_residue(name: str) -> bool:
     return name == ".coverage" or name.startswith(".coverage.") or name in _RESIDUE_DIRS
 
 
-def _boundary_variants(glob: str) -> list:
-    """Guard-glob match forms, borrowed from the pre-tool hook so one boundary
-    definition governs both the block and the sweep."""
-    try:
-        import guard_hook  # noqa: WPS433 — same package, no import-time side effects
-
-        return guard_hook._glob_variants(glob)
-    except Exception:
-        g = str(glob).replace("\\", "/")
-        return [g, g.rstrip("/") + "/**"]
-
-
 def _inside_boundary(entry: Path, root: Path, globs: list) -> bool:
     """True when `entry` lies inside a frozen or blocked glob.
 
     The sweep moves files, which is a write, so it obeys exactly the boundary
-    `pre_tool_use.py` would enforce against a manual `mv`. The `/_` probe suffix
-    lets a directory entry match a subtree glob such as `htmlcov/**`.
+    `pre_tool_use.py` would enforce against a manual `mv`: the same canonical
+    path matching, so one boundary definition governs both the block and the sweep.
     """
     if not globs:
         return False
-    rel = entry.name
-    absolute = entry.as_posix()
-    candidates = (rel, rel + "/_", absolute, absolute + "/_")
-    for glob in globs:
-        for variant in _boundary_variants(glob):
-            if any(fnmatch.fnmatch(candidate, variant) for candidate in candidates):
-                return True
-    return False
+    target = _paths.locate(str(entry), root)
+    return any(_paths.Boundary(glob, root).matches(target) for glob in globs)
 
 
 def _phase_directories(catalog_root: Path) -> list:

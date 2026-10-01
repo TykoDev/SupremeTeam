@@ -131,8 +131,8 @@ boundary file instead of starting a second one beside it.
 
 **The run can still checkpoint itself.** A script's arguments are data, not write
 targets, so `python skills/harness/hooks/save_run.py checkpoint ...` is not stopped
-by Rule D, and Rule C (the single-writer rule) does not read a path passed to it as
-a write either. That is a property of how the command is analysed, not a list of
+by Rule D, and Rule C (the single-writer rule) does not treat a path passed to the
+script as a write either. That is a property of how the command is analysed, not a list of
 exempt names: a redirect from the same command into a core run file, or any other
 command that writes there, is still denied. A command the analyser cannot tokenise
 (an unbalanced quote) falls back to textual rules, which carry no such exception: a
@@ -223,7 +223,7 @@ fault therefore means a write into `blocked_globs` is *allowed*, not denied. Eac
 fault is counted by type in `.harness-state/observations/PreToolUse.json`. A
 `guard-state.json` that cannot be read does not switch every rule off: the hook
 applies no boundary from it, but the destructive-command rule still runs, and a
-record whose list has the wrong shape is read entry by entry.
+list in the wrong shape is skipped without stopping the rest of the record.
 
 The hook is also a text guard, not a hard lock. It analyses the command a tool is
 about to run and the path an edit tool names, and runs nothing, so a program that

@@ -71,9 +71,10 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   `last_fault` in `.harness-state/observations/<Event>.json`, and
   `check_readiness.py` reports them as `hooks_faults`. A guard record in the wrong
   shape no longer switches rules off: its lists are read one by one, and the
-  destructive-command rule needs none of the record. Hook input is decoded as
-  UTF-8 whatever the Windows code page, the hooks share one atomic write, one lock
-  and one project-root resolver, and hook modules import one another by name.
+  destructive-command rule needs none of the record. Hook input is read as UTF-8
+  bytes instead of through the console code page (reproduced with a forced legacy
+  code page on Linux; not run on Windows), the hooks share one atomic write, one
+  lock and one project-root resolver, and hook modules import one another by name.
 - The gate wrappers hold a slot optional when `gates.yaml` lets a submitter waive it
   or `pipelines.yaml` runs its stage only under a condition, so a valid skip record
   no longer fails the shape check while the boundary validator passes the same

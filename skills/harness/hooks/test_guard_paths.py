@@ -244,6 +244,60 @@ class AllowMatchTests(PathCase):
         self.assertTrue(self.allow("skillset-saves/runs/r1/investigation/real.md", self.ALLOW))
 
 
+@unittest.skipUnless(hasattr(os, "symlink") and os.name != "nt", "needs POSIX symlinks")
+class ResolverTests(PathCase):
+    """RR-guard-2: a shared resolver follows links exactly as ``realpath`` does, in one look per directory."""
+
+    def build(self) -> list:
+        (self.root / "real" / "deep" / "er").mkdir(parents=True)
+        (self.root / "real" / "file.txt").write_text("x", encoding="utf-8")
+        (self.root / "alias").symlink_to(self.root / "real", target_is_directory=True)
+        (self.root / "rel").symlink_to("real/deep", target_is_directory=True)
+        (self.root / "up").symlink_to("../" + self.root.name + "/real", target_is_directory=True)
+        (self.root / "real" / "back").symlink_to("..", target_is_directory=True)
+        (self.root / "chain").symlink_to("alias", target_is_directory=True)
+        (self.root / "dangling").symlink_to(self.root / "nowhere")
+        (self.root / "loop-a").symlink_to("loop-b")
+        (self.root / "loop-b").symlink_to("loop-a")
+        (self.root / "file-link").symlink_to("real/file.txt")
+        return [f"{self.root}/{tail}" for tail in (
+            "real", "real/deep/er", "alias", "alias/deep/er/new.txt", "rel", "rel/er/x/y", "up/deep", "real/back/real/file.txt",
+            "chain/deep", "chain/deep/er/a/b/c", "dangling", "dangling/x", "loop-a", "loop-a/x", "file-link", "file-link/x",
+            "real/file.txt/x", "missing/a/b/c", "alias/back/alias/deep")]
+
+    def test_it_returns_what_realpath_returns(self):
+        resolver = _paths.Resolver()
+        for text in self.build():
+            with self.subTest(path=text):
+                self.assertEqual(resolver.real(text), _paths._real(text))
+
+    def test_the_order_in_which_paths_are_asked_does_not_change_an_answer(self):
+        paths = self.build()
+        forward = [_paths.Resolver().real(text) for text in paths]
+        shared = _paths.Resolver()
+        self.assertEqual([shared.real(text) for text in reversed(paths)][::-1], forward)
+
+    def test_a_relative_or_drive_path_is_not_resolved_and_the_root_is_itself(self):
+        resolver = _paths.Resolver()
+        self.assertEqual((resolver.real("a/b"), resolver.real("/")), (None, "/"))
+
+    def test_a_directory_is_looked_at_once_however_many_paths_lie_below_it(self):
+        deep = self.root / "/".join(f"d{i}" for i in range(40))
+        deep.mkdir(parents=True)
+        resolver = _paths.Resolver()
+        with mock.patch("os.lstat", wraps=os.lstat) as lstat:
+            for index in range(500):
+                resolver.real(f"{deep}/f{index}")
+        self.assertLess(lstat.call_count, 40 + len(deep.parts) + 500 + 5)
+
+    def test_locate_with_a_resolver_gives_the_same_forms(self):
+        self.build()
+        resolver = _paths.Resolver()
+        for text in ("alias/deep/new.txt", "rel/x", "chain/file.txt", "plain/none", "up/deep/er"):
+            with self.subTest(text=text):
+                self.assertEqual(_paths.locate(text, self.root, None, resolver), _paths.locate(text, self.root))
+
+
 class CaseFoldTests(unittest.TestCase):
     def test_deny_matching_always_folds_and_allow_folds_only_on_a_case_insensitive_platform(self):
         with mock.patch.object(_paths, "WINDOWS", False), mock.patch.object(_paths.sys, "platform", "linux"):

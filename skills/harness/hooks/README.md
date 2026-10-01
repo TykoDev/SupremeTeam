@@ -54,6 +54,7 @@ The harness hooks operate at multiple lifecycle layers to ensure safety, traceab
                               │  • Rule D: Read-only run boundaries
                               │  • Rule E: Coverage destination advisory
                               │  • Rule F: Hook scripts and registration files
+                              │  • Rule G: A write after a directory chain the analysis cannot follow
                               ▼
 [Executed Action] ───► PostToolUse (post_tool_use.py) [Layer 4]
                               │  • Trajectory regulation (repeat fails, loops, streaks)
@@ -73,7 +74,7 @@ Every file in `skills/harness/hooks/` serves an explicit, non-overlapping archit
 | File | Type / Event | Layer | Description |
 | :--- | :--- | :---: | :--- |
 | [`pre_tool_use.py`](pre_tool_use.py) | `PreToolUse` | 3 | Registered host entry point wrapper; forwards directly to `guard_hook.py`. |
-| [`guard_hook.py`](guard_hook.py) | Engine (`PreToolUse`) | 3 | Action Realization engine enforcing Rules A through F, one function per rule (destructive commands, boundaries, read-only runs, single writers, hook files) plus the Rule E advisory. |
+| [`guard_hook.py`](guard_hook.py) | Engine (`PreToolUse`) | 3 | Action Realization engine enforcing Rules A through G, one function per rule (destructive commands, a write the analysis cannot place, boundaries, read-only runs, single writers, hook files) plus the Rule E advisory. |
 | [`_cmdscan.py`](_cmdscan.py) | Internal Module | 3 | Shell command analyser: quoting, substitutions, heredocs, `cd`, wrappers (`sudo`, `env`, `xargs`, `sh -c`, `find -exec`, `powershell -Command`, `cmd /c`) and the write targets of the usual verbs, in time linear in the command. |
 | [`_paths.py`](_paths.py) | Internal Module | 3 | Path and glob canonicaliser: separators, `.`/`..`, `~`, drive letters, links and case, one `Boundary` per glob for the deny direction and an anchored allow-list test. |
 | [`post_tool_use.py`](post_tool_use.py) | `PostToolUse` | 4 | Trajectory Regulation engine: catches loops and repeated failures, sweeps coverage residue, refreshes heartbeats. |
@@ -94,7 +95,7 @@ Every file in `skills/harness/hooks/` serves an explicit, non-overlapping archit
 | [`test_hooks.py`](test_hooks.py) | Test Suite | - | Unit and integration tests for `pre_tool_use.py`, `guard_hook.py`, `post_tool_use.py`, and `user_prompt_submit.py`. |
 | [`test_hooks_hardening.py`](test_hooks_hardening.py) | Test Suite | - | Registration analysis, trajectory isolation per session, freeze record handling, registration repair and the readiness capability map. |
 | [`test_hooks_robustness.py`](test_hooks_robustness.py) | Test Suite | - | The end-to-end hardening claims: path spellings and Windows/POSIX separators, symbolic links, a fixed-seed fuzz of the three registered hooks, and universal fail-open with a deny that stays a deny. |
-| [`test_guard_rules.py`](test_guard_rules.py) | Test Suite | - | Rules A to F one by one (a positive and a negative case per destructive-command rule), the never-weaker differential against the old rules, fallbacks, rule isolation and cost bounds. |
+| [`test_guard_rules.py`](test_guard_rules.py) | Test Suite | - | Rules A to G one by one (a positive and a negative case per destructive-command rule), the never-weaker differential against the old rules, fallbacks, rule isolation, working-directory tracking, and cost bounds for seventeen command shapes at 100 KB. |
 | [`test_guard_cmdscan.py`](test_guard_cmdscan.py) | Test Suite | - | The command analyser: lexing, wrappers, write-target tables, nesting and cost. |
 | [`test_guard_paths.py`](test_guard_paths.py) | Test Suite | - | The path and glob canonicaliser: spellings, links, case, allow versus deny direction. |
 | [`test_guard_harness_files.py`](test_guard_harness_files.py) | Test Suite | - | Rule F: the hook scripts and registration files are protected while the guard is in use, and not otherwise. |
@@ -141,7 +142,7 @@ Invoked by the host before any write-capable or shell tool executes. `pre_tool_u
 
 #### Rule Hierarchy and Enforcement Contract
 
-`guard_hook.py` applies its rules in strict priority order (A, B, D, C, F; Rule E is advice, never a deny). Each rule is one function of the call, so each has its own tests, and a rule that faults is counted and skipped without switching off the others.
+`guard_hook.py` applies its rules in strict priority order (A, G, B, D, C, F; Rule E is advice, never a deny). Each rule is one function of the call, so each has its own tests, and a rule that faults is counted and skipped without switching off the others.
 
 1. **Rule A — Dangerous Shell Commands:**
    - Detects destructive commands that almost never represent legitimate agent work, from the command's arguments rather than its raw text: `rm --no-preserve-root`, recursive wipes of a root, home or drive (`rm -rf /`, `rm -rf ~/`, `rm -rf "$HOME/"`, `/bin/rm -rf /*`, `rm -rf *`), the same inside `sh -c`, `$(...)`, `sudo`, `env`, `xargs` and `find -exec`; PowerShell and cmd recursive root deletions (`Remove-Item -Recurse C:\`, `rd /s C:\`, `format`); fork bombs; raw filesystem formats and block device overwrites (`mkfs`, `dd of=/dev/sd*`); recursive permission stripping (`chmod -R 000 /`); and force-pushing to protected branches (`git push --force origin main`, `git -C r push origin master -f`).
@@ -169,6 +170,9 @@ Invoked by the host before any write-capable or shell tool executes. `pre_tool_u
    - Denies edit tools and shell writes to `skills/harness/hooks/` and to the host hook registration files (`.claude/settings.json`, `.claude/settings.local.json`, `.codex/hooks.json`, `.github/hooks.json` and their user-scope equivalents, including the Cursor and OpenCode plugin paths), because one edit to `guard_hook.py` would otherwise persist and switch the guard off while readiness kept reporting the hooks registered.
    - **Engaged only while the guard is in use:** a boundary is recorded or a run is pinned. Developing the hooks in a plain checkout is never blocked. A maintainer who has to edit them inside a run starts the host with `SUPREMETEAM_HARNESS_DEV=1`, which only the person launching the host can set. The sanctioned registration writers (`repair_registration.py`, `scripts/install_hooks.py`) are scripts and keep working. Detecting a change since registration is the registration tooling's job, not this rule's.
 
+7. **Rule G — A Write the Analysis Cannot Place:**
+   - A chain of relative `cd` is followed only up to 512 characters of directory. Past that the analyser stops, says so (`lost_directory`), and the directory of every later write is unknown, so a write could land on anything a rule protects. The command is denied whole, in every mode, with a reason that says why; a command with no write after such a chain is not affected. Following a chain costs time and memory that grow with the square of its length, and nobody works that way: use short paths from one directory, or split the command. Rule G runs second, because it is a flag the analyser already set and the rules after it would spend their time locating every write of a command it denies anyway.
+
 #### What the guard cannot see
 
 The guard is a text guard. It analyses the command a tool is about to run and the path an edit tool names; it does not run anything and it is not a sandbox. These are known limits, stated here so no one relies on more than it gives:
@@ -178,7 +182,8 @@ The guard is a text guard. It analyses the command a tool is about to run and th
 - interpreter inline code (`python -c`, `node -e`, `perl -e`): it is searched for protected paths, not interpreted, so a read-only run is not enforced against what inline code does beyond naming a protected path;
 - a tool name it does not know, and a tool input in a shape it cannot read, which are allowed through;
 - a link created in the same command that then writes through it;
-- a command it cannot parse (unbalanced quoting): the older textual rules still run on the raw text, which is never weaker than before, but it is not an analysis.
+- a command it cannot parse (unbalanced quoting): the older textual rules still run on the raw text, which is never weaker than before, but it is not an analysis;
+- the working directory after a `cd` chain longer than 512 characters, which Rule G refuses rather than guesses.
 
 The hook also fails open on its own faults. Back anything that must not change with version control, filesystem permissions or a sandbox as well.
 

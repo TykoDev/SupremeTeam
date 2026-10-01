@@ -36,6 +36,11 @@ from dataclasses import dataclass, field
 MAX_DEPTH = 8
 _MAX_NEST = 100
 _MAX_BRACE = 64
+# The longest working directory a chain of ``cd`` is followed to. Each directory is the one before it plus a
+# segment, so a chain of N relative ``cd`` holds N strings of growing length and every write below them carries
+# one: quadratic memory and, in the guard that resolves each, quadratic time. Past this length the directory is
+# no longer followed and ``Analysis.lost_directory`` says so (the guard then refuses a write it cannot place).
+MAX_CWD = 512
 
 
 @dataclass(frozen=True)
@@ -57,6 +62,8 @@ class Write:
 @dataclass
 class Analysis:
     ok: bool = True
+    # A ``cd`` led past ``MAX_CWD`` characters: the directory of the writes after it is not known.
+    lost_directory: bool = False
     commands: list = field(default_factory=list)
     writes: list = field(default_factory=list)
     code: list = field(default_factory=list)
@@ -1327,8 +1334,14 @@ def _note_write(ctx: _Ctx, path: str, via: str, cwds: tuple, glob: bool, unresol
 
 
 def _recent(ctx: _Ctx) -> tuple:
-    """The directories a ``cd`` may have left the shell in; the latest ones, which are the ones that can be current."""
-    return tuple(ctx.cwds[-3:])
+    """The directories a ``cd`` may have left the shell in; the latest ones, which are the ones that can be current.
+
+    Each appears once, in the order of its last visit, so the last one is always where the shell is."""
+    recent: list = []
+    for cwd in reversed(ctx.cwds[-3:]):
+        if cwd not in recent:
+            recent.append(cwd)
+    return tuple(reversed(recent))
 
 
 def _record_redirects(redirects: list, ctx: _Ctx) -> "str | None":
@@ -1478,7 +1491,9 @@ def _change_directory(rest: list, ctx: _Ctx) -> None:
     current = ctx.cwds[-1] if ctx.cwds else ""
     absolute = target.startswith("/") or re.match(r"[A-Za-z]:", target) is not None
     moved = posixpath.normpath(target if absolute else posixpath.join(current, target))
-    if moved not in ctx.cwds:
+    if len(moved) > MAX_CWD:
+        ctx.out.lost_directory = True
+    elif not ctx.cwds or ctx.cwds[-1] != moved:
         ctx.cwds.append(moved)
 
 

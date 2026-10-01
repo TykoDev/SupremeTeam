@@ -635,7 +635,7 @@ class RuleIsolationTests(GuardCase):
             self.assertEqual(self.call("ls"), "")
 
     def test_the_rule_order_is_the_documented_one(self):
-        self.assertEqual([label for label, _ in guard_hook.RULES], ["A", "B", "D", "C", "F"])
+        self.assertEqual([label for label, _ in guard_hook.RULES], ["A", "G", "B", "D", "C", "F"])
 
 
 class RuleUnitTests(GuardCase):
@@ -717,6 +717,129 @@ class CostTests(GuardCase):
         out, elapsed = self.timed(command)
         self.assertTrue(kit.denied(out))
         self.assertLess(elapsed, 6.0, f"took {elapsed:.1f}s")
+
+
+class WorkingDirectoryRuleTests(GuardCase):
+    """RR-guard-6 and RR-guard-2: the guard places a write where the shell really is, and refuses one it cannot place."""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / "src" / "payments").mkdir(parents=True)
+        (self.root / "src" / "x").mkdir()
+
+    def test_a_cd_back_into_a_visited_directory_does_not_hide_a_frozen_write(self):
+        self.guard(FROZEN)
+        self.check(("cd src; cd x; cd ..; cd payments; touch a.py", "cd src && cd x && cd .. && cd payments && echo x > a.py",
+                    "cd src; cd x; cd ..; cd payments; rm a.py", "cd src; cd x; cd ..; cd payments; cp b a.py",
+                    "cd src/x; cd ..; cd payments; sed -i s/a/b/ a.py", "cd src; cd x; cd ../..; cd src/payments; touch a.py"),
+                   deny=True, fragment="frozen boundary")
+        self.check(("cd src; cd x; cd ..; touch ok.py", "cd src; cd x; touch ok.py", "cd src; cd x; cd ..; cd x; touch ok.py"), deny=False)
+
+    def test_a_cd_back_into_a_visited_directory_does_not_widen_a_read_only_run(self):
+        self.guard(READ_ONLY)
+        base = f"skillset-saves/runs/{READ_ONLY_RUN}"
+        self.check((f"cd {base}/investigation; cd x; cd ..; cd ..; touch a.md", f"cd {base}/investigation && cd x && cd .. && cd .. && echo x > a.md"),
+                   deny=True, fragment="read-only")
+        self.check((f"cd {base}/investigation; cd x; cd ..; touch a.md", f"cd {base}/investigation; touch a.md"), deny=False)
+
+    def test_a_cd_back_into_a_visited_directory_does_not_hide_a_single_writer_file(self):
+        self.check(("cd skillset-saves; cd runs; cd ..; cd runs/r1; echo x > _state.md",
+                    "cd skillset-saves/runs; cd r1; cd ..; cd r1; rm _lock.md"), deny=True, fragment="save_run.py")
+
+    def test_a_write_after_a_chain_the_analysis_stopped_following_is_denied_everywhere(self):
+        chain = "; ".join(f"cd directory{i}" for i in range(200))
+        for state in ({}, FROZEN, READ_ONLY):
+            self.guard(state)
+            for command in (chain + "; touch f", chain + "; echo x > f", chain + "; cd /tmp; touch f"):
+                with self.subTest(state=sorted(state), command=command[-30:]):
+                    out = self.call(command)
+                    self.assertTrue(kit.denied(out), out)
+                    self.assertIn(f"more than {guard_hook._cmdscan.MAX_CWD} characters", kit.reason(out))
+
+    def test_a_long_chain_with_no_write_and_a_short_one_with_writes_pass(self):
+        self.guard(FROZEN)
+        chain = "; ".join(f"cd directory{i}" for i in range(200))
+        self.check((chain + "; ls", chain + "; cat f | wc -l", "; ".join(f"cd d{i}" for i in range(30)) + "; touch f"), deny=False)
+
+    def test_the_unplaced_write_rule_does_not_hide_a_dangerous_command(self):
+        chain = "; ".join(f"cd directory{i}" for i in range(200))
+        out = self.call(chain + "; touch f; rm -rf /")
+        self.assertIn("recursive delete", kit.reason(out))
+
+
+def _shapes(size: int) -> dict:
+    """Command shapes of about ``size`` characters that stress one part of the analysis each."""
+    deep = "cd " + "/".join(f"a{i}" for i in range(60)) + "; "
+    return {
+        "relative cd chain": " && ".join(f"cd d{i} && touch f" for i in range(size // 22)),
+        "relative cd chain, distinct files": "; ".join(f"cd d{i}; touch f{i}" for i in range(size // 24)),
+        "cd up and down": "; ".join(f"cd d{i}; touch f; cd .." for i in range(size // 28)),
+        "writes below a deep directory": deep + "; ".join(f"touch f{i}" for i in range(size // 11)),
+        "subshells": "; ".join(f"(cd d{i} && touch f)" for i in range(size // 22)),
+        "command substitutions": "; ".join(f"echo $(cd d{i}; touch f)" for i in range(size // 28)),
+        "nested subshells": "(" * 90 + "touch f" + ")" * 90,
+        "nested substitutions": "echo " + "$(echo " * 7 + "x" + ")" * 7,
+        "long pipeline": " | ".join("cat" for _ in range(size // 6)),
+        "thousands of quotes": "echo " + "'a' " * (size // 4),
+        "thousands of double quotes": "echo " + '"a b" ' * (size // 6),
+        "deep brace nesting": "echo " + "{" * 64 + "a,b" + "}" * 64,
+        "many brace groups": "echo " + " ".join("{a,b,c}" for _ in range(size // 8)),
+        "many redirects": "echo x " + " ".join(f">f{i}" for i in range(size // 6)),
+        "many writes": "; ".join(f"touch f{i}" for i in range(size // 11)),
+        "absolute cd chain": "; ".join(f"cd /tmp/d{i}; touch f" for i in range(size // 24)),
+        "heredoc": "cat <<EOF\n" + "x\n" * (size // 2) + "EOF",
+    }
+
+
+class ShapeCostTests(GuardCase):
+    """RR-guard-2: no shape of a command costs more than a few seconds at 100 KB, in any mode, and none costs more than
+    its length times a constant in file-system lookups (a count a slow machine cannot change)."""
+
+    SIZE = 100 * 1024
+    # Frozen is the costliest mode (every rule locates every write); read-only denies early, and no record skips Rule B.
+    MODES = (("frozen", {**FROZEN, "blocked_globs": [{"glob": "**/secrets/**", "owner": "ops"}]}), ("read-only", READ_ONLY))
+
+    # The shapes whose directory outgrows the analysis; the guard refuses their writes in every mode (Rule G).
+    UNPLACED = ("relative cd chain", "relative cd chain, distinct files")
+
+    def test_every_shape_is_decided_in_a_few_seconds_in_every_mode(self):
+        for name, command in _shapes(self.SIZE).items():
+            for mode, state in self.MODES:
+                with self.subTest(shape=name, mode=mode):
+                    self.guard(state)
+                    start = time.perf_counter()
+                    out = self.call(command)
+                    elapsed = time.perf_counter() - start
+                    self.assertLess(elapsed, 12.0, f"{len(command)} characters took {elapsed:.1f}s")
+                    if name in self.UNPLACED:
+                        self.assertTrue(kit.denied(out))
+                    elif mode != "read-only":
+                        self.assertEqual(out, "", f"{name} was refused in a mode that protects none of its paths")
+
+    def test_the_74kb_chain_of_the_report_is_cheap_with_no_record_at_all(self):
+        command = " && ".join(f"cd d{i} && touch f" for i in range(3500))
+        start = time.perf_counter()
+        out = self.call(command)
+        elapsed = time.perf_counter() - start
+        self.assertTrue(kit.denied(out))
+        self.assertLess(elapsed, 5.0, f"took {elapsed:.1f}s (95 s before the fix)")
+
+    def test_file_system_lookups_grow_with_the_command_not_with_its_square(self):
+        for name in ("relative cd chain", "relative cd chain, distinct files", "cd up and down", "writes below a deep directory"):
+            counts = []
+            for size in (20 * 1024, 40 * 1024):
+                with mock.patch("os.lstat", wraps=os.lstat) as lstat:
+                    self.call(_shapes(size)[name])
+                counts.append(lstat.call_count)
+            with self.subTest(shape=name, counts=counts):
+                self.assertLess(counts[1], counts[0] * 2 * 1.5 + 200)
+
+    def test_padding_the_command_with_a_long_chain_does_not_hide_a_later_deny(self):
+        self.guard(FROZEN)
+        chain = _shapes(self.SIZE)["relative cd chain"]
+        for tail in ("rm -rf /", "cd /tmp; rm -rf ~/", "git push -f origin main"):
+            with self.subTest(tail=tail):
+                self.assertTrue(kit.denied(self.call(chain + "; " + tail)))
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ import functools
 import os
 import posixpath
 import re
+import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -118,6 +119,42 @@ def _real(text: str) -> "str | None":
         return None
 
 
+class Resolver:
+    """Link resolution for many paths that share a prefix: each directory is looked at once.
+
+    ``os.path.realpath`` stats every component of every path it is given, so a long working
+    directory and a thousand writes in it cost a thousand walks of the whole directory. Here a
+    path is its parent's resolution plus one component, and the parents are remembered. One
+    resolver serves one tool call, never longer, so a link made afterwards is never missed.
+    Windows keeps ``realpath`` for every path: it also corrects case and expands short names."""
+
+    def __init__(self) -> None:
+        self._known: dict = {"/": "/"}
+
+    def real(self, text: str) -> "str | None":
+        """What ``_real`` returns for ``text``: a normalised absolute path with no ``.``, ``..`` or doubled separators."""
+        if WINDOWS or not text.startswith("/"):
+            return _real(text)
+        known = self._known
+        chain = []
+        node = text
+        while node not in known:
+            chain.append(node)
+            node = node.rpartition("/")[0] or "/"
+        resolved = known[node]
+        for node in reversed(chain):
+            candidate = resolved.rstrip("/") + "/" + node.rpartition("/")[2]
+            try:
+                link = stat.S_ISLNK(os.lstat(candidate).st_mode)
+            except OSError:
+                link = False
+            except ValueError:
+                return None
+            resolved = (_real(candidate) or candidate) if link else candidate
+            known[node] = resolved
+        return known[text]
+
+
 def _fold(text: str, fold: bool) -> str:
     return text.lower() if fold else text
 
@@ -146,9 +183,12 @@ def _relative_to(form: str, roots: list) -> "str | None":
     return None
 
 
-def locate(text: str, root: "str | Path", bases=None) -> Target:
-    """Every canonical form of ``text``: relative paths are tried against each of ``bases`` (default: the root)."""
+def locate(text: str, root: "str | Path", bases=None, resolver: "Resolver | None" = None) -> Target:
+    """Every canonical form of ``text``: relative paths are tried against each of ``bases`` (default: the root).
+
+    A ``resolver`` shared by many calls makes following links cost one look per directory, not one walk per path."""
     roots = _root_forms(root)
+    real_of = resolver.real if resolver is not None else _real
     cleaned = clean(text)
     candidates = [cleaned]
     if cleaned.startswith("~"):
@@ -161,7 +201,7 @@ def locate(text: str, root: "str | Path", bases=None) -> Target:
             for base in (bases or [roots[0]]):
                 absolute.append(_normalise(clean(posix(base)).rstrip("/") + "/" + candidate))
     for form in list(absolute):
-        real = _real(form)
+        real = real_of(form)
         if real is not None:
             absolute.append(_normalise(real))
     seen: dict = {}

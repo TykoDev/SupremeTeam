@@ -363,6 +363,7 @@ class Call:
         self.starts = [host_cwd, root_text] if host_cwd and _paths.is_absolute(host_cwd) and host_cwd != root_text else [root_text]
         self._located: dict = {}
         self._shell_targets: dict = {}
+        self._resolver = _paths.Resolver()
 
     @functools.cached_property
     def command(self) -> str:
@@ -378,7 +379,7 @@ class Call:
     def locate(self, text: str, bases) -> "_paths.Target":
         key = (text, tuple(bases))
         if key not in self._located:
-            self._located[key] = _paths.locate(text, self.root, list(bases))
+            self._located[key] = _paths.locate(text, self.root, list(bases), self._resolver)
         return self._located[key]
 
     @functools.cached_property
@@ -712,6 +713,25 @@ def rule_harness_files(call: "Call") -> "str | None":
     return _HARNESS_REASON if hit and _protection_engaged(call) else None
 
 
+# --- Rule G: a write the analyser cannot place -------------------------------------------------------------
+
+# A chain of relative ``cd`` is followed only so far (``_cmdscan.MAX_CWD``): past that the directory of every
+# later write is unknown, so the write could land on anything a rule protects. The cost of following it is
+# quadratic and nobody works that way, so the command is refused whole instead of being let through.
+_UNPLACED_REASON = (
+    "Blocked by harness Action Realization layer: the command changes directory through more than {limit} "
+    "characters of path and then writes, so the guard cannot tell where the write lands. "
+    "Use short paths from one directory, or split the command."
+)
+
+
+def rule_unplaced_write(call: "Call") -> "str | None":
+    """Rule G: a command that writes after its working directory outgrew the analysis is denied."""
+    if not call.shell or not (call.analysis.lost_directory and call.analysis.writes):
+        return None
+    return _UNPLACED_REASON.format(limit=_cmdscan.MAX_CWD)
+
+
 # --- Rule E: coverage destination advisory --------------------------------------------------------------
 #
 # Each pattern is a command that writes coverage data with no destination named,
@@ -773,8 +793,10 @@ def rule_coverage(call: "Call") -> "str | None":
 # --- driver ---------------------------------------------------------------------------------------------
 
 # Rules run in this order; the first reason wins. A rule that faults is counted and skipped, so one
-# defect never turns off the rest.
-RULES = [("A", rule_dangerous), ("B", rule_frozen), ("D", rule_read_only), ("C", rule_single_writer), ("F", rule_harness_files)]
+# defect never turns off the rest. Rule G is a flag the analyser set, so it goes before the rules that
+# would spend their time locating every write of a command it denies anyway.
+RULES = [("A", rule_dangerous), ("G", rule_unplaced_write), ("B", rule_frozen), ("D", rule_read_only), ("C", rule_single_writer),
+         ("F", rule_harness_files)]
 
 
 def _deny(reason: str) -> None:

@@ -271,6 +271,18 @@ class WriteTargetTests(unittest.TestCase):
         self.assertEqual(len(write.cwds), 3)
         self.assertEqual(write.cwds[-1], "/".join(f"d{i}" for i in range(40)))
 
+    def test_a_cd_back_into_a_visited_directory_is_where_the_next_cd_starts(self):
+        """RR-guard-6: the shell is in src/payments here, not in src/x/payments, so the write lands on a frozen path."""
+        for text in ("cd src; cd x; cd ..; cd payments; touch a.py", "cd src && cd x && cd .. && cd payments && touch a.py",
+                     "cd src/x; cd ..; cd payments; touch a.py", "cd src; cd x; cd ../..; cd src/payments; touch a.py"):
+            with self.subTest(command=text):
+                self.assertEqual(analyse(text).writes[-1].cwds[-1], "src/payments")
+        self.assertEqual(analyse("cd a; cd ..; cd a; touch f").writes[0].cwds[-1], "a")
+
+    def test_the_directories_a_write_carries_are_distinct_and_the_last_is_current(self):
+        write = analyse("cd a; cd ..; cd a; cd ..; cd a; touch f").writes[0]
+        self.assertEqual(write.cwds, (".", "a"))
+
     def test_the_via_names_the_redirect_or_the_command(self):
         self.assertEqual([(w.path, w.via) for w in analyse("echo a >> f; rm g").writes], [("f", ">>"), ("g", "rm")])
         self.assertEqual(analyse("ri f", ps=True).writes[0].via, "remove-item")
@@ -384,6 +396,49 @@ class OpaqueCodeTests(unittest.TestCase):
         result = analyse("[System.IO.File]::Delete('f')", ps=True)
         self.assertTrue(result.code)
         self.assertEqual(analyse("[Math]::Max(1,2)", ps=True).code, [])
+
+
+class WorkingDirectoryCostTests(unittest.TestCase):
+    """RR-guard-2: a chain of relative ``cd`` makes each directory the previous one plus a segment, so what the analysis
+    keeps for it must stop growing, and what it cannot follow must say so."""
+
+    @staticmethod
+    def kept(result) -> int:
+        return sum(len(cwd) for write in result.writes for cwd in write.cwds)
+
+    def test_a_long_relative_chain_is_flagged_and_what_is_kept_is_bounded(self):
+        for text in ("; ".join(f"cd d{i}; touch f{i}" for i in range(5000)), " && ".join(f"cd d{i} && touch f" for i in range(4500))):
+            with self.subTest(length=len(text)):
+                result = analyse(text)
+                self.assertTrue(result.lost_directory)
+                self.assertLessEqual(max(len(cwd) for write in result.writes for cwd in write.cwds), _cmdscan.MAX_CWD)
+
+    def test_what_is_kept_grows_with_the_command_not_with_its_square(self):
+        def chain(count: int):
+            return analyse("; ".join(f"cd d{i}; touch f{i}" for i in range(count)))
+
+        small, large = chain(2000), chain(8000)
+        self.assertLess(self.kept(large), self.kept(small) * 4 * 1.5)
+        self.assertLess(self.kept(large), 8000 * 3 * _cmdscan.MAX_CWD)
+
+    def test_a_chain_inside_the_limit_is_followed_exactly(self):
+        result = analyse("".join(f"cd d{i}; " for i in range(60)) + "touch f")
+        self.assertFalse(result.lost_directory)
+        self.assertEqual(result.writes[0].cwds[-1], "/".join(f"d{i}" for i in range(60)))
+
+    def test_going_up_and_down_never_grows_the_directory(self):
+        result = analyse("".join(f"cd d{i}; touch f; cd ..; " for i in range(3000)))
+        self.assertFalse(result.lost_directory)
+        self.assertLess(max(len(cwd) for write in result.writes for cwd in write.cwds), 20)
+
+    def test_a_subshell_does_not_accumulate_either(self):
+        result = analyse("; ".join(f"(cd d{i} && touch f)" for i in range(4000)))
+        self.assertFalse(result.lost_directory)
+        self.assertLess(self.kept(result), 4000 * 3 * 20)
+
+    def test_an_absolute_directory_longer_than_the_limit_is_flagged_too(self):
+        self.assertTrue(analyse("cd /" + "/".join("d" * 40 for _ in range(14)) + "; touch f").lost_directory)
+        self.assertFalse(analyse("cd /tmp/some/ordinary/directory; touch f").lost_directory)
 
 
 class CostTests(unittest.TestCase):

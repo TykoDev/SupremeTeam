@@ -110,6 +110,71 @@ class NoRunsIsAFailureTests(unittest.TestCase):
             self.assertIn("No eval directories", err)
 
 
+class PrimaryAndBaselineTests(unittest.TestCase):
+    """The delta is the skill under test minus its baseline, whatever the directories sort like (RR-V5-4)."""
+
+    def benchmark(self, configs: dict[str, tuple[int, float, int]]) -> dict:
+        """configs maps a directory name to (passed of 4, seconds, tokens)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            for config, (passed, seconds, tokens) in configs.items():
+                run = Path(tmp) / "eval-1" / config
+                write_json(run / "grading.json", grading(passed, 4))
+                write_json(run / "timing.json", {"total_tokens": tokens, "total_duration_seconds": seconds})
+            return agg.generate_benchmark(Path(tmp))
+
+    def configurations(self, benchmark: dict) -> list[str]:
+        return [name for name in benchmark["run_summary"] if name != "delta"]
+
+    def test_an_improvement_over_old_skill_is_positive(self):
+        benchmark = self.benchmark({"with_skill": (4, 20.0, 5000), "old_skill": (2, 15.0, 3000)})
+        self.assertEqual({"pass_rate": "+0.50", "time_seconds": "+5.0", "tokens": "+2000"}, benchmark["run_summary"]["delta"])
+        self.assertEqual(["with_skill", "old_skill"], self.configurations(benchmark))
+
+    def test_new_skill_against_old_skill_and_with_skill_against_without_skill(self):
+        for config, baseline in (("new_skill", "old_skill"), ("with_skill", "without_skill")):
+            with self.subTest(primary=config, baseline=baseline):
+                benchmark = self.benchmark({baseline: (1, 30.0, 4000), config: (3, 10.0, 1000)})
+                self.assertEqual([config, baseline], self.configurations(benchmark))
+                self.assertEqual({"pass_rate": "+0.50", "time_seconds": "-20.0", "tokens": "-3000"},
+                                 benchmark["run_summary"]["delta"])
+
+    def test_the_runs_list_the_primary_first(self):
+        benchmark = self.benchmark({"old_skill": (2, 1.0, 1), "with_skill": (4, 1.0, 1)})
+        self.assertEqual(["with_skill", "old_skill"], [run["configuration"] for run in benchmark["runs"]])
+
+    def test_the_markdown_and_the_printed_summary_put_the_skill_first_with_a_positive_delta(self):
+        benchmark = self.benchmark({"with_skill": (4, 20.0, 5000), "old_skill": (2, 15.0, 3000)})
+        header = next(line for line in agg.generate_markdown(benchmark).splitlines() if line.startswith("| Metric"))
+        self.assertEqual("| Metric | With Skill | Old Skill | Delta |", header)
+        with tempfile.TemporaryDirectory() as tmp:
+            for config, passed in (("with_skill", 4), ("old_skill", 2)):
+                write_json(Path(tmp) / "eval-1" / config / "grading.json", grading(passed, 4))
+            code, out, _ = run_main(tmp)
+        self.assertEqual(0, code)
+        summary = out[out.index("Summary:"):].splitlines()
+        self.assertEqual(["  With Skill: 100.0% pass rate", "  Old Skill: 50.0% pass rate", "  Delta:         +0.50"], summary[1:4])
+
+    def test_other_names_pair_with_the_recognised_one_and_otherwise_keep_name_order(self):
+        cases = {
+            "with_skill and an unnamed baseline": ({"zzz": (1, 1.0, 1), "with_skill": (3, 1.0, 1)}, ["with_skill", "zzz"], "+0.50"),
+            "old_skill and an unnamed candidate": ({"old_skill": (1, 1.0, 1), "aaa": (3, 1.0, 1)}, ["aaa", "old_skill"], "+0.50"),
+            "no recognised names": ({"b_variant": (1, 1.0, 1), "a_variant": (3, 1.0, 1)}, ["a_variant", "b_variant"], "+0.50"),
+            "a third configuration is kept after the pair": (
+                {"with_skill": (4, 1.0, 1), "alt": (3, 1.0, 1), "old_skill": (2, 1.0, 1)}, ["with_skill", "old_skill", "alt"], "+0.50"),
+        }
+        for label, (configs, order, delta) in cases.items():
+            with self.subTest(case=label):
+                benchmark = self.benchmark(configs)
+                self.assertEqual(order, self.configurations(benchmark))
+                self.assertEqual(delta, benchmark["run_summary"]["delta"]["pass_rate"])
+
+    def test_one_configuration_has_no_delta(self):
+        for config in ("with_skill", "old_skill"):
+            with self.subTest(config=config):
+                benchmark = self.benchmark({config: (4, 1.0, 1)})
+                self.assertEqual({"pass_rate": None, "time_seconds": None, "tokens": None}, benchmark["run_summary"]["delta"])
+
+
 class HonestGapTests(unittest.TestCase):
     def test_configuration_with_no_graded_run_is_null_and_has_no_delta(self):
         with tempfile.TemporaryDirectory() as tmp:

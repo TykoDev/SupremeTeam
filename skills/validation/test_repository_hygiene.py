@@ -21,7 +21,7 @@ from pathlib import Path
 
 import _catalog
 from _catalog import SKILLS
-from package_check import manifest_globs, matches
+from package_check import RESIDUE_CLASSES, manifest_globs, matches
 
 REPO = SKILLS.parent
 ASSETS = REPO / "docs" / "assets"
@@ -112,6 +112,37 @@ class GitignoreTests(unittest.TestCase):
 
     def test_it_names_no_scratch_file_from_one_machine(self):
         self.assertEqual([], [pattern for pattern in sorted(self.patterns) if "GLM-SCORE" in pattern])
+
+    #: One path per residue class that ``package_check`` refuses, so `git add .` cannot stage
+    #: what the delivery check would then reject. ``vcs-metadata`` is the one class git never stages.
+    RESIDUE_SAMPLES = {
+        "interpreter-cache": ["skills/x/__pycache__/m.pyc", "m.pyc"],
+        "runtime-state": [".harness-state/guard-state.json", ".supremeteam/state.json"],
+        "save-state": ["skillset-saves/runs/r/_state.md"],
+        "test-scratch": ["harness-test-work/x", "gatekeeper-test-work/x"],
+        "render-scratch": [".playwright-mcp/shot.png"],
+        "coverage-residue": [".coverage", ".coverage.host.1", "htmlcov/index.html", ".nyc_output/x.json"],
+        "eval-workspace": ["skills/x/evals/workspace/out.json", "my-skill-workspace/iteration-1/out.json"],
+        "archives": ["release.zip", "my-skill.skill"],
+        "secrets": [".env", ".env.local", "server.pem", "server.key", "bundle.p12", "bundle.pfx",
+                    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".npmrc", ".netrc", ".pypirc",
+                    "credentials.json", "credentials-prod.json"],
+    }
+
+    def test_every_path_the_delivery_check_refuses_is_one_git_ignores(self):
+        """SEC-T-07: the check refused `*.pem`, `*.key`, `*.zip` and `*.skill` while `git add .` still staged them."""
+        if shutil.which("git") is None or not (REPO / ".git").exists():
+            self.skipTest("not a git checkout, or git is not installed: ignore rules cannot be evaluated")
+        self.assertEqual(set(RESIDUE_CLASSES) - {"vcs-metadata"}, set(self.RESIDUE_SAMPLES),
+                         "package_check gained or lost a residue class; give the new one a sample here")
+        paths = [path for samples in self.RESIDUE_SAMPLES.values() for path in samples]
+        ignored = set(subprocess.run(["git", "check-ignore", "--no-index", *paths], cwd=REPO, capture_output=True,
+                                     text=True, encoding="utf-8", errors="replace").stdout.splitlines())
+        self.assertEqual([], sorted(set(paths) - ignored))
+        for klass, samples in self.RESIDUE_SAMPLES.items():
+            with self.subTest(residue_class=klass):
+                self.assertTrue(all(matches(path, RESIDUE_CLASSES[klass]) for path in samples),
+                                "a sample is not residue of its class, so it proves nothing about the class")
 
 
 @CHECKOUT_ONLY

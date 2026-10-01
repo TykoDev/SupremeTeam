@@ -104,6 +104,8 @@ Every file in `skills/harness/hooks/` serves an explicit, non-overlapping archit
 | [`test_hooks_maintenance.py`](test_hooks_maintenance.py) | Test Suite | - | The coverage sweep (read-only runs, active runs, isolated `coverage combine`), neutralised context text, the fault trace of the post-tool and prompt hooks, and import structure. |
 | [`test_audit_improve_parts.py`](test_audit_improve_parts.py) | Test Suite | - | The audit as one function per record class, with a golden report pinning the output. |
 | [`test_hooks_lifecycle.py`](test_hooks_lifecycle.py) | Test Suite | - | Persistence lifecycle tests: `save_run.py` state transitions, atomic journaling, and read-only run confinement. |
+| [`test_run_state.py`](test_run_state.py) | Test Suite | - | The run-state writer: mutual exclusion between writers, evidence handling, closed runs, recovery, and the audit trail. |
+| [`test_saves_reader.py`](test_saves_reader.py) | Test Suite | - | Classification of saved state by `_saves.inspect_saves` and `inspect_run`: corrupt, conflicting, orphaned, unreadable, stale and closed runs. |
 | [`test_hooks_observed.py`](test_hooks_observed.py) | Test Suite | - | Verification tests for observed host hook firing vs synthetic simulation. |
 | [`test_guard_state.py`](test_guard_state.py) | Test Suite | - | Authority and boundary tests for `guard_state.py` (freeze/block entries, owner checks, allow-dangerous expiries). |
 | [`test_registration_contract.py`](test_registration_contract.py) | Test Suite | - | Multi-host registration tests for Claude Code, Codex, and GitHub Copilot configuration formats. |

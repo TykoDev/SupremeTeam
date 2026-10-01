@@ -43,9 +43,14 @@ when two sweeps overlap — the second sweep runs under the first boundary or wa
 
 Denied while the record is unreleased:
 
-- Every `Edit`, `Write`, and `NotebookEdit` whose target falls outside the allow globs.
-- Every mutating shell command that names no allowed path — the hook classifies the
-  command text, so a mutation hidden in a longer pipeline is still denied.
+- Every `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, and `apply_patch` whose target falls
+  outside the allow globs.
+- Every shell command with a write target outside the allow globs and `.harness-state/**`.
+  The hook analyses the command (redirects, `tee`, `sed -i`, `cp` and `mv` destinations,
+  `curl -o`, `git checkout --`, `cd`, and wrappers such as `sudo` and `sh -c`), and every
+  write target must lie inside: naming one allowed path in a command that also writes
+  somewhere else does not satisfy it. A git command that changes the repository and names
+  no path (`git add -A`, `git push`, `git merge`) is denied too.
 
 Passing untouched:
 
@@ -53,10 +58,18 @@ Passing untouched:
 - Writes under the allow globs, so the evidence bundle and the report are still written.
 - Writes under `.harness-state/**`, which the hook always allows so the record itself and
   the run journal keep working.
+- The run's own `save_run.py` calls (`checkpoint`, `heartbeat`, `complete`). A script's
+  arguments are data and not write targets, so the run can still record itself; a redirect
+  from that command into a core run file is still denied, and so is a `save_run.py` command
+  the analyser cannot tokenise (an unbalanced quote). `../../guard/references/enforcement.md`
+  states this once, with the reason.
 
 Outside the harness entirely: the boundary is a tool-call guard, not a filesystem
-permission. A command the hook does not classify as mutating still writes whatever the
-process it starts writes, so a test runner invoked read-only can still drop `.coverage`,
+permission, and the hook is a text guard that reads the command a tool is about to run
+(`../../harness/hooks/README.md` § What the guard cannot see lists its limits). A command
+whose writes it cannot see still writes whatever the process it starts writes (a script
+file, a program that builds its path at run time), so a test runner invoked read-only
+can still drop `.coverage`,
 `.coverage.*`, `htmlcov/`, or `.nyc_output/` at the project root. That is residue, not
 evidence: resolve the destination with
 `python skills/scripts/output_paths.py --run-id <run> --phase qa --kind coverage --name .coverage --mkdir`
@@ -91,7 +104,7 @@ is itself denied by the hook, which routes every change through this writer.
 ## 5. Recovery from a Record Left Unreleased
 
 The failure is silent and it outlives the session: an unreleased record keeps Rule D
-denying every edit-tool write and every mutating shell command project-wide, so the next
+denying every edit-tool write and every shell write outside the allow globs project-wide, so the next
 session in the same project starts blocked with no indication of which run blocked it.
 
 ```bash

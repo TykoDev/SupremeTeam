@@ -271,8 +271,11 @@ agent that tries produces a denial rather than a record:
 - `_audit-trail.md`, `_state.md`, `_lock.md`, `_latest.md`, `_journal.json` and
   `_history/*` have exactly one writer, `save_run.py`
   (`../../save-ownership.yaml` class `core-run-record`). `pre_tool_use.py`
-  Rule C denies every edit-tool write to them and every mutating shell command
-  that names one without invoking `save_run.py`.
+  Rule C denies every edit-tool write to them and every shell command whose write
+  targets include one. A script's arguments are data and not write targets, so
+  `save_run.py` itself is never stopped, while a redirect from its command line
+  into a core file is. The hook is a text guard, not a lock
+  (`../../harness/hooks/README.md` § What the guard cannot see).
 - `save_run.py` emits its own fixed event vocabulary and has **no annotation
   operation**: nothing in `create | checkpoint | heartbeat | complete | block |
   release | recover | status` takes an arbitrary event name. The trail can only

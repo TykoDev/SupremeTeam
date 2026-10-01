@@ -40,8 +40,54 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   retires a registered path that moved or was pruned.
 - The tech-stack registry records `verified_at`, `support_ends` and a note on what
   its digests do and do not prove.
+- The guard's modules and suites. `skills/harness/hooks/` gains `_cmdscan.py` (the
+  shell command analyser), `_paths.py` (the path and glob canonicaliser),
+  `_fsutil.py` (the one atomic write and OS advisory lock), `_bootstrap.py` and
+  `_testkit.py`, and test files for the rules, the analyser, the paths, the
+  hook-file protection, the state helpers and an end-to-end fuzz of the registered
+  hooks (see [docs/directory-structure.md](docs/directory-structure.md)).
+- `SUPREMETEAM_HARNESS_DEV=1`, set by the person who launches the host, lifts the
+  protection of the hook scripts and their registration files for a maintenance
+  session (see Security).
 
 ### Changed
+
+- The guard keeps one record per boundary. `guard_state.py` normalises every glob
+  before it compares or stores it, so `src\payments\**`, `./src/payments/**`,
+  `src//payments/**` and the absolute form of a project path are one record and one
+  release, and refuses a glob that can never match (empty, `.`, or climbing out of
+  the project with `..`). A relative glob is anchored at the project root: `src/**`
+  no longer reaches `docs/src/`, so a boundary meant for nested directories is
+  recorded with a leading `**/`. Writers take an operating-system lock
+  (`.harness-state/guard-state.json.lock`, `--lock-timeout` seconds, 5 by default)
+  from reading the record to replacing it, so two sessions cannot lose each
+  other's change. `blocked_globs` is a write boundary and is documented as one; the
+  claim that reads were checked against it is gone. A `save_run.py` command is
+  exempt from the single-writer rule because a script's arguments are data and not
+  write targets, no longer because its name appears in the text; a redirect from
+  that command into a core file is still denied.
+- Hooks fail open and count it. Every place a hook swallows an exception records
+  the exception type (never its message, a path or a command) under `faults` and
+  `last_fault` in `.harness-state/observations/<Event>.json`, and
+  `check_readiness.py` reports them as `hooks_faults`. A guard record in the wrong
+  shape no longer switches rules off: its lists are read one by one, and the
+  destructive-command rule needs none of the record. Hook input is read as UTF-8
+  bytes instead of through the console code page (reproduced with a forced legacy
+  code page on Linux; not run on Windows), the hooks share one atomic write, one
+  lock and one project-root resolver, and hook modules import one another by name.
+- The gate wrappers hold a slot optional when `gates.yaml` lets a submitter waive it
+  or `pipelines.yaml` runs its stage only under a condition, so a valid skip record
+  no longer fails the shape check while the boundary validator passes the same
+  package. A file fills one slot, matched on its own name and on whole words. `--prior`
+  reads a JSON verdict record as well as Markdown frontmatter, and revisions such
+  as `r1` and `r2` are compared as tokens. The blocked-phrase list is one list with
+  one case rule; a pattern that does not compile or a missing phrase file is an
+  error, never a clean result.
+- `scan_record.py` names the raw output relative to the manifest that embeds it, so
+  a record in the documented layout reaches the gate without a hand edit. It records
+  the command with its argument boundaries, runs `--version-command` without a
+  shell, and `--fail-on-output` records a scanner that prints findings and exits 0
+  as `fail`; `pass` still means only that the scanner exited 0.
 
 - Installers replace and remove only what they installed. A directory or file of
   yours that shares a name with an installed item is moved to
@@ -105,6 +151,18 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   says which catalog and date its figures describe, docs/harness.md tabulates the
   exit codes and streams of every tool, and several documents now say what their
   comparator actually checks.
+- Documentation catch-up for the guard and the inventories. The freeze, guard,
+  careful and unfreeze references, `save-protocol.md`, the admiral agent protocol and
+  the QA-only boundary reference describe the guard as it is: one record per glob, a
+  structural `save_run.py` exemption, the writer lock, the grant cap, and a text guard
+  that is not a hard lock. AGENTS.md and docs/directory-structure.md list every file
+  the packages added and their section counts add up to 53; BENCHMARK.md's Tests
+  section gives the command for each suite instead of counts that go stale. The
+  tech-stack registry says that `vue-nuxt` locks Nuxt 3, whose end of life passed on
+  2026-07-31, and that choosing a supported major is the owner's decision.
+  `skills/validation/test_docs_inventory.py` checks the section counts against the
+  tree and that the engineer's preconditions name nothing the design pipeline orders
+  after it.
 - `design/engineer` and `design/architect` no longer require a stack lock, which
   `pipelines.yaml` orders after both; the engineer works from the detected stack
   and `design/commander` locks it afterwards. `unfreeze` is a declared owner of the
@@ -113,6 +171,36 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ### Security
 
+- The pre-tool guard reads shell commands and canonicalises paths before it
+  matches. It follows quoting, `cd`, redirects, wrappers (`sudo`, `env`, `xargs`,
+  `sh -c`, `find -exec`, `powershell -Command`, `cmd /c`) and the write targets of
+  the usual verbs, and resolves `.` and `..`, doubled separators, backslashes, `~`,
+  drive letters, links and case first. A freeze, a block or a read-only run is no
+  longer slipped by `>path` without a space, `tee`, `sed -i`, `curl -o`, a heredoc,
+  inline code that names a protected path, a wrapper or another spelling of the path,
+  and a read-only run
+  judges every write target of a command, not whether one allowed path appears in
+  it. Git commands that change the repository and name no path (`git add -A`,
+  `git push`) are denied under a read-only run. The destructive-command rule is the
+  union of the new structural rules and the old textual ones, so it never denies
+  less than before (a differential test against the old patterns pins that), and
+  its cost is linear in the command: a 72 KB command took 12 seconds. It is still a
+  text guard, not a sandbox, and `skills/harness/hooks/README.md` lists what it
+  cannot see.
+- The hook scripts and the host files that register them (`.claude/settings.json`,
+  `.codex/hooks.json`, `.github/hooks.json` and their user-scope equivalents) are
+  protected, but only while a run is pinned or a boundary is recorded, so developing
+  the hooks in a plain checkout is never blocked. A maintainer who has to edit them
+  inside a run starts the host with `SUPREMETEAM_HARNESS_DEV=1`; nothing an agent
+  runs can set it for the host. The Taste records, and the removal or move of a
+  directory that holds a protected record, fall under the single-writer rule too.
+- An `allow_dangerous` grant lasts at most 8 hours (the writer refuses more and the
+  hook treats a longer one as malformed), and it is honoured only from a state
+  directory this user owns that is not a link. Every restriction is kept
+  regardless.
+- The coverage sweep obeys a read-only run, writes residue only into the active
+  run, and runs `coverage combine` with `-P` from a neutral directory, so a module
+  planted in the destination is never imported.
 - Waivers can no longer be written in the submitter's own words: the gate rejects
   an applicability record whose reason is not exactly the sanctioned wording for
   that key and boundary.
@@ -142,3 +230,17 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   Spring Boot start commands without Spring Boot evidence.
 - The responsibility matrix's specialist count was never compared, because the
   comparator's pattern accepted only "twenty-one"; it now reads spelled counts.
+- The YAML subset reader dropped `#` lines, stripped a ` #` tail and collapsed blank
+  lines inside block scalars, where all three are content; every YAML file and
+  frontmatter in the tree parses to the same value as before. It also keeps a
+  version such as `3.10` as text instead of the float `3.1`.
+- `check_parity.py` no longer lets a void element (`<input>`, `<img>`) leave a route
+  open and credit a later shell-level state to it, and rejects an inventory with no
+  routes or components instead of scoring it 1.0.
+- `aggregate_benchmark.py` reads the layout `references/real-evals.md` tells agents
+  to produce and exits 1 when no run was graded, where it used to write an empty
+  benchmark with a delta of `+0.00`.
+- `validation/run_eval.py` and `trigger_eval.py` no longer score a failed session: a
+  missing CLI, a timeout, a non-zero exit or a reply flagged as an error is an error
+  with exit 1, never "0 skills registered". `run_eval.py` lost the `--queries` and
+  `--turns` flags it parsed and never read.

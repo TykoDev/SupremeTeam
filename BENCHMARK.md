@@ -11,8 +11,8 @@ The catalog now has 53 skills (`audit-improve` joined afterwards and is outside
 every figure), and none of them has been re-measured since. The rubric scores are
 model judgements, not machine output; the routing accuracy is a paid, networked
 measurement. CI re-runs neither, so nothing keeps them true, and a number older
-than the catalog it describes should be read as history. The test counts are from
-the run named under [Tests](#tests).
+than the catalog it describes should be read as history. Test counts are not
+recorded here at all; [Tests](#tests) gives the commands that produce them.
 
 ## Headline
 
@@ -22,7 +22,7 @@ the run named under [Tests](#tests).
 | Spec, harness and doctrine, 21 artifacts | mean **97.5** / 100, lowest 95 |
 | Routing accuracy, paraphrased requests, 52-skill roster | **94.8%** (294/310) |
 | Skills a host registers by name | the 22 at the catalog root; the 31 nested specialists are reached by path. Last measured at 21 root skills: 20 registered, one shadowed by a stale copy |
-| Automated tests | seven suites, run by CI; counts are in [Tests](#tests) |
+| Automated tests | seven suites, run by CI; [Tests](#tests) has the command for each, and the count is what a run prints |
 | Gate boundaries | 10, all proven satisfiable against the real validator |
 
 ## Skills
@@ -260,26 +260,24 @@ values against the skills and gate parameters they depend on.
 
 ## Tests
 
-The counts below are copied from a run. They go stale as tests are added, and the
-commands under the tables regenerate them.
+No test count is recorded in this file. A count copied into a document is stale
+with the next test added, and nothing here would say so. The counts are produced by
+running the suites: each command below ends with a `Ran N tests` line and an `OK` or
+`FAILED` verdict, and CI runs every one of them on every change.
 
-| Suite | Tests |
+| Suite | Command |
 |---|---|
-| `skills/harness/gatekeeper` | 93 (1 skipped) |
-| `skills/harness/hooks` | 128 |
-| `skills/scripts` | 24 |
-| `skills/taste` | 3 |
-| `skills/validation` | 152 (1 skipped) |
-| `skills/skill-maker/skill-creator/scripts` | 5 |
+| hooks | `python -m unittest discover -s skills/harness/hooks -p "test_*.py"` |
+| gates | `python -m unittest discover -s skills/harness/gatekeeper -p "test_*.py"` |
+| validation | `python -m unittest discover -s skills/validation -p "test_*.py"` |
+| scripts | `python -m unittest discover -s skills/scripts -p "test_*.py"` |
+| taste | `python -m unittest discover -s skills/taste -p "test_*.py"` |
+| installers | `python -m unittest discover -s scripts -p "test_*.py"` |
+| skill_creator | `python -m unittest discover -s skills/skill-maker/skill-creator -p "test_*.py"` |
 
-| Validation module | Tests |
-|---|---|
-| `test_catalog_contracts.py` | 30 |
-| `test_orchestration.py` | 44 |
-| `test_pipeline_contracts.py` | 10 |
-| `test_pipeline_workflows.py` | 16 (1 skipped) |
-| `test_save_contracts.py` | 17 |
-| `test_trigger_routing.py` | 35 |
+The suite names are the keys of `commands` in `skills/runtime-manifest.yaml`, which
+holds the same command lines. A test that needs PyYAML says so in its skip message,
+so a count with and without PyYAML installed can differ by those skips.
 
 Run them all, from a checkout (the same seven suites and three validators CI runs):
 

@@ -7,10 +7,12 @@ Each pipeline closes at a gate boundary defined in
 [`skills/pipelines.yaml`](../skills/pipelines.yaml), which holds the stages, the
 stage owners, the closing boundary, and the scripts each stage needs.
 
-Those two files are the truth. This page elaborates them and is not allowed to
-contradict them: a contract test checks that every owner is on the roster, every
-boundary exists in the gate spec, every named artifact has exactly one writer, and
-every required script is actually on disk.
+Those two files are the truth. This page elaborates them, and where the two
+differ the files win. The contract tests read the files, not this page: they check
+that every owner is on the roster, every boundary exists in the gate spec, every
+named artifact has exactly one writer, and every required script is on disk.
+`validate_manifests.py` compares this page with the pipeline table rows and the
+pipeline count only, so the stage diagrams below are kept by hand.
 
 ![The delivery lifecycle](assets/Intro.jpg)
 

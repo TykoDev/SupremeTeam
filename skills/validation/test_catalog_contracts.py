@@ -554,17 +554,16 @@ class DeclaredCoverageTests(unittest.TestCase):
                          "the Specialists section must name every manifest specialist:\n  "
                          + "\n  ".join(missing))
 
-        stated = re.search(r"\b(twenty-one|\d+)\s+specialists\b", block, re.I)
-        if stated:
-            words = {"twenty-one": 21, "twenty": 20, "twenty-two": 22}
-            value = words.get(stated.group(1).lower())
-            if value is None and stated.group(1).isdigit():
-                value = int(stated.group(1))
-            if value is not None:
-                self.assertEqual(
-                    value, len(declared),
-                    f"the matrix says {stated.group(1)} specialists; the manifest declares "
-                    f"{len(declared)}")
+        ones = ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+        words = {"twenty": 20, **{f"twenty-{word}": 20 + n for n, word in enumerate(ones, 1)}}
+        spelled = "|".join(sorted(words, key=len, reverse=True))
+        stated = re.search(rf"\b({spelled}|\d+)\s+specialists\b", block, re.I)
+        self.assertIsNotNone(stated, "the Specialists section states no count the comparator can read")
+        value = int(stated.group(1)) if stated.group(1).isdigit() else words[stated.group(1).lower()]
+        self.assertEqual(
+            value, len(declared),
+            f"the matrix says {stated.group(1)} specialists; the manifest declares "
+            f"{len(declared)}")
 
     def test_release_layer_owner_matches_the_pipeline_and_the_gate(self):
         """The RELEASE row named the stage writer, not the pipeline owner."""

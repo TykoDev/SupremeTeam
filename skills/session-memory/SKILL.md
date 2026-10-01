@@ -18,7 +18,9 @@ allowed-tools: Read, Grep, Glob, Bash, Write
 
 Hold the one durable record a run can be rebuilt from. Every other skill reasons
 from context that ends with its session; the run record, its audit trail, and the
-tagged learning store outlive both. That is why they have exactly one writer, why
+tagged learning reports outlive both. The learning reports are files under the run,
+and a lookup searches that run's reports; there is no store that carries them
+across runs. That is why they have exactly one writer, why
 a checkpoint is refused rather than approximated when its evidence does not
 verify, and why a learning without evidence never becomes durable guidance.
 

@@ -28,7 +28,7 @@ behavior when work is rewound, resumed, or unable to proceed.
 | REVIEW | code-chief | A build or changed artifact is submitted | GATE, COMPLETE, REVISE, BLOCKED, ESCALATE, SAFETY |
 | GATE | the boundary's gatekeeper | A phase boundary requests an approval decision | DESIGN, RELEASE, COMPLETE, REVISE, BLOCKED, ESCALATE, SAFETY |
 | RELEASE | land-and-deploy | The gate approved an externally visible delivery | COMPLETE, REVISE, BLOCKED, ESCALATE, SAFETY |
-| SAFETY | guard or freeze | A guarded, frozen, destructive, or externally visible action is requested | INTAKE, DESIGN, BUILD, REVIEW, GATE, RELEASE, REVISE, BLOCKED, ESCALATE |
+| SAFETY | guard, freeze, or unfreeze | A guarded, frozen, destructive, or externally visible action is requested | INTAKE, DESIGN, BUILD, REVIEW, GATE, RELEASE, REVISE, BLOCKED, ESCALATE |
 | REVISE | current artifact owner | A finding or changed input names a correction boundary | DESIGN, BUILD, REVIEW, GATE, RELEASE, BLOCKED, ESCALATE, SAFETY |
 | ESCALATE | admiral | Evidence, ownership, or approval cannot be resolved safely | INTAKE, REVISE, BLOCKED |
 | BLOCKED | current run owner | A required input, permission, or decision is unavailable | INTAKE, DESIGN, BUILD, REVIEW, GATE, RELEASE, REVISE, ESCALATE, SAFETY |
@@ -36,6 +36,12 @@ behavior when work is rewound, resumed, or unable to proceed.
 | TASTE_ACTIVE | taste | Preference management begins with bounded scope and intent | TASTE_GATE_PENDING, BLOCKED, ESCALATE, SAFETY |
 | TASTE_GATE_PENDING | taste | A taste package is ready for `taste-review` | COMPLETE, DESIGN, BUILD, REVIEW, RELEASE, TASTE_GATE_REVISE, BLOCKED, ESCALATE, SAFETY |
 | TASTE_GATE_REVISE | taste | The taste gate returns a bounded correction | TASTE_ACTIVE, TASTE_GATE_PENDING, BLOCKED, ESCALATE, SAFETY |
+
+The Owner column names the skill that holds the state while it lasts. It can
+differ from the lifecycle layer's owner in
+[responsibility-matrix.md](responsibility-matrix.md): in RELEASE, `land-and-deploy`
+holds the state, while `ship` owns the layer, the `release` pipeline and the
+`deploy-readiness` submission.
 
 The transition record names `from_state`, `to_state`, `run_id`, `revision`,
 `owner`, `reason`, `evidence_paths`, and `next_action`. An invalid transition is

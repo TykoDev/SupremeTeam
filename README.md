@@ -23,7 +23,7 @@ optional runtime hooks turn some of the rules into refusals instead of advice;
 they are off until you register them, and without them routing and guards are
 advisory (see [Install.md](Install.md#runtime-hooks)).
 
-![The runtime harness: knowledge, action inspection, trajectory, persistence](docs/assets/7_harness.jpg)
+![The four lifecycle layers of the runtime harness](docs/assets/7_harness.jpg)
 
 ## First ten minutes
 

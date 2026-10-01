@@ -110,7 +110,7 @@ record each key must be, and the exact sanctioned waiver text:
   boundary declares its own `fallback_values` for `rendered_verification`,
   `selected_variant`, `parity_evidence`, and `accessibility_evidence` — and a
   boundary list **shadows** the global entry for that key rather than adding to
-  it (engine `../harness/gatekeeper/check.py:361-362` resolves the boundary list
+  it (engine `sanctioned_values` in `../harness/gatekeeper/check.py` resolves the boundary list
   *or* the global one, never their union). So at `redesign-review` the two
   redesign-only reasons covering a `merge` or `deferred` selection are the
   **exhaustive** set for all four keys, and the global

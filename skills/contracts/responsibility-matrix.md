@@ -112,7 +112,8 @@ change.
 writes the run record. A phase owner writes only its phase artifact. A
 gatekeeper never repairs the submission. `land-and-deploy` never changes an
 approved package without a new revision. The selected `guard` or `freeze` owner
-never widens a path boundary while applying a check.
+never widens a path boundary while applying a check; `unfreeze` is the one owner
+that releases a boundary, through `guard_state.py`, which keeps the released entry.
 
 ## Enforcement
 
@@ -146,7 +147,7 @@ machine manifest, so a comparator would be short, and until one is written a
 drifted cell is silent. Naming them here is the honest alternative to calling
 them judgement:
 
-- **The Gate coverage table.** All three columns restate [`../gates.yaml`](../gates.yaml) and [`../pipelines.yaml`](../pipelines.yaml): a boundary has a phase gatekeeper exactly when its pipeline carries a `phase-gate` stage, and the gatekeeper named is that stage's `owner`. All ten rows were verified against both manifests by hand on 2026-09-16 and agreed. A test reading the table and diffing it against the two manifests would make the verification durable.
+- **The Gate coverage table.** All three columns restate [`../gates.yaml`](../gates.yaml) and [`../pipelines.yaml`](../pipelines.yaml): a boundary has a phase gatekeeper exactly when its pipeline carries a `phase-gate` stage, and the gatekeeper named is that stage's `owner`. All ten rows were compared with both manifests, by a script and by hand, on 2026-10-01 and agreed. A test reading the table and diffing it against the two manifests would make the verification durable.
 - **The Layer matrix Owner column.** Ten of the fourteen owners are the `owner` of the same-named pipeline in `../pipelines.yaml` — TASTE, DESIGN, REDESIGN, BUILD, REVIEW, SECURITY, INVESTIGATION, QA, SKILL CREATION, RELEASE. The remaining four come from [`../team-manifest.yaml`](../team-manifest.yaml): INTAKE from `front_door`, MEMORY from `session_memory`, SAFETY from the `safety` list, GATE from `phase_gatekeepers` plus `cross_stage_gatekeeper`. Only the `RELEASE` row is compared today, and only loosely.
 
 ### Judgement, with no manifest to compare against

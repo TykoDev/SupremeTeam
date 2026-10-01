@@ -351,6 +351,12 @@ enough that the miss belongs to the rewrite.
   path-prefixed id, the nested specialists included, which a host that scans one
   level deep never lists (see Host registration above). The routing figure
   measures how well descriptions discriminate, not what a host user can choose.
+- **The dual-mode split.** `qa` and `ship` run directly on an explicit standalone
+  request and enter through `admiral` on a cold lifecycle request
+  (`routing-doctrine.md`, Routing classes). That discriminator is the user's
+  intent, which a description alone does not carry, so the eval cannot score
+  those skills against `admiral` on it. The shared phrases ("find the root cause",
+  "create a skill") are deliberate and tested; they are not a routing error.
 - **Trigger phrasings beyond four per skill.** The corpus takes four; a skill's
   fifth and sixth phrasings are untested.
 - **Hook registration on a given host.** The hook behaviour is tested against

@@ -157,7 +157,7 @@ def scan(
 def _guard_globs(root: Path) -> tuple[str, ...]:
     """The effective frozen and blocked globs, read the way the guard reads them (``_state.load_guard_state``)."""
     try:
-        state = _state.load_guard_state(root)
+        state = _state.load_guard_state(root, "PostToolUse")
         return tuple(str(glob) for key in ("frozen_globs", "blocked_globs") for glob in state.get(key) or [] if glob)
     except Exception as exc:
         _state.record_fault("PostToolUse", exc)

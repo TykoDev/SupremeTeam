@@ -811,28 +811,39 @@ def _deny(reason: str) -> None:
     sys.exit(0)
 
 
-def _advise(hint: str) -> None:
-    """Emit advisory context and allow the action.
+def _advise(notes: list) -> None:
+    """Emit advisory context, one tagged note per line, and allow the action.
 
-    Deliberately not a deny: running coverage is legitimate work. What is not
-    legitimate is leaving its output at the project root, and that is a
-    destination mistake the caller can still correct before the command runs.
+    Deliberately not a deny. Running coverage is legitimate work; what is not
+    legitimate is leaving its output at the project root, a destination mistake
+    the caller can still correct before the command runs. A guard record that
+    cannot be read is the owner's to repair, and the call is not the place to
+    stop work the rules that still run have no objection to.
     """
     out = {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "additionalContext": "[harness:coverage-residue] " + hint,
+            "additionalContext": "\n".join(notes),
         }
     }
     print(json.dumps(out))
     sys.exit(0)
 
 
+_UNREADABLE_NOTE = (
+    "[harness:guard-state] .harness-state/guard-state.json exists but cannot be read, so no frozen, blocked or "
+    "read-only boundary is enforced for this call. The destructive-command, single-writer and hook-file rules "
+    "still are. Tell the owner: the record has to be repaired or recreated through guard_state.py "
+    "(an agent write to it is denied) and each boundary recorded again. Until then treat every boundary as "
+    "not enforced."
+)
+
+
 def _guard_state() -> dict:
     """The guard record, or an empty one when it cannot be read: Rule A needs none of it, and a record that
     cannot be read must not switch every rule off. The fault is counted."""
     try:
-        return _state.load_guard_state()
+        return _state.load_guard_state(event="PreToolUse")
     except Exception as exc:
         _state.record_fault("PreToolUse", exc)
         return {}
@@ -866,14 +877,17 @@ def main() -> None:
             continue
         if reason:
             _deny(reason)
+    notes = [_UNREADABLE_NOTE] if call.guard.get("unreadable") and (call.shell or call.writer) else []
     try:
         advice = rule_coverage(call)
     except Exception as exc:
         _state.record_fault("PreToolUse", exc)
-        return
+        advice = None
     if advice:
-        _advise(advice)
-    # No rule fired: stay silent and let the action proceed.
+        notes.append("[harness:coverage-residue] " + advice)
+    if notes:
+        _advise(notes)
+    # No rule fired and nothing to say: stay silent and let the action proceed.
 
 
 if __name__ == "__main__":

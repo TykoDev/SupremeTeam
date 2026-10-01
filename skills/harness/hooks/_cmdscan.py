@@ -62,11 +62,11 @@ class Write:
 @dataclass
 class Analysis:
     ok: bool = True
-    # A ``cd`` led past ``MAX_CWD`` characters: the directory of the writes after it is not known.
-    lost_directory: bool = False
     commands: list = field(default_factory=list)
     writes: list = field(default_factory=list)
     code: list = field(default_factory=list)
+    # A ``cd`` led past ``MAX_CWD`` characters: the directory of the writes after it is not known.
+    lost_directory: bool = False
 
 
 class _Unbalanced(Exception):

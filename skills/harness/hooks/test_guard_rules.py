@@ -942,6 +942,26 @@ class WorkingDirectoryRuleTests(GuardCase):
         self.check(("cd skillset-saves; cd runs; cd ..; cd runs/r1; echo x > _state.md",
                     "cd skillset-saves/runs; cd r1; cd ..; cd r1; rm _lock.md"), deny=True, fragment="save_run.py")
 
+    def test_cd_dash_and_popd_do_not_leave_a_read_only_run_inside_a_directory_the_shell_has_left(self):
+        """RR3-guard-5: the record said the shell was still in the allowed directory after `cd -` or `popd` took it back out."""
+        self.guard(READ_ONLY)
+        base = f"skillset-saves/runs/{READ_ONLY_RUN}/investigation"
+        self.check((f"cd {base} && cd - && touch notes.md", f"cd {base}; cd -; touch notes.md", f"pushd {base}; popd; touch notes.md",
+                    f"pushd {base} >/dev/null; ls; popd; echo x > notes.md", f"cd {base}; cd; touch notes.md",
+                    f"(cd {base}; touch ok.md); touch notes.md"),
+                   deny=True, fragment="read-only")
+        self.check((f"cd {base}; cd x; cd -; touch notes.md", f"pushd {base}; pushd x; popd; touch notes.md", f"cd {base}; pushd x; popd; touch notes.md",
+                    f"cd {base}; (cd ..; cd -); touch notes.md", f"cd {base}; cd -; cd -; touch notes.md"), deny=False)
+
+    def test_a_frozen_directory_reached_by_popd_or_cd_dash_is_still_denied(self):
+        self.guard(FROZEN)
+        self.check(("cd src; pushd payments; touch a.py", "cd src; pushd ..; popd; touch payments/a.py", "cd src; cd payments; cd -; cd -; touch a.py",
+                    "cd src/payments; cd ..; cd -; touch a.py", "pushd src; pushd payments; popd; popd; pushd src/payments; touch a.py"),
+                   deny=True, fragment="frozen boundary")
+        # The directories visited last stay candidates for a deny rule, so going back out of a frozen one is still refused: it fails safe.
+        self.check(("pushd src/payments; ls; popd; touch top.txt", "cd src/payments; cd -; touch top.txt"), deny=True, fragment="frozen boundary")
+        self.check(("pushd src; popd; touch top.txt", "cd src; cd -; touch top.txt"), deny=False)
+
     def test_a_write_after_a_chain_the_analysis_stopped_following_is_denied_everywhere(self):
         chain = "; ".join(f"cd directory{i}" for i in range(200))
         for state in ({}, FROZEN, READ_ONLY):

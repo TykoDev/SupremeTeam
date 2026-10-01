@@ -153,7 +153,7 @@ Invoked by the host before any write-capable or shell tool executes. `pre_tool_u
 2. **Rule B — Frozen and Blocked Boundaries:**
    - Enforces write locks declared by `guard` and `freeze` (`frozen_globs` and `blocked_globs`). `blocked_globs` is a write boundary, never enforced against reads.
    - **Path tools (`Edit`, `Write`, `MultiEdit`, `NotebookEdit`, `apply_patch`; tool names match in any case; `file_path`, `filePath`, `path` and `target_file` are read):** denies any write whose canonical path lies in a frozen/blocked glob: `.`/`..` segments, doubled separators, backslashes, `~`, drive letters, links and case are resolved first.
-   - **Shell tools (`Bash`, `PowerShell`):** the command is analysed; every write target (redirects, `tee`, `sed -i`, `cp`/`mv` destinations, `curl -o`, `dd of=`, `git checkout --`, `git apply`, PowerShell cmdlets, `cmd` verbs, and so on) is checked, `cd` is followed, and a tree verb (`rm -r`, `mv`, `git clean`) aimed at a directory above a boundary counts as hitting it. Reads (`cat`, `grep`, `ls`, `Get-Content`) pass.
+   - **Shell tools (`Bash`, `PowerShell`):** the command is analysed; every write target (redirects, `tee`, `sed -i`, `cp`/`mv` destinations, `curl -o`, `dd of=`, `git checkout --`, `git apply`, PowerShell cmdlets, `cmd` verbs, and so on) is checked, `cd` is followed (`cd -`, `pushd` and `popd` and a bare `cd` to the home directory too, each scoped to the subshell or substitution it is in), and a tree verb (`rm -r`, `mv`, `git clean`) aimed at a directory above a boundary counts as hitting it. Reads (`cat`, `grep`, `ls`, `Get-Content`) pass.
    - A relative glob is anchored at the project root: `src/**` does not reach `docs/src/`.
    - `git restore --staged` (without `--worktree`) and a `git reset` that is not `--hard`, `--merge` or `--keep` only move the index: their pathspecs are not writes into a frozen tree. A `trap` handler is read as the command line it is, so what it writes is seen.
 
@@ -196,7 +196,7 @@ The guard is a text guard. It analyses the command a tool is about to run and th
 - a link created in the same command that then writes through it;
 - a git command that rewrites the tree and names no path (`git reset --hard`, `git stash`, `git clean -fd`, `git merge`, `git checkout <branch>`): under a freeze it can change a frozen file and nothing sees it, because there is no path to compare; only a read-only run denies it (Rule D);
 - a command it cannot parse (unbalanced quoting): the older textual rules still run on the raw text, which is never weaker than before, but it is not an analysis;
-- the working directory after a `cd` chain longer than 512 characters, which Rule G refuses rather than guesses.
+- the working directory after a `cd` chain longer than 512 characters, which Rule G refuses rather than guesses, and after a `cd` or `pushd` into a path built at run time (`cd "$d"`), which is judged as if the shell had not moved. `cd -`, `popd` and `pushd` with no directory are followed with a directory stack. A deny rule still treats the last three directories the shell was in as candidates, so going back out of a frozen directory (`pushd src/payments; ls; popd; touch top.txt`) is refused as a write into it; that errs toward denying, while a read-only run's allow list judges only the directory the shell is really in.
 
 The hook also fails open on its own faults. Back anything that must not change with version control, filesystem permissions or a sandbox as well.
 

@@ -283,6 +283,66 @@ class WriteTargetTests(unittest.TestCase):
         write = analyse("cd a; cd ..; cd a; cd ..; cd a; touch f").writes[0]
         self.assertEqual(write.cwds, (".", "a"))
 
+    def test_cd_dash_and_popd_return_to_the_directory_the_shell_is_really_in(self):
+        """RR3-guard-5: `cd -` and `popd` moved the shell without moving the record, so a write after them was judged in the
+        directory the shell had left (under the allow list of a read-only run, that is a way out of it)."""
+        for text, expected in (
+            ("cd a; cd -; touch f", "."),
+            ("cd a; cd b; cd -; touch f", "a"),
+            ("cd a; cd b; cd -; cd -; touch f", "a/b"),
+            ("cd a && cd -  && touch f", "."),
+            ("cd a; cd ..; cd -; touch f", "a"),
+            ("pushd a; popd; touch f", "."),
+            ("pushd a; ls; popd >/dev/null; touch f", "."),
+            ("cd x; pushd a; pushd b; popd; touch f", "x/a"),
+            ("cd x; pushd a; pushd b; popd; popd; touch f", "x"),
+            ("cd x; pushd y; pushd; touch f", "x"),
+            ("cd x; pushd y; pushd; pushd; touch f", "x/y"),
+            ("cd a; popd; touch f", "a"),
+            ("cd a; pushd; touch f", "a"),
+            ("pushd /abs/dir; popd; touch f", "."),
+            ("cd a; pushd b; cd c; popd; touch f", "a"),
+        ):
+            with self.subTest(command=text):
+                self.assertEqual(analyse(text).writes[-1].cwds[-1], expected, text)
+        self.assertEqual(analyse("cd -; touch f").writes[0].cwds, ())
+        self.assertEqual(analyse("popd; touch f").writes[0].cwds, ())
+
+    def test_a_bare_cd_goes_home_for_bash_and_nowhere_for_powershell(self):
+        with mock.patch.dict(os.environ, {"HOME": "/home/u"}):
+            self.assertEqual(analyse("cd a; cd; touch f").writes[-1].cwds[-1], "/home/u")
+            self.assertEqual(analyse("cd a; cd; cd -; touch f").writes[-1].cwds[-1], "a")
+            self.assertEqual(analyse("cd a; Set-Location; Set-Content f x", ps=True).writes[-1].cwds[-1], "a")
+
+    def test_powershell_push_and_pop_location_follow_the_same_way(self):
+        self.assertEqual(analyse("Push-Location a; Pop-Location; Set-Content f x", ps=True).writes[-1].cwds[-1], ".")
+        self.assertEqual(analyse("Set-Location a; pushd b; popd; Set-Content f x", ps=True).writes[-1].cwds[-1], "a")
+        self.assertEqual(analyse("Set-Location a; Set-Location b; Set-Location -; Set-Content f x", ps=True).writes[-1].cwds[-1], "a")
+
+    def test_the_directory_stack_is_scoped_like_the_directory_itself(self):
+        for text, expected in (
+            ("cd x; pushd y; (popd); touch f", "x/y"),
+            ("cd x; (pushd y; popd; cd z); touch f", "x"),
+            ("cd x; pushd y; echo $(popd); touch f", "x/y"),
+            ("cd x; pushd y; sh -c 'popd'; touch f", "x/y"),
+            ("cd x; (pushd y); popd; touch f", "x"),
+            ("cd x; (cd y; cd -; touch g); touch f", "x"),
+        ):
+            with self.subTest(command=text):
+                self.assertEqual(analyse(text).writes[-1].cwds[-1], expected, text)
+
+    def test_a_path_built_at_run_time_leaves_the_shell_where_it_was(self):
+        self.assertEqual(analyse("cd a; cd $UNKNOWN; touch f").writes[-1].cwds[-1], "a")
+        self.assertEqual(analyse("cd a; pushd $UNKNOWN; popd; touch f").writes[-1].cwds[-1], "a")
+
+    def test_the_directory_stack_is_bounded(self):
+        text = "pushd a; " * 5000 + "popd; " * 5000 + "touch f"
+        result = analyse(text)
+        self.assertTrue(result.writes)
+        start = time.perf_counter()
+        analyse("pushd a; " * 11000 + "( popd ); " * 100 + "touch f")
+        self.assertLess(time.perf_counter() - start, 3.0)
+
     def test_a_git_command_that_only_moves_the_index_writes_no_file(self):
         """RR-guard-5: `git restore --staged .` is not a write into the tree, and `git reset` is not unless it is hard."""
         for text in ("git restore --staged .", "git restore -S src", "git restore --staged src/payments/a.py", "git reset HEAD src/a.py",

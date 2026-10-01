@@ -580,6 +580,7 @@ class _Ctx:
         self.ps = ps
         self.vars: dict = {}
         self.cwds: list = []
+        self.stack: tuple = ()
         self.depth = 0
         self.text = ""
         self.seen: set = set()
@@ -1194,7 +1195,11 @@ _EVAL_FLAGS = {"node": ("-e", "--eval", "-p", "--print"), "nodejs": ("-e", "--ev
                "bun": ("-e", "--eval"), "ruby": ("-e",), "php": ("-r",), "lua": ("-e",), "luajit": ("-e",),
                "rscript": ("-e",), "osascript": ("-e",)}
 _DOTNET_FILE = re.compile(r"\[(?:System\.)?IO\.(?:File|Directory)\]::\s*(?!Exists|Read|Get|Enumerate|OpenRead)\w+", re.I)
-_CD = frozenset({"cd", "chdir", "pushd", "set-location", "sl", "push-location"})
+_PUSH = frozenset({"pushd", "push-location"})
+_POP = frozenset({"popd", "pop-location"})
+_CD = frozenset({"cd", "chdir", "set-location", "sl"}) | _PUSH | _POP
+# Directories ``pushd`` remembers, newest last; beyond this the oldest are forgotten so the record stays bounded.
+_STACK_LIMIT = 64
 _DECLARE = frozenset({"export", "declare", "local", "readonly", "typeset"})
 _XARGS_ARG = frozenset({"-n", "-P", "-L", "-s", "-d", "-E", "-a", "--max-args", "--max-procs", "--max-lines",
                         "--max-chars", "--delimiter", "--eof", "--arg-file"})
@@ -1633,18 +1638,47 @@ def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None", st
     _finish(args, ctx, body, stdin)
 
 
-def _change_directory(rest: list, ctx: _Ctx) -> None:
-    operands = [a for a in rest if not a.text.startswith("-") or a.text == "-"]
-    if not operands or operands[0].unresolved or operands[0].text == "-":
-        return
-    target = operands[0].text.replace("\\", "/") if ctx.ps else operands[0].text
-    current = ctx.cwds[-1] if ctx.cwds else ""
-    absolute = target.startswith("/") or re.match(r"[A-Za-z]:", target) is not None
-    moved = posixpath.normpath(target if absolute else posixpath.join(current, target))
+def _go(ctx: _Ctx, moved: str) -> None:
+    """Make ``moved`` (a directory in the form ``cwds`` holds) the current one, or say the chain is too long to follow."""
     if len(moved) > MAX_CWD:
         ctx.out.lost_directory = True
     elif not ctx.cwds or ctx.cwds[-1] != moved:
         ctx.cwds.append(moved)
+
+
+def _change_directory(verb: str, rest: list, ctx: _Ctx) -> None:
+    """Follow ``cd``, ``cd -``, ``pushd`` and ``popd``, so the last directory recorded is always where the shell is.
+
+    ``cd -`` returns to the directory before the last change; ``popd`` to the one ``pushd`` remembered. Where the
+    shell goes is unknown for a path built at run time (``cd "$d"``), and then it is left where it was."""
+    operands = [a for a in rest if not a.text.startswith("-") or a.text == "-"]
+    current = ctx.cwds[-1] if ctx.cwds else ""
+    if verb in _POP:
+        if ctx.stack:
+            ctx.stack, target = ctx.stack[:-1], ctx.stack[-1]
+            _go(ctx, target)
+        return
+    if verb in _PUSH:
+        if not operands:
+            # Without a directory it swaps the current one with the newest remembered.
+            if ctx.stack:
+                ctx.stack, target = (*ctx.stack[:-1], current or "."), ctx.stack[-1]
+                _go(ctx, target)
+            return
+        ctx.stack = (*ctx.stack, current or ".")[-_STACK_LIMIT:]
+    if not operands:
+        if not ctx.ps:
+            _go(ctx, posixpath.normpath(_home().replace("\\", "/")))
+        return
+    if operands[0].unresolved:
+        return
+    if operands[0].text == "-":
+        if ctx.cwds:
+            _go(ctx, ctx.cwds[-2] if len(ctx.cwds) > 1 else ".")
+        return
+    target = operands[0].text.replace("\\", "/") if ctx.ps else operands[0].text
+    absolute = target.startswith("/") or re.match(r"[A-Za-z]:", target) is not None
+    _go(ctx, posixpath.normpath(target if absolute else posixpath.join(current, target)))
 
 
 def _find_targets(verb: str, rest: list, ctx: _Ctx) -> "tuple | None":
@@ -1689,7 +1723,7 @@ def _finish(args: list, ctx: _Ctx, body: "str | None", stdin: bool = False) -> N
         ctx.seen.add(command)
         ctx.out.commands.append(command)
     if verb in _CD:
-        _change_directory(rest, ctx)
+        _change_directory(verb, rest, ctx)
     elif verb in _DECLARE:
         for argument in rest:
             match = _ASSIGN.match(argument.text)
@@ -1722,9 +1756,10 @@ def _run_tokens(tokens: list, ctx: _Ctx) -> None:
                 continue
             flush()
             if value == "(":
-                marks.append(len(ctx.cwds))
+                marks.append((len(ctx.cwds), ctx.stack))
             elif value == ")" and marks:
-                del ctx.cwds[marks.pop():]
+                size, ctx.stack = marks.pop()
+                del ctx.cwds[size:]
         else:
             stages[-1].append((kind, value))
     flush()
@@ -1739,7 +1774,7 @@ def _process(text: str, ctx: _Ctx, ps: bool, scoped: bool = True) -> None:
         ctx.out.code.append(text)
         _note_unnamed(ctx, "", "nested")
         return
-    saved_ps, saved_text, mark = ctx.ps, ctx.text, len(ctx.cwds)
+    saved_ps, saved_text, mark, stack = ctx.ps, ctx.text, len(ctx.cwds), ctx.stack
     ctx.ps, ctx.text = ps, text
     ctx.depth += 1
     try:
@@ -1752,6 +1787,7 @@ def _process(text: str, ctx: _Ctx, ps: bool, scoped: bool = True) -> None:
         ctx.ps, ctx.text = saved_ps, saved_text
         if scoped:
             del ctx.cwds[mark:]
+            ctx.stack = stack
 
 
 def analyse(text: str, *, powershell: bool = False) -> Analysis:

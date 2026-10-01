@@ -914,6 +914,7 @@ class RealCatalogTests(unittest.TestCase):
             self.assertEqual(installed, source, f"{name} differs from skills/{name}")
         self.assertEqual(read_manifest(dest).items, ITEMS.selected())
         self.assertEqual(sorted(entry.name for entry in dest.iterdir()), sorted([*ITEMS.selected(), MANIFEST]))
+        self.assertEqual((dest / "LICENSE").read_bytes(), (REPO / "LICENSE").read_bytes(), "the install carries the licence notice")
 
 
 class ItemListTests(unittest.TestCase):
@@ -939,6 +940,12 @@ class ItemListTests(unittest.TestCase):
         self.assertFalse(set(ITEMS.legacy) & set(ITEMS.selected()), "a legacy directory must not be a current item")
         for team, members in ITEMS.teams.items():
             self.assertEqual(len(members), len(set(members)), team)
+
+    def test_the_installed_licence_is_the_repository_licence(self):
+        """An install carries only skills/, so the licence notice travels as the core item skills/LICENSE."""
+        self.assertIn("LICENSE", ITEMS.core)
+        self.assertEqual((SKILLS / "LICENSE").read_bytes(), (REPO / "LICENSE").read_bytes(),
+                         "skills/LICENSE has to stay a copy of the repository LICENSE")
 
     def test_standalone_teams_match_the_team_manifest(self):
         roster = load_data(SKILLS / "team-manifest.yaml")

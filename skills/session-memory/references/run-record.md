@@ -44,8 +44,9 @@ another writer (default 10). Run
 
 ## Results and exit codes
 
-Every operation emits one JSON result on stdout. Read `result` before reporting
-anything; the exit code carries the same verdict for a shell caller.
+Every operation emits one JSON result, on stdout except for an engine error,
+which writes its JSON to stderr. Read `result` before reporting anything; the exit
+code carries the same verdict for a shell caller.
 
 | `result` | Exit | Meaning | Response |
 | --- | --- | --- | --- |
@@ -53,6 +54,10 @@ anything; the exit code carries the same verdict for a shell caller.
 | `refused` | 1 | Contract violation: competing owner, wrong revision, unsafe path, stale lock, `create` with no evidence, terminal run without `--reopen`. Also a busy write lock, which says so | Resolve the contract and reissue; for a busy lock just reissue. Never hand-edit a core run file to get past it |
 | `degraded` | 2 | The write failed; nothing coherent was published and the previous revision is intact | Warn once, report persistence as degraded, keep readable evidence, and use transient mode only when resume cannot be proven |
 | *(engine error)* | 3 | Bad input or an internal failure in the writer itself | Treat as degraded for persistence purposes and surface the raw message; do not retry blindly |
+
+Read `result` as well as the code: a mistyped option is argparse's own exit 2,
+which looks like `degraded`, but it prints nothing to stdout and the usage message
+goes to stderr.
 
 A `degraded` result is not a smaller `refused`. `refused` means the run said no
 and the fix is upstream of the write; `degraded` means the medium said no and the

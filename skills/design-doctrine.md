@@ -13,14 +13,16 @@ Taste itself ([taste-doctrine.md](taste-doctrine.md)), for gate boundaries and
 their required evidence ([gates.yaml](gates.yaml)), or for routing
 ([routing-doctrine.md](routing-doctrine.md)).
 
-**Which bound skills carry a pointer today.** `architect`, `design-qa`, and
-`gatekeeper-design` link this doctrine from their own documents, so a run of any
-of them loads it. `commander` and `frontier` do not: `commander` reaches these
-rules through the `architect` package it assembles and the `gatekeeper-design`
-verdict it receives, and `frontier` reaches them only through the reviewer
-applying them. A doctrine no bound skill loads cannot bind that skill by
-assertion, so the binding claim above is honest for three of the five and is a
-standing gap for the other two.
+**Which bound skills carry a pointer today.** `architect`, `design-qa`, `frontier`,
+and `gatekeeper-design` link this doctrine from their own `SKILL.md`, so a run of
+any of them loads it. `commander` links it only from its
+`references/gate-evidence.md` (the `ui_evidence` row), not from `SKILL.md`: it
+reaches these rules through the `architect` package it assembles and the
+`gatekeeper-design` verdict it receives. A doctrine no bound skill loads cannot
+bind that skill by assertion, so the binding claim above is honest for four of the
+five and a standing gap for `commander`. The redesign pipeline's `redesign`,
+`prototyper`, and `design-mapper` link it too, though they are not in the bound
+list.
 
 User presentation and interaction preferences are governed by
 [Taste Doctrine](taste-doctrine.md). Apply effective Taste where multiple valid

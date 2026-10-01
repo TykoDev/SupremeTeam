@@ -54,7 +54,9 @@ verdicts and never touch a submission.
 
 [`save-ownership.yaml`](../skills/save-ownership.yaml) is the path-level policy;
 [`ownership.yaml`](../skills/ownership.yaml) is the artifact-level owner map.
-`skills/validation/test_save_contracts.py` checks the two agree, and
+`skills/validation/test_save_contracts.py` checks part of their agreement: the
+writers of the run record, the gate verdicts and the grilling log, and that the
+tools of two classes exist. The other classes are not compared with the owner map.
 `pre_tool_use.py` denies edit-tool writes to core run files outright.
 
 ## Lifecycle
@@ -89,8 +91,13 @@ died before it finished.
 Exit codes matter here. 0 is `ok`. 1 is `refused`, which is a contract violation to
 resolve, never something to work around by hand-editing save files; the one
 refusal to simply retry is a busy write lock. 2 is `degraded`, meaning the write
-failed and nothing coherent was published. Refused and degraded operations are
-recorded in the run's audit trail, so `/audit-improve` can see them.
+failed and nothing coherent was published. 3 is an engine error: the writer could
+not run on the input it was given (an unreadable file, an invalid value), nothing
+was published, and the JSON report is on stderr rather than stdout. Refused and
+degraded operations are recorded in the run's audit trail, so `/audit-improve` can
+see them. Read `result` in the JSON on stdout before treating a 2 as degraded: a
+mistyped option is argparse's own exit 2 and prints nothing there. The other tools'
+codes are in [harness.md](harness.md#exit-codes-and-streams).
 
 ## Locks and staleness
 

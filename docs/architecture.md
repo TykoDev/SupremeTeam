@@ -7,10 +7,12 @@ Each pipeline closes at a gate boundary defined in
 [`skills/pipelines.yaml`](../skills/pipelines.yaml), which holds the stages, the
 stage owners, the closing boundary, and the scripts each stage needs.
 
-Those two files are the truth. This page elaborates them and is not allowed to
-contradict them: a contract test checks that every owner is on the roster, every
-boundary exists in the gate spec, every named artifact has exactly one writer, and
-every required script is actually on disk.
+Those two files are the truth. This page elaborates them, and where the two
+differ the files win. The contract tests read the files, not this page: they check
+that every owner is on the roster, every boundary exists in the gate spec, every
+named artifact has exactly one writer, and every required script is on disk.
+`validate_manifests.py` compares this page with the pipeline table rows and the
+pipeline count only, so the stage diagrams below are kept by hand.
 
 ![The delivery lifecycle](assets/Intro.jpg)
 
@@ -117,7 +119,15 @@ The stack lock names the registry slug, locked versions, and overlay digest from
 sanctioned fallback when no runtime or framework changes. Detect the slug with
 `python skills/scripts/check_runtime.py --project-root . --detect-project` from the
 project root; the report prints the root it inspected and warns when nothing under
-it looks like a project.
+it looks like a project. The stack lock comes after the implementation spec in the
+stage order, so the engineer works from the detected stack and `commander` locks it
+afterwards.
+
+A digest in the registry is the integrity of the overlay text, not where the
+guidance came from. The registry also records when its pins were last read
+(`verified_at`) and the end-of-support dates the overlays state (`support_ends`);
+nothing checks either yet, so a lock on a slug whose support has ended is visible to
+a reader and not to the gate.
 
 Out: an approved design package with requirements, architecture, interface
 contracts, design system, plan, implementation spec, and traceability.

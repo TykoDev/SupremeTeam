@@ -9,7 +9,7 @@ description: >-
   skill, build a team, or run Admiral — even when the request never says
   Admiral. Standalone guardrail, browser, release, and testing tools run
   directly.
-version: 2.1.0
+version: 2.1.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -125,6 +125,8 @@ Never use Tier 0 to waive a failed check.
 The workflow below applies after Tier 0 has been ruled out.
 
 ## Workflow
+
+Commands in this skill are written for a checkout (`python skills/harness/hooks/save_run.py ...`). In an installed copy, read the leading `skills/` as the skill set root, the directory that holds `admiral/` (for example `~/.agents/skills/`), and `python` as `python3` (`py -3` on Windows); run them from the user's project, whose `skillset-saves/` is where the run is written, never inside the skill set. Paths written relative to a skill (`../harness/...`) mean the same in both layouts.
 
 1. **Classify the save directory before creating state.** Inspect `skillset-saves/_latest.md` and classify the directory with `python skills/harness/hooks/save_run.py status --run-id <id>` into one of the eleven values `save-protocol.md` §2 Startup defines — active, inactive, complete, stale, orphaned, conflicting, corrupt, interrupted, missing, uninitialized, or unreadable — then resume an active reclaimable run before starting a new one. Only `active` and `orphaned` reinforce the session pin. Do not collapse the set: `stale` (heartbeat older than 30 minutes, or dated in the future) needs `recover --reason`, `interrupted` (a publish journal present) needs `recover --rollback`, `uninitialized` (a run directory holding intake's report and no record, which is where a session that ended between intake and `create` leaves off) needs only `create`, and `corrupt` needs both preserved and escalated — each has a distinct recovery, so a run filed under a neighbouring label gets the wrong one. `complete` and `inactive` are told apart by `run_status`: a `released` run resumes by `checkpoint`, a `complete` one only by `checkpoint --reopen`. `_latest.md` is a pointer, not the run: never conclude "no run to resume" from its absence without scanning `runs/` first and rebuilding the pointer over a recoverable orphan. If activation fails, warn once, attempt read-only resume from any readable saved artifacts, and continue transiently only when no coherent resume boundary can be proven.
 2. **Establish readiness and shared understanding.** Classify the request as full, partial, resume, create-skill, or create-team, and probe whether the host supports agent mode. Then run the four intake contracts in `references/contracts.md` — Harness Hook Registration, Runtime Readiness Diagnostic, MCP Registry Freshness, and Grill-Me Intake — holding each result until step 3 creates the run, then carrying it as a `--set` field on `create` (the run record does not exist before then, and its audit trail is written only by `save_run.py`). The grilling result is written to `skillset-saves/runs/{run-id}/intake/report_grilling.md` (resolve it with `python skills/scripts/output_paths.py --kind phase_report --phase intake --name report_grilling.md --run-id <run> --mkdir`), which is the hashed artifact behind the `decisions` gate key, so a design package whose decisions are not backed by it fails `design-to-build` mechanically. Reject any stage skip that lacks explicit approval lineage.

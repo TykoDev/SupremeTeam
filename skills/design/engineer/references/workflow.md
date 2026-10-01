@@ -20,22 +20,24 @@ must map, the ordering rules, and the checklist the spec is accepted against.
 ## Preconditions
 
 The spec is written only against approved upstream work. Confirm all four before
-slicing; a missing one is a return to `design/commander`, not a gap to fill
-locally.
+slicing; a missing one is a return to the owner named in its row, not a gap to
+fill locally. The stack lock is not one of them: `../../../pipelines.yaml` orders
+`stack-lock` after `implementation-spec`, so `design/commander` locks the stack
+against the detected stack this spec records.
 
 | Precondition | Source | Why it blocks |
 | --- | --- | --- |
 | Component boundaries and data flow approved | `design/architect` (`architecture`) | Module ownership per slice is unassignable without them |
 | Endpoint or interface contracts approved, where any surface is in scope | `design/architect` (`interface-contract`) | A contract test cannot be named against an unspecified contract |
 | Milestones, rollout shape, and per-slice acceptance conditions approved | `design/planner` (`plan`) | Acceptance evidence has nothing to be judged against |
-| Runtime, framework, and version choices locked | `design/commander` (`stack-lock`) | Migration order and rollback mechanism depend on the runtime |
+| Runtime, framework, and version the slices target | `python skills/scripts/check_runtime.py --project-root . --detect-project`, or the approved `architecture` when there is no project to inspect | Migration order and rollback mechanism depend on the runtime |
 
 ## Implementation-Spec Document Template
 
 ```markdown
 # Implementation Spec — {scope}
 
-**Revision**: {n}   **Design package revision**: {n}   **Stack lock**: {slug}@{versions}
+**Revision**: {n}   **Design package revision**: {n}   **Detected stack**: {slug}@{versions}
 
 ## Slice order
 

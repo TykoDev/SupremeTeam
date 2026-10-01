@@ -59,17 +59,32 @@ dependency changes, and anything crossing systems take the ordinary route.
 
 ## Who can be called, and how
 
-| Tier | Skills | How they are reached |
+These are the seven classes of
+[`routing-doctrine.md`](../skills/routing-doctrine.md), the table the tests
+compare with the roster. This page repeats it; where they differ the doctrine
+wins.
+
+| Routing class | Skills | How they are reached |
 |---|---|---|
 | Entry orchestrator | `admiral` | The front door. Lifecycle work starts here |
-| In-scope, defers when cold | `design/commander`, `design/redesign`, `build/build-management`, `review/code-chief`, `skill-maker`, `investigate`, `taste`, `session-memory`, `gatekeeper-admiral` | Components of the Admiral pipeline. Reached without an active handoff, they hand off to `admiral` first, then take the delegation back |
-| Internal specialists | every skill under `design/`, `build/`, `review/` not listed above | Through their owning sub-orchestrator. Not a user entry point |
-| Standalone tools | `careful`, `freeze`, `guard`, `unfreeze`, `browse`, `open-browser`, `setup-browser-cookies`, `pair-agent`, `ship`, `setup-deploy`, `land-and-deploy`, `document-release`, `qa`, `qa-only`, `benchmark` | Out of routing scope. Call them directly whenever |
+| Pipeline owners (must defer) | `design/commander`, `build/build-management`, `review/code-chief`, `review/cso`, `investigate`, `design/redesign`, `skill-maker`, `taste` | Components of the Admiral pipeline. Reached without an active handoff, they hand off to `admiral` first, then take the delegation back |
+| Dual-mode entry | `qa`, `qa-only`, `ship` | Used as tools **and** the owners of a gated pipeline when admiral delegates to them; how they were reached decides which is running. All three sit at the install root, so a host registers them by name |
+| Gatekeepers (must defer) | `gatekeeper-admiral`, `design/gatekeeper-design`, `build/gatekeeper-build`, `review/gatekeeper-code` | Only by a submitting owner presenting a package at the boundary they validate. Never a front door |
+| Session memory | `session-memory` | A component of the Admiral pipeline, engaged by `admiral` at its checkpoints; it hands off to `admiral` when reached cold |
+| Internal specialists | every skill under `design/`, `build/`, `review/` not named above; `taste/taste-review`; `skill-maker/skill-creator`; `skill-maker/skill-reviewer` | Through their owning sub-orchestrator. Not a user entry point |
+| Standalone tools | `audit-improve`, `careful`, `freeze`, `guard`, `unfreeze`, `browse`, `open-browser`, `setup-browser-cookies`, `pair-agent`, `benchmark`, `setup-deploy`, `land-and-deploy`, `document-release` | Out of routing scope. Call them directly whenever |
 
 "Standalone" means directly reachable without going through admiral. It does not
 mean unused by the pipelines. `qa` and `ship` are both directly invokable **and**
-own a pipeline when admiral delegates to them; which one is happening is decided
-by how they were reached, not by the skill.
+own a pipeline when admiral delegates to them, and `qa-only` runs inside the `qa`
+pipeline; which one is happening is decided by how they were reached, not by the
+skill.
+
+Reachable is not the same as registered. A host that scans one level deep lists
+the 22 skills at the install root by name; the 31 nested ones (the 23 internal
+specialists, five pipeline owners and three phase gatekeepers that sit in a
+category folder) are never offered by the loader and are reached by path through
+the skill that delegates to them.
 
 ## Where requests go
 
@@ -114,7 +129,7 @@ Every later message in the session belongs to that run, even when you never say
 The pin clears on `RUN_COMPLETE`, on `release admiral` or `/exit-admiral`, or when
 the lock is verified stale. Every release is appended to the audit trail.
 
-## Making it deterministic
+## Making it reliable
 
 `skills/harness/hooks/user_prompt_submit.py` fires on every fresh prompt and
 injects an advisory reminder: point at `admiral` when no run is active, reinforce

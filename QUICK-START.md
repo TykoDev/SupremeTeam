@@ -42,26 +42,11 @@ by name, or when one already exists.
 The installer only replaces or removes what it installed. Anything of yours that
 shares a name with an installed item (`review`, `qa`, `scripts`, ...) is moved,
 never deleted, to `<target>.supremeteam-backup/<timestamp>/` and listed in the
-summary. Run it with `--dry-run` first to see what it would do without writing
-anything. [Install.md](Install.md) has the details.
+summary. Run it with `--dry-run` (`-DryRun` on Windows) first to see what it would
+do without writing anything. [Install.md](Install.md) has the details.
 
-### Installer options
-
-| Goal | Windows | macOS / Linux |
-|---|---|---|
-| Pick teams | `-Team Design,Review` | `--team design --team review` |
-| Pick hosts | `-Target Codex,Claude` | `--target codex --target claude` |
-| Register hooks | `-RegisterHooks` | `--register-hooks` |
-| Which hook config | `-HooksScope Project` | `--hooks-scope project` |
-| Skip the hook question | `-HooksYes` | `--hooks-yes` |
-| Custom path | `-Destination "path"` | `--destination "path"` |
-| Preview only | `-DryRun` | `--dry-run` |
-
-Teams: `Design`, `Build`, `Review`, `Browser`, `Release`, `Safety`, `Testing`,
-`All`. Hosts: `auto`, `codex`, `claude`, `cursor`, `opencode`. Per-host
-destination flags exist too (`-CodexDestination`, `--claude-destination`, and so
-on); `-InstallClaude` and `--install-claude` are older aliases for the Claude
-target.
+Teams, hosts, the hook-scope and no-prompt flags, a custom destination and
+`--dry-run` are in [Install.md](Install.md#installer-options).
 
 You will know it worked when the installer prints its summary:
 
@@ -110,11 +95,11 @@ To see the change before running the installer for real, install first without
 `--register-hooks`, then:
 
 ```bash
-python scripts/install_hooks.py --target claude --hook-root "$HOME/.agents/skills/harness/hooks" --dry-run
+python3 scripts/install_hooks.py --target claude --hook-root "$HOME/.agents/skills/harness/hooks" --dry-run
 ```
 
 Copilot has hook support but no installer target and no skills directory; register
-it with `python scripts/install_hooks.py --target copilot --hook-root "$HOME/.agents/skills/harness/hooks"`.
+it with `python3 scripts/install_hooks.py --target copilot --hook-root "$HOME/.agents/skills/harness/hooks"`.
 
 Then open `/hooks` or restart the host if it wants to review them first.
 
@@ -128,12 +113,19 @@ So it picks up the new skills and hook config.
 
 ## 4. Verify
 
+Verify the installed copy from any directory (Python 3.13 or newer; `py -3` and
+`%USERPROFILE%\.agents\skills\` on Windows, and
+[Install.md](Install.md#paths-and-the-python-command) for the rule behind the
+paths):
+
 ```bash
-python skills/harness/hooks/check_readiness.py --host auto
-python skills/scripts/check_runtime.py
-python skills/scripts/validate_manifests.py
-python skills/scripts/package_check.py --root .
+python3 ~/.agents/skills/harness/hooks/check_readiness.py --host auto
+python3 ~/.agents/skills/scripts/check_runtime.py
+python3 ~/.agents/skills/scripts/validate_manifests.py
 ```
+
+In a checkout, the same commands start at its root (`python3 skills/...`), and
+`python3 skills/scripts/package_check.py --root .` is available too.
 
 `check_readiness.py` gives you a capability map: `python_runtime`,
 `hooks_configured`, `hooks_executable`, `hooks_coverage`, `hooks_interpreter`,
@@ -152,8 +144,8 @@ pretend otherwise.
 If a hook is missing, look at the repair before you apply it:
 
 ```bash
-python skills/harness/hooks/repair_registration.py --host claude --scope project
-python skills/harness/hooks/repair_registration.py --host claude --scope project --apply
+python3 ~/.agents/skills/harness/hooks/repair_registration.py --host claude --scope project
+python3 ~/.agents/skills/harness/hooks/repair_registration.py --host claude --scope project --apply
 ```
 
 The preview is the default, and it never touches global host config unless you
@@ -209,33 +201,29 @@ directly on the Tier 0 fast path. No interview, no saved run, no gate package.
 You get the change, the checks that were actually run, and anything still
 unresolved.
 
-Security, deployment, and production changes never qualify, however small.
+Security, deployment, and production changes never qualify, however small. The
+test is not file count: a change qualifies when it is local, understood and
+reversible and its acceptance check is obvious. A one-line change to an
+authentication check does not qualify.
+
+### What a run costs
+
+A governed run starts from `admiral/SKILL.md` (about 28 KB) and the root contracts
+it points at: `routing-doctrine.md`, `grill-me-doctrine.md`, `save-protocol.md`,
+`harness-doctrine.md`, `execution-contract.md`, `gates.yaml` and `pipelines.yaml`
+(about 155 KB between them). That is the price of one interview, one persisted run
+and a gate at every boundary, so budget the context for it. The sizes drift as the
+files change; this measures them now:
+
+```bash
+wc -c skills/admiral/SKILL.md skills/{routing-doctrine,grill-me-doctrine,save-protocol,harness-doctrine,execution-contract}.md skills/{gates,pipelines}.yaml
+```
+
+The Tier 0 fast path above needs none of it (no interview, no saved run, no gate
+package), which is why small work is better left off the full route.
 
 ## Manual install
 
-Copy the skills folder content into the common target, then register the hooks.
-Needs **Python 3.13 or newer** for the hook step. A hand copy merges into any
-existing directory of the same name and overwrites files in it, so move your own
-`review/`, `design/`, `scripts/` and similar folders out of the way first. For
-upgrades, follow [Install.md](Install.md) instead so existing host mirrors get
-refreshed too.
-
-```bash
-cd /path/to/SupremeTeam
-mkdir -p "$HOME/.agents/skills"
-cp -R skills/. "$HOME/.agents/skills/"
-python scripts/install_hooks.py --target claude --hook-root "$HOME/.agents/skills/harness/hooks"
-```
-
-```powershell
-cd C:\path\to\SupremeTeam
-$destination = Join-Path $env:USERPROFILE ".agents\skills"
-New-Item -ItemType Directory -Force -Path $destination | Out-Null
-Copy-Item -Recurse -Force (Join-Path "skills" "*") -Destination $destination
-python scripts\install_hooks.py --target claude --hook-root "$destination\harness\hooks"
-```
-
-Swap `--target` for your host (`codex`, `claude`, `copilot`; `cursor`/`opencode`
-write a plugin package). Add `--dry-run` first to see the change, and note that
-the default `--scope user` edits your global host config. Skip the hook line to
-leave routing and guards advisory.
+If the installer will not run, copy the skills folder by hand and register the
+hooks yourself: [Install.md](Install.md#manual-install-fallback) has the commands
+and what a hand copy skips.

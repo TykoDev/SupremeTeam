@@ -48,8 +48,9 @@ authority:
   skill_count: >-
     skill_count is the number of SKILL.md files under skills/, and it must equal
     both that count and the number of distinct names declared across the role and
-    list keys. A name repeated in two groups shrinks the distinct count and fails
-    the same check, so the groups partition the roster rather than overlapping.
+    list keys. The check counts distinct names, so a name listed in two groups is
+    not an error by itself (qa, ship and skill-maker are, deliberately); a skill
+    left out of every group is, because the distinct count then falls short.
   grouping: >-
     Only the union of the groups is checked. Nothing verifies that a skill sits in
     the right group, so a release skill listed under browser would pass every test.
@@ -85,9 +86,9 @@ failure_paths:
   skill_count_drift: >-
     check_pipeline_mirrors fails with the SKILL.md count it found on disk.
     skill_count must equal both that count and the distinct member count, so a
-    name repeated across two groups fails the same check. Fix the roster, not
-    the number: editing skill_count to match a miscount hides the missing or
-    duplicated skill it exists to surface.
+    skill missing from every group, or a name with no SKILL.md, fails the same
+    check. Fix the roster, not the number: editing skill_count to match a
+    miscount hides the missing or extra skill it exists to surface.
   documentation_mirror_stale: >-
     check_pipeline_mirrors also reads AGENTS.md, README.md, and four files under
     docs/ for needles derived from skill_count, the pipeline count, and the

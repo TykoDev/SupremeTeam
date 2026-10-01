@@ -5,15 +5,24 @@ produced, and what it does not cover. Every figure here was observed, not
 estimated — where a measurement was not taken, this file says so rather than
 inferring one.
 
+**When these were measured.** The scores and routing figures below are as
+published in this file's 2026-09-18 revision, on the 52-skill catalog of that date.
+The catalog now has 53 skills (`audit-improve` joined afterwards and is outside
+every figure), and none of them has been re-measured since. The rubric scores are
+model judgements, not machine output; the routing accuracy is a paid, networked
+measurement. CI re-runs neither, so nothing keeps them true, and a number older
+than the catalog it describes should be read as history. The test counts are from
+the run named under [Tests](#tests).
+
 ## Headline
 
 | Dimension | Result |
 |---|---|
-| Skill quality, 52 skills | mean **99.4** / 100, lowest 97, 31 at 100 |
+| Skill quality, 52-skill catalog | mean **99.4** / 100, lowest 97, 31 at 100 |
 | Spec, harness and doctrine, 21 artifacts | mean **97.5** / 100, lowest 95 |
-| Routing accuracy, paraphrased requests | **94.8%** (294/310) |
-| Skills the host registers | all **21** entry skills; the 31 internal specialists deliberately not |
-| Automated tests | **405**, all passing (2 skipped as designed) |
+| Routing accuracy, paraphrased requests, 52-skill roster | **94.8%** (294/310) |
+| Skills a host registers by name | the 22 at the catalog root; the 31 nested specialists are reached by path. Last measured at 21 root skills: 20 registered, one shadowed by a stale copy |
+| Automated tests | seven suites, run by CI; counts are in [Tests](#tests) |
 | Gate boundaries | 10, all proven satisfiable against the real validator |
 
 ## Skills
@@ -64,7 +73,7 @@ security, structure, documentation — 10 points each.
 | `review/quality-review` | 100 |
 | `setup-browser-cookies` | 100 |
 | `setup-deploy` | 100 |
-| `ship` | 100 |
+| `skill-maker` | 100 |
 | `build/gatekeeper-build` | 99 |
 | `design/architect` | 99 |
 | `design/commander` | 99 |
@@ -86,6 +95,13 @@ security, structure, documentation — 10 points each.
 | `ship` | 98 |
 | `taste` | 98 |
 | `design/engineer` | 97 |
+| `audit-improve` | not scored (added after the round) |
+
+The 2026-09-18 data listed `ship` twice, at 100 and at 98. The deduction ledger
+below gives `ship` 98 (D3 −2), and `skill-maker`, the one skill with no row, has no
+deduction, so the 100 row labelled `ship` is read as `skill-maker`'s. With that
+reading the 52 rows are the 52 skills the catalog held then, once each, and the
+band counts and means above stand.
 
 </details>
 
@@ -93,6 +109,10 @@ security, structure, documentation — 10 points each.
 <summary>Deductions cited in the 2026-09-18 round — 26 findings across 21 skills</summary>
 
 Every line was checked against the cited source before it cost a point; 31 skills scored clean.
+This is the ledger of that round and is not edited afterwards. Findings in it have
+since been fixed in the catalog (`design/engineer`'s stack-lock precondition and
+`admiral`'s audit-trail appends among them); the scores were not re-run, so they
+still carry the deduction.
 
 | Skill | Finding |
 |---|---|
@@ -158,8 +178,8 @@ what is machine-checked and what is judgement?
 
 ## Routing
 
-The catalog is description-routed: a model picks one skill out of 52 by reading
-descriptions. That decision is measured by
+The catalog is description-routed: a model picks one skill out of 52 (the roster
+when this was measured) by reading descriptions. That decision is measured by
 [`skills/validation/trigger_eval.py`](skills/validation/trigger_eval.py), which
 puts the whole roster in front of a real model and scores which skill wins.
 
@@ -187,9 +207,10 @@ ever see. The lower number is the truer one.
 ### Host registration
 
 Claude Code discovers skills at `.claude/skills/<name>/SKILL.md`, one level deep.
-The layout follows the routing classes: the 21 skills a user may reach
-directly sit at the catalog root and register; the 31 internal specialists
-stay nested, where the loader does not offer them. That is
+The layout follows the routing classes: the skills a user may reach
+directly sit at the catalog root and register (21 when this was measured, 22
+now); the 31 internal specialists stay nested, where the loader does not offer
+them. That is
 "reached only through the owning sub-orchestrator" expressed in the filesystem.
 
 Nesting costs those specialists nothing, because delegation never used the skill
@@ -209,9 +230,9 @@ artifact, not a catalog defect, and a reinstall clears it.
 
 ## Pipelines and review gates
 
-10 pipelines close at 10 gate boundaries carrying 71 required
-evidence keys. 4 pipelines carry an explicit phase-gate stage; the rest are
-judged once, by the cross-stage gatekeeper.
+10 pipelines close at 10 gate boundaries, each with its own required
+evidence keys (`gates.yaml` lists them). 4 pipelines carry an explicit phase-gate
+stage; the rest are judged once, by the cross-stage gatekeeper.
 
 Phase gatekeepers: `gatekeeper-design`, `gatekeeper-build`, `gatekeeper-code`. Cross-stage: `gatekeeper-admiral`.
 
@@ -221,7 +242,7 @@ real files and real digests and submits it to `check.py`. All 10
 boundaries are proven satisfiable, which is not implied by their being
 internally consistent: a boundary can require a key that is also barred from
 fallback and produced by no stage, and every document involved would still read
-correctly. Six refusal tests follow, because a generator that only produces
+correctly. Refusal tests follow, because a generator that only produces
 passing packages proves the generator works, not the gate. One test walks a
 complete run — open, checkpoint per stage, submit, verdict, close — and checks
 the audit trail kept an event per stage.
@@ -238,6 +259,9 @@ machine in `contracts/workflow-protocol.md`, and pipeline `when` and `fan_out`
 values against the skills and gate parameters they depend on.
 
 ## Tests
+
+The counts below are copied from a run. They go stale as tests are added, and the
+commands under the tables regenerate them.
 
 | Suite | Tests |
 |---|---|
@@ -257,14 +281,15 @@ values against the skills and gate parameters they depend on.
 | `test_save_contracts.py` | 17 |
 | `test_trigger_routing.py` | 35 |
 
-Run them all:
+Run them all, from a checkout (the same seven suites and three validators CI runs):
 
 ```bash
-for d in skills/harness/gatekeeper skills/harness/hooks skills/scripts \
-         skills/taste skills/validation skills/skill-maker/skill-creator/scripts; do
+for d in skills/harness/hooks skills/harness/gatekeeper skills/validation \
+         skills/scripts skills/taste scripts skills/skill-maker/skill-creator; do
   python -m unittest discover -s "$d" -p "test_*.py"
 done
 python skills/scripts/validate_manifests.py
+python skills/scripts/check_runtime.py
 python skills/scripts/package_check.py --root .
 ```
 
@@ -320,7 +345,18 @@ enough that the miss belongs to the rewrite.
   picks, not whether it then behaves correctly. A skill can be picked right and
   run wrong.
 - **Real sessions end to end.** `run_eval.py` measures registration, not task
-  outcomes. A workspace realistic enough to exercise 52 skills does not exist here.
+  outcomes. A workspace realistic enough to exercise every skill does not exist
+  here.
+- **What a host's picker offers.** The routing roster is every skill as a
+  path-prefixed id, the nested specialists included, which a host that scans one
+  level deep never lists (see Host registration above). The routing figure
+  measures how well descriptions discriminate, not what a host user can choose.
+- **The dual-mode split.** `qa` and `ship` run directly on an explicit standalone
+  request and enter through `admiral` on a cold lifecycle request
+  (`routing-doctrine.md`, Routing classes). That discriminator is the user's
+  intent, which a description alone does not carry, so the eval cannot score
+  those skills against `admiral` on it. The shared phrases ("find the root cause",
+  "create a skill") are deliberate and tested; they are not a routing error.
 - **Trigger phrasings beyond four per skill.** The corpus takes four; a skill's
   fifth and sixth phrasings are untested.
 - **Hook registration on a given host.** The hook behaviour is tested against

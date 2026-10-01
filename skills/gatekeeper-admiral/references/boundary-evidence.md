@@ -61,22 +61,20 @@ this table is untyped — required and non-falsy, nothing more.
 ## 3. Sanctioned waivers, verbatim
 
 A waiver is a typed applicability record — `{applicable: false, reason, scope,
-decided_by}` — whose reason should be one of the strings below.
+decided_by}` — whose reason must be one of the strings below.
 
-**Know how much of that the machine enforces**, because it is less than the
-sentence above suggests. `check.py` mechanically rejects two things: a waiver on
-a key this boundary does not list as waivable (*evidence not waivable*), and an
-applicability record missing any of `reason`, `scope`, `decided_by`
-(`check.py:343-355`). It does **not** compare the reason *text* against this
-table for an ordinary waivable key — any non-empty reason passes. The wording is
-compared in exactly two places: for a bare fallback string, which schema 2
-rejects on form anyway, and for the four selection-dependent keys at
-`redesign-review`, where `check_selection_dependencies` requires the reason to
-match the one the `selection.decision` implies, exactly.
+**Know how much of that the machine enforces.** `check.py` rejects a waiver on a
+key this boundary does not list as waivable (*evidence not waivable*), an
+applicability record missing any of `reason`, `scope`, `decided_by` (*applicability
+record incomplete*), and a reason that is not exactly one of the wordings this
+boundary sanctions for the key (*applicability reason not sanctioned*); the code
+is `applicability_record` and `sanctioned_values` in `check.py`. For the four
+selection-dependent keys at `redesign-review`, `check_selection_dependencies`
+also requires the reason the `selection.decision` implies.
 
-So for most keys the sanctioned wording is a **judgement** standard, enforced by
-workflow step 4 and by this gate returning `REVISE`, not by the checker. A green
-self-check does not mean the reasons were read. Read them.
+What no checker judges is whether the waiver is *true*: that no surface changed,
+or that a scan was not possible, is read from the package by workflow step 4, and
+a green self-check does not mean it was. Read the package, not just the wording.
 
 | Key | The only sanctioned reason |
 | --- | --- |
@@ -126,10 +124,11 @@ themes, bound by `inputs` to each mock.
 this boundary `rendered_verification`, `selected_variant`, `parity_evidence`, and
 `accessibility_evidence` each carry a boundary-level `fallback_values` list, and
 that list is **exhaustive**: a boundary entry shadows the global entry for the
-same key instead of extending it. `../../harness/gatekeeper/check.py:361-362`
-resolves `boundary.fallback_values[key] or spec.fallback_values[key]` — the
-boundary list short-circuits, so the two reasons below are the only sanctioned
-wordings here, both quoted verbatim in `../../gates.yaml`:
+same key instead of extending it. `sanctioned_values` in
+`../../harness/gatekeeper/check.py` resolves
+`boundary.fallback_values[key] or spec.fallback_values[key]` — the boundary list
+short-circuits, so the two reasons below are the only sanctioned wordings here,
+both quoted verbatim in `../../gates.yaml`:
 
 | Reason | When it is true |
 | --- | --- |

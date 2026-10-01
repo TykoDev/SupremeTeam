@@ -43,7 +43,7 @@ creates carries a `.supremeteam-managed` marker. On an upgrade:
   parents, any folder that overlaps the checkout, and `.` unless the current
   directory already holds an install (a full path to it is always accepted).
 
-Common flags (full list in [QUICK-START.md](QUICK-START.md)):
+### Installer options
 
 | Goal | Windows | macOS / Linux |
 |---|---|---|
@@ -54,6 +54,12 @@ Common flags (full list in [QUICK-START.md](QUICK-START.md)):
 | Skip the hook question | `-HooksYes` | `--hooks-yes` |
 | Custom path | `-Destination "path"` | `--destination "path"` |
 | Preview only | `-DryRun` | `--dry-run` |
+
+Teams: `Design`, `Build`, `Review`, `Browser`, `Release`, `Safety`, `Testing`,
+`All`. Hosts: `auto`, `codex`, `claude`, `cursor`, `opencode`. Per-host
+destination flags exist too (`-CodexDestination`, `--claude-destination`, and so
+on); `-InstallClaude` and `--install-claude` are older aliases for the Claude
+target. `--help` (`Get-Help .\scripts\install.ps1`) lists every option.
 
 ## From a GitHub URL
 
@@ -131,13 +137,50 @@ every existing mirror is refreshed. Core components are never optional, even for
 single-team install: every skill resolves the root doctrine files, and every
 `gatekeeper-*` depends on `harness/gatekeeper/`.
 
+**What a host sees.** A host that scans its skill directory one level deep
+registers the 22 skills that sit at the install root, by name. The 31 internal
+specialists stay nested one level below, so no host lists them; they are reached by
+path through the skill that delegates to them (`skills/routing-doctrine.md`,
+"Host registration"). `AGENTS.md` is a checkout-only index: the installers do not
+copy it, and nothing is discovered from it unless your tool is pointed at a
+checkout.
+
 ## Python
 
 The harness, hook verifier, and registration helper need **Python 3.13 or newer**
 ([`skills/runtime-manifest.yaml`](skills/runtime-manifest.yaml) is the authority).
-Check with `python --version`, `py -3 --version`, or `python3 --version`. If none
-is 3.13+, ask before installing one; the skill files still copy without it, but
-hook verification and registration stay unavailable.
+Check with `python3 --version` (macOS and Linux) or `py -3 --version` (Windows);
+`python3.13 --version` finds an interpreter installed under its versioned name. If
+none is 3.13+, ask before installing one; the skill files still copy without it,
+but hook verification and registration stay unavailable.
+
+The shell installer looks for `python3`, then `python`. If your 3.13 exists only as
+`python3.13`, make it answer to `python3` (a symlink earlier on `PATH`, or a
+virtual environment), or skip the installer's registration step and run
+`python3.13 scripts/install_hooks.py ...` yourself, as the examples below do.
+
+### Paths and the Python command
+
+Every command in this repository's documents is written for a checkout and starts
+at its root, for example `python skills/scripts/check_runtime.py`. Two
+substitutions give the form you need elsewhere:
+
+| In the documents | macOS / Linux | Windows |
+|---|---|---|
+| leading `skills/` | the install root, `~/.agents/skills/` (or a host mirror such as `~/.claude/skills/`) | `%USERPROFILE%\.agents\skills\` |
+| `python` | `python3` | `py -3` |
+
+`python skills/harness/hooks/save_run.py status --run-id <id>` therefore reads
+`python3 ~/.agents/skills/harness/hooks/save_run.py status --run-id <id>` in an
+installed copy, run from your project: the run's files go to that project's
+`skillset-saves/`, never into the install root. `skills/runtime-manifest.yaml`
+(`launchers`) is the authority for the Python command per platform. Inside a skill,
+paths are written relative to the skill (`../harness/hooks/...`) and mean the same
+thing in both layouts.
+
+Only a checkout holds `scripts/` (the installers, `install_hooks.py` and their
+tests), `docs/`, `AGENTS.md`, `package_check.py`'s expected layout, and the test
+suites; the commands that need one say so.
 
 ## Runtime hooks
 
@@ -147,11 +190,11 @@ them — registration changes runtime behavior, so it is always explicit.
 
 ```bash
 # Inspect current state (checks the hosts that have a config file or a host variable)
-python skills/harness/hooks/verify_registration.py --host auto
-# Preview what registration would change; writes nothing
-python scripts/install_hooks.py --target codex --hook-root "$HOME/.agents/skills/harness/hooks" --dry-run
-# Register (or pass -RegisterHooks / --register-hooks to the installer)
-python scripts/install_hooks.py --target codex --hook-root "$HOME/.agents/skills/harness/hooks"
+python3 ~/.agents/skills/harness/hooks/verify_registration.py --host auto
+# From the checkout: preview what registration would change; writes nothing
+python3 scripts/install_hooks.py --target codex --hook-root "$HOME/.agents/skills/harness/hooks" --dry-run
+# From the checkout: register (or pass -RegisterHooks / --register-hooks to the installer)
+python3 scripts/install_hooks.py --target codex --hook-root "$HOME/.agents/skills/harness/hooks"
 ```
 
 `--host` / `--target` take `codex`, `claude`, or `copilot` for native JSON config;
@@ -190,10 +233,18 @@ Summarize the Supreme Team pipelines available from the installed skills.
 A good install names `admiral` as the entry orchestrator, the design/build/review
 pipelines, the investigation, session-memory, and skill-maker components, the
 standalone browser/release/safety/testing groups, and the shared doctrine files.
+To verify the installed copy itself (from any directory; see
+[Paths and the Python command](#paths-and-the-python-command)):
+
+```bash
+python3 ~/.agents/skills/scripts/check_runtime.py
+python3 ~/.agents/skills/scripts/validate_manifests.py
+```
+
 Once a run is active, one command covers Python, hooks, and saves:
 
 ```bash
-python skills/harness/hooks/check_readiness.py --host auto --require-active-run
+python3 ~/.agents/skills/harness/hooks/check_readiness.py --host auto --require-active-run
 ```
 
 `Ready` covers Python and, with that flag, the run. Hooks are optional, so missing
@@ -214,17 +265,19 @@ moves it aside on its next run. Needs **Python 3.13 or newer** for the hook step
 $destination = Join-Path $env:USERPROFILE ".agents\skills"
 New-Item -ItemType Directory -Force -Path $destination | Out-Null
 Copy-Item -Recurse -Force (Join-Path "skills" "*") -Destination $destination
-python scripts\install_hooks.py --target claude --hook-root "$destination\harness\hooks"
+py -3 scripts\install_hooks.py --target claude --hook-root "$destination\harness\hooks"
 ```
 
 ```bash
 mkdir -p "$HOME/.agents/skills"
 cp -R skills/. "$HOME/.agents/skills/"
-python scripts/install_hooks.py --target claude --hook-root "$HOME/.agents/skills/harness/hooks"
+python3 scripts/install_hooks.py --target claude --hook-root "$HOME/.agents/skills/harness/hooks"
 ```
 
 Swap `--target` for your host (`codex`, `claude`, `copilot`; `cursor`/`opencode`
-write a plugin package). Skip the hook line to leave routing and guards advisory.
+write a plugin package). Add `--dry-run` first to see the change, and note that the
+default `--scope user` edits your global host config. Skip the hook line to leave
+routing and guards advisory.
 
 ## Uninstall
 

@@ -1,10 +1,11 @@
 # Runtime Harness Doctrine
 
 Binding rules for how every skill adapts the interface between the model and its
-environment, not the model itself. The harness adds five layers without changing
-the pipeline: entry routing, persistent context, phase trajectory, evidence
-gates, and action guardrails. Skills and gates cite this doctrine by section
-number.
+environment, not the model itself. The harness adds four lifecycle layers without
+changing the pipeline (§1): the environment contract, procedural skill, action
+realization, and trajectory regulation. Entry routing, persistent context and the
+evidence gates reach those layers through the hooks and the gate engines. Skills
+and gates cite this doctrine by section number.
 
 This file is canonical for the four-layer model, the failure taxonomy and its
 priority order, the engineering non-negotiables every intervention must satisfy,

@@ -28,8 +28,10 @@ finding policy is, and the one skill allowed to submit.
 engine error, never a pass.
 
 The table below mirrors that file. A drift test in
-`skills/harness/gatekeeper/test_gate_manifests.py` fails if the two ever disagree,
-so this table cannot quietly rot.
+`skills/harness/gatekeeper/test_gate_manifests.py` compares its boundary names and
+its backticked evidence keys with the spec and fails when those differ. The Guards
+and Submitter columns are prose that no test compares, so they are kept by hand
+and the spec's `submitter` field is the authority.
 
 | Boundary | Guards | Submitter | Required evidence |
 | --- | --- | --- | --- |

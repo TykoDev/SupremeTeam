@@ -70,8 +70,11 @@ python skills/harness/hooks/save_run.py recover    --run-id <run> --reason "<why
 ```
 
 `create` needs at least one `--evidence` path, since a run stands on the evidence
-it is created from. It runs a write, read, and delete probe before claiming
-anything, and refuses while another run holds the session pin. Persistence is
+it is created from, and a run id of 1 to 128 letters, digits, `.`, `_` or `-` that
+starts with a letter, digit or `_`. Only `create` holds an id to that grammar: a run
+an earlier writer made under a looser one (any single path segment) is still read,
+resumed, recovered and closed by its id. It runs a write, read, and delete probe
+before claiming anything, and refuses while another run holds the session pin. Persistence is
 active only once it returns `ok`. Resolve the intake report it cites with
 `skills/scripts/output_paths.py --kind phase_report --phase intake --name
 report_grilling.md`.
@@ -80,7 +83,9 @@ Checkpoint before every delegation and at every returned boundary. Each checkpoi
 snapshots the previous revision into `_history/`, registers evidence hashes,
 refreshes the heartbeat, and publishes state, lock, and pointer atomically behind
 `_journal.json`. Evidence that moved or was pruned is dropped with
-`--drop-evidence <path> --reason <why>`, which the audit trail records.
+`--drop-evidence <path> --reason <why>`, which the audit trail records; a run keeps
+at least one evidence path, so the last one is dropped only together with its
+replacement in `--evidence`.
 
 An interrupted publish shows up as `interrupted` and is repaired with
 `recover --rollback`. While the journal exists, every other operation is refused
@@ -119,8 +124,12 @@ With hooks registered, all three hooks (`pre_tool_use.py`, `post_tool_use.py`,
 to once every five minutes, so an attended run does not go stale mid-phase. The
 refresh costs a read of the pointer and the pointed run's lock, not a scan of every
 saved run; a hook waits a quarter of a second for the mutex and skips the refresh
-if another writer has it, because a hook never holds up the host. It will not
-revive a lock that is already stale.
+if another writer has it, because a hook never holds up the host, and that skip is
+the design, not a hook fault. It will not revive a lock that is already stale.
+
+Every record the writer creates (state, lock, pointer, journal, history snapshots and
+the audit trail) is readable by its owner alone, whatever the umask; directories keep
+the default, and `_write.lock` is an empty mutex file.
 
 Reclaiming a stale lock requires `recover --reason`, which writes the stale lock's
 path, heartbeat, owner, and sha256 into the audit trail before taking it. Nothing
@@ -134,7 +143,8 @@ missing, uninitialized, or unreadable. `complete` is a finished run; `inactive` 
 a released or blocked one, and `run_status` names which. `uninitialized` is a run
 directory that holds intake's report and no record yet: run `create`. `status`
 also classifies the run you asked about as `requested_run` and says what to do
-next. Only a coherent fresh active or orphaned record reinforces the session pin.
+next; the readiness diagnostic prints the same next step under `Saves:` unless a run
+is active. Only a coherent fresh active or orphaned record reinforces the session pin.
 
 `_latest.md` is a pointer, not the truth. When it is missing, stale, or disagrees
 with a reclaimable run, scan `runs/` before concluding there is nothing to resume.

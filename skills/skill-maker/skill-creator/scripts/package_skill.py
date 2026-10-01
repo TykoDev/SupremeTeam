@@ -44,7 +44,8 @@ Exit codes:
     0  the archive was written; its path is printed
     1  the skill folder is missing, is not a directory, has no SKILL.md,
        fails quick_validate, holds something refused above, the output
-       location is unusable, or the archive could not be created
+       location is unusable, residue-classes.json cannot be read, or the
+       archive could not be created
 """
 
 import fnmatch

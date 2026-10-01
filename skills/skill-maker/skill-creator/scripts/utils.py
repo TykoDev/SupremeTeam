@@ -12,7 +12,6 @@ PROJECT_MARKERS = (".claude", ".git", ".harness-state", "skillset-saves")
 # defines it on Windows, and this check has to be importable everywhere.
 MOUNT_POINT_REPARSE_TAG = 0xA0000003
 
-
 # The secret and run-state names the packager refuses. skills/scripts/package_check.py reads
 # the same file, which is how the two lists stay one list.
 RESIDUE_CLASSES_FILE = Path(__file__).with_name("residue-classes.json")

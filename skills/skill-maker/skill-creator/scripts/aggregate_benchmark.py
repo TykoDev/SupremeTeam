@@ -314,7 +314,7 @@ def aggregate_results(results: dict) -> dict:
         }
 
     # Primary minus baseline, the first two of ordered_configs, when both have data
-    primary =run_summary.get(configs[0]) if len(configs) >= 2 else None
+    primary = run_summary.get(configs[0]) if len(configs) >= 2 else None
     baseline = run_summary.get(configs[1]) if len(configs) >= 2 else None
 
     def delta(metric: str, fmt: str) -> str | None:

@@ -148,7 +148,7 @@ test, so run the suite and read its last line.
 - **Validation**, `skills/validation/`: `test_catalog_contracts.py`, `test_orchestration.py`,
   `test_pipeline_contracts.py`, `test_pipeline_workflows.py`, `test_save_contracts.py`,
   `test_save_prose.py`, `test_save_taxonomy.py`, `test_trigger_routing.py`,
-  `test_eval_tools.py`, `test_repository_hygiene.py`
+  `test_eval_tools.py`, `test_repository_hygiene.py`, `test_docs_inventory.py`
 - **Scripts**, `skills/scripts/`: `test_check_runtime_contract.py`,
   `test_check_runtime_detection.py`, `test_check_runtime_layout.py`,
   `test_check_runtime_redaction.py`, `test_check_runtime_scaffold.py`,

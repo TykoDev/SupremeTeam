@@ -71,19 +71,29 @@ enforcement:
     validation/test_catalog_contracts.py GuardWriterTests requires the
     harness-guards class to name guard_state.py and requires pre_tool_use.py to
     route writes there, and ToolSurfaceTests denies the Edit tool to every
-    tool-bearing class writer that is a skill.
+    tool-bearing class writer that is a skill. validation/test_save_taxonomy.py
+    requires scripts/save_taxonomy.py, the code's copy of this policy, to equal
+    generated_roots, phase_directories, phase_subdirectories, and the
+    core-run-record and phase-root patterns; requires the resolver to accept
+    exactly the declared phase_directories; requires every resolver kind, in
+    every declared phase, to resolve to a path that exactly one class owns (the
+    narrower class wins an overlap); requires every phase-root pattern to be
+    producible by --kind phase_report; and holds the pre-tool hook, the size
+    audit, and the coverage sweep, which restate parts of it, to it by what they
+    do.
   enforced_at_write_time: >-
     Only two classes are enforced when a write is attempted. harness/hooks/
-    pre_tool_use.py denies direct edit-tool writes to the core-run-record paths
-    and to project-taste-preferences, and denies direct edit-tool or
-    mutating-shell writes to the harness-guards record. Every other class is a
-    declaration that a reviewer applies.
+    pre_tool_use.py denies direct edit-tool writes to the record files of
+    core-run-record (its rule says which) and to project-taste-preferences, and
+    denies direct edit-tool or mutating-shell writes to the harness-guards
+    record. Every other class is a declaration that a reviewer applies.
   judgement: >-
     purpose, generated_roots_rule, notes, writer_vocabulary, unowned_path_rule,
     this enforcement block, and the `rule` text of every class. No comparator
-    matches a written file against the patterns of its class, so a report
-    written to the wrong phase subdirectory by the right owner fails nothing
-    here and is caught, if at all, by the gate reading the wrong evidence root.
+    matches a file an agent composed by hand against the patterns of its class
+    (only what the resolver emits is matched), so a report written to the wrong
+    phase subdirectory by the right owner fails nothing here and is caught, if
+    at all, by the gate reading the wrong evidence root.
 
 notes:
   - "Product source stays in the application's own layout. It is never written under skillset-saves; evidence that depends on it is snapshotted into <phase>/evidence/ with source path, revision, and sha256 provenance (typed-record inputs in gates.yaml)."
@@ -112,13 +122,21 @@ classes:
       - skillset-saves/runs/*/_audit-trail.md
       - skillset-saves/runs/*/_journal.json
       - skillset-saves/runs/*/_history/*
-    rule: Written only through save_run.py operations; the pre-tool hook denies direct edit-tool writes.
+      - skillset-saves/_write.lock
+    rule: >-
+      Written only through save_run.py operations; the pre-tool hook denies direct edit-tool writes
+      to the record files. _write.lock is the writer mutex, an empty file the operating system
+      locks while an operation runs; it is never edited or deleted by hand, because a deleted
+      lock file no longer excludes a second writer.
   - id: grilling-log
     writer: admiral
     patterns:
       - skillset-saves/runs/*/intake/report_grilling.md
       - skillset-saves/runs/*/intake/intake-brief.md
-    rule: The hashed artifact behind the decisions gate key; sibling phases reference it as ../intake/report_grilling.md.
+    rule: >-
+      The hashed artifact behind the decisions gate key; sibling phases reference it as
+      ../intake/report_grilling.md. Resolved as scripts/output_paths.py --kind phase_report --phase intake.
+      Its two paths also match a phase-reports pattern; this narrower class wins.
   - id: phase-manifest
     writer: phase-lead
     patterns:
@@ -132,7 +150,10 @@ classes:
       - skillset-saves/runs/*/*/report_*.md
       - skillset-saves/runs/*/*/deliverable_*.md
       - skillset-saves/runs/*/*/review-packet.md
-    rule: Reports, plans, summaries. A delegated specialist writes only the report named in its delegation.
+    rule: >-
+      Reports, plans, summaries. A delegated specialist writes only the report named in its delegation.
+      The phase-root names are resolved as scripts/output_paths.py --kind phase_report; everything
+      under reports/ is --kind reports.
   - id: phase-artifacts
     writer: phase-lead-or-delegated-specialist
     patterns:

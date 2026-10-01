@@ -58,7 +58,7 @@ This skill is a component of the **Admiral** delivery pipeline; `admiral` is the
 `core-run-record` class, and `../save-protocol.md` §3 states the same boundary.
 No other skill writes these paths by any means; a skill that needs one of them
 changed routes the write through session-memory rather than performing it. The
-class is six patterns, quoted verbatim from the policy so the boundary never has
+class is seven patterns, quoted verbatim from the policy so the boundary never has
 to be inferred:
 
 ```text
@@ -68,14 +68,17 @@ skillset-saves/runs/*/_lock.md
 skillset-saves/runs/*/_audit-trail.md
 skillset-saves/runs/*/_journal.json
 skillset-saves/runs/*/_history/*
+skillset-saves/_write.lock
 ```
 
-All six are written only through `../harness/hooks/save_run.py` operations —
-including by this skill. The pre-tool hook denies direct edit-tool writes to
-them, so a hand-edit surfaces as a blocked action rather than a shortcut.
+All seven are written only through `../harness/hooks/save_run.py` operations —
+including by this skill. The pre-tool hook denies direct edit-tool writes to the
+record files, so a hand-edit surfaces as a blocked action rather than a shortcut.
 `_journal.json` exists only mid-publish and `_history/` holds superseded
 revisions; neither is scratch to tidy away, because an interrupted publish is
-diagnosed from exactly those two.
+diagnosed from exactly those two. `_write.lock` is the mutex every write holds,
+locked by the operating system while `save_run.py` runs: never edit or delete it,
+since a deleted lock file no longer excludes a second writer.
 
 `../ownership.yaml` names the three artifacts this ownership produces, each with
 the moment it is owed and the evidence it carries:
@@ -113,7 +116,7 @@ directory. The phase must be one of `../save-ownership.yaml`
 
 ## Required Contracts
 
-- **One writer, one mechanism**: The `core-run-record` class is written only by this skill and only through `../harness/hooks/save_run.py`. A direct edit-tool write to any of the six paths is denied by the pre-tool hook, and a skill that needs one of them changed routes the write through here rather than performing it (§ Write Ownership).
+- **One writer, one mechanism**: The `core-run-record` class is written only by this skill and only through `../harness/hooks/save_run.py`. A direct edit-tool write to any of the six record paths is denied by the pre-tool hook, the seventh is the mutex and is never edited, and a skill that needs one of them changed routes the write through here rather than performing it (§ Write Ownership).
 - **Verified evidence or no checkpoint**: A checkpoint is refused rather than approximated when `--expect-revision` does not match or its evidence does not verify. A `refused` result is a contract violation to resolve, never something to work around by hand-editing a save file — an approximated checkpoint is worse than none, because the run is rebuilt from it.
 - **Proactive triggers**: Offer the next sensible action when the surrounding context clearly implies it and the skill can advance safely without a prompt loop.
 
@@ -154,9 +157,11 @@ Skip only when there is no durable state worth saving and no relevant learning t
 | Scenario | Response |
 | --- | --- |
 | `save_run.py` returns `degraded` (exit 2) | The write failed and nothing coherent was published; the previous revision is intact. Warn once, report persistence as degraded rather than active, keep the readable evidence, and fall back to transient mode only when resume cannot be proven. Never re-attempt the write by editing the file directly. |
-| `save_run.py` returns `refused` (exit 1) | A contract violation — competing owner, wrong revision, unsafe path, stale lock, or a terminal run reached without `--reopen`. Read the refusal reason and resolve the contract: reclaim a stale lock with `recover --reason`, re-read the current revision, or reopen deliberately. A refusal is never worked around by hand-editing a core run file. |
+| `save_run.py` returns `refused` (exit 1) | A contract violation — competing owner, wrong revision, unsafe path, stale lock, a `create` with no evidence, or a terminal run reached without `--reopen`. Read the refusal reason and resolve the contract: reclaim a stale lock with `recover --reason`, re-read the current revision, or reopen deliberately. A refusal is never worked around by hand-editing a core run file. The one refusal that is not a contract violation is a busy write lock (the reason says so and asks for a retry): another `save_run.py` was writing, so reissue the call. |
 | `--expect-revision` does not match the revision on disk | Another writer advanced the run. Stop, re-read state with `save_run.py status --run-id <run-id>`, reconcile what changed, and checkpoint against the revision actually published. Forcing the stale number would publish a lineage that silently drops the other writer's revision. |
 | `_state.md` is unreadable, truncated, or does not parse | Classify it as corrupt, not empty. Never overwrite corrupt canonical bytes — they are the evidence of what happened. Report the run as unresumable, and resolve through `save_run.py recover`, adding `--rollback` when a `_journal.json` is present and `status` reports `interrupted`. |
+| A checkpoint is refused because an evidence path registered earlier no longer exists | The path stays in the run until it is dropped, so restoring it or dropping it are the two ways out. Drop it with `checkpoint --drop-evidence <path> --reason "<why>"`, registering the file's new location with `--evidence` in the same call; the audit trail keeps the hash it had. Do not edit `_state.md` to remove it. |
+| `status` reports `uninitialized` for the run id | The run directory holds intake's report and no record: `create` has not run, or a refused one left the directory. Run `create` with the report as `--evidence`. This is not corruption and needs no recovery. |
 | A checkpoint omits the active blocker, next action, or artifact path that a later session would need to resume safely | Treat the checkpoint as incomplete and add the missing continuity fields before claiming the run is resumable. |
 | A new learning is recorded without a supporting file reference, observation source, or confidence level | Reject or narrow the learning so later skills do not treat an unverified hunch as durable guidance. |
 | Resume state points to artifacts that are missing, stale, or from a different run than the one being restored | Mark the resume path unsafe, surface the drift explicitly, and reload only the verified state that still matches the active run. |

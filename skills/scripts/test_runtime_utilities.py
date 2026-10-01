@@ -185,6 +185,66 @@ class RuntimeUtilitiesTests(unittest.TestCase):
             self.assertFalse((root / "scan.json.tmp").exists())
 
 
+class ResolverContractTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+
+    def test_phase_report_kind_resolves_the_grilling_log_the_gate_references(self):
+        """Following "resolve every destination with output_paths.py" used to put the
+        grilling log in intake/reports/, where the manifest's ../intake/report_grilling.md
+        reference finds nothing."""
+        self.assertEqual(resolve(self.root, "phase_report", run_id="r1", phase="intake", name="report_grilling.md"),
+                         self.root / "skillset-saves/runs/r1/intake/report_grilling.md")
+        self.assertEqual(resolve(self.root, "reports", run_id="r1", phase="intake", name="report_grilling.md"),
+                         self.root / "skillset-saves/runs/r1/intake/reports/report_grilling.md")
+
+    def test_phase_report_cli_prints_the_documented_path(self):
+        process = subprocess.run(
+            [sys.executable, str(SCRIPTS / "output_paths.py"), "--project-root", str(self.root), "--kind", "phase_report",
+             "--run-id", "r1", "--phase", "intake", "--name", "report_grilling.md", "--mkdir"],
+            capture_output=True, text=True)
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        self.assertEqual(json.loads(process.stdout)["relative"], "skillset-saves/runs/r1/intake/report_grilling.md")
+        self.assertTrue((self.root / "skillset-saves/runs/r1/intake").is_dir())
+
+    def test_help_carries_the_per_kind_destination_table(self):
+        """The table of what each kind resolves to lived only in the module docstring."""
+        process = subprocess.run([sys.executable, str(SCRIPTS / "output_paths.py"), "--help"], capture_output=True, text=True)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertIn("phase_report skillset-saves/runs/<run>/<phase>/<name>", process.stdout)
+
+    def test_phase_report_refuses_names_no_class_declares(self):
+        for phase, name in (("design", "notes.md"), ("design", "intake-brief.md"), ("intake", "report_x.txt"),
+                            ("intake", "sub/report_x.md"), ("intake", "../report_x.md"), ("intake", "/tmp/report_x.md"),
+                            ("intake", ""), ("design", "manifest.json")):
+            with self.subTest(phase=phase, name=name):
+                with self.assertRaises(ValueError):
+                    resolve(self.root, "phase_report", run_id="r1", phase=phase, name=name)
+
+    def test_segments_are_single_safe_segments_even_with_a_trailing_newline(self):
+        """`$` matches before a final newline, so a value read with read_text() and not
+        stripped named a directory that ends in one."""
+        for kind, arguments in (("reports", dict(run_id="abc\n", phase="build", name="x.md")),
+                                ("verdict", dict(run_id="r1", phase="build", boundary="a-to-b\n")),
+                                ("trajectory", dict(run_id="r1", session="s1\n"))):
+            with self.subTest(kind=kind):
+                with self.assertRaises(ValueError):
+                    resolve(self.root, kind, **arguments)
+
+    def test_an_empty_or_relative_xdg_data_home_falls_back_to_the_home_default(self):
+        """An empty value (common in containers and CI) made the data root ./supremeteam,
+        inside the project when run from it."""
+        default = (Path.home() / ".local" / "share" / "supremeteam").resolve()
+        with mock.patch.object(sys, "platform", "linux"):
+            for value in ("", "relative/data"):
+                with self.subTest(value=value):
+                    self.assertEqual(global_data_root({"XDG_DATA_HOME": value}), default)
+            self.assertEqual(global_data_root({"XDG_DATA_HOME": str(self.root / "xdg")}),
+                             (self.root / "xdg" / "supremeteam").resolve())
+
+
 class LineEndingAgnosticHashTests(unittest.TestCase):
     """The catalog must work on an LF and a CRLF checkout alike: every recorded
     sha256 folds text to LF first, binary is untouched, and the CLI that

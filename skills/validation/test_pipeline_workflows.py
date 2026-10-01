@@ -371,8 +371,9 @@ class RunLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "skillset-saves").mkdir()  # the project-root marker
+            (root / "README.md").write_text("# fixture\n", encoding="utf-8")
 
-            opened = self._save(root, "create", "--run-id", "wf-probe", "--owner", owner)
+            opened = self._save(root, "create", "--run-id", "wf-probe", "--owner", owner, "--evidence", "README.md")
             self.assertEqual("ok", opened.get("result"), opened)
             revision = opened.get("revision")
             self.assertIsInstance(revision, int, opened)
@@ -421,7 +422,9 @@ class RunLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "skillset-saves").mkdir()
-            opened = self._save(root, "create", "--run-id", "wf-stale", "--owner", "build-management")
+            (root / "README.md").write_text("# fixture\n", encoding="utf-8")
+            opened = self._save(root, "create", "--run-id", "wf-stale", "--owner", "build-management",
+                                "--evidence", "README.md")
             stale = opened["revision"]
             first = self._save(root, "checkpoint", "--run-id", "wf-stale",
                                "--owner", "build-management", "--expect-revision", str(stale))

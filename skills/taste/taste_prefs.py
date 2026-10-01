@@ -4,9 +4,10 @@
 Canonical records are JSON; ``taste.md`` is a deterministic rendered view.  The
 global root is ``SUPREMETEAM_HOME`` when set, then ``CODEX_HOME``/``AGENTS_HOME``,
 then the platform user-data convention (XDG data, macOS Application Support, or
-Windows local app data). It is rejected if it resolves inside the checkout. The
-module deliberately uses only the Python standard library so hooks and recovery
-tools can invoke it in the minimum supported runtime.
+Windows local app data). An empty or relative ``XDG_DATA_HOME`` is ignored, as the
+XDG specification requires. The root is rejected if it resolves inside the
+checkout. The module deliberately uses only the Python standard library so hooks
+and recovery tools can invoke it in the minimum supported runtime.
 """
 from __future__ import annotations
 
@@ -22,16 +23,41 @@ import shutil
 import socket
 import sys
 import tempfile
+import time
+import uuid
 from pathlib import Path
 from typing import Any
 
 SCHEMA = "supremeteam-taste-preferences"
 VERSION = 1
+EXPORT_SCHEMA = "supremeteam-taste-export"
+EXPORT_VERSION = 1
+READS = ("status", "list", "effective", "diff", "export")
 MUTATIONS = {"propose", "confirm", "set", "deprecate", "revoke", "promote", "specialize", "import", "reset"}
 STATES = {"proposed", "active", "deprecated"}
-SENSITIVE_KEY = re.compile(r"(?:secret|password|passwd|credential|token|api[_-]?key|private[_-]?key|cookie|authorization|prompt|conversation|email|phone|address|full[_-]?name|user[_-]?name|social[_-]?security|ssn)", re.I)
+ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}")
+# The vocabularies of taste-doctrine.md sections 3 and 4. test_taste_store.py compares them
+# with the doctrine, which stays canonical.
+CATEGORIES = ("visual-style", "typography", "color-behavior", "density", "motion", "layout", "component-behavior", "content-tone", "interaction-patterns", "technology-ergonomics", "anti-preference")
+STRENGTHS = ("hard", "strong", "soft")
+SOURCES = ("explicit", "imported", "confirmed-inference")
+# A mutation holds the lock for milliseconds, so a lock this old was abandoned.
+LOCK_STALE_AFTER = 600
+# Design vocabulary reuses several of these words as qualifiers (design tokens, phone layouts,
+# cookie banners), so a key is judged by whole words: the credential words anywhere, and the
+# personal-datum words only when they end the key or are followed by a datum qualifier.
+CREDENTIAL_KEY = re.compile(r"(?<![a-z0-9])(?:secrets?|passwords?|passwd|credentials?|authorization|ssn|api-?keys?|private-?keys?|social-?security|full-?names?|user-?names?)(?![a-z])")
+DATUM_KEY = re.compile(r"(?<![a-z0-9])(?:tokens?|cookies?|prompts?|conversations?|emails?|phones?|address(?:es)?)\d*(?:-(?:numbers?|values?|ids?|hash|lines?\d*|text|history|\d+))*$")
+DESIGN_TOKEN = re.compile(r"(?<![a-z0-9])design-tokens?(?![a-z0-9])")
+# Key material has a separator after the prefix and a token-shaped tail. Real sk- keys carry
+# digits, which words such as skeleton-loading-states and skeuomorphic-glass-theme do not.
 SENSITIVE_VALUE = re.compile(
-    r"(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._~+/=-]+|\b(?:sk|ghp|github_pat|xox[baprs])[-_A-Za-z0-9]{12,}|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b)",
+    r"(?:-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    r"|\bBearer\s+[A-Za-z0-9._~+/=-]{16,}"
+    r"|\bsk_(?:live|test)_[A-Za-z0-9]{10,}"
+    r"|\bsk-(?=[A-Za-z_-]*\d)[A-Za-z0-9_-]{16,}"
+    r"|\b(?:ghp|github_pat|xox[baprs])[-_A-Za-z0-9]{12,}"
+    r"|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b)",
     re.I,
 )
 MAX_TEXT = 1000
@@ -74,7 +100,10 @@ def global_root() -> Path:
         return (base / "SupremeTeam").resolve()
     if sys.platform == "darwin":
         return (Path.home() / "Library" / "Application Support" / "SupremeTeam").resolve()
-    return (Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "supremeteam").resolve()
+    xdg = Path(os.environ.get("XDG_DATA_HOME", ""))
+    # Path("") is the current directory, and a relative value would resolve against it.
+    base = xdg if xdg.is_absolute() else Path.home() / ".local" / "share"
+    return (base / "supremeteam").resolve()
 
 
 def paths(project_root: Path, scope: str) -> dict[str, Path]:
@@ -113,33 +142,74 @@ def blank(project_root: Path, scope: str) -> dict[str, Any]:
     return result
 
 
-def validate_safe(value: Any, path: str = "$", *, redact: bool = False) -> Any:
+def sensitive_key(key: str) -> bool:
+    """Whether a field name or an id names a credential or a personal datum."""
+    spaced = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1-\2", key)
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", spaced)
+    words = DESIGN_TOKEN.sub("design", re.sub(r"[^a-z0-9]+", "-", spaced.lower()).strip("-"))
+    return bool(CREDENTIAL_KEY.search(words) or DATUM_KEY.search(words))
+
+
+def validate_safe(value: Any, path: str = "$", *, redact: bool = False, report: list[dict[str, str]] | None = None) -> Any:
+    """Refuse secrets and personal fields, or with ``redact`` remove them and record where in ``report``."""
     if isinstance(value, dict):
         clean = {}
         for key, item in value.items():
-            if not isinstance(key, str) or SENSITIVE_KEY.search(key):
+            if not isinstance(key, str) or sensitive_key(key):
                 if redact:
+                    if report is not None:
+                        report.append({"path": f"{path}.{key}", "action": "dropped"})
                     continue
                 raise TasteError("sensitive_input", "sensitive or personal fields are not accepted", field=f"{path}.{key}")
-            clean[key] = validate_safe(item, f"{path}.{key}", redact=redact)
+            clean[key] = validate_safe(item, f"{path}.{key}", redact=redact, report=report)
         return clean
     if isinstance(value, list):
         if len(value) > 100:
             raise TasteError("unbounded_input", "lists are limited to 100 items", field=path)
-        return [validate_safe(v, f"{path}[]", redact=redact) for v in value]
+        return [validate_safe(v, f"{path}[]", redact=redact, report=report) for v in value]
     if isinstance(value, str):
-        if len(value) > MAX_TEXT:
-            if redact:
-                return value[:MAX_TEXT] + "[REDACTED:TRUNCATED]"
+        if len(value) > MAX_TEXT and not redact:
             raise TasteError("unbounded_input", f"text is limited to {MAX_TEXT} characters", field=path)
-        if SENSITIVE_VALUE.search(value):
+        # The scan runs before truncation and reaches past the cut, so a secret in the kept text
+        # or straddling the cut is caught; it never runs over unbounded input.
+        if SENSITIVE_VALUE.search(value[:MAX_TEXT + 256]):
             if redact:
+                if report is not None:
+                    report.append({"path": path, "action": "redacted"})
                 return "[REDACTED]"
             raise TasteError("sensitive_input", "secret, credential, token, or personal identifier detected", field=path)
+        if len(value) > MAX_TEXT:
+            if report is not None:
+                report.append({"path": path, "action": "truncated"})
+            return value[:MAX_TEXT] + "[REDACTED:TRUNCATED]"
         return value
     if value is None or isinstance(value, (bool, int, float)):
         return value
     raise TasteError("invalid_input", "preference values must be JSON data", field=path)
+
+
+def check_id(entry_id: str | None) -> None:
+    """An id is a stable label, and a label must not embed a secret or name a personal datum."""
+    if not entry_id or not ID_PATTERN.fullmatch(entry_id):
+        raise TasteError("invalid_id", "--id must be a stable lowercase identifier")
+    check_id_safe(entry_id)
+
+
+def check_id_safe(entry_id: str, **where: Any) -> None:
+    if sensitive_key(entry_id) or SENSITIVE_VALUE.search(entry_id):
+        raise TasteError("sensitive_input", "an id may not embed a secret, contain a credential word, or end in a personal-data word; say what the preference is about", field="id", **where)
+
+
+def validate_proposal(value: Any) -> None:
+    """Enforce the doctrine section 4 fields on a new proposal. Stored entries are never re-checked."""
+    if not isinstance(value, dict):
+        raise TasteError("invalid_entry", "a proposal is a JSON object carrying category, normalized_rule, strength, and source")
+    for field, allowed in (("category", CATEGORIES), ("strength", STRENGTHS), ("source", SOURCES)):
+        if value.get(field) not in allowed:
+            raise TasteError("invalid_entry", f"{field} is required and must be a taste-doctrine.md identifier", field=field, allowed=list(allowed))
+    rule = value.get("normalized_rule")
+    if not isinstance(rule, str) or not rule.strip():
+        raise TasteError("invalid_entry", "normalized_rule is required and must be a non-empty string", field="normalized_rule")
 
 
 def validate(record: Any, expected_scope: str) -> dict[str, Any]:
@@ -159,13 +229,16 @@ def load(project_root: Path, scope: str) -> tuple[dict[str, Any], bool]:
     target = paths(project_root, scope)["json"]
     if not target.exists():
         return blank(project_root, scope), False
+    recovery = "repair or move the file explicitly before retrying"
     try:
         record = json.loads(target.read_text(encoding="utf-8"))
         return validate(record, scope), True
-    except TasteError:
-        raise
+    except TasteError as exc:
+        # The doctrine refuses an unreadable record and one that fails validation alike; the
+        # specific validation code stays in `reason` for whoever repairs the file.
+        raise TasteError("corrupt_record", "canonical record failed validation; original bytes were preserved", path=str(target), reason=exc.code, detail=exc.message, recovery=recovery) from exc
     except Exception as exc:
-        raise TasteError("corrupt_record", "canonical record is unreadable; original bytes were preserved", path=str(target), recovery="repair or move the file explicitly before retrying") from exc
+        raise TasteError("corrupt_record", "canonical record is unreadable; original bytes were preserved", path=str(target), recovery=recovery) from exc
 
 
 def render(record: dict[str, Any]) -> str:
@@ -182,43 +255,221 @@ def render(record: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def lock(targets: list[dict[str, Path]]) -> list[Path]:
-    acquired = []
+def host_id() -> str:
+    """Opaque host identifier recorded in a lock; empty when the hostname is unavailable."""
     try:
-        for item in targets:
-            item["lock"].parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(item["lock"], os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            os.write(fd, json.dumps({"pid": os.getpid(), "created_at": now()}).encode())
-            os.close(fd)
-            acquired.append(item["lock"])
-        return acquired
-    except FileExistsError as exc:
-        for path in acquired:
-            path.unlink(missing_ok=True)
-        raise TasteError("locked", "preference store is locked by another writer", path=str(exc.filename))
+        return hashlib.sha256(socket.gethostname().encode()).hexdigest()[:16]
     except Exception:
-        for path in acquired:
-            path.unlink(missing_ok=True)
+        return ""
+
+
+def pid_alive(pid: int) -> bool | None:
+    """Whether a process exists on this host, or None where the platform cannot say."""
+    if sys.platform == "win32":
+        return None  # os.kill(pid, 0) raises a console event there instead of probing
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except (OSError, OverflowError):  # a lock file is not trusted to hold a pid the platform accepts
+        return None
+    return True
+
+
+def read_lock(path: Path) -> dict[str, Any]:
+    """What a lock file records about its holder; empty when unreadable, as after a kill mid-write."""
+    try:
+        holder = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return holder if isinstance(holder, dict) else {}
+
+
+def lock_age(path: Path, holder: dict[str, Any]) -> float | None:
+    """Seconds since the lock was taken: the time it records, else the file's own."""
+    try:
+        taken = dt.datetime.fromisoformat(str(holder["created_at"]))
+        return (dt.datetime.now(dt.timezone.utc) - taken).total_seconds()
+    except (KeyError, ValueError, TypeError):
+        pass
+    try:
+        return time.time() - path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def stale_reason(path: Path, holder: dict[str, Any]) -> str | None:
+    """Why a lock is provably abandoned, or None when its holder may still be running."""
+    pid, mine = holder.get("pid"), host_id()
+    if type(pid) is int and pid > 0 and mine and holder.get("host") == mine and pid_alive(pid) is False:
+        return "holder-dead"
+    age = lock_age(path, holder)
+    return "expired" if age is not None and age > LOCK_STALE_AFTER else None
+
+
+def retrying(action: Any, attempts: int = 8) -> None:
+    """Run a file operation with short retries: on Windows a reader holding the file open (host
+    hook, indexer, antivirus, another writer checking the lock) makes a rename or delete fail
+    transiently with PermissionError. The same policy as save_run._replace_with_retry,
+    repeated because this module stays standalone."""
+    delay = 0.05
+    for attempt in range(attempts):
+        try:
+            action()
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.8)
+
+
+def replace_with_retry(source: Path, target: Path, attempts: int = 8) -> None:
+    retrying(lambda: os.replace(source, target), attempts)
+
+
+def unlink_with_retry(path: Path) -> None:
+    retrying(lambda: path.unlink(missing_ok=True))
+
+
+def take(path: Path) -> str:
+    """Create the lock file exclusively, record the holder in it, and return the token that proves it is ours."""
+    token = uuid.uuid4().hex
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        os.write(fd, json.dumps({"pid": os.getpid(), "host": host_id(), "created_at": now(), "token": token}).encode())
+    except BaseException:
+        os.close(fd)
+        path.unlink(missing_ok=True)
         raise
+    os.close(fd)
+    return token
+
+
+def reclaim(path: Path) -> dict[str, Any] | None:
+    """Remove the lock at path if its holder is provably gone, and describe what was removed."""
+    holder = read_lock(path)
+    reason = stale_reason(path, holder)
+    # A lock that changed between the two reads belongs to a writer that just took it.
+    if reason is None or read_lock(path) != holder:
+        return None
+    unlink_with_retry(path)
+    return {"reason": reason, "prior": {key: holder[key] for key in ("pid", "created_at") if isinstance(holder.get(key), (int, str)) and len(str(holder[key])) <= 64}}
+
+
+def busy(path: Path) -> TasteError:
+    holder = read_lock(path)
+    details: dict[str, Any] = {"path": str(path), "stale_after_seconds": LOCK_STALE_AFTER}
+    age = lock_age(path, holder)
+    if age is not None:
+        details["age_seconds"] = int(age)
+    if type(holder.get("pid")) is int:
+        details["holder_pid"] = holder["pid"]
+    return TasteError("locked", "preference store is locked by another writer", **details)
+
+
+class Held:
+    """The lock files one writer owns. Each carries a token, so a lock is trusted or released only while it is still ours."""
+
+    def __init__(self) -> None:
+        self.locks: list[tuple[Path, str]] = []
+        self.reclaimed: list[dict[str, Any]] = []
+
+    def acquire(self, scope: str, target: dict[str, Path]) -> None:
+        path = target["lock"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        removed = None
+        try:
+            token = take(path)
+        except FileExistsError:
+            removed = reclaim(path)
+            if removed is None:
+                raise busy(path) from None
+            try:
+                token = take(path)
+            except FileExistsError:  # another writer took the freed lock first
+                raise busy(path) from None
+        self.locks.append((path, token))
+        if removed:
+            note = {"scope": scope, **removed}
+            with target["journal"].open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps({"event": "lock_reclaimed", "at": now(), **note}, sort_keys=True) + "\n")
+            self.reclaimed.append(note)
+
+    def verify(self) -> None:
+        for path, token in self.locks:
+            if read_lock(path).get("token") != token:
+                raise TasteError("lock_lost", "the store lock was reclaimed while this writer held it; nothing was written", path=str(path))
+
+    def release(self) -> None:
+        for path, token in self.locks:
+            if read_lock(path).get("token") == token:
+                unlink_with_retry(path)
+        self.locks.clear()
+
+
+def lock(destinations: dict[str, dict[str, Path]]) -> Held:
+    held = Held()
+    try:
+        for scope, target in destinations.items():
+            held.acquire(scope, target)
+    except BaseException:
+        held.release()
+        raise
+    return held
 
 
 def stage(record: dict[str, Any], destination: dict[str, Path]) -> tuple[Path, Path]:
     destination["json"].parent.mkdir(parents=True, exist_ok=True)
-    staged = []
-    for suffix, content in ((".json.tmp", canonical_bytes(record)), (".md.tmp", render(record).encode())):
-        fd, name = tempfile.mkstemp(prefix=".taste-", suffix=suffix, dir=destination["json"].parent)
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(content); stream.flush(); os.fsync(stream.fileno())
-        staged.append(Path(name))
+    staged: list[Path] = []
+    try:
+        for suffix, content in ((".json.tmp", canonical_bytes(record)), (".md.tmp", render(record).encode())):
+            fd, name = tempfile.mkstemp(prefix=".taste-", suffix=suffix, dir=destination["json"].parent)
+            staged.append(Path(name))
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(content); stream.flush(); os.fsync(stream.fileno())
+    except BaseException:
+        for path in staged:
+            path.unlink(missing_ok=True)
+        raise
     return staged[0], staged[1]
 
 
+def rollback(records: list[tuple[str, dict[str, Any], dict[str, Path], bool]], backups: list[dict[str, Path]], replaced: list[tuple[int, str]], journals: dict[int, int | None]) -> list[tuple[Path, Path | None]]:
+    """Undo a partial commit. Returns each file that could not be restored with the backup that
+    still holds its prior bytes. A journal only ever lists committed revisions, so its appended
+    lines go first."""
+    failed: list[tuple[Path, Path | None]] = []
+    for index, size in journals.items():
+        journal = records[index][2]["journal"]
+        try:
+            if size is None:
+                journal.unlink(missing_ok=True)
+            else:
+                os.truncate(journal, size)
+        except OSError:
+            failed.append((journal, None))
+    for index, key in reversed(replaced):
+        dest = records[index][2]
+        backup = backups[index].get(key)
+        try:
+            if backup:
+                replace_with_retry(backup, dest[key])
+            else:
+                dest[key].unlink(missing_ok=True)
+        except OSError:
+            failed.append((dest[key], backup))
+    return failed
+
+
 def commit_pair(records: list[tuple[str, dict[str, Any], dict[str, Path], bool]], *, locks_held: bool = False) -> None:
-    locks, staged, backups, replaced = [], [], [], []
+    held, staged, backups, replaced, journals, keep = None, [], [], [], {}, set()
     try:
         if not locks_held:
-            locks = lock([item[2] for item in records])
-        for scope, record, dest, existed in records:
+            held = lock({scope: dest for scope, _, dest, _ in records})
+        for _, record, dest, _ in records:
             pair = stage(record, dest); staged.append(pair)
             backup = {}
             for key in ("json", "md"):
@@ -233,27 +484,28 @@ def commit_pair(records: list[tuple[str, dict[str, Any], dict[str, Path], bool]]
                 history = dest["history"] / f"revision-{old['revision']:08d}-{old['canonical_record_digest'].split(':')[1][:12]}.json"
                 if not history.exists():
                     shutil.copy2(dest["json"], history)
-            os.replace(staged[index][0], dest["json"]); replaced.append((index, "json"))
-            os.replace(staged[index][1], dest["md"]); replaced.append((index, "md"))
+            replace_with_retry(staged[index][0], dest["json"]); replaced.append((index, "json"))
+            replace_with_retry(staged[index][1], dest["md"]); replaced.append((index, "md"))
+            journals[index] = dest["journal"].stat().st_size if dest["journal"].exists() else None
             with dest["journal"].open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps({"revision": record["revision"], "digest": record["canonical_record_digest"], "generated_at": record["generated_at"]}, sort_keys=True) + "\n")
     except Exception as exc:
-        for index, key in reversed(replaced):
-            dest = records[index][2]
-            backup = backups[index].get(key)
-            if backup:
-                os.replace(backup, dest[key])
-            else:
-                dest[key].unlink(missing_ok=True)
+        failed = rollback(records, backups, replaced, journals)
+        keep.update(backup for _, backup in failed if backup)
         if isinstance(exc, TasteError):
             raise
+        if failed:
+            unrestored = [{"path": str(target), "backup": str(backup) if backup else None} for target, backup in failed]
+            raise TasteError("write_failed", "atomic preference write failed and the rollback was incomplete; each unrestored file's prior bytes are in its backup", reason=str(exc), unrestored=unrestored) from exc
         raise TasteError("write_failed", "atomic preference write failed and replacements were rolled back", reason=str(exc)) from exc
     finally:
         for pair in staged:
             for path in pair: path.unlink(missing_ok=True)
         for backup in backups:
-            for path in backup.values(): path.unlink(missing_ok=True)
-        for path in locks: path.unlink(missing_ok=True)
+            for path in backup.values():
+                if path not in keep: path.unlink(missing_ok=True)
+        if held:
+            held.release()
 
 
 def parse_value(raw: str | None) -> Any:
@@ -269,9 +521,11 @@ def mutate(record: dict[str, Any], command: str, args: argparse.Namespace, sourc
     result = copy.deepcopy(record)
     entry_id = args.entry_id
     if command in {"propose", "set"}:
-        if not entry_id or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,127}", entry_id):
-            raise TasteError("invalid_id", "--id must be a stable lowercase identifier")
-        value = validate_safe(parse_value(args.value), redact=args.redact)
+        check_id(entry_id)
+        raw = parse_value(args.value)
+        if command == "propose":
+            validate_proposal(raw)
+        value = validate_safe(raw, redact=args.redact)
         result["entries"][entry_id] = {"state": "proposed" if command == "propose" else "active", "value": value, "updated_at": now()}
         result["tombstones"].pop(entry_id, None)
     elif command in {"confirm", "deprecate"}:
@@ -289,6 +543,7 @@ def mutate(record: dict[str, Any], command: str, args: argparse.Namespace, sourc
     elif command in {"promote", "specialize"}:
         if not source or entry_id not in source["entries"]:
             raise TasteError("not_found", "source preference entry does not exist", id=entry_id)
+        check_id_safe(entry_id)
         result["entries"][entry_id] = copy.deepcopy(source["entries"][entry_id]); result["entries"][entry_id]["updated_at"] = now()
         result["tombstones"].pop(entry_id, None)
     elif command == "import":
@@ -296,12 +551,16 @@ def mutate(record: dict[str, Any], command: str, args: argparse.Namespace, sourc
             incoming = json.loads(Path(args.input).read_text(encoding="utf-8"))
         except Exception as exc:
             raise TasteError("invalid_import", "import must be a readable JSON file", path=args.input) from exc
+        if isinstance(incoming, dict) and "entries" in incoming and ("schema" in incoming or "schema_version" in incoming):
+            if (incoming.get("schema"), incoming.get("schema_version")) not in ((SCHEMA, VERSION), (EXPORT_SCHEMA, EXPORT_VERSION)):
+                raise TasteError("invalid_schema", "an import that declares a schema must declare a recognised schema and version", expected=[SCHEMA, EXPORT_SCHEMA])
         entries = incoming.get("entries", incoming) if isinstance(incoming, dict) else incoming
         if not isinstance(entries, dict) or len(entries) > 1000:
             raise TasteError("invalid_import", "import entries must be a JSON object with at most 1000 entries")
-        for key, item in entries.items():
-            if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,127}", str(key)):
+        for index, (key, item) in enumerate(entries.items()):
+            if not ID_PATTERN.fullmatch(str(key)):
                 raise TasteError("invalid_id", "import contains an invalid stable id", id=str(key))
+            check_id_safe(key, index=index)
             value = item.get("value") if isinstance(item, dict) and "value" in item else item
             result["entries"][key] = {"state": "active", "value": validate_safe(value, redact=args.redact), "updated_at": now()}
             result["tombstones"].pop(key, None)
@@ -314,6 +573,11 @@ def mutate(record: dict[str, Any], command: str, args: argparse.Namespace, sourc
     result["generated_at"] = now(); result["previous_revision_digest"] = prior
     result["canonical_record_digest"] = digest(result)
     return result
+
+
+def substance(entry: dict[str, Any] | None) -> tuple[Any, Any] | None:
+    """What two stores can disagree about. updated_at differs on every write, so it is left out."""
+    return None if entry is None else (entry["state"], entry["value"])
 
 
 def selected_scopes(scope: str | None) -> list[str]:
@@ -342,16 +606,23 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-root", default=".")
     sub = parser.add_subparsers(dest="command", required=True)
-    for command in ("status", "list", "effective", "diff", "export"):
+    for command in READS:
         p = sub.add_parser(command); p.add_argument("--scope", choices=("global", "project", "both"), default="both")
-        if command == "export": p.add_argument("--output", required=True); p.add_argument("--redact", action="store_true", default=True)
+        if command == "export":
+            p.add_argument("--output", required=True)
+            # Redaction is a safety property, so an export cannot be made unredacted. The flag stays
+            # so callers that already pass it keep working.
+            p.add_argument("--redact", action="store_true", help="accepted and ignored: an export is always redacted")
     for command in sorted(MUTATIONS):
         p = sub.add_parser(command); p.add_argument("--scope", choices=("global", "project", "both"), required=True)
         p.add_argument("--expect-revision", action="append"); p.add_argument("--id", dest="entry_id"); p.add_argument("--value")
         p.add_argument("--input"); p.add_argument("--redact", action="store_true")
     args = parser.parse_args(argv); root = Path(args.project_root).resolve()
+    held = None
     try:
         if args.command not in MUTATIONS:
+            if args.command == "diff" and args.scope != "both":
+                raise TasteError("invalid_scope", "diff compares the project store with the global store; use --scope both")
             loaded = {scope: load(root, scope)[0] for scope in selected_scopes(args.scope)}
             if args.command == "status":
                 return emit(True, stores={s: {"path": str(paths(root, s)["json"]), "exists": paths(root, s)["json"].exists(), "revision": r["revision"], "digest": r["canonical_record_digest"]} for s, r in loaded.items()})
@@ -362,15 +633,15 @@ def main(argv: list[str] | None = None) -> int:
                     if item["state"] == "active": effective[key] = {**item, "source_scope": scope}
             if args.command == "effective": return emit(True, entries=effective)
             if args.command == "diff":
-                project, global_ = load(root, "project")[0], load(root, "global")[0]
-                ids = sorted(set(project["entries"]) | set(global_["entries"]))
-                return emit(True, differences=[{"id": i, "project": project["entries"].get(i), "global": global_["entries"].get(i)} for i in ids if project["entries"].get(i) != global_["entries"].get(i)])
-            export = {"schema": "supremeteam-taste-export", "schema_version": 1, "generated_at": now(), "provenance": {s: r["canonical_record_digest"] for s, r in loaded.items()}, "entries": validate_safe(effective, redact=True)}
+                project, global_ = loaded["project"]["entries"], loaded["global"]["entries"]
+                return emit(True, differences=[{"id": i, "project": project.get(i), "global": global_.get(i)} for i in sorted(set(project) | set(global_)) if substance(project.get(i)) != substance(global_.get(i))])
+            redactions: list[dict[str, str]] = []
+            export = {"schema": EXPORT_SCHEMA, "schema_version": EXPORT_VERSION, "generated_at": now(), "provenance": {s: r["canonical_record_digest"] for s, r in loaded.items()}, "entries": validate_safe(effective, redact=True, report=redactions)}
             Path(args.output).write_text(json.dumps(export, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            return emit(True, output=str(Path(args.output).resolve()), redacted=True)
+            return emit(True, output=str(Path(args.output).resolve()), redacted=True, redactions=redactions)
         scopes = selected_scopes(args.scope)
         destinations = {scope: paths(root, scope) for scope in scopes}
-        held = lock(list(destinations.values()))
+        held = lock(destinations)
         try:
             # Re-read and compare revisions only after every destination lock is
             # held, preventing two writers from validating the same revision.
@@ -391,13 +662,17 @@ def main(argv: list[str] | None = None) -> int:
                 updated = mutate(current[scope][0], args.command, args, source)
                 validate(updated, scope)
                 records.append((scope, updated, destinations[scope], current[scope][1]))
+            held.verify()
             commit_pair(records, locks_held=True)
         finally:
-            for path in held:
-                path.unlink(missing_ok=True)
-        return emit(True, command=args.command, stores={s: {"revision": r["revision"], "digest": r["canonical_record_digest"]} for s, r, _, _ in records})
+            held.release()
+        result: dict[str, Any] = {"command": args.command, "stores": {s: {"revision": r["revision"], "digest": r["canonical_record_digest"]} for s, r, _, _ in records}}
+        if held.reclaimed:
+            result["lock_reclaimed"] = held.reclaimed
+        return emit(True, **result)
     except TasteError as exc:
-        return emit(False, error={"code": exc.code, "message": exc.message, **exc.details})
+        extra = {"lock_reclaimed": held.reclaimed} if held and held.reclaimed else {}
+        return emit(False, error={"code": exc.code, "message": exc.message, **exc.details}, **extra)
 
 
 if __name__ == "__main__":

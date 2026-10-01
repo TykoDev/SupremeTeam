@@ -6,13 +6,10 @@ the store was at that revision when the write began. Scenarios without a command
 block are routing and confirmation decisions, not writer calls, so they have
 none.
 
-`test_taste_prefs.py` is the writer's contract suite, not a transcript of this
-file: its three tests exercise `set` (project, `both`, and the `--redact` path),
-`deprecate`, `revoke`, `reset`, and `effective`, plus the `stale_revision`,
-`sensitive_input`, and `corrupt_record` refusals. `status`, `list`, `diff`,
-`export`, `confirm`, `import`, `promote`, `propose`, and `specialize` are
-documented here and in `workflow.md` but are not covered by that suite — run
-`--help` on any of them before composing a call.
+`test_taste_prefs.py` and `test_taste_store.py` are the writer's contract suites,
+not a transcript of this file: between them every subcommand runs on its success
+path and on its refusal paths. Run `--help` on any subcommand before composing a
+call, and see `workflow.md` § Error codes for what a refusal means.
 
 ## Contents
 
@@ -37,7 +34,13 @@ python skills/taste/taste_prefs.py effective --scope both      # confirm the mer
 ```
 
 An inferred preference is `propose`d and only `confirm`ed on an explicit user
-decision, never written straight to `active` with `set`.
+decision, never written straight to `active` with `set`. A proposal carries the
+doctrine fields, and the writer refuses one that lacks them:
+
+```bash
+python skills/taste/taste_prefs.py propose --scope project --expect-revision 5 --id tables.zebra --value '{"category":"visual-style","normalized_rule":"Avoid zebra striping on dense tables","strength":"soft","source":"confirmed-inference","confidence":0.7,"rationale":"Picked the plain variant in three reviews"}'
+python skills/taste/taste_prefs.py confirm --scope project --expect-revision 6 --id tables.zebra
+```
 
 ## Global preference
 

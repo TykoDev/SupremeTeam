@@ -66,7 +66,7 @@ def _fsync(handle) -> None:
         pass  # a file system without fsync still got the bytes
 
 
-def atomic_write(path: Path, data: "str | bytes", *, notes: "list[str] | None" = None) -> None:
+def atomic_write(path: Path, data: "str | bytes", *, mode: "int | None" = None, notes: "list[str] | None" = None) -> None:
     """Replace ``path`` with ``data`` in one step, or leave it as it was; raises ``OSError``.
 
     The staging file is named per process, so writers that overlap never truncate
@@ -74,7 +74,12 @@ def atomic_write(path: Path, data: "str | bytes", *, notes: "list[str] | None" =
     a link, so a staging name planted as a symlink is not written through. A target
     whose ACL denies the rename (a file another sandbox user created) is
     overwritten in place after the retries, and that non-atomic step is appended to
-    ``notes`` so it is visible rather than silent."""
+    ``notes`` so it is visible rather than silent.
+
+    ``mode`` None leaves the permission bits to the process umask. An explicit mode
+    is the one the file ends with, applied again after creation because the umask can
+    only have narrowed it, and it is already in force when the bytes are written, so a
+    file meant to be private is never readable between its creation and its chmod."""
     path = Path(path)
     payload = data.encode("utf-8") if isinstance(data, str) else data
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
@@ -83,11 +88,13 @@ def atomic_write(path: Path, data: "str | bytes", *, notes: "list[str] | None" =
             tmp.unlink()
         except FileNotFoundError:
             pass
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _BINARY, 0o666)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _BINARY, 0o666 if mode is None else mode)
         with os.fdopen(fd, "wb") as handle:
             handle.write(payload)
             handle.flush()
             _fsync(handle)
+        if mode is not None:
+            os.chmod(tmp, mode)
         try:
             replace_with_retry(tmp, path)
         except PermissionError as exc:

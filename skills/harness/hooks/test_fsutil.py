@@ -43,6 +43,49 @@ class AtomicWriteTests(unittest.TestCase):
         self.assertEqual(target.read_bytes(), b"\x00\xffraw")
         self.assertEqual(self.leftovers(), [])
 
+    @unittest.skipIf(os.name == "nt", "POSIX permission bits")
+    def test_an_explicit_mode_is_the_mode_the_file_ends_with_whatever_the_umask(self):
+        """QR-PY-05: registration needed this for host config files, and kept its own copy of the write to get it."""
+        for umask in (0o022, 0o077, 0):
+            for mode in (0o600, 0o644):
+                with self.subTest(umask=oct(umask), mode=oct(mode)):
+                    target = self.dir / f"m{umask}-{mode}.json"
+                    previous = os.umask(umask)
+                    try:
+                        _fsutil.atomic_write(target, b"{}", mode=mode)
+                    finally:
+                        os.umask(previous)
+                    self.assertEqual(os.stat(target).st_mode & 0o777, mode)
+                    self.assertEqual(target.read_bytes(), b"{}")
+        self.assertEqual(self.leftovers(), [])
+
+    @unittest.skipIf(os.name == "nt", "POSIX permission bits")
+    def test_a_private_file_is_never_wider_than_its_mode_while_it_is_staged(self):
+        seen: list = []
+        real_replace = _fsutil.replace_with_retry
+
+        def look(tmp, path, attempts=8):
+            seen.append(os.stat(tmp).st_mode & 0o777)
+            real_replace(tmp, path, attempts)
+
+        previous = os.umask(0)
+        try:
+            with mock.patch.object(_fsutil, "replace_with_retry", look):
+                _fsutil.atomic_write(self.dir / "private.json", b"x", mode=0o600)
+        finally:
+            os.umask(previous)
+        self.assertEqual(seen, [0o600])
+
+    @unittest.skipIf(os.name == "nt", "POSIX permission bits")
+    def test_no_mode_leaves_the_bits_to_the_umask_as_before(self):
+        target = self.dir / "plain.json"
+        previous = os.umask(0o027)
+        try:
+            _fsutil.atomic_write(target, "x")
+        finally:
+            os.umask(previous)
+        self.assertEqual(os.stat(target).st_mode & 0o777, 0o640)
+
     def test_staging_is_named_per_process(self):
         seen = []
         real = os.replace

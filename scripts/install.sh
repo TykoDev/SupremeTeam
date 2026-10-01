@@ -13,6 +13,9 @@ cursor_destination="${HOME:-}/.cursor/skills"
 opencode_destination="${HOME:-}/.config/opencode/skills"
 install_claude=0
 register_hooks=0
+hooks_scope=user
+hooks_yes=0
+hooks_declined=0
 dry_run=0
 codex_target_explicit=0
 cursor_target_explicit=0
@@ -64,7 +67,13 @@ Options:
                               Default: auto.
   --destination PATH        Override the default agent skill path.
   --codex-destination PATH  Override the Codex skill path.
-  --register-hooks          Register runtime harness hooks for selected hosts.
+  --register-hooks          Register runtime harness hooks for selected hosts. This edits
+                            host config files (by default the global ones in your home
+                            directory); a terminal run previews them and asks first.
+  --hooks-scope SCOPE       Which host config --register-hooks writes: user (default),
+                            project or local. The last two belong to the project around
+                            the directory you run this from.
+  --hooks-yes               Do not ask before --register-hooks writes.
   --install-claude          Mirror the install into ~/.claude/skills.
   --claude-destination PATH Override the Claude Code skill path.
   --cursor-destination PATH Override the Cursor skill path.
@@ -828,8 +837,19 @@ register_harness_hooks() {
     for target in "${selected_targets[@]}"; do
         hook_args+=(--target "$target")
     done
+    hook_args+=(--scope "$hooks_scope")
+    if [[ $hooks_yes -eq 1 ]]; then
+        hook_args+=(--yes)
+    fi
 
-    "$python" "${hook_args[@]}"
+    # Exit 3 is the operator answering no at the preview: nothing was written.
+    local status=0
+    "$python" "${hook_args[@]}" || status=$?
+    if [[ $status -eq 3 ]]; then
+        hooks_declined=1
+    elif [[ $status -ne 0 ]]; then
+        exit "$status"
+    fi
 }
 
 # An interrupted run still clears its staging directory; the exit codes are the
@@ -862,6 +882,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         --register-hooks)
             register_hooks=1
+            shift
+            ;;
+        --hooks-scope)
+            [[ $# -ge 2 ]] || die "Missing value for --hooks-scope."
+            case "$2" in
+                user|project|local) hooks_scope="$2" ;;
+                *) die "--hooks-scope must be user, project or local." ;;
+            esac
+            shift 2
+            ;;
+        --hooks-yes)
+            hooks_yes=1
             shift
             ;;
         --install-claude)
@@ -981,6 +1013,8 @@ if [[ $register_hooks -ne 1 ]]; then
     printf 'Hook registration: not requested\n'
 elif [[ ${#selected_targets[@]} -eq 0 ]]; then
     printf 'Hook registration: skipped (no host detected)\n'
+elif [[ $hooks_declined -eq 1 ]]; then
+    printf 'Hook registration: declined (nothing was written)\n'
 else
     printf 'Hook registration: completed\n'
 fi

@@ -22,13 +22,22 @@ Two classes of host:
   whether the host actually invokes it is a host-observed fact.
 
 Writes are scoped, previewable, and recoverable: ``--scope`` picks exactly one
-config file, ``--dry-run`` prints a unified diff and writes nothing, an existing
-file that is not valid JSON is refused rather than overwritten, and every
-overwrite keeps a timestamped ``.bak-`` copy before replacing the file
-atomically.
+config file (``user`` is the global one and the default, because the installer puts
+the hook scripts under the user's skills directory), ``--dry-run`` prints a unified
+diff and writes nothing, an existing file that is not valid UTF-8 JSON is refused
+rather than overwritten, and every overwrite keeps a timestamped ``.bak-`` copy
+before replacing the file atomically. File and backup keep the permission bits the
+original had; a new user-level file is owner-only.
+
+Run from a terminal, it first prints that same preview and asks before writing
+anything; ``--yes`` skips the question. With no terminal (CI, a pipe) it writes
+straight away, as before. Each registration also records the sha256 of the hook
+scripts under ``.harness-state/`` of the project it was run from, so
+``verify_registration.py`` can report a script that changed later.
 
 Exit 0 when every selected host is registered (or already was, or a dry run
-previewed cleanly), 2 when a write was refused or a written hook did not verify.
+previewed cleanly), 2 when a write was refused or a written hook did not verify,
+3 when the operator declined at the prompt and nothing was written.
 """
 
 from __future__ import annotations
@@ -37,16 +46,16 @@ import argparse
 import difflib
 import importlib
 import json
-import os
-import shutil
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 
 class Refused(Exception):
     """A write this script declined to make. Reported to the operator, exit code 2."""
 
+
+EXIT_REFUSED = 2
+EXIT_DECLINED = 3
 
 # Hosts whose registration this script can verify after writing it.
 NATIVE_HOSTS = ("codex", "claude", "copilot")
@@ -77,11 +86,22 @@ def _load_harness(hook_root: Path):
     return verify, repair
 
 
+def _read_text(path: Path) -> str:
+    """Read an existing file as UTF-8, refusing when it is some other encoding."""
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise Refused(
+            f"{path} is not UTF-8 text ({exc.reason} at byte {exc.start}); refusing to overwrite it. "
+            "Windows PowerShell 5.1 redirection writes UTF-16: save the file as UTF-8, then re-run."
+        ) from exc
+
+
 def _read_config(path: Path) -> dict:
     """Read one JSON config, refusing to proceed when it exists but does not parse."""
-    if not path.exists():
-        return {}
-    text = path.read_text(encoding="utf-8")
+    text = _read_text(path)
     if not text.strip():
         return {}
     try:
@@ -96,7 +116,7 @@ def _read_config(path: Path) -> dict:
     return data
 
 
-def _write_text(path: Path, before: str, after: str, dry_run: bool) -> Path | None:
+def _write_text(path: Path, before: str, after: str, dry_run: bool, repair, private: bool) -> Path | None:
     """Write atomically after backing up, or print the diff when this is a dry run.
 
     Returns the backup path when one was made.
@@ -112,32 +132,24 @@ def _write_text(path: Path, before: str, after: str, dry_run: bool) -> Path | No
         )
         print(diff if diff.strip() else f"  (no change to {path})")
         return None
-    path.parent.mkdir(parents=True, exist_ok=True)
-    backup = None
-    if path.exists():
-        backup = path.with_name(path.name + ".bak-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
-        shutil.copyfile(path, backup)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(after, encoding="utf-8")
-    os.replace(tmp, path)
-    return backup
+    return repair.write_with_backup(path, after, private=private)
 
 
-def _native_target(args: argparse.Namespace, host: str, repair) -> Path:
-    """Resolve one native host's config file: an explicit override, else --scope."""
+def _native_target(args: argparse.Namespace, host: str, repair) -> tuple[Path, bool]:
+    """Resolve one native host's config file (an explicit override, else --scope) and whether it was overridden."""
     override = {"codex": args.codex_hooks, "claude": args.claude_settings, "copilot": args.copilot_hooks}[host]
     if override:
-        return Path(override).expanduser()
+        return Path(override).expanduser(), True
     try:
-        return repair.target_path(host, args.scope)
+        return repair.target_path(host, args.scope), False
     except ValueError as exc:
         raise Refused(str(exc)) from exc
 
 
 def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict:
     """Register the required hooks for one JSON-configured host, then verify them."""
-    path = _native_target(args, host, repair)
-    before = path.read_text(encoding="utf-8") if path.exists() else ""
+    path, overridden = _native_target(args, host, repair)
+    before = _read_text(path)
     config = _read_config(path)
     try:
         desired, added = repair.plan(json.loads(json.dumps(config)), host, args.python_command)
@@ -147,7 +159,7 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
     after = json.dumps(desired, indent=2) + "\n"
     backup = None
     if added:
-        backup = _write_text(path, before, after, args.dry_run)
+        backup = _write_text(path, before, after, args.dry_run, repair, private=args.scope == "user")
     elif args.dry_run:
         print(f"  (no change to {path})")
 
@@ -158,6 +170,7 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
         "added": added,
         "backup": str(backup) if backup else None,
         "applied": bool(added) and not args.dry_run,
+        "notes": [] if overridden else repair.scope_warnings(host, args.scope, path),
     }
     if args.dry_run:
         result["hooks"] = {}
@@ -166,21 +179,15 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
 
     # Re-read what is now on disk and ask the harness verifier, rather than
     # trusting that writing the file was the same thing as registering a hook.
-    written = _read_config(path)
-    hooks: dict[str, dict] = {}
+    states = verify.hook_states([_read_config(path)], host)
+    hooks = {}
     for key, script in verify.REQUIRED:
-        event = verify.EVENTS[host][key]
-        best = {"executable": False, "reason": "no command registered"}
-        for command in verify._commands([written], event):
-            candidate = verify.analyse(command, script)
-            if candidate["executable"]:
-                best = candidate
-                break
-            if candidate.get("configured") and not best.get("configured"):
-                best = candidate
-        hooks[script] = {"event": event, "executable": bool(best.get("executable")), "reason": best.get("reason", "")}
+        state = states[key]
+        hooks[script] = {"event": verify.EVENTS[host][key], "executable": state["registered"], "reason": state["reason"]}
     result["hooks"] = hooks
     result["registered"] = all(entry["executable"] for entry in hooks.values())
+    if result["registered"]:
+        result["hash_record"] = str(repair.record_hashes(states, host))
     return result
 
 
@@ -214,10 +221,10 @@ def register_cursor(args: argparse.Namespace, repair) -> dict:
     }
     written = []
     for path, obj in ((root / ".cursor-plugin" / "plugin.json", manifest), (root / "hooks" / "hooks.json", hooks)):
-        before = path.read_text(encoding="utf-8") if path.exists() else ""
+        before = _read_text(path)
         after = json.dumps(obj, indent=2) + "\n"
         if before != after:
-            _write_text(path, before, after, args.dry_run)
+            _write_text(path, before, after, args.dry_run, repair, private=True)
             written.append(str(path))
         elif args.dry_run:
             print(f"  (no change to {path})")
@@ -236,14 +243,20 @@ def _js_string(value: str) -> str:
     return json.dumps(value)
 
 
-def register_opencode(args: argparse.Namespace) -> dict:
-    """Write the OpenCode plugin. OpenCode loads JavaScript, not a hook config entry."""
-    path = Path(args.opencode_plugin).expanduser()
-    hook_root = str(args.hook_root).replace("\\", "/")
-    plugin = f"""import {{ spawnSync }} from "node:child_process";
+def opencode_plugin_source(python_command: str, hook_root: str, repair) -> str:
+    """The OpenCode plugin. ``spawnSync`` takes an executable and its arguments apart,
+    so a launcher such as ``py -3`` is split here and its arguments are passed on."""
+    command, *leading = repair.launcher_parts(python_command)
+    arguments = [*leading, *repair.utf8_flags(python_command)]
+    root = hook_root.replace("\\", "/")
+    return f"""import {{ spawnSync }} from "node:child_process";
 
-const pythonCommand = {_js_string(args.python_command)};
-const hookRoot = {_js_string(hook_root)};
+const pythonCommand = {_js_string(command)};
+const pythonArgs = {json.dumps(arguments)};
+const hookRoot = {_js_string(root)};
+
+let launchFailure = null;
+let launchFailureReported = false;
 
 function toToolName(name) {{
   const lower = String(name || "").toLowerCase();
@@ -256,19 +269,38 @@ function toToolName(name) {{
 function runHook(script, payload, cwd) {{
   const result = spawnSync(
     pythonCommand,
-    [`${{hookRoot}}/${{script}}`],
+    [...pythonArgs, `${{hookRoot}}/${{script}}`],
     {{
       input: JSON.stringify(payload),
       encoding: "utf8",
       env: {{ ...process.env, SUPREMETEAM_PROJECT_DIR: cwd || process.cwd() }},
     }},
   );
-  if (result.error || !result.stdout.trim()) return null;
+  if (result.error) {{
+    launchFailure = launchFailure || String(result.error.message || result.error);
+    return null;
+  }}
+  if (result.status) {{
+    launchFailure = launchFailure || `${{script}} exited with status ${{result.status}}: ${{String(result.stderr || "").trim().slice(0, 300)}}`;
+  }}
+  if (!result.stdout.trim()) return null;
   try {{
     return JSON.parse(result.stdout);
   }} catch {{
     return null;
   }}
+}}
+
+async function reportLaunchFailure(ctx) {{
+  if (!launchFailure || launchFailureReported || !ctx.client?.app?.log) return;
+  launchFailureReported = true;
+  await ctx.client.app.log({{
+    body: {{
+      service: "supremeteam-hooks",
+      level: "warn",
+      message: `The harness hooks are not running (${{pythonCommand}}): ${{launchFailure}}`,
+    }},
+  }});
 }}
 
 export const SupremeTeamHooks = async (ctx) => ({{
@@ -280,6 +312,7 @@ export const SupremeTeamHooks = async (ctx) => ({{
       tool_input: output?.args || input?.args || {{}},
     }};
     const result = runHook("pre_tool_use.py", payload, cwd);
+    await reportLaunchFailure(ctx);
     const hook = result?.hookSpecificOutput;
     if (hook?.permissionDecision === "deny") {{
       throw new Error(hook.permissionDecisionReason || "Blocked by SupremeTeam harness.");
@@ -294,6 +327,7 @@ export const SupremeTeamHooks = async (ctx) => ({{
       tool_response: output || {{}},
     }};
     const result = runHook("post_tool_use.py", payload, cwd);
+    await reportLaunchFailure(ctx);
     const context = result?.hookSpecificOutput?.additionalContext;
     if (context && ctx.client?.app?.log) {{
       await ctx.client.app.log({{
@@ -303,10 +337,16 @@ export const SupremeTeamHooks = async (ctx) => ({{
   }},
 }});
 """
-    before = path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def register_opencode(args: argparse.Namespace, repair) -> dict:
+    """Write the OpenCode plugin. OpenCode loads JavaScript, not a hook config entry."""
+    path = Path(args.opencode_plugin).expanduser()
+    plugin = opencode_plugin_source(args.python_command, str(args.hook_root), repair)
+    before = _read_text(path)
     changed = before != plugin
     if changed:
-        _write_text(path, before, plugin, args.dry_run)
+        _write_text(path, before, plugin, args.dry_run, repair, private=True)
     elif args.dry_run:
         print(f"  (no change to {path})")
     return {
@@ -333,11 +373,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hook-root", type=Path, required=True,
                         help="installed skills/harness/hooks directory the commands will point at")
     parser.add_argument("--python-command", default=sys.executable or "python",
-                        help="interpreter to register (a path, or a launcher with arguments such as 'py -3')")
+                        help="interpreter to register (a path, or a launcher with arguments such as 'py -3'); "
+                             "default: the interpreter running this script")
     parser.add_argument("--scope", choices=["user", "project", "local"], default="user",
-                        help="which config file to write for codex/claude/copilot (default: user)")
+                        help="which config file to write for codex/claude/copilot: user is the global file, "
+                             "project and local belong to the project around the working directory (default: user)")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the unified diff for every file and write nothing")
+    parser.add_argument("--yes", action="store_true",
+                        help="do not ask before writing (a terminal run otherwise previews and asks)")
     parser.add_argument("--json", action="store_true", help="append a machine-readable report")
     parser.add_argument("--codex-hooks", default=None, help="override the codex config path")
     parser.add_argument("--claude-settings", default=None, help="override the claude config path")
@@ -349,20 +393,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
-    args.hook_root = args.hook_root.expanduser().resolve()
-    try:
-        verify, repair = _load_harness(args.hook_root)
-    except Refused as exc:
-        print(f"REFUSED: {exc}")
-        return 2
-
-    targets: list[str] = []
-    for target in args.target:
-        if target not in targets:
-            targets.append(target)
-
+def _run_targets(args: argparse.Namespace, targets: list[str], verify, repair) -> list[dict]:
+    """Register (or, on a dry run, preview) every target and print what happened."""
     results = []
     for host in targets:
         print(f"\n[{host}]")
@@ -372,7 +404,7 @@ def main() -> int:
             elif host == "cursor":
                 result = register_cursor(args, repair)
             else:
-                result = register_opencode(args)
+                result = register_opencode(args, repair)
         except Refused as exc:
             print(f"  REFUSED: {exc}")
             results.append({"host": host, "registered": False, "refused": True, "error": str(exc)})
@@ -383,7 +415,11 @@ def main() -> int:
             continue
         results.append(result)
 
+        # The interpreter is registered as given, so say now if it cannot run the hooks.
+        warning = verify.interpreter_warning(verify.interpreter_report(repair.command_for("pre_tool_use.py", args.python_command)))
         print(f"  config: {result['path']}")
+        for note in [*result.get("notes", []), *([warning] if warning else [])]:
+            print(f"  note: {note}")
         if result.get("backup"):
             print(f"  backup: {result['backup']}")
         if args.dry_run:
@@ -397,8 +433,51 @@ def main() -> int:
                 detail = "" if state["executable"] else f"  ({state['reason']})"
                 print(f"  [{mark}] {state['event']} -> {script}{detail}")
             print("  status: REGISTERED" if result["registered"] else "  status: NOT REGISTERED")
+            if result.get("hash_record"):
+                print(f"  hook hashes recorded in: {result['hash_record']}")
         else:
             print(f"  written, but not machine-verifiable. {result['note']}")
+    return results
+
+
+def _interactive() -> bool:
+    try:
+        return bool(sys.stdin and sys.stdout and sys.stdin.isatty() and sys.stdout.isatty())
+    except ValueError:
+        return False
+
+
+def _confirm(question: str) -> bool:
+    try:
+        return input(question).strip().lower() in {"y", "yes"}
+    except EOFError:
+        return False
+
+
+def main() -> int:
+    args = parse_args()
+    args.hook_root = args.hook_root.expanduser().resolve()
+    try:
+        verify, repair = _load_harness(args.hook_root)
+    except Refused as exc:
+        print(f"REFUSED: {exc}")
+        return EXIT_REFUSED
+
+    targets: list[str] = []
+    for target in args.target:
+        if target not in targets:
+            targets.append(target)
+
+    if not args.dry_run and not args.yes and _interactive():
+        print("Preview of the changes. Nothing is written until you confirm.")
+        preview = argparse.Namespace(**{**vars(args), "dry_run": True})
+        if any(r.get("added") for r in _run_targets(preview, targets, verify, repair)):
+            if not _confirm("\nWrite these changes? [y/N] "):
+                print("Declined: nothing was written.")
+                return EXIT_DECLINED
+            print("\nWriting:")
+
+    results = _run_targets(args, targets, verify, repair)
 
     print("\nobserved: unverified - whether the host fires a hook is not proven by writing config.")
     print("Open /hooks or restart the target host if it requires hook review or reload.")
@@ -411,7 +490,7 @@ def main() -> int:
     failed = [r["host"] for r in results if r.get("registered") is False]
     if failed:
         print(f"\nRegistration did not verify for: {', '.join(failed)}")
-        return 2
+        return EXIT_REFUSED
     return 0
 
 

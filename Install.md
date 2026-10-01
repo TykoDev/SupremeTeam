@@ -50,6 +50,8 @@ Common flags (full list in [QUICK-START.md](QUICK-START.md)):
 | Pick teams | `-Team Design,Review` | `--team design --team review` |
 | Pick hosts | `-Target Codex,Claude` | `--target codex --target claude` |
 | Register hooks | `-RegisterHooks` | `--register-hooks` |
+| Which hook config | `-HooksScope Project` | `--hooks-scope project` |
+| Skip the hook question | `-HooksYes` | `--hooks-yes` |
 | Custom path | `-Destination "path"` | `--destination "path"` |
 | Preview only | `-DryRun` | `--dry-run` |
 
@@ -103,9 +105,9 @@ rm -rf "$work"
 
 The archive is deleted at the end, and hook registration needs
 `scripts/install_hooks.py` from it. Add `--register-hooks` (`-RegisterHooks`) to the
-installer line to register hooks in the same run, or register later from the
-installed tree with `harness/hooks/repair_registration.py` (preview first, see
-[Runtime hooks](#runtime-hooks)).
+installer line to register hooks in the same run (it edits host config files; see
+[Runtime hooks](#runtime-hooks) for which), or register later from the installed
+tree with `harness/hooks/repair_registration.py` (a preview first).
 
 ## Where it goes
 
@@ -119,6 +121,9 @@ added when there is local evidence of the host.
 | OpenCode | `~/.config/opencode/skills/` | `%USERPROFILE%\.config\opencode\skills\` |
 | Codex | `~/.codex/skills/` | `%USERPROFILE%\.codex\skills\` |
 | Cursor | `~/.cursor/skills/` | `%USERPROFILE%\.cursor\skills\` |
+
+GitHub Copilot has no skills directory here: only its hook configuration is
+written, and only when you register hooks for it (see [Runtime hooks](#runtime-hooks)).
 
 Claude Code and OpenCode mirror automatically when present. Codex and Cursor
 mirror only when named explicitly or already holding an install. On upgrade,
@@ -141,17 +146,38 @@ Copying `skills/harness/` puts the three hooks (`pre_tool_use.py`,
 them — registration changes runtime behavior, so it is always explicit.
 
 ```bash
-# Inspect current state
+# Inspect current state (checks the hosts that have a config file or a host variable)
 python skills/harness/hooks/verify_registration.py --host auto
+# Preview what registration would change; writes nothing
+python scripts/install_hooks.py --target codex --hook-root "$HOME/.agents/skills/harness/hooks" --dry-run
 # Register (or pass -RegisterHooks / --register-hooks to the installer)
 python scripts/install_hooks.py --target codex --hook-root "$HOME/.agents/skills/harness/hooks"
 ```
 
 `--host` / `--target` take `codex`, `claude`, or `copilot` for native JSON config;
-`cursor` and `opencode` load a plugin package that is not machine-verifiable. The
-helper writes atomically, keeps a timestamped `.bak-` copy, is idempotent, and
-leaves unrelated keys alone. Afterward open `/hooks` or restart the host. Without
-hooks, entry routing and tool guards are advisory only.
+`cursor` and `opencode` load a plugin package that is not machine-verifiable.
+Registration edits these files, by default the global (`user`) ones:
+
+| Host | `user` scope (default) | `project` / `local` scope |
+|---|---|---|
+| Claude Code | `~/.claude/settings.json` | `.claude/settings.json` / `.claude/settings.local.json` |
+| Codex | `~/.codex/hooks.json` | `.codex/hooks.json` |
+| GitHub Copilot | `~/.config/github-copilot/hooks.json` | `.github/hooks.json` |
+| Cursor | `~/.cursor/plugins/local/supremeteam-hooks/` | not scoped |
+| OpenCode | `~/.config/opencode/plugins/supremeteam-hooks.js` | not scoped |
+
+`--scope project|local` (`--hooks-scope`, `-HooksScope` on the installers) means the
+project around the directory you run it from. A `project` file is usually committed
+and holds machine-absolute paths; for Claude Code `local` is the per-machine file.
+Run from a terminal, the helper prints the diff of every file it would change and
+asks before writing; `--yes` (`--hooks-yes`, `-HooksYes`) skips the question, and
+with no terminal it writes straight away. It writes atomically, keeps a timestamped
+`.bak-` copy with the original's permissions, refuses a file that is not UTF-8 JSON,
+is idempotent, and leaves unrelated keys alone. It registers the Python that runs
+it (`--python-command` names another), started with `-X utf8`, and records the
+sha256 of the hook scripts in `.harness-state/hook-hashes.json` so a later edit to
+one shows up in `verify_registration.py`. Afterward open `/hooks` or restart the
+host. Without hooks, entry routing and tool guards are advisory only.
 
 ## Verify
 
@@ -169,6 +195,10 @@ Once a run is active, one command covers Python, hooks, and saves:
 ```bash
 python skills/harness/hooks/check_readiness.py --host auto --require-active-run
 ```
+
+`Ready` covers Python and, with that flag, the run. Hooks are optional, so missing
+ones are listed beside it rather than failing it; add `--require-hooks` to make
+working hooks part of ready.
 
 ## Manual install (fallback)
 
@@ -196,6 +226,27 @@ python scripts/install_hooks.py --target claude --hook-root "$HOME/.agents/skill
 Swap `--target` for your host (`codex`, `claude`, `copilot`; `cursor`/`opencode`
 write a plugin package). Skip the hook line to leave routing and guards advisory.
 
+## Uninstall
+
+There is no uninstall command. Undo what the installer did, hooks first so the host
+stops calling scripts you are about to delete.
+
+1. **Unregister the hooks**, if you registered them. In each file from the
+   [Runtime hooks](#runtime-hooks) table that you registered, delete the three
+   entries (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`) whose `command` runs
+   `pre_tool_use.py`, `post_tool_use.py` and `user_prompt_submit.py`, or restore the
+   newest `<file>.bak-<timestamp>` kept beside it if nothing else in the file has
+   changed since. For Cursor and OpenCode delete the plugin package or file. Restart
+   the host; `verify_registration.py --host auto` then reports `MISSING`.
+2. **Remove the skills.** In each target from [Where it goes](#where-it-goes) that
+   holds an install, delete every item named on an `item <name>` line of its
+   `.supremeteam-manifest`, then the manifest. Leave everything else: `mcp-tools.md`
+   is your tool registry, and `<target>.supremeteam-backup/` holds anything of yours
+   the installer moved aside.
+3. **Project leftovers**, if you want them gone: `.harness-state/` holds hook state
+   and the hash record, and `skillset-saves/` holds your run history, so keep that
+   one unless you are sure.
+
 ## When it goes wrong
 
 | Symptom | Likely cause | Fix |
@@ -210,3 +261,5 @@ write a plugin package). Skip the hook line to leave routing and guards advisory
 | Gatekeepers can't find `_gatecheck.py` | `harness/` was skipped | Use the installer or copy every core component |
 | Resume and saves broken | `save-protocol.md` was skipped | Copy the root doctrine files |
 | Hooks not enforced | Never registered, trusted, or reloaded | Register explicitly, then reload the host |
+| Registration says `declined` | You answered no at the preview | Re-run and answer `y`, or pass `--hooks-yes` |
+| `verify_registration.py` warns about the interpreter | The registered Python is missing or older than the manifest floor | Edit the registered `command` to name a supported Python, or remove the three entries and register again (`--python-command`, or `repair_registration.py --python`) |

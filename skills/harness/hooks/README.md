@@ -23,6 +23,8 @@ These hooks implement the **Action Realization (Layer 3)** and **Trajectory Regu
    - [`check_readiness.py` (Readiness Diagnostic)](#check_readinesspy-diagnostic--runtime-readiness)
    - [`verify_registration.py` (Config Inspector)](#verify_registrationpy-diagnostic--registration-verifier)
    - [`repair_registration.py` (Scoped Repair)](#repair_registrationpy-diagnostic--registration-repair)
+   - [`install_hooks.py` (Registration Writer)](#scriptsinstall_hookspy-installer--registration-writer)
+   - [Removing a Registration](#removing-a-registration)
 7. [Maintenance and Telemetry Hooks](#maintenance-and-telemetry-hooks)
    - [`size_audit.py` (Oversized Runtime Scanner)](#size_auditpy-maintenance--runtime-storage-scan)
    - [`audit_improve.py` (Failure Telemetry and Improvement Handoff)](#audit_improvepy-maintenance--telemetry-audit)
@@ -77,9 +79,9 @@ Every file in `skills/harness/hooks/` serves an explicit, non-overlapping archit
 | [`guard_state.py`](guard_state.py) | CLI / Utility | 3 | Sole sanctioned writer for `.harness-state/guard-state.json` (freeze, block, read-only, allow-dangerous). |
 | [`size_audit.py`](size_audit.py) | CLI / Sub-hook | Maintenance | Periodic bounded scanner reporting oversized files/directories (>= 256 MiB) under generated runtime roots. |
 | [`audit_improve.py`](audit_improve.py) | CLI / Sub-hook | Maintenance | Reads bounded, redacted failure telemetry and formats improvement handoffs for `audit-improve` and `skill-maker`. |
-| [`check_readiness.py`](check_readiness.py) | CLI / Diagnostic | - | Evaluates runtime prerequisites: Python version (>= 3.13), hook registration, observed firing, and save state. |
-| [`verify_registration.py`](verify_registration.py) | CLI / Diagnostic | - | Non-mutating inspector checking whether hooks are configured, resolvable, and executable in host configs. |
-| [`repair_registration.py`](repair_registration.py) | CLI / Diagnostic | - | Scoped dry-run diff preview and `--apply` repair tool for host hook configuration with timestamped backups. |
+| [`check_readiness.py`](check_readiness.py) | CLI / Diagnostic | - | Evaluates runtime prerequisites: Python version (>= 3.13), hook registration, observed firing, and save state. Read-only. |
+| [`verify_registration.py`](verify_registration.py) | CLI / Diagnostic | - | Non-mutating inspector checking whether hooks are configured, resolvable, and executable in host configs, whether their matchers cover the tools they need, and which interpreter they launch. |
+| [`repair_registration.py`](repair_registration.py) | CLI / Diagnostic | - | Scoped dry-run diff preview and `--apply` repair tool for host hook configuration with timestamped backups; records the hook script hashes. |
 | [`_state.py`](_state.py) | Internal Module | 3 & 4 | Fail-open foundation helper: project-root resolution, trajectory recording, guard state access, and heartbeat refresh. |
 | [`_saves.py`](_saves.py) | Internal Module | Persistence | Shared parser and classifier for `skillset-saves/`: `SaveRecord` dataclass, state validation, and evidence resolution. |
 | [`.gitignore`](.gitignore) | Config | - | Excludes runtime observations, temporary scratch files, and Python bytecode caches. |
@@ -89,6 +91,9 @@ Every file in `skills/harness/hooks/` serves an explicit, non-overlapping archit
 | [`test_hooks_observed.py`](test_hooks_observed.py) | Test Suite | - | Verification tests for observed host hook firing vs synthetic simulation. |
 | [`test_guard_state.py`](test_guard_state.py) | Test Suite | - | Authority and boundary tests for `guard_state.py` (freeze/block entries, owner checks, allow-dangerous expiries). |
 | [`test_registration_contract.py`](test_registration_contract.py) | Test Suite | - | Multi-host registration tests for Claude Code, Codex, and GitHub Copilot configuration formats. |
+| [`test_registration_hardening.py`](test_registration_hardening.py) | Test Suite | - | Host selection, matcher coverage, interpreter checks, project-root resolution, read-only diagnostics, file modes, and hook-script integrity for `verify_registration.py`, `repair_registration.py` and `check_readiness.py`. |
+| [`test_installer_hooks.py`](test_installer_hooks.py) | Test Suite | - | `scripts/install_hooks.py` and the `--register-hooks` options of `install.sh` / `install.ps1`: non-UTF-8 files, the generated OpenCode plugin run under node, file modes, and the preview-and-ask step on a terminal. |
+| [`test_documented_flags.py`](test_documented_flags.py) | Test Suite | - | Checks every documented command line in `README.md`, `QUICK-START.md`, `Install.md` and this README against the argument parser of the script it runs. |
 | [`test_size_audit.py`](test_size_audit.py) | Test Suite | - | Traversal limits, threshold calculations, and throttle record tests for `size_audit.py`. |
 | [`test_audit_improve.py`](test_audit_improve.py) | Test Suite | - | Telemetry analysis, correlation hashing, cooldown enforcement, and handoff formatting tests for `audit_improve.py`. |
 
@@ -207,8 +212,8 @@ python skills/harness/hooks/save_run.py heartbeat --run-id <run-id> [--owner <ow
 # Mark run complete (releases session pin, preserves final state)
 python skills/harness/hooks/save_run.py complete --run-id <run-id> [--owner <owner>]
 
-# Mark run blocked (records blocking dispute reason while preserving run pointer)
-python skills/harness/hooks/save_run.py block --run-id <run-id> --reason "<reason>"
+# Mark run blocked (preserves the run pointer; --reason belongs to recover and checkpoint --drop-evidence, block does not record it)
+python skills/harness/hooks/save_run.py block --run-id <run-id> --next-action "<what unblocks it>" [--set blocked_reason=<text>]
 
 # Release lock (clears session pin to allow other operations)
 python skills/harness/hooks/save_run.py release --run-id <run-id> [--owner <owner>]
@@ -224,6 +229,7 @@ python skills/harness/hooks/save_run.py status --run-id <run-id>
 - `0`: Success (`ok`).
 - `1`: Refused (`refused` — contract violation, active lock held by another owner, or corrupt state).
 - `2`: Degraded (`degraded` — disk or system write failure).
+- `3`: Engine error (`engine_error` — an operating-system or value error the contract does not name, such as an unreadable record; the JSON goes to stderr).
 
 ---
 
@@ -266,36 +272,51 @@ python skills/harness/hooks/guard_state.py status [--json]
 
 ## Registration, Verification, and Repair
 
+Registration is optional. Without it, entry routing and the write guards are advisory and nothing else changes; the diagnostics below say so and never treat it as a failure.
+
 ### Supported Hosts and Config Locations
 
-| Host | Configuration File | Format | Scope |
+| Host | Configuration File | Format | Scopes (`--scope`) |
 | :--- | :--- | :--- | :--- |
-| **Codex** | `~/.codex/hooks.json` or `.codex/hooks.json` | JSON | user, project |
-| **Claude Code** | `~/.claude/settings.json` or `.claude/settings.json` | JSON | user, project, local |
-| **GitHub Copilot** | `~/.config/github-copilot/hooks.json` or `.github/hooks.json` | JSON | user, project |
-| **Cursor** | `~/.cursor/plugins/local/supremeteam-hooks/` | Plugin | local |
-| **OpenCode** | `~/.config/opencode/plugins/supremeteam-hooks.js` | Plugin | local |
+| **Codex** | `~/.codex/hooks.json` or `.codex/hooks.json` | JSON | `user`, `project` |
+| **Claude Code** | `~/.claude/settings.json`, `.claude/settings.json` or `.claude/settings.local.json` | JSON | `user`, `project`, `local` |
+| **GitHub Copilot** | `~/.config/github-copilot/hooks.json` or `.github/hooks.json` | JSON | `user`, `project` |
+| **Cursor** | `~/.cursor/plugins/local/supremeteam-hooks/` | Plugin | - |
+| **OpenCode** | `~/.config/opencode/plugins/supremeteam-hooks.js` | Plugin | - |
+
+`user` is the global file every project on the machine reads. `project` and `local` belong to the project around the working directory, found the way `find_project_root()` does it (see `_state.py`) by every tool in this section. A `project` file is usually committed and the registered commands hold machine-absolute paths, so for Claude Code prefer `local`, which is the per-machine file. GitHub Copilot has no skills directory: only its hook configuration is written, and only by `scripts/install_hooks.py --target copilot` or `repair_registration.py --host copilot`.
 
 ### `check_readiness.py` (Diagnostic — Runtime Readiness)
 
-Verifies the prerequisites that orchestrators (`admiral`, `commander`) inspect at intake:
+Verifies the prerequisites that orchestrators (`admiral`, `commander`) inspect at intake. It only reads: it never registers a hook, creates `.harness-state/` or save state, or installs Python.
 
 ```bash
-# Check runtime readiness for current auto-detected host
+# Check runtime readiness for the hosts that have an environment signal or a config file
 python skills/harness/hooks/check_readiness.py --host auto
 
 # Check readiness and require an active pinned run (used during resume)
 python skills/harness/hooks/check_readiness.py --host auto --require-active-run
 
+# Require working hooks as well (hooks are optional by default)
+python skills/harness/hooks/check_readiness.py --host auto --require-hooks
+
+# Inspect another project's saves and host configuration
+python skills/harness/hooks/check_readiness.py --host auto --project-root /path/to/project
+
 # Output structured JSON report
 python skills/harness/hooks/check_readiness.py --host auto --json
 ```
 
+**Ready.** `Ready: yes` (exit 0) means Python meets the floor, the hook check reached a definite answer, and, when asked for, a run is active. Hooks are optional, so hooks that are `missing` do not make a project not ready; the report lists them as a separate fact, with the repair preview. Two things do block: a hook state the verifier could not determine (`unknown`, for example no readable configuration for the host you named, because a check with no answer is not a pass) and `--require-hooks`, which also rejects a matcher that misses tools and an interpreter that is missing or too old. The JSON report lists the reasons under `blockers` and everything else worth knowing under `warnings`.
+
 **Capability Matrix Dimensions:**
-- `python_runtime`: Python $\ge$ 3.13.
-- `hooks_configured`: Config entries present in host configuration.
+- `python_runtime`: Python at or above the floor in `runtime-manifest.yaml` (3.13).
+- `hooks_configured`: Config entries present in the host configuration of every selected host.
 - `hooks_executable`: Target scripts exist and have valid Python invocation syntax.
+- `hooks_coverage`: `full`, `partial` (a registered matcher misses tools the hook needs), or `unverified`.
+- `hooks_interpreter`: `ok`, `too_old`, `not_found` (not on this PATH; a host may supply its own), or `unverified`.
 - `hooks_observed`: Real host execution observed (`observed`, `partial`, `simulated`, or `unverified`).
+- `hooks_faults`: Internal faults the hooks failed open on, when they record them. A hook that fires with faults is reported as `firing with N faults`.
 - `saves_readable`: `skillset-saves/` is structurally readable.
 - `active_run`: Valid active run pointer and unexpired lock held.
 - `deterministic_validators`: Catalog validator scripts are accessible.
@@ -306,14 +327,26 @@ Inspects host configuration files without modifying them:
 
 ```bash
 python skills/harness/hooks/verify_registration.py --host auto
-python skills/harness/hooks/verify_registration.py --host claude --scope project
+python skills/harness/hooks/verify_registration.py --host claude
 python skills/harness/hooks/verify_registration.py --host codex --json
 ```
+
+`--host auto` (the default) checks the hosts that have an environment signal (`CODEX_*`, `CLAUDE*`, `COPILOT*`) or any config file, and names each with the reason, so a host you do not use is not reported as unregistered. `--host all` checks the three hosts regardless; a host name checks that host. User, project and (Claude Code) local files are read together.
 
 Verifies for each hook (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`):
 - `configured`: Event is declared in the host configuration.
 - `resolvable`: Target script path exists on disk.
 - `executable`: Invocation uses a direct Python launcher syntax without swallowed arguments.
+- Matcher: a registered `matcher` has to select the tools the hook needs (`Bash`, `PowerShell`, `Edit`, `Write`, `NotebookEdit`, plus `apply_patch` on Codex for the two tool hooks). A matcher that selects none of them is not a registration. A narrower one is `partial`: it is reported with the tools it misses, and `repair_registration.py` adds a group for them.
+
+Reported next to REGISTERED without failing it:
+- Interpreter: whether the registered launcher is found on this PATH and its version against the floor in `runtime-manifest.yaml`. The version is read by running that interpreter once with `-I -S -c`; an interpreter inside the project directory is never run.
+- Integrity: `unchanged`, `changed` or `unrecorded`, against the sha256 written to `.harness-state/hook-hashes.json` when the hook was registered. A script edited on purpose reports `changed`; record the new hash with `repair_registration.py --host <host> --record-hashes`.
+
+#### Exit Codes
+- `0`: Every selected host is fully registered (warnings may still be printed).
+- `1`: A selected host's readable config lacks required hooks, or `--host auto` found no host at all.
+- `2`: The host or its config cannot be determined (a named host with no readable config, an unreadable file, or an internal error).
 
 ### `repair_registration.py` (Diagnostic — Registration Repair)
 
@@ -325,7 +358,54 @@ python skills/harness/hooks/repair_registration.py --host claude --scope project
 
 # Apply changes (creates timestamped backup <file>.bak-<timestamp> and writes atomically)
 python skills/harness/hooks/repair_registration.py --host claude --scope project --apply
+
+# Register another interpreter than the one running the script
+python skills/harness/hooks/repair_registration.py --host claude --scope local --python "py -3.13" --apply
+
+# Re-record the hook script hashes after a deliberate edit (changes no host config)
+python skills/harness/hooks/repair_registration.py --host claude --record-hashes
 ```
+
+- **Interpreter:** registers the interpreter running the script (an absolute path), started with `-X utf8` so a hook payload cannot fail to decode under a legacy code page. `--python` names another; `verify_registration.py` warns when the registered one is missing or older than the floor.
+- **Minimal:** adds only what is missing, either a hook that does not launch its script or the group of tools a registered matcher leaves out. Every other key, matcher and hook is preserved.
+- **Scope:** the dry run is the default and `--scope user` is never implied. It warns when the file is global (`user`) or usually committed (`project`).
+- **Files:** a file that is not UTF-8 JSON is refused untouched (exit 2). The file and its `.bak-` backup keep the permission bits the original had; a new `user` file is owner-only.
+- **Hashes:** `--apply` records the sha256 of each registered hook script in `.harness-state/hook-hashes.json`.
+
+#### Exit Codes
+- `0`: Nothing to do, or the change was applied.
+- `1`: Changes are needed and `--apply` was not given.
+- `2`: Refused (unreadable or invalid config, undefined scope) or a write failed.
+
+### `scripts/install_hooks.py` (Installer — Registration Writer)
+
+The helper behind `install.sh --register-hooks` and `install.ps1 -RegisterHooks`. It lives in the repository's `scripts/` directory, not in the installed skills, and takes its hook definitions from the installed harness under `--hook-root`, so an install and a later repair cannot disagree.
+
+```bash
+# Preview every file it would change; writes nothing
+python scripts/install_hooks.py --target claude --hook-root "$HOME/.agents/skills/harness/hooks" --dry-run
+
+# Register for the project's local file instead of the global one
+python scripts/install_hooks.py --target claude --hook-root "$HOME/.agents/skills/harness/hooks" --scope local
+
+# Register several hosts; no question asked
+python scripts/install_hooks.py --target claude --target codex --target copilot --hook-root "$HOME/.agents/skills/harness/hooks" --yes
+```
+
+- **Default scope** is `user`, because the installer puts the hook scripts under your home directory. The wrappers forward `--hooks-scope user|project|local` (`-HooksScope`).
+- **Preview and ask:** run from a terminal, it prints the unified diff of every file it would change and asks `Write these changes? [y/N]` first. `--yes` (`--hooks-yes`, `-HooksYes`) skips the question. With no terminal (CI, a pipe) it writes straight away, so automation is unchanged.
+- **Safety:** a file that is not UTF-8 JSON is refused and the other hosts still proceed; every overwrite keeps a `.bak-` copy with the original's permission bits; a new user-level file is owner-only.
+- **Cursor and OpenCode** get a plugin package it cannot verify. The OpenCode plugin starts the interpreter without a shell, so `--python-command "py -3"` is split into command and arguments, and it logs once when the interpreter cannot start.
+- **Exit codes:** `0` registered (or already was, or a dry run); `2` a write was refused or a written hook did not verify; `3` you answered no and nothing was written.
+
+### Removing a Registration
+
+There is no unregister command; the registration is three entries in a config file, and every change kept a backup.
+
+1. Open the file for each host (table above). Remove the `PreToolUse`, `PostToolUse` and `UserPromptSubmit` entries whose `command` points at `pre_tool_use.py`, `post_tool_use.py` and `user_prompt_submit.py`, or restore the newest `<file>.bak-<timestamp>` next to it if nothing else changed since.
+2. Cursor and OpenCode: delete the plugin package (`~/.cursor/plugins/local/supremeteam-hooks/`) or file (`~/.config/opencode/plugins/supremeteam-hooks.js`).
+3. Optional: delete `.harness-state/hook-hashes.json` in the projects that recorded one.
+4. Restart the host. `python skills/harness/hooks/verify_registration.py --host auto` then reports `MISSING` for it, and `check_readiness.py` still reports ready.
 
 ---
 
@@ -339,8 +419,8 @@ Periodically scans `.harness-state/` and `skillset-saves/` for storage growth ex
 # Run manual on-demand size audit with JSON output
 python skills/harness/hooks/size_audit.py --project-root . --force --json
 
-# Override threshold and interval
-python skills/harness/hooks/size_audit.py --threshold 104857600 --interval 3600
+# Override the threshold (bytes) and the throttle interval (seconds) through the environment
+SUPREMETEAM_SIZE_AUDIT_THRESHOLD_BYTES=104857600 SUPREMETEAM_SIZE_AUDIT_INTERVAL_SECONDS=3600 python skills/harness/hooks/size_audit.py
 ```
 
 - **Safety:** Never deletes files; reports cleanup candidates.
@@ -352,11 +432,8 @@ python skills/harness/hooks/size_audit.py --threshold 104857600 --interval 3600
 Gathers bounded runtime failure telemetry and prepares structured improvement packets:
 
 ```bash
-# Run read-only audit across saved runs and tool trajectories
+# Run read-only audit across saved runs and tool trajectories (an explicit run ignores the cooldown)
 python skills/harness/hooks/audit_improve.py --run --project-root .
-
-# Force audit ignoring cooldown
-python skills/harness/hooks/audit_improve.py --run --force
 ```
 
 - **Redaction:** Hashes run identifiers and trajectory file names using SHA-256 prefixes; never logs raw credentials or environment secrets.

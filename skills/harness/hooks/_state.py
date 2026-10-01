@@ -98,6 +98,24 @@ def state_dir() -> Path:
         return d
 
 
+def existing_state_dir(base: "str | Path | None" = None) -> "Path | None":
+    """The harness state directory when one already exists, else None.
+
+    A read-only counterpart of ``state_dir()`` for diagnostics: it looks in the
+    same two places (the project's ``.harness-state`` and the temp fallback) and
+    never creates either.
+    """
+    root = Path(base) if base else project_root()
+    namespace = hashlib.sha256(str(root).encode("utf-8", "ignore")).hexdigest()[:16]
+    for candidate in (root / ".harness-state", Path(tempfile.gettempdir()) / "supremeteam-harness-state" / namespace):
+        try:
+            if candidate.is_dir():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
 def _read_json(path: Path, default):
     try:
         if not path.exists():

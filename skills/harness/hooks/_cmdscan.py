@@ -973,9 +973,22 @@ def git_parts(argv) -> tuple:
     return sub, operands, directories, flags
 
 
+def git_index_only(sub: str, flags) -> bool:
+    """True for a git command that moves what is in the index and writes no file of the tree.
+
+    ``git restore --staged`` without ``--worktree`` and a ``git reset`` that is not ``--hard``, ``--merge`` or
+    ``--keep`` unstage: the pathspecs they take name no file they change."""
+    letters = "".join(flag[1:] for flag in flags if not flag.startswith("--"))
+    if sub == "restore":
+        return ("--staged" in flags or "S" in letters) and "--worktree" not in flags and "W" not in letters
+    if sub == "reset":
+        return not any(flag in ("--hard", "--merge", "--keep") for flag in flags)
+    return False
+
+
 def _t_git(rest, ctx):
-    sub, operands, directories, _ = git_parts(rest)
-    if sub not in _GIT_PATHSPEC:
+    sub, operands, directories, flags = git_parts(rest)
+    if sub not in _GIT_PATHSPEC or git_index_only(sub, flags):
         return []
     return [(operand, tuple(directories), "git " + sub) for operand in operands]
 
@@ -1461,6 +1474,12 @@ def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None") ->
         rest = args[1:]
         if verb in ("eval", "invoke-expression", "iex"):
             _process(" ".join(a.text for a in rest), ctx, ctx.ps or verb != "eval", scoped=False)
+            return
+        if verb == "trap":
+            # The handler is a command line the shell runs later; it is read as one, so what it writes is seen.
+            actions = [a for a in rest if not a.text.startswith("-") or a.text == "-"]
+            if len(actions) > 1 and actions[0].text != "-":
+                _process(actions[0].text, ctx, ctx.ps, scoped=True)
             return
         if verb in _SHELLS or verb in _POWERSHELLS:
             plain = _shell(rest, ctx, body) if verb in _SHELLS else _powershell(rest, ctx, body)

@@ -283,6 +283,24 @@ class WriteTargetTests(unittest.TestCase):
         write = analyse("cd a; cd ..; cd a; cd ..; cd a; touch f").writes[0]
         self.assertEqual(write.cwds, (".", "a"))
 
+    def test_a_git_command_that_only_moves_the_index_writes_no_file(self):
+        """RR-guard-5: `git restore --staged .` is not a write into the tree, and `git reset` is not unless it is hard."""
+        for text in ("git restore --staged .", "git restore -S src", "git restore --staged src/payments/a.py", "git reset HEAD src/a.py",
+                     "git reset -q -- src", "git reset --mixed HEAD~1 src", "git -C r restore --staged ."):
+            with self.subTest(command=text):
+                self.assertEqual(paths(text), set())
+        for text in ("git restore .", "git restore --staged --worktree .", "git restore -SW .", "git restore --worktree src",
+                     "git reset --hard HEAD src", "git reset --merge src", "git checkout -- src", "git clean -fd src"):
+            with self.subTest(command=text):
+                self.assertTrue(paths(text), text)
+
+    def test_a_trap_handler_is_read_as_the_command_line_it_is(self):
+        self.assertEqual(paths("trap 'rm src/payments/a.py' EXIT"), {"src/payments/a.py"})
+        self.assertEqual(paths("trap \"rm -f $tmp; cp x src/b\" EXIT INT"), {"src/b"} | paths("rm -f $tmp"))
+        for text in ("trap 'echo bye' EXIT", "trap - EXIT", "trap -p", "trap -l", "trap"):
+            with self.subTest(command=text):
+                self.assertEqual(paths(text), set())
+
     def test_the_via_names_the_redirect_or_the_command(self):
         self.assertEqual([(w.path, w.via) for w in analyse("echo a >> f; rm g").writes], [("f", ">>"), ("g", "rm")])
         self.assertEqual(analyse("ri f", ps=True).writes[0].via, "remove-item")

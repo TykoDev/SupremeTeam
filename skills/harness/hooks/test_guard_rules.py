@@ -719,6 +719,42 @@ class CostTests(GuardCase):
         self.assertLess(elapsed, 6.0, f"took {elapsed:.1f}s")
 
 
+class OrdinaryMutatorTests(GuardCase):
+    """RR-guard-5: what round 1 changed without saying so. An index-only git command is not a write into a frozen tree, and
+    the package managers a read-only run must not run were denied only because `install` was a word in the text."""
+
+    def test_unstaging_is_not_a_write_into_a_frozen_boundary(self):
+        self.guard(FROZEN)
+        self.check(("git restore --staged .", "git restore -S src", "git reset HEAD src/payments/a.py", "git reset -q", "git reset --mixed HEAD~1 -- .",
+                    "git -C . restore --staged src/payments"), deny=False)
+        self.check(("git restore src/payments/a.py", "git restore .", "git restore --staged --worktree src/payments", "git checkout -- src/payments/a.py",
+                    "trap 'rm src/payments/a.py' EXIT"), deny=True, fragment="frozen boundary")
+
+    def test_unstaging_still_changes_the_repository_so_a_read_only_run_may_not(self):
+        self.guard(READ_ONLY)
+        self.check(("git restore --staged .", "git restore -S src", "git reset HEAD src/a.py", "git reset --mixed"), deny=True, fragment="read-only")
+
+    def test_a_read_only_run_may_not_install_packages(self):
+        self.guard(READ_ONLY)
+        self.check(("npm install", "npm i", "npm ci", "npm --prefix web install", "npm install --save-dev x", "pnpm add x", "yarn", "yarn add x", "bun install",
+                    "pip install -r requirements.txt", "pip install -e .", "pip3 uninstall x", "python -m pip install x", "python3 -m pip install -r r.txt", "py -3 -m pip uninstall x", "pipx install x",
+                    "uv add x", "uv pip install x", "sudo apt-get install -y jq", "apt remove x", "brew install x", "choco install x", "gem install x",
+                    "cargo add x", "go get x", "composer require x", "bundle install", "poetry add x", "conda install x",
+                    "npx playwright install chromium", "bunx foo add x", "cd web && npm install", "sh -c 'npm install'", "env CI=1 npm ci"),
+                   deny=True, fragment="read-only")
+
+    def test_a_read_only_run_may_still_run_what_only_reads(self):
+        self.guard(READ_ONLY)
+        self.check(("npm ls", "npm view x version", "npm test", "npm run lint", "pnpm list", "yarn --version", "pip list", "pip show x", "pip freeze",
+                    "pip --version", "uv pip list", "apt list --installed", "apt-cache policy x", "brew list", "gem list", "cargo --version", "go version",
+                    "go build ./...", "npx eslint .", "bunx tsc --noEmit", "git status", "git log --oneline", "ls node_modules"), deny=False)
+
+    def test_a_trap_handler_is_judged_like_any_command(self):
+        self.guard(READ_ONLY)
+        self.check(("trap 'rm -rf build' EXIT", "trap 'shred x' EXIT INT"), deny=True, fragment="read-only")
+        self.check(("trap 'echo bye' EXIT",), deny=False)
+
+
 class WorkingDirectoryRuleTests(GuardCase):
     """RR-guard-6 and RR-guard-2: the guard places a write where the shell really is, and refuses one it cannot place."""
 

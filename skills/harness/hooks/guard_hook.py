@@ -526,14 +526,59 @@ def _read_only_reason(records) -> str:
 
 
 def _unscoped_git(call: "Call") -> bool:
-    """A git command that changes the repository or tree and names no path to judge (``git add -A``, ``git push``)."""
+    """A git command that changes the repository or tree and names no path to judge (``git add -A``, ``git push``).
+
+    An index-only command (``git restore --staged .``) names pathspecs but writes no file, so it is the repository
+    it changes and counts here."""
     for command in call.analysis.commands:
         if command.verb != "git":
             continue
-        sub, operands, _, _ = _cmdscan.git_parts(command.argv)
-        if sub in _GIT_REPO_WRITERS and not (sub in _GIT_PATHSPEC and operands):
+        sub, operands, _, flags = _cmdscan.git_parts(command.argv)
+        if sub in _GIT_REPO_WRITERS and not (sub in _GIT_PATHSPEC and operands and not _cmdscan.git_index_only(sub, flags)):
             return True
     return False
+
+
+# Package managers change the dependency directory, a lockfile or the machine without naming a path, so a read-only
+# run may not run them. Each maps to the subcommands that install, remove or update; scripts they run are not seen.
+_JS_PACKAGE = frozenset({"install", "i", "ci", "add", "remove", "rm", "uninstall", "un", "update", "up", "upgrade", "link", "prune",
+                         "dedupe", "rebuild"})
+_SYSTEM_PACKAGE = frozenset({"install", "remove", "purge", "uninstall", "upgrade", "dist-upgrade", "autoremove"})
+_PACKAGE_MANAGERS = {
+    **dict.fromkeys(("npm", "pnpm", "yarn", "bun"), _JS_PACKAGE),
+    **dict.fromkeys(("pip", "pip3"), frozenset({"install", "uninstall"})),
+    "pipx": frozenset({"install", "uninstall", "upgrade", "inject", "reinstall"}),
+    "uv": frozenset({"add", "remove", "sync", "lock"}),
+    **dict.fromkeys(("apt", "apt-get", "aptitude", "dnf", "yum", "zypper", "apk", "brew", "choco", "scoop", "winget", "port"), _SYSTEM_PACKAGE),
+    "gem": frozenset({"install", "uninstall", "update"}),
+    "cargo": frozenset({"install", "add", "remove", "update"}),
+    "go": frozenset({"get", "install"}),
+    "composer": frozenset({"install", "require", "remove", "update"}),
+    "bundle": frozenset({"install", "add", "update", "remove"}),
+    "poetry": frozenset({"install", "add", "remove", "update", "lock"}),
+    **dict.fromkeys(("conda", "mamba"), frozenset({"install", "remove", "update", "create", "uninstall"})),
+}
+# Runners that fetch and execute a package: only the ones told to install something (`npx playwright install`).
+_PACKAGE_RUNNERS = frozenset({"npx", "pnpx", "bunx", "uvx"})
+_INSTALL_WORDS = frozenset({"install", "i", "add", "uninstall", "update"})
+
+
+def _changes_packages(command) -> bool:
+    verb, operands = command.verb, _operands(command.argv)
+    if (verb == "uv" or (re.fullmatch(r"python[0-9.]*|py", verb) and "-m" in command.argv)) and operands[:1] in (["pip"], ["pip3"]):
+        verb, operands = "pip", operands[1:]
+    if verb in _PACKAGE_RUNNERS:
+        return any(word in _INSTALL_WORDS for word in operands)
+    if verb not in _PACKAGE_MANAGERS:
+        return False
+    if verb == "yarn" and not operands:  # a bare `yarn` installs; only its version and help flags do not
+        return not {"--version", "-v", "--help", "-h"} & set(command.argv)
+    return any(word in _PACKAGE_MANAGERS[verb] for word in operands[:3])
+
+
+def _installs_packages(call: "Call") -> bool:
+    """A package manager command that installs, removes or updates packages (``npm install``, ``sudo apt-get install -y jq``)."""
+    return any(_changes_packages(command) for command in call.analysis.commands)
 
 
 def rule_read_only(call: "Call") -> "str | None":
@@ -556,7 +601,7 @@ def rule_read_only(call: "Call") -> "str | None":
     for write, targets in call.shell_targets(strict=True):
         if write.unresolved or any(not _paths.inside_allowed(target, allow, call.root, fold=fold) for target in targets):
             return _read_only_reason(records)
-    return _read_only_reason(records) if _unscoped_git(call) else None
+    return _read_only_reason(records) if _unscoped_git(call) or _installs_packages(call) else None
 
 
 # --- Rule C: single writers --------------------------------------------------------------------------

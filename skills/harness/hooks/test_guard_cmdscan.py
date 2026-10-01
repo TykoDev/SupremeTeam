@@ -902,7 +902,7 @@ POWERSHELL_READS = (
 class PowerShellBlockTests(unittest.TestCase):
     """PowerShell script blocks and the cmdlets that take their path from the pipeline, and the cost of reading all of the above."""
 
-    def test_a_powershell_script_block_is_read_for_the_read_only_rule_only(self):
+    def test_a_powershell_script_block_is_read_in_a_nested_analysis(self):
         for text, expected in POWERSHELL_BLOCKS:
             with self.subTest(command=text):
                 found = sorted({path for paths, _ in hidden(text, ps=True) for path in paths})
@@ -950,6 +950,38 @@ class PowerShellBlockTests(unittest.TestCase):
                 self.assertLess(time.perf_counter() - start, 4.0)
 
 
+class PowerShellAbbreviationTests(unittest.TestCase):
+    """An abbreviated parameter that fits a value parameter and a switch (`-f`: `-Filter` or `-Force`) is a switch, so the word
+    after it is an operand; round 2 read it as `-Filter` and the path after it was never a write target."""
+
+    AMBIGUOUS = (
+        ("rm -f x", {"x"}), ("rm -r -f x", {"x"}), ("rm -f $tmp", {"$tmp"}), ("Remove-Item -f x", {"x"}), ("ri -f x", {"x"}),
+        ("del -f x", {"x"}), ("mv -f a b", {"a", "b"}), ("cp -f a b", {"b"}), ("Set-Content -f x v", {"x"}), ("Add-Content -f x v", {"x"}),
+        ("Clear-Content -f x", {"x"}), ("Rename-Item -f a b", {"a"}), ("Move-Item -f a b", {"a", "b"}), ("Copy-Item -f a b", {"b"}),
+        ("New-Item -f x", {"x"}), ("Out-File -f x", {"x"}), ("rm -c x", {"x"}), ("Remove-Item -f -Recurse x", {"x"}),
+    )
+    UNIQUE = (
+        ("Remove-Item -fi *.py x", {"x"}), ("Remove-Item -Filter *.py x", {"x"}), ("Remove-Item -Force x", {"x"}), ("Remove-Item -fo x", {"x"}),
+        ("Remove-Item -pa x", {"x"}), ("Remove-Item -Path x", {"x"}), ("Remove-Item -l x", {"x"}), ("Remove-Item -in *.py -Path x", {"x"}),
+        ("Set-Content -v hello out.txt", {"out.txt"}), ("Set-Content -Value hello out.txt", {"out.txt"}), ("Copy-Item -d dest src", {"dest"}),
+        ("Copy-Item -Destination dest src", {"dest"}), ("Remove-Item -Credential me x", {"x"}), ("rm -rf x", {"x"}),
+    )
+
+    def test_an_ambiguous_abbreviation_is_a_switch_and_the_path_after_it_is_written(self):
+        for text, expected in self.AMBIGUOUS:
+            with self.subTest(command=text):
+                self.assertEqual(paths(text, ps=True), expected, text)
+
+    def test_an_abbreviation_that_fits_one_value_parameter_still_takes_its_value(self):
+        for text, expected in self.UNIQUE:
+            with self.subTest(command=text):
+                self.assertEqual(paths(text, ps=True), expected, text)
+
+    def test_every_switch_listed_is_a_parameter_the_value_table_does_not_hold(self):
+        for verb, switches in _cmdscan._PS_SWITCHES.items():
+            with self.subTest(cmdlet=verb):
+                self.assertIn(verb, _cmdscan._PS_SPECS)
+                self.assertFalse(set(switches) & set(_cmdscan._PS_SPECS[verb][0]), verb)
 
 
 class WorkingDirectoryCostTests(unittest.TestCase):

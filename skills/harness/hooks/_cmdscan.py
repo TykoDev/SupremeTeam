@@ -1133,20 +1133,51 @@ _PS_SPECS = {
     "start-bitstransfer": (("source", "destination"), ("destination",), "none"),
     "set-acl": (("path", "literalpath", "aclobject"), ("path", "literalpath"), "first"),
 }
+# The switch parameters of each cmdlet above, which take no value. Only here to tell an abbreviation that fits a value
+# parameter alone (`-fi` is `-Filter`) from one that fits a switch too (`-f` is `-Filter` or `-Force`, which PowerShell
+# refuses as ambiguous and a native command of the same name, `rm -f` on Linux, reads as a switch).
+_PS_SWITCHES = {
+    "set-content": ("force", "passthru", "nonewline", "asbytestream", "whatif", "confirm", "usetransaction"),
+    "add-content": ("force", "passthru", "nonewline", "asbytestream", "whatif", "confirm", "usetransaction"),
+    "clear-content": ("force", "whatif", "confirm", "usetransaction"),
+    "out-file": ("append", "force", "noclobber", "nonewline", "whatif", "confirm"),
+    "new-item": ("force", "whatif", "confirm", "usetransaction"),
+    "remove-item": ("force", "recurse", "whatif", "confirm", "usetransaction"),
+    "rename-item": ("force", "passthru", "whatif", "confirm", "usetransaction"),
+    "move-item": ("force", "passthru", "whatif", "confirm", "usetransaction"),
+    "copy-item": ("container", "force", "passthru", "recurse", "whatif", "confirm", "usetransaction"),
+    "set-itemproperty": ("force", "passthru", "whatif", "confirm", "usetransaction"),
+    "tee-object": ("append",),
+    "export-csv": ("append", "force", "noclobber", "notypeinformation", "includetypeinformation", "whatif", "confirm"),
+    "export-clixml": ("force", "noclobber", "whatif", "confirm"),
+    "invoke-webrequest": ("passthru", "resume", "usebasicparsing", "skipcertificatecheck", "skiphttperrorcheck", "disablekeepalive"),
+    "invoke-restmethod": ("passthru", "resume", "usebasicparsing", "skipcertificatecheck", "skiphttperrorcheck", "disablekeepalive"),
+    "expand-archive": ("force", "passthru", "whatif", "confirm"),
+    "compress-archive": ("update", "passthru", "whatif", "confirm"),
+    "set-acl": ("passthru", "whatif", "confirm"),
+}
 
 
-def _ps_param(text: str, names: tuple) -> "tuple | None":
-    """``(canonical name, inline value)`` when ``text`` is a parameter of the cmdlet (an exact or unique-prefix match)."""
+def _ps_param(text: str, names: tuple, switches: tuple = ()) -> "tuple | None":
+    """``(canonical name, inline value)`` when ``text`` is a value parameter of the cmdlet (an exact or unique-prefix match).
+
+    An abbreviation that also fits one of the cmdlet's ``switches`` is ambiguous and is not a value parameter: the word after
+    it stays an operand, so `rm -f src/payments/a` names its target."""
     if not text.startswith("-") or len(text) < 2 or not text[1:2].isalpha():
         return None
     name, colon, value = text[1:].partition(":")
     lowered = name.lower()
-    matched = [candidate for candidate in names if candidate == lowered] or [c for c in names if c.startswith(lowered)]
+    matched = [candidate for candidate in names if candidate == lowered]
+    if not matched:
+        fits = {candidate for candidate in (*names, *switches) if candidate.startswith(lowered)}
+        matched = [candidate for candidate in names if candidate.startswith(lowered)] if len(fits) == 1 else []
     return (matched[0], value if colon else None) if matched else None
 
 
 def _t_powershell(verb: str, rest: list, ctx: _Ctx) -> list:
     value_params, path_params, rule = _PS_SPECS[verb]
+    value_params = (*value_params, "credential")
+    switches = _PS_SWITCHES.get(verb, ())
     named: dict = {}
     positional: list = []
     i = 0
@@ -1156,7 +1187,7 @@ def _t_powershell(verb: str, rest: list, ctx: _Ctx) -> list:
         if _CMD_SWITCH.match(text):
             i += 1
             continue
-        param = _ps_param(text, value_params)
+        param = _ps_param(text, value_params, switches)
         if param:
             name, inline = param
             if inline is not None:

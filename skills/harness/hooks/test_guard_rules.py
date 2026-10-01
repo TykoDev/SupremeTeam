@@ -570,6 +570,26 @@ class LaunchedWriterTests(GuardCase):
                 self.assertLess(elapsed, 6.0, f"{len(command)} chars took {elapsed:.1f}s")
 
 
+class PowerShellAbbreviationRuleTests(GuardCase):
+    """`rm -f src/payments/a` in the PowerShell tool (a native `rm` on Linux, `Remove-Item -f` elsewhere) was read as a filter, so
+    no rule saw the path; the substring rule refused it."""
+
+    def test_an_ambiguous_abbreviation_does_not_hide_a_frozen_write(self):
+        self.guard(FROZEN)
+        self.check(("rm -f src/payments/a", "rm -r -f src/payments", "Remove-Item -f src/payments/a", "ri -f src/payments/a",
+                    "del -f src/payments/a", "mv -f src/payments/a build/a", "cp -f a src/payments/b", "Set-Content -f src/payments/a x",
+                    "Rename-Item -f src/payments/a b", "Remove-Item -f -Recurse src/payments"), deny=True, tool="PowerShell", fragment="frozen boundary")
+        self.check(("rm -f build/x", "Remove-Item -f build/x", "mv -f build/a build/b", "cp -f src/payments/a build/", "Remove-Item -fi *.py src/other",
+                    "Get-ChildItem -f src/payments"), deny=False, tool="PowerShell")
+
+    def test_it_does_not_hide_a_core_record_or_a_write_in_a_read_only_run(self):
+        self.check(("rm -f skillset-saves/runs/r1/_state.md",), deny=True, tool="PowerShell", fragment="save_run.py")
+        self.check(("Remove-Item -f .harness-state/guard-state.json",), deny=True, tool="PowerShell", fragment="guard_state.py")
+        self.guard(READ_ONLY)
+        self.check(("rm -f x", "Remove-Item -f $tmp", "mv -f a b"), deny=True, tool="PowerShell", fragment="is recorded read-only")
+        self.check((f"rm -f skillset-saves/runs/{READ_ONLY_RUN}/investigation/a.md",), deny=False, tool="PowerShell")
+
+
 # --- Rule D -------------------------------------------------------------------------
 
 class ReadOnlyRunTests(GuardCase):

@@ -68,7 +68,7 @@ wins.
 |---|---|---|
 | Entry orchestrator | `admiral` | The front door. Lifecycle work starts here |
 | Pipeline owners (must defer) | `design/commander`, `build/build-management`, `review/code-chief`, `review/cso`, `investigate`, `design/redesign`, `skill-maker`, `taste` | Components of the Admiral pipeline. Reached without an active handoff, they hand off to `admiral` first, then take the delegation back |
-| Dual-mode entry | `qa`, `qa-only`, `ship` | Directly invokable as tools **and** the owners of a gated pipeline when admiral delegates to them; how they were reached decides which is running |
+| Dual-mode entry | `qa`, `qa-only`, `ship` | Used as tools **and** the owners of a gated pipeline when admiral delegates to them; how they were reached decides which is running. All three sit at the install root, so a host registers them by name |
 | Gatekeepers (must defer) | `gatekeeper-admiral`, `design/gatekeeper-design`, `build/gatekeeper-build`, `review/gatekeeper-code` | Only by a submitting owner presenting a package at the boundary they validate. Never a front door |
 | Session memory | `session-memory` | A component of the Admiral pipeline, engaged by `admiral` at its checkpoints; it hands off to `admiral` when reached cold |
 | Internal specialists | every skill under `design/`, `build/`, `review/` not named above; `taste/taste-review`; `skill-maker/skill-creator`; `skill-maker/skill-reviewer` | Through their owning sub-orchestrator. Not a user entry point |

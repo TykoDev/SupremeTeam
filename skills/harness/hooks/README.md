@@ -503,8 +503,8 @@ Underlying fail-open utility for Layer 3 and Layer 4 hooks:
 ### `_saves.py` (Core Helper — Save Classifier)
 
 Shared parser for the canonical `skillset-saves/` layout:
-- `classify_saves(project_root)`: Classifies save directory status (`active`, `complete`, `stale`, `orphaned`, `conflicting`, `corrupt`, `interrupted`, `missing`, `unreadable`).
-- `has_active_run(project_root)`: Boolean probe returning `True` only when a coherent, fresh, unexpired run lock exists.
+- `classify_saves(project_root)`: Classifies save directory status (`active`, `inactive`, `complete`, `stale`, `orphaned`, `conflicting`, `corrupt`, `interrupted`, `uninitialized`, `missing`, `unreadable`).
+- `has_active_run(project_root)`: Boolean probe returning `True` only when a coherent, fresh, unexpired run lock exists. The guard's hook-file rule and the prompt hook ask it on every call, so it reads each run's lock and classifies in full only the runs whose lock is held and the one the pointer names (`inspect_saves(only_held=True)`), which gives the classification's answer in about a third of the time at a thousand runs.
 - `read_latest_pointer(project_root)`: Safely extracts the active run ID from `skillset-saves/_latest.md`.
 
 ---

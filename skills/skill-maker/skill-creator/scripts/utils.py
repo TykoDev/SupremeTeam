@@ -1,5 +1,6 @@
 """Shared utilities for skill-creator scripts."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -10,6 +11,12 @@ PROJECT_MARKERS = (".claude", ".git", ".harness-state", "skillset-saves")
 # winnt.h IO_REPARSE_TAG_MOUNT_POINT, which marks a junction. The stat module only
 # defines it on Windows, and this check has to be importable everywhere.
 MOUNT_POINT_REPARSE_TAG = 0xA0000003
+
+
+# The secret and run-state names the packager refuses. skills/scripts/package_check.py reads
+# the same file, which is how the two lists stay one list.
+RESIDUE_CLASSES_FILE = Path(__file__).with_name("residue-classes.json")
+RESIDUE_CLASS_NAMES = ("runtime-state", "save-state", "secrets")
 
 
 class ProjectRootError(Exception):
@@ -41,6 +48,28 @@ def is_link(path: Path) -> bool:
         return getattr(path.lstat(), "st_reparse_tag", 0) == MOUNT_POINT_REPARSE_TAG
     except OSError:
         return False
+
+
+def load_residue_classes() -> dict[str, list[str]]:
+    """The directory and file names the packager refuses, by residue class.
+
+    Raises ValueError when the list cannot be read or is malformed: a protection
+    that cannot read its list must stop, not refuse nothing.
+    """
+    try:
+        data = json.loads(RESIDUE_CLASSES_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"cannot read {RESIDUE_CLASSES_FILE}: {exc}") from exc
+    if (
+        not isinstance(data, dict)
+        or set(data) != set(RESIDUE_CLASS_NAMES)
+        or not all(
+            isinstance(names, list) and names and all(isinstance(name, str) and name for name in names)
+            for names in data.values()
+        )
+    ):
+        raise ValueError(f"{RESIDUE_CLASSES_FILE} must map {', '.join(RESIDUE_CLASS_NAMES)} to non-empty lists of names")
+    return data
 
 
 def find_project_root(explicit: Path | None = None, start: Path | None = None) -> Path:

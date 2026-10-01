@@ -1,0 +1,9 @@
+{
+  "runtime-state": [".harness-state", ".supremeteam"],
+  "save-state": ["skillset-saves"],
+  "secrets": [
+    ".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx",
+    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
+    ".npmrc", ".netrc", ".pypirc", "credentials*.json"
+  ]
+}

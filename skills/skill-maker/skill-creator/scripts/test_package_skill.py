@@ -1,9 +1,11 @@
 """Regression tests for package_skill: what is refused, what is skipped, and where the archive may land."""
 import contextlib
 import io
+import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -13,6 +15,10 @@ import zipfile
 CREATOR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CREATOR))
 from scripts import package_skill as ps  # noqa: E402
+from scripts import utils  # noqa: E402
+from scripts.utils import load_residue_classes  # noqa: E402
+
+PACKAGE_CHECK = CREATOR.parents[1] / "scripts" / "package_check.py"
 
 SKILL_MD = "---\nname: sample\ndescription: Does a thing\n---\nbody\n"
 
@@ -53,16 +59,16 @@ class PackagingCase(unittest.TestCase):
         except (OSError, NotImplementedError):
             self.skipTest("this host cannot create symlinks")
 
-
-class RefusalTests(PackagingCase):
-    """A secret, run state or a link in the source folder is refused, and nothing is written."""
-
     def assert_refused(self, skill: Path, *offenders: str):
         result, printed = package(skill, self.out)
         self.assertIsNone(result)
         self.assertFalse(self.out.exists(), "a refused package must leave no archive or directory behind")
         for offender in offenders:
             self.assertIn(offender, printed)
+
+
+class RefusalTests(PackagingCase):
+    """A secret, run state or a link in the source folder is refused, and nothing is written."""
 
     def test_secrets_are_refused(self):
         for offender in (".env", ".env.production", "keys/server.pem", "keys/deploy.key", ".ENV", "keys/SERVER.PEM"):
@@ -106,6 +112,91 @@ class RefusalTests(PackagingCase):
         result, printed = package(skill, self.out)
         self.assertIsNotNone(result, printed)
         self.assertEqual(["sample/SKILL.md"], names(result))
+
+
+class SharedResidueTests(PackagingCase):
+    """The packager and package_check.py refuse the same secrets and run state, from one list (RR-V5-3)."""
+
+    # Named secrets the packager zipped while package_check.py already flagged them.
+    SECRETS = ("id_rsa", ".npmrc", "keys/cert.p12", "creds/credentials.json", "keys/site.pfx", ".netrc", ".pypirc",
+               "keys/id_dsa", "keys/id_ecdsa", "home/id_ed25519", "creds/credentials.prod.json", ".NPMRC", "keys/CERT.P12")
+    NOT_SECRETS = ("keys/id_rsa.pub", "docs/credentials-guide.md", "credentials.md", "references/npmrc-notes.md")
+
+    def concrete(self, pattern: str) -> str:
+        """A file name the glob matches."""
+        return pattern.replace("*", "x")
+
+    def test_the_secrets_package_check_names_are_refused(self):
+        for offender in self.SECRETS:
+            with self.subTest(offender=offender), tempfile.TemporaryDirectory() as tmp:
+                self.root = Path(tmp).resolve()
+                self.out = self.root / "out"
+                self.assert_refused(make_skill(self.root, {"references/ok.md": "fine", offender: "SECRET"}), offender)
+
+    def test_supremeteam_state_is_run_state(self):
+        for offender, directory in {".supremeteam/state.json": ".supremeteam", "scripts/.SupremeTeam/x": ".SupremeTeam"}.items():
+            with self.subTest(offender=offender), tempfile.TemporaryDirectory() as tmp:
+                self.root = Path(tmp).resolve()
+                self.out = self.root / "out"
+                self.assert_refused(make_skill(self.root, {offender: "state"}), directory)
+
+    def test_public_keys_and_ordinary_credential_words_are_still_packaged(self):
+        skill = make_skill(self.root, {name: "fine" for name in self.NOT_SECRETS})
+        result, printed = package(skill, self.out)
+        self.assertIsNotNone(result, printed)
+        self.assertEqual(sorted(f"sample/{name}" for name in (*self.NOT_SECRETS, "SKILL.md")), names(result))
+
+    def test_every_name_in_the_shared_list_is_refused(self):
+        residue = load_residue_classes()
+        offenders = [self.concrete(name) for name in residue["secrets"]]
+        offenders += [f"{name}/x.md" for kind in ("runtime-state", "save-state") for name in residue[kind]]
+        for offender in offenders:
+            with self.subTest(offender=offender), tempfile.TemporaryDirectory() as tmp:
+                self.root = Path(tmp).resolve()
+                self.out = self.root / "out"
+                self.assert_refused(make_skill(self.root, {offender: "x"}), offender.split("/")[0])
+
+    @unittest.skipUnless(PACKAGE_CHECK.is_file(), "package_check.py is not part of an installed skill")
+    def test_package_check_classes_every_name_the_packager_refuses_as_residue_too(self):
+        residue = load_residue_classes()
+        offenders = {self.concrete(name): "secrets" for name in residue["secrets"]}
+        offenders.update({f"{name}/x.md": kind for kind in ("runtime-state", "save-state") for name in residue[kind]})
+        offenders.update({name: "secrets" for name in self.SECRETS})
+        for offender in offenders:
+            path = self.root / "tree" / offender
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x", encoding="utf-8")
+        # The distribution manifest leaves .env files out before the residue scan; select everything.
+        manifest = self.root / "select-everything.json"
+        manifest.write_text(json.dumps({"include": ["**/*"], "exclude": []}), encoding="utf-8")
+        process = subprocess.run(
+            [sys.executable, str(PACKAGE_CHECK), "--root", str(self.root / "tree"), "--manifest", str(manifest)],
+            capture_output=True, text=True, encoding="utf-8", check=False,
+        )
+        flagged = {row["path"]: row["class"] for row in json.loads(process.stdout)["violations"]}
+        self.assertEqual(offenders, {path: flagged.get(path) for path in offenders})
+
+    def test_a_list_that_cannot_be_read_stops_the_packager_instead_of_refusing_nothing(self):
+        skill = make_skill(self.root, {"references/ok.md": "fine"})
+        broken = {
+            "missing": None,
+            "not json": "{",
+            "not a mapping": "[]",
+            "a class is missing": json.dumps({"secrets": [".env"], "runtime-state": [".harness-state"]}),
+            "an empty class": json.dumps({"secrets": [], "runtime-state": ["a"], "save-state": ["b"]}),
+            "a name that is not text": json.dumps({"secrets": [1], "runtime-state": ["a"], "save-state": ["b"]}),
+        }
+        for label, content in broken.items():
+            with self.subTest(list=label):
+                listing = self.root / "residue.json"
+                listing.unlink(missing_ok=True)
+                if content is not None:
+                    listing.write_text(content, encoding="utf-8")
+                with patch.object(utils, "RESIDUE_CLASSES_FILE", listing):
+                    result, printed = package(skill, self.out)
+                self.assertIsNone(result)
+                self.assertIn("ERROR: ", printed)
+                self.assertFalse(self.out.exists())
 
 
 class ContentTests(PackagingCase):

@@ -116,7 +116,9 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   a record in the documented layout reaches the gate without a hand edit. It records
   the command with its argument boundaries, runs `--version-command` without a
   shell, and `--fail-on-output` records a scanner that prints findings and exits 0
-  as `fail`; `pass` still means only that the scanner exited 0.
+  as `fail`; `pass` still means only that the scanner exited 0. A `--version-command`
+  that cannot start, such as an unquoted Windows path, is named in the record's
+  limitations instead of leaving a null version with no reason.
 
 - Installers replace and remove only what they installed. A directory or file of
   yours that shares a name with an installed item is moved to
@@ -275,7 +277,9 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 - The YAML subset reader dropped `#` lines, stripped a ` #` tail and collapsed blank
   lines inside block scalars, where all three are content; every YAML file and
   frontmatter in the tree parses to the same value as before. It also keeps a
-  version such as `3.10` as text instead of the float `3.1`.
+  version such as `3.10` as text instead of the float `3.1`: a number is a float only
+  when it prints back unchanged, so `.5`, `+1.5`, `1.`, `1.50` and `1.5e+3` stay text too,
+  which PyYAML would read as floats (no shipped YAML holds an unquoted float).
 - `check_parity.py` no longer lets a void element (`<input>`, `<img>`) leave a route
   open and credit a later shell-level state to it, and rejects an inventory with no
   routes or components instead of scoring it 1.0.

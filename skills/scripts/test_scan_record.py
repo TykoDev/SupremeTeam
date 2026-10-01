@@ -93,6 +93,35 @@ class CommandFidelityTests(ScanRecordCase):
         self.assertIsNone(record["tool_version"])
         self.assertEqual(record["version_command"], "definitely-not-a-scanner-binary --version")
 
+    def test_a_version_command_that_cannot_start_is_named_in_the_limitations(self):
+        """RR-gate-4: the version went missing without a word, and nothing told the reader why."""
+        self.scan("--version-command", "definitely-not-a-scanner-binary --version")
+        limitations = self.record()["limitations"]
+        self.assertEqual(["version command not run: executable not found on PATH: definitely-not-a-scanner-binary"],
+                         limitations)
+
+    def test_an_unquoted_windows_path_is_named_with_the_way_to_write_it(self):
+        self.scan("--version-command", r"C:\Tools\pip-audit.exe --version")
+        (gap,) = self.record()["limitations"]
+        self.assertIn("executable not found on PATH: C:Toolspip-audit.exe", gap)
+        self.assertIn("write the path with / or double each backslash", gap)
+
+    def test_a_path_written_the_documented_way_is_not_reported_missing(self):
+        script = self.root / "version.py"
+        script.write_text("print('scanner 1.2')\n", encoding="utf-8")
+        for spelling in (shlex.join([sys.executable, script.as_posix()]),
+                         " ".join(['"' + sys.executable.replace("\\", "\\\\") + '"', script.as_posix()])):
+            with self.subTest(spelling=spelling):
+                self.scan("--version-command", spelling)
+                record = self.record()
+                self.assertEqual((record["tool_version"], record["limitations"]), ("scanner 1.2", []))
+
+    def test_a_version_command_that_runs_adds_no_limitation_and_a_no_run_request_says_nothing_about_it(self):
+        self.scan("--version-command", shlex.join(python("print('scanner 9.9')")))
+        self.assertEqual(self.record()["limitations"], [])
+        self.scan("--no-run", "--version-command", "definitely-not-a-scanner-binary --version")
+        self.assertEqual(self.record()["limitations"], [])
+
     def test_no_version_command_leaves_both_fields_null(self):
         self.scan()
         record = self.record()

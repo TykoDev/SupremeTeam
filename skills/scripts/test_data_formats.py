@@ -9,12 +9,37 @@ from __future__ import annotations
 
 import unittest
 
-from data_formats import DataFormatError, parse_frontmatter, parse_yaml
+from data_formats import DataFormatError, parse_frontmatter, parse_scalar, parse_yaml
 
 try:
     import yaml
 except ModuleNotFoundError:  # pragma: no cover - environment without PyYAML
     yaml = None
+
+
+class NumberSpellingTests(unittest.TestCase):
+    """RR-gate-5: a number is a float only when it prints back unchanged, which is wider than version numbers."""
+
+    def test_a_spelling_that_does_not_print_back_unchanged_stays_text(self):
+        for text in ("3.10", "1.20", ".5", "+1.5", "1.", "1.50", "-2.50", "1.5e+3"):
+            with self.subTest(text=text):
+                self.assertEqual(parse_scalar(text), text)
+
+    def test_a_spelling_that_prints_back_unchanged_is_a_number(self):
+        for text, value in (("1.5", 1.5), ("-0.25", -0.25), ("100.0", 100.0), ("7", 7), ("-3", -3)):
+            with self.subTest(text=text):
+                self.assertEqual(parse_scalar(text), value)
+
+    @unittest.skipIf(yaml is None, "PyYAML is optional; the cases above pin the expected values")
+    def test_the_difference_from_pyyaml_is_the_documented_one(self):
+        """PyYAML reads the first group as floats and the second as text, for exactly the spellings above."""
+        for text in ("3.10", ".5", "+1.5", "1.", "1.50", "1.5e+3"):
+            with self.subTest(text=text):
+                self.assertIsInstance(yaml.safe_load(text), float)
+                self.assertIsInstance(parse_scalar(text), str)
+        for text in ("1.5e3", "1e3"):
+            with self.subTest(text=text):
+                self.assertEqual(yaml.safe_load(text), parse_scalar(text))
 
 
 class BlockScalarTests(unittest.TestCase):

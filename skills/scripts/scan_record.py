@@ -29,7 +29,10 @@ The record captures: tool, tool version and the argv that printed it (when
 --version-command is given), command (shlex.join of argv) and argv itself, exit
 code, observed_at, duration, inputs bound by sha256 to the inspected
 manifests/lockfiles, target revision (git HEAD when available), the stdout and
-stderr artifacts (raw output retained beside the record), and limitations.
+stderr artifacts (raw output retained beside the record), and limitations. A
+--version-command that cannot start (a missing executable, or a Windows path whose
+backslashes POSIX quoting read as escapes) is named in the limitations, so a null
+tool version always has a reason on the record.
 Artifact names are relative to the manifest that will embed the record, so the
 record passes the gate unedited: the run phase directory when --out sits inside
 skillset-saves/runs/<run>/<phase>/, else the record's own directory, else
@@ -109,7 +112,7 @@ def main() -> int:
     parser.add_argument("--out", required=True, help="path of the JSON record; raw output is stored beside it")
     parser.add_argument("--input", action="append", default=[], help="project-relative manifest/lockfile the scan inspects (repeatable)")
     parser.add_argument("--tool", help="tool name (default: first command token)")
-    parser.add_argument("--version-command", help="command that prints the tool version, e.g. 'pip-audit --version'; split with POSIX shell quoting rules and run as an argument list, never through a shell")
+    parser.add_argument("--version-command", help="command that prints the tool version, e.g. 'pip-audit --version'; split with POSIX shell quoting rules (so write a Windows path with / or doubled backslashes) and run as an argument list, never through a shell; a version command that cannot start is named in the record's limitations")
     parser.add_argument("--fail-exit-codes", default="1", help="comma-separated integer exit codes that mean findings were reported")
     parser.add_argument("--fail-on-output", action="append", default=[], metavar="REGEX", help="record fail instead of pass when the scanner exits 0 but its stdout or stderr matches REGEX (repeatable), for scanners that print findings and exit 0")
     parser.add_argument("--manifest-root", help="directory of the manifest that will embed this record; artifact names are written relative to it (default: the run phase directory when --out is inside skillset-saves/runs/<run>/<phase>/, else the record's own directory)")
@@ -170,18 +173,28 @@ def main() -> int:
             return 2
         inputs.append({"path": Path(value).as_posix(), "sha256": sha256_file(target)})
 
-    version = None
-    probe_executable = resolve_executable(version_argv[0]) if version_argv and not args.no_run else None
-    if probe_executable is not None:
-        try:
-            probe = subprocess.run([probe_executable, *version_argv[1:]], text=True, capture_output=True, check=False, timeout=60)
-            output = (probe.stdout or probe.stderr).strip()
-            version = output.splitlines()[0] if output else None
-        except (OSError, subprocess.TimeoutExpired):
-            version = None
+    version, version_gap = None, None
+    if version_argv and not args.no_run:
+        probe_executable = resolve_executable(version_argv[0])
+        if probe_executable is None:
+            # POSIX quoting reads a backslash as an escape, so an unquoted Windows path arrives mangled and
+            # the version would otherwise go missing without a word.
+            hint = ""
+            if "\\" in args.version_command:
+                hint = " (a backslash escapes the next character: write the path with / or double each backslash)"
+            version_gap = f"version command not run: executable not found on PATH: {version_argv[0]}{hint}"
+        else:
+            try:
+                probe = subprocess.run([probe_executable, *version_argv[1:]], text=True, capture_output=True, check=False, timeout=60)
+                output = (probe.stdout or probe.stderr).strip()
+                version = output.splitlines()[0] if output else None
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                version_gap = f"version command failed: {type(exc).__name__}"
 
     observed_at = datetime.now(timezone.utc).isoformat()
     status, exit_code, duration, limitations = "not-run", None, 0.0, list(args.limitation)
+    if version_gap:
+        limitations.append(version_gap)
     raw_stdout, raw_stderr = "", "not run\n"
     if not args.no_run:
         executable = resolve_executable(command[0])

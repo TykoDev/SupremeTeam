@@ -49,6 +49,7 @@ from pathlib import Path
 import _cmdscan
 import _paths
 import _state
+import run_heartbeat
 
 HOOK_DIR = Path(__file__).resolve().parent
 
@@ -907,7 +908,7 @@ def _project_root() -> Path:
 def main() -> None:
     data = _state.read_hook_input("PreToolUse")
     _state.record_observation("PreToolUse", data)
-    _state.refresh_run_heartbeat(data, "PreToolUse")
+    run_heartbeat.refresh(data, "PreToolUse")
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {}) or {}
     if str(tool_name).lower() == "apply_patch" and isinstance(tool_input, str):

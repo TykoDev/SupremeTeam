@@ -472,11 +472,34 @@ class ImportStructureTests(unittest.TestCase):
     """QR-PY-14 / QR-PY-04: one bootstrap, no private cross-module imports, one project-root resolver."""
 
     OWNED = ("guard_hook", "guard_state", "pre_tool_use", "post_tool_use", "user_prompt_submit", "size_audit", "audit_improve",
-             "_state", "_cmdscan", "_paths", "_fsutil", "_bootstrap", "save_run", "_saves", "verify_registration", "repair_registration")
+             "_state", "_cmdscan", "_paths", "_fsutil", "_bootstrap", "save_run", "_saves", "verify_registration", "repair_registration",
+             "run_heartbeat")
     HOOK_MODULES = {path.stem for path in HOOK_DIR.glob("*.py")} | {"data_formats", "save_taxonomy"}
 
     def tree(self, name: str) -> ast.Module:
         return ast.parse((HOOK_DIR / f"{name}.py").read_text(encoding="utf-8"))
+
+    def imported(self, name: str) -> set:
+        """Every module ``name`` imports, wherever in the file: a function-local import is an edge too."""
+        found = set()
+        for node in ast.walk(self.tree(name)):
+            if isinstance(node, ast.Import):
+                found.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                found.add(node.module.split(".")[0])
+        return found
+
+    def test_the_state_helper_imports_no_hook_module_above_it(self):
+        """`_state` is the lowest hook module. It imported `save_run`, which imports it, for the one heartbeat function."""
+        allowed = {"_bootstrap", "_fsutil", "save_taxonomy", "data_formats"}
+        self.assertEqual(self.imported("_state") & (self.HOOK_MODULES - allowed), set())
+        self.assertFalse(hasattr(_state, "refresh_run_heartbeat"), "the move leaves no alias behind")
+
+    def test_the_heartbeat_module_is_above_the_state_helper_and_the_writer_not_below(self):
+        self.assertLessEqual({"_state", "save_run"}, self.imported("run_heartbeat"))
+        for lower in ("_state", "save_run", "_saves", "_fsutil", "_bootstrap"):
+            with self.subTest(lower=lower):
+                self.assertNotIn("run_heartbeat", self.imported(lower))
 
     def test_no_owned_module_imports_a_private_name_from_another_module(self):
         offenders = []

@@ -230,7 +230,7 @@ inspection alone. Registration requires explicit user approval.
 
 All three lifecycle hooks — `pre_tool_use.py`, `post_tool_use.py`, and
 `user_prompt_submit.py` — call `_state.record_observation()` and then
-`_state.refresh_run_heartbeat()`, so both the observation record and the
+`run_heartbeat.refresh()`, so both the observation record and the
 heartbeat refresh come from every hook and neither is post-tool only.
 `harness/hooks/README.md` § Heartbeat refresh is canonical for the refresh
 conditions and states the same set: a payload carrying a host session id,

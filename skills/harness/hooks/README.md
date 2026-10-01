@@ -86,7 +86,8 @@ Every file in `skills/harness/hooks/` serves an explicit, non-overlapping archit
 | [`check_readiness.py`](check_readiness.py) | CLI / Diagnostic | - | Evaluates runtime prerequisites: Python version (>= 3.13), hook registration, observed firing, and save state. Read-only. |
 | [`verify_registration.py`](verify_registration.py) | CLI / Diagnostic | - | Non-mutating inspector checking whether hooks are configured, resolvable, and executable in host configs, whether their matchers cover the tools they need, and which interpreter they launch. |
 | [`repair_registration.py`](repair_registration.py) | CLI / Diagnostic | - | Scoped dry-run diff preview and `--apply` repair tool for host hook configuration with timestamped backups; records the hook script hashes. |
-| [`_state.py`](_state.py) | Internal Module | 3 & 4 | Fail-open foundation helper: the one project-root resolver, hook input decoding, trajectory recording, guard state access, fault counting, and heartbeat refresh. |
+| [`_state.py`](_state.py) | Internal Module | 3 & 4 | Fail-open foundation helper: the one project-root resolver, hook input decoding, trajectory recording, guard state access, and fault counting. It imports no module above it, which is why the heartbeat refresh is not here. |
+| [`run_heartbeat.py`](run_heartbeat.py) | Internal Module | Persistence | The heartbeat refresh every registered hook runs on each host event (`refresh(data, event)`): throttled, fail-open, and written only through `save_run.py`. It sits above `_state` and `save_run`; neither imports it. |
 | [`_fsutil.py`](_fsutil.py) | Internal Module | 3 & 4 | The one atomic write (per-process staging, retry, in-place fallback, an optional explicit file mode) and the one OS advisory lock (`AdvisoryLock`) the hooks and writers share. |
 | [`_bootstrap.py`](_bootstrap.py) | Internal Module | - | Puts this directory and `skills/scripts` on `sys.path` once, so modules import what they need by its real name, and lists the files a registered hook runs to decide (`enforcement_files()`, for the hash record). |
 | [`_testkit.py`](_testkit.py) | Test Support | - | Shared scaffolding for the guard tests: an in-process `decide()` and a subprocess `run_hook()` that read the project from the environment as a host does. |
@@ -508,8 +509,7 @@ Underlying fail-open utility for Layer 3 and Layer 4 hooks:
 - `record_fault(event, error)` / `load_observations()`: the fault count described under [Fault trace](#fault-trace).
 - `safe_text(value, limit)`: neutralises and caps text taken from state before it is shown to the model. `read_mapping(path)` reads a run record.
 - `record_observation()`: Appends hook execution records under `.harness-state/observations/` with session ID tracking.
-- `refresh_run_heartbeat()`: Throttled update of the active run's heartbeat in `_state.md` and `_lock.md`.
-- `record_trajectory_step()`: Appends tool call signatures to `.harness-state/trajectories/` and prunes records older than 7 days.
+- `append_trajectory()`: Appends tool call signatures to `.harness-state/trajectories/` and prunes records older than 7 days.
 
 ### `_saves.py` (Core Helper — Save Classifier)
 
@@ -522,7 +522,7 @@ Shared parser for the canonical `skillset-saves/` layout:
 
 ## Heartbeat Refresh
 
-To prevent active runs from going stale during long autonomous workflows, all three registered hooks (`pre_tool_use.py`, `post_tool_use.py`, `user_prompt_submit.py`) refresh the active run's heartbeat:
+To prevent active runs from going stale during long autonomous workflows, all three registered hooks (`pre_tool_use.py`, `post_tool_use.py`, `user_prompt_submit.py`) refresh the active run's heartbeat through `run_heartbeat.refresh`:
 - **Conditions:** Only when the hook payload contains a valid host `session_id`, an active run lock is held, the lock is coherent and uncorrupted, and the run is not interrupted.
 - **Throttling:** Refreshes are throttled to at most once every 5 minutes.
 - **Execution:** Calls `save_run.py heartbeat --run-id <run> --owner <owner>` internally.

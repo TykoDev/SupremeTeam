@@ -18,6 +18,7 @@ import json
 import subprocess
 import sys
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -29,7 +30,7 @@ import pre_tool_use  # noqa: E402
 
 # The hook modules this package owns: each must import on an interpreter below the floor.
 OWNED_MODULES = ("_bootstrap", "_cmdscan", "_fsutil", "_paths", "_state", "guard_hook", "guard_state", "post_tool_use",
-                 "pre_tool_use", "size_audit", "audit_improve", "user_prompt_submit")
+                 "pre_tool_use", "run_heartbeat", "size_audit", "audit_improve", "user_prompt_submit")
 OLDER = kit.older_interpreters()
 BELOW_FLOOR = (3, 10, 12, "final", 0)
 
@@ -201,6 +202,28 @@ class OlderInterpreterTests(unittest.TestCase):
                 post = kit.run_hook("post_tool_use.py", {"tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_response": {}},
                                     self.root, python=python)
                 self.assertEqual((post.returncode, post.stderr), (0, b""))
+
+    def test_every_entry_refreshes_a_due_heartbeat_under_each_older_interpreter(self):
+        """The refresh moved out of `_state` into `run_heartbeat` (QR-PY-14); the three entries still reach the real writer from it."""
+        (self.root / "README.md").write_text("# fixture\n", encoding="utf-8")
+        created = subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), "create", "--run-id", "run-1", "--evidence", "README.md",
+                                  "--project-root", str(self.root)], capture_output=True, text=True, env=kit.clean_env(self.root), check=False)
+        self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
+        lock = self.root / "skillset-saves" / "runs" / "run-1" / "_lock.md"
+        throttle = self.root / ".harness-state" / "observations" / "heartbeat-scan.json"
+        entries = (("pre_tool_use.py", "PreToolUse", kit.bash("ls")), ("post_tool_use.py", "PostToolUse", kit.bash("ls")),
+                   ("user_prompt_submit.py", "UserPromptSubmit", {"prompt": "/status"}))
+        for label, python in OLDER:
+            for script, event, payload in entries:
+                record = json.loads(lock.read_text(encoding="utf-8"))
+                record["heartbeat"] = (datetime.now(timezone.utc) - timedelta(minutes=12)).isoformat()
+                record.pop("heartbeat_source", None)
+                lock.write_text(json.dumps(record), encoding="utf-8")
+                throttle.unlink(missing_ok=True)
+                with self.subTest(python=label, entry=script):
+                    proc = kit.run_hook(script, {**payload, "session_id": "host-1"}, self.root, python=python)
+                    self.assertEqual((proc.returncode, proc.stderr), (0, b""))
+                    self.assertEqual(json.loads(lock.read_text(encoding="utf-8")).get("heartbeat_source"), f"hook:{event}")
 
     def test_a_real_failure_to_import_the_guard_is_readable_and_counted(self):
         for label, python in OLDER:

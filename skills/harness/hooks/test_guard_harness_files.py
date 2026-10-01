@@ -55,6 +55,8 @@ class HarnessFileCase(unittest.TestCase):
     def assertProtected(self, output: str, message: str = "") -> None:
         self.assertTrue(kit.denied(output), message or output)
         self.assertIn("SUPREMETEAM_HARNESS_DEV", kit.reason(output))
+        self.assertIn("not a hook", kit.reason(output))  # RR-guard-4: the cost of covering the whole file is said, with who decides
+        self.assertIn("owner", kit.reason(output))
 
 
 class NotEngagedTests(HarnessFileCase):

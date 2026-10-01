@@ -724,7 +724,8 @@ _HARNESS_REASON = (
     "Blocked by harness Action Realization layer: the hook scripts and the host files that register them are not "
     "edited while a run is pinned or a boundary is recorded, because an edit there would switch the guard off. "
     "Register through skills/harness/hooks/repair_registration.py, or edit them in a maintenance session "
-    "(start the host with SUPREMETEAM_HARNESS_DEV=1)."
+    "(start the host with SUPREMETEAM_HARNESS_DEV=1). A setting in one of those files that is not a hook "
+    "(a permission, an environment entry) is the owner's to change: say what and why."
 )
 
 

@@ -116,14 +116,15 @@ def validate_skill(skill_path):
     # Official Claude Skills frontmatter properties (per the Skills spec).
     OFFICIAL_PROPERTIES = {'name', 'description', 'license', 'allowed-tools', 'metadata', 'compatibility'}
 
-    # SupremeTeam catalog extension fields. These are intentional, catalog-wide
-    # taxonomy/orchestration keys (used by 32-76 of the catalog's skills) and are
-    # consumed as prose by the orchestrators, not by the host loader. They are
-    # accepted here so the validator does not reject the catalog's own skills.
+    # SupremeTeam catalog extension field: `version`, which every one of the
+    # catalog's skills carries (CONTRIBUTING.md says when to bump it). It is read
+    # by people and tools, not by the host loader, and is accepted here so the
+    # validator does not reject the catalog's own skills. A key no skill uses is
+    # not listed: it would only hide a typo.
     # Note: 'allowed_tools' (underscore) is deliberately NOT in either set — the
     # real field is the hyphenated 'allowed-tools', so the underscore form stays
     # a caught typo (the host silently ignores it).
-    SUPREMETEAM_EXTENSIONS = {'version', 'family', 'role', 'auth_context', 'mcp_servers', 'canonical'}
+    SUPREMETEAM_EXTENSIONS = {'version'}
 
     ALLOWED_PROPERTIES = OFFICIAL_PROPERTIES | SUPREMETEAM_EXTENSIONS
 

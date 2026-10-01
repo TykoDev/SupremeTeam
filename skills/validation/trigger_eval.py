@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Behavioural trigger eval: does the right skill win, out of all 52?
+"""Behavioural trigger eval: does the right skill win, out of the whole roster?
 
 Every other check in this catalog is structural. This one is not: it asks a real
 model to route a real request against the real roster, and scores whether the
@@ -9,8 +9,9 @@ Why a catalog-level eval rather than the per-skill one in
 ``skill-maker/skill-creator/scripts/run_eval.py``: that harness registers a
 single skill and asks whether it fires. A skill can fire correctly in isolation
 and still be wrong in the catalog, because another skill's description claims the
-same phrasing. Discrimination is the property that matters once there are 52 of
-them, and it is only visible when all 52 compete for the same request.
+same phrasing. Discrimination is the property that matters once a catalog has
+dozens of skills, and it is only visible when all of them compete for the same
+request.
 
 The corpus is not invented — it is taken from the catalog, in three forms of
 increasing difficulty, because the easy forms flatter the result:

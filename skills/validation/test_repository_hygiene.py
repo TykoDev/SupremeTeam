@@ -60,7 +60,7 @@ class LicenseTests(unittest.TestCase):
         self.assertIn('THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND', self.text)
 
     def test_the_package_manifest_declares_the_license_the_file_grants(self):
-        """The manifest travels with an installed copy; the LICENSE file does not."""
+        """The manifest travels with an installed copy, as does skills/LICENSE, a copy of the file this class reads."""
         self.assertEqual("MIT", _catalog.load_spec("package-manifest.yaml")["license"])
 
     def test_the_readme_states_the_license_and_links_the_file(self):

@@ -28,7 +28,7 @@ HOOK_DIR = Path(__file__).resolve().parent
 SAVE_RUN = HOOK_DIR / "save_run.py"
 sys.path.insert(0, str(HOOK_DIR))
 import _saves  # noqa: E402
-from test_run_state import refusing  # noqa: E402
+from test_run_state import refusing, unsearchable  # noqa: E402
 
 NOW = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
 
@@ -362,6 +362,34 @@ class RefusedRecordTests(unittest.TestCase):
             self.assertTrue(_saves.has_active_run(self.project.root))
         self.assertEqual((result["status"], result["access_denied"]), ("corrupt", ["skillset-saves/runs"]), result)
         self.assertNotIn(str(self.project.root), result["detail"])
+
+    def test_a_directory_this_account_may_not_search_is_not_read_as_absent_whatever_pathlib_makes_of_it(self):
+        """RR3-state-6: `Path.exists` and `Path.is_dir` answer no for it where pathlib is built on `os.path`, which read a run
+        under such a directory as no run. The refused stat is simulated in `os.stat`, which both of them call."""
+        self.project.run("a")
+        self.project.pointer("a")
+        with unsearchable("skillset-saves/runs"):
+            result = self.project.classify()
+            self.assertTrue(_saves.has_active_run(self.project.root))
+            single = _saves.inspect_run(self.project.root, "a", now=self.project.now)
+        self.assertEqual((result["status"], result["access_denied"]), ("corrupt", ["skillset-saves/runs/a"]), result)
+        self.assertEqual((single["state"], single["access_denied"]), ("corrupt", ["skillset-saves/runs/a"]), single)
+
+    def test_the_probes_tell_a_path_that_is_not_there_from_one_that_cannot_be_reached(self):
+        self.project.run("a")
+        runs, there, gone = self.project.runs, self.project.runs / "a", self.project.runs / "nothing"
+        self.assertEqual((_saves.path_exists(there), _saves.path_is_dir(there), _saves.path_exists(gone), _saves.path_is_dir(gone)),
+                         (True, True, False, False))
+        self.assertFalse(_saves.path_is_dir(there / "_state.md"))
+        self.assertFalse(_saves.path_exists(runs / "a" / "_state.md" / "below a file"), "a file on the way is not a refusal")
+        with unsearchable("skillset-saves/runs"):
+            for probe in (_saves.path_exists, _saves.path_is_dir):
+                with self.assertRaises(PermissionError):
+                    probe(there)
+                with self.assertRaises(PermissionError):
+                    probe(gone)
+            self.assertTrue(_saves._exists(gone), "a record that cannot be shown absent may be there")
+            self.assertFalse(_saves.is_directory(there), "a caller that was refused already asks only whether it is a directory")
 
     def test_a_directory_where_a_record_belongs_is_damage_not_a_refusal_even_where_the_system_says_permission_denied(self):
         """Windows raises PermissionError for the read of a directory; only a file this account is refused is a refusal."""

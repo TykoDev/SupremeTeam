@@ -9,9 +9,11 @@ heartbeat, and referenced evidence agree.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from stat import S_ISDIR
 from typing import Any
 
 import _bootstrap
@@ -75,7 +77,7 @@ def _load(path: Path) -> tuple[dict[str, Any] | None, bool]:
         value = parse_yaml(path.read_text(encoding="utf-8"))
     except PermissionError:
         # Windows says the same for a directory where the record belongs, which is damage, not a refusal.
-        return None, not _is_directory(path)
+        return None, not is_directory(path)
     except (OSError, ValueError, RecursionError):
         # A parse failure, undecodable bytes and an integer literal past the interpreter's digit limit are all ValueErrors.
         return None, False
@@ -86,17 +88,43 @@ def _mapping(path: Path) -> dict[str, Any] | None:
     return _load(path)[0]
 
 
-def _is_directory(path: Path) -> bool:
+def _stat(path: Path) -> os.stat_result | None:
+    """What ``stat`` says of a path, None where nothing is there, and PermissionError where a directory on the way may not
+    be searched by this account: a path it cannot reach is not shown absent.
+
+    ``Path.exists`` and ``Path.is_dir`` raise that on an interpreter that builds them on ``stat`` and answer no on one that
+    builds them on ``os.path``, so the probes here and in the writer go through this instead."""
     try:
-        return path.is_dir()
-    except OSError:
+        return path.stat()
+    except PermissionError:
+        raise
+    except (OSError, ValueError):
+        return None
+
+
+def path_exists(path: Path) -> bool:
+    """Whether a path is there. Raises PermissionError where a directory on the way may not be searched."""
+    return _stat(path) is not None
+
+
+def path_is_dir(path: Path) -> bool:
+    """Whether a path is a directory. Raises PermissionError where a directory on the way may not be searched."""
+    found = _stat(path)
+    return found is not None and S_ISDIR(found.st_mode)
+
+
+def is_directory(path: Path) -> bool:
+    """Whether a path is a directory, for a caller that has been refused something there already: no, where it is refused."""
+    try:
+        return path_is_dir(path)
+    except PermissionError:
         return False
 
 
 def _exists(path: Path) -> bool:
-    """``Path.exists``, which raises under a directory this account may not search: that path cannot be shown absent."""
+    """Whether a record may be there: a directory this account may not search is not shown to lack it."""
     try:
-        return path.exists()
+        return path_exists(path)
     except PermissionError:
         return True
 
@@ -186,7 +214,7 @@ def _resolve_evidence(project_root: Path, paths: tuple[str, ...]) -> tuple[str, 
             resolved.relative_to(root)
         except (OSError, ValueError):
             return f"evidence path escapes project root {value!r}", ()
-        if not resolved.exists():
+        if not path_exists(resolved):
             missing.append(value)
     return "", tuple(missing)
 
@@ -370,13 +398,13 @@ def inspect_saves(project_root: Path, *, now: datetime | None = None, only_held:
 
 def _classify(project_root: Path, now: datetime, only_held: bool) -> dict[str, Any]:
     root = project_root.resolve() / "skillset-saves"
-    if not root.exists():
+    if not path_exists(root):
         return {"status": "missing", "detail": "skillset-saves does not exist", "run_id": ""}
     runs_dir = root / "runs"
-    if not runs_dir.is_dir():
+    if not path_is_dir(runs_dir):
         return {"status": "missing", "detail": "skillset-saves/runs does not exist", "run_id": ""}
 
-    pointer_exists = (root / POINTER).exists()
+    pointer_exists = path_exists(root / POINTER)
     pointer_run_id, pointer_revision, pointer_updated_at, pointer_reason, pointer_refused = _pointer(root)
     if pointer_refused:
         return _refused([f"{root.name}/{POINTER}"])
@@ -384,10 +412,10 @@ def _classify(project_root: Path, now: datetime, only_held: bool) -> dict[str, A
         return {"status": "corrupt", "detail": pointer_reason, "run_id": ""}
     if pointer_run_id and (Path(pointer_run_id).name != pointer_run_id or pointer_run_id in {".", ".."}):
         return {"status": "corrupt", "detail": "pointer run_id is not a safe directory name", "run_id": ""}
-    if pointer_run_id and not (runs_dir / pointer_run_id).is_dir():
+    if pointer_run_id and not path_is_dir(runs_dir / pointer_run_id):
         return {"status": "corrupt", "detail": f"pointer target run {pointer_run_id} does not exist", "run_id": ""}
 
-    run_dirs = sorted((path for path in runs_dir.iterdir() if path.is_dir()), key=lambda path: path.name)
+    run_dirs = sorted((path for path in runs_dir.iterdir() if path_is_dir(path)), key=lambda path: path.name)
     if only_held:
         run_dirs = [path for path in run_dirs if path.name == pointer_run_id or _lock_is_held(path)]
     records = [_record(project_root.resolve(), path, now, verify_evidence=path.name == pointer_run_id) for path in run_dirs]
@@ -453,7 +481,7 @@ def inspect_run(project_root: Path, run_id: str, *, now: datetime | None = None)
     root = project_root.resolve()
     run_dir = root / "skillset-saves" / "runs" / run_id
     try:
-        if not run_dir.is_dir():
+        if not path_is_dir(run_dir):
             return {"run_id": run_id, "state": "absent", "detail": f"run {run_id} has no directory"}
         record = _record(root, run_dir, now, verify_evidence=True)
     except PermissionError as exc:

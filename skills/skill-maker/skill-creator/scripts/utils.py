@@ -1,5 +1,7 @@
 """Shared utilities for skill-creator scripts."""
 
+from __future__ import annotations
+
 import json
 import sys
 from pathlib import Path

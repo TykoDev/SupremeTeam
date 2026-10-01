@@ -48,6 +48,8 @@ Exit codes:
        archive could not be created
 """
 
+from __future__ import annotations
+
 import fnmatch
 import sys
 import zipfile

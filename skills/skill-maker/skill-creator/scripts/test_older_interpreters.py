@@ -1,10 +1,11 @@
-"""Regression tests for link detection on interpreters older than Python 3.12.
+"""Regression tests for the scripts on interpreters older than this repository's own floor.
 
 Path.is_junction() does not exist before 3.12, and the packager and the eval viewer must
 still run there (the packager is the one tool a Claude.ai session can use). The in-process
 tests take the method away from Path; the interpreter tests run the real tools under every
-older Python this host has.
+older Python this host has; the 3.9 tests read the source because no 3.9 is assumed.
 """
+import ast
 import contextlib
 import importlib.util
 import io
@@ -147,6 +148,53 @@ class PackagerWithoutIsJunctionTests(unittest.TestCase):
         with without_is_junction():
             self.assertIsNone(self.package(skill))
         self.assertFalse((self.root / "out").exists())
+
+
+class Python39FloorTests(unittest.TestCase):
+    """The scripts r1 ran on Python 3.9 still can: no annotation is evaluated as a union when the def runs.
+
+    A "X | None" annotation raises TypeError before 3.10 unless annotations stay strings
+    (from __future__ import annotations). No 3.9 interpreter is assumed here, so this
+    reads the source instead of running it.
+    """
+
+    # Importable on 3.9 at r1: no definition-time union, no syntax newer than 3.9.
+    RAN_ON_39 = ("package_skill", "quick_validate", "utils", "aggregate_benchmark", "generate_report")
+
+    @staticmethod
+    def evaluated_unions(tree: ast.Module) -> list[int]:
+        """Line numbers of defs whose signature holds a PEP 604 union that Python evaluates."""
+        lazy = any(isinstance(node, ast.ImportFrom) and node.module == "__future__"
+                   and any(alias.name == "annotations" for alias in node.names) for node in tree.body)
+        if lazy:
+            return []
+        lines = []
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs, node.args.vararg, node.args.kwarg]
+            annotations = [argument.annotation for argument in arguments if argument is not None and argument.annotation]
+            if node.returns:
+                annotations.append(node.returns)
+            if any(isinstance(part, ast.BinOp) and isinstance(part.op, ast.BitOr)
+                   for annotation in annotations for part in ast.walk(annotation)):
+                lines.append(node.lineno)
+        return lines
+
+    def test_no_script_r1_ran_on_39_evaluates_a_union_annotation(self):
+        for name in self.RAN_ON_39:
+            with self.subTest(script=name):
+                source = (CREATOR / "scripts" / f"{name}.py").read_text(encoding="utf-8")
+                tree = ast.parse(source, feature_version=(3, 9))
+                self.assertEqual(self.evaluated_unions(tree), [])
+
+    def test_the_check_sees_a_union_that_python_would_evaluate(self):
+        eager = ast.parse("def f(x: int | None) -> str | None: ...\n")
+        lazy = ast.parse("from __future__ import annotations\ndef f(x: int | None) -> str | None: ...\n")
+        plain = ast.parse("def f(x: int) -> str: ...\nvalue: int | None = None\n")
+        self.assertEqual(self.evaluated_unions(eager), [1])
+        self.assertEqual(self.evaluated_unions(lazy), [])
+        self.assertEqual(self.evaluated_unions(plain), [])
 
 
 @unittest.skipUnless(OLDER_INTERPRETERS, "no Python older than 3.12 on PATH")

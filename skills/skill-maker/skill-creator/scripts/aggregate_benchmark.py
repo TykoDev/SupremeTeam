@@ -54,6 +54,8 @@ Exit codes:
     1  the directory is missing or holds no graded run; nothing is written
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import math

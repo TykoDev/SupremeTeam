@@ -401,8 +401,11 @@ orphaned — the ones not invoked directly are imported by the ones that are.
 
 **Regression tests.** The `scripts/test_*.py` modules cover each script's failure paths:
 frontmatter validation and parser parity, packaging refusals and output location, the eval
-subprocess and pipe handling, failed runs that are not measurements, the benchmark layouts,
-the viewer's embedding, symlink and server rules, and UTF-8 on a Windows code page. None
+subprocess and pipe handling, failed runs that are not measurements, the benchmark layouts and
+which configuration the delta is measured from, the viewer's embedding, symlink and server rules, link
+detection on interpreters older than 3.12, the secret list shared with `package_check.py`, how each
+script starts (as a module or by path), the prose that points at the packager, and UTF-8 on a Windows
+code page. None
 runs the `claude` CLI or opens a network connection. Run them after changing anything under
 `scripts/` or `eval-viewer/`, from the skill-creator directory:
 

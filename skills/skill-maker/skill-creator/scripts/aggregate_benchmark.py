@@ -8,9 +8,10 @@ Reads grading.json files from run directories and produces:
   baseline (without_skill, or old_skill): primary minus baseline, primary listed first
 
 Run as a module from the skill-creator directory, so the `scripts` package
-resolves:
+resolves, or by path from anywhere:
 
     python -m scripts.aggregate_benchmark <benchmark_dir> [--skill-name NAME]
+    python <skill-creator>/scripts/aggregate_benchmark.py <benchmark_dir> [--skill-name NAME]
 
 Example:
     python -m scripts.aggregate_benchmark benchmarks/2026-01-15T10-30-00/
@@ -61,7 +62,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from scripts.utils import configure_stdout
+try:
+    from scripts.utils import configure_stdout
+except ModuleNotFoundError:  # run by path, where only this directory is on sys.path
+    from utils import configure_stdout
 
 RUN_DIR = re.compile(r"run-(\d+)")
 

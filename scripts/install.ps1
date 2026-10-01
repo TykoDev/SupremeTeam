@@ -12,6 +12,11 @@ param(
 
     [switch]$RegisterHooks,
 
+    [ValidateSet("User", "Project", "Local")]
+    [string]$HooksScope = "User",
+
+    [switch]$HooksYes,
+
     [switch]$InstallClaude,
 
     [string]$ClaudeDestination = (Join-Path $env:USERPROFILE ".claude\skills"),
@@ -55,6 +60,7 @@ $script:stage = ""
 $script:stageRoot = ""
 $script:stageCommitted = $false
 $script:backupDir = ""
+$script:hooksDeclined = $false
 
 # Names become path components, so they are checked before any path is built
 # from them: no separators, no leading dot or dash, nothing a wildcard would match.
@@ -920,10 +926,18 @@ function Register-HarnessHooks {
     foreach ($hostName in $HostTargets) {
         $hookArgs += @("--target", $hostName)
     }
+    $hookArgs += @("--scope", $HooksScope.ToLowerInvariant())
+    if ($HooksYes) {
+        $hookArgs += "--yes"
+    }
 
     $pythonArgs = @($python.Arguments)
     & $python.Command @pythonArgs @hookArgs
-    if ($LASTEXITCODE -ne 0) {
+    # Exit 3 is the operator answering no at the preview: nothing was written.
+    if ($LASTEXITCODE -eq 3) {
+        $script:hooksDeclined = $true
+    }
+    elseif ($LASTEXITCODE -ne 0) {
         throw "Hook registration failed."
     }
 }
@@ -1001,6 +1015,9 @@ try {
     }
     elseif ($hostTargets.Count -eq 0) {
         $hookStatus = "skipped (no host detected)"
+    }
+    elseif ($script:hooksDeclined) {
+        $hookStatus = "declined (nothing was written)"
     }
     else {
         $hookStatus = "completed"

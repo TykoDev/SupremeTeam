@@ -119,6 +119,12 @@ python -m unittest discover -s skills/skill-maker/skill-creator -p "test_*.py"
 | [docs/persistent-saves.md](docs/persistent-saves.md) | Save layout, locks, resume |
 | [docs/direct-invocation.md](docs/direct-invocation.md) | Calling skills directly |
 | [docs/directory-structure.md](docs/directory-structure.md) | Where everything lives |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Running the suites, the fail-open and fail-loud rules, commits, skill versions |
+| [CHANGELOG.md](CHANGELOG.md) | What changed |
+
+## License
+
+Supreme Team is released under the [MIT License](LICENSE). Copyright (c) 2026 TykoDev.
 
 <p align="center">
     <sub>Built by <a href="https://github.com/TykoDev">TykoDev</a> · Supreme Team</sub>

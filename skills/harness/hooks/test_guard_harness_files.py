@@ -179,15 +179,15 @@ class EnforcementFilesTests(unittest.TestCase):
     def closure(self) -> set:
         import _bootstrap
 
-        found, todo = {}, list(self.ENTRY)
-        while todo:
-            name = todo.pop()
+        found, pending = {}, list(self.ENTRY)
+        while pending:
+            name = pending.pop()
             if name in found:
                 continue
             for base in (_bootstrap.HOOKS, _bootstrap.SCRIPTS):
                 if (base / f"{name}.py").is_file():
                     found[name] = base / f"{name}.py"
-                    todo.extend(self.imports(found[name]))
+                    pending.extend(self.imports(found[name]))
                     break
         return set(found.values())
 

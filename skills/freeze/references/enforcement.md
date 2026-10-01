@@ -155,7 +155,10 @@ hook applies no boundary from it, but the destructive-command rule still runs.
 The hook is also a text guard, not a hard lock. It reads the command a tool is about
 to run and the path an edit tool names; it does not run anything, so a program that
 builds its path at run time, a script file, a tool it has no entry for, or a link made
-in the same command can write into a frozen path unseen.
+in the same command can write into a frozen path unseen. A writer whose target comes from a list, a pipe
+or a variable (`cat list | xargs rm`, `echo 'rm x' | sh`) is refused only when the command also spells a
+frozen path (`echo 'rm src/payments/a' | sh`); the commands a launcher or script block runs are judged like the
+command line.
 `../../harness/hooks/README.md` § What the guard cannot see lists these limits in
 full. Treat freeze as a discipline aid that catches honest mistakes; for a boundary
 that must not change under any circumstances, back it with version-control

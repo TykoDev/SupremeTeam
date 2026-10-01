@@ -19,9 +19,10 @@ does and returns structure the guard rules apply to:
   that ``xargs`` feeds from standard input, an inline program that redirects or opens
   a file, a shell that reads its program from a pipe, the targets inside a diff), which
   a rule that needs every target named (a read-only run) cannot accept;
-* ``hidden``: the analyses of commands a launcher runs that only a read-only run judges
-  (``parallel``, ``entr``, a PowerShell script block), kept apart so a freeze and a
-  block see the command line exactly as they did before the launcher was read.
+* ``hidden``: the analyses of commands a launcher runs (``parallel``, ``entr``, ``watch``,
+  a PowerShell script block), kept apart from the command line's own ``commands`` and
+  ``writes`` so a rule reads them on purpose: the guard judges each one like the line
+  itself.
 
 It is a text analysis, not a sandbox. It does not execute, resolve a path built at run
 time, follow a script file, or know a tool it has no entry for; where it cannot tell it
@@ -72,9 +73,14 @@ class Unnamed:
     """A write the command does not name a target for: ``how`` is ``stdin`` (the verb's operands arrive on standard
     input, or a shell or interpreter reads its program there), ``program`` (an inline program redirects or opens a
     file), ``diff`` (``patch`` or ``git apply`` writes the files its diff names) or ``nested`` (text the analysis
-    could not read: below ``MAX_DEPTH``, or unbalanced inside a launcher; no verb)."""
+    could not read: below ``MAX_DEPTH``, or unbalanced inside a launcher; no verb).
+
+    ``opaque`` marks a finding that is a program the analysis cannot read (a shell or interpreter that reads its program
+    from a pipe, or that nested text): nothing in the command says it writes, only that it could. The others are
+    writes the analysis found: a verb that writes, a program that redirects or opens a file, a diff."""
     verb: str
     how: str
+    opaque: bool = False
 
 
 @dataclass
@@ -1127,20 +1133,51 @@ _PS_SPECS = {
     "start-bitstransfer": (("source", "destination"), ("destination",), "none"),
     "set-acl": (("path", "literalpath", "aclobject"), ("path", "literalpath"), "first"),
 }
+# The switch parameters of each cmdlet above, which take no value. Only here to tell an abbreviation that fits a value
+# parameter alone (`-fi` is `-Filter`) from one that fits a switch too (`-f` is `-Filter` or `-Force`, which PowerShell
+# refuses as ambiguous and a native command of the same name, `rm -f` on Linux, reads as a switch).
+_PS_SWITCHES = {
+    "set-content": ("force", "passthru", "nonewline", "asbytestream", "whatif", "confirm", "usetransaction"),
+    "add-content": ("force", "passthru", "nonewline", "asbytestream", "whatif", "confirm", "usetransaction"),
+    "clear-content": ("force", "whatif", "confirm", "usetransaction"),
+    "out-file": ("append", "force", "noclobber", "nonewline", "whatif", "confirm"),
+    "new-item": ("force", "whatif", "confirm", "usetransaction"),
+    "remove-item": ("force", "recurse", "whatif", "confirm", "usetransaction"),
+    "rename-item": ("force", "passthru", "whatif", "confirm", "usetransaction"),
+    "move-item": ("force", "passthru", "whatif", "confirm", "usetransaction"),
+    "copy-item": ("container", "force", "passthru", "recurse", "whatif", "confirm", "usetransaction"),
+    "set-itemproperty": ("force", "passthru", "whatif", "confirm", "usetransaction"),
+    "tee-object": ("append",),
+    "export-csv": ("append", "force", "noclobber", "notypeinformation", "includetypeinformation", "whatif", "confirm"),
+    "export-clixml": ("force", "noclobber", "whatif", "confirm"),
+    "invoke-webrequest": ("passthru", "resume", "usebasicparsing", "skipcertificatecheck", "skiphttperrorcheck", "disablekeepalive"),
+    "invoke-restmethod": ("passthru", "resume", "usebasicparsing", "skipcertificatecheck", "skiphttperrorcheck", "disablekeepalive"),
+    "expand-archive": ("force", "passthru", "whatif", "confirm"),
+    "compress-archive": ("update", "passthru", "whatif", "confirm"),
+    "set-acl": ("passthru", "whatif", "confirm"),
+}
 
 
-def _ps_param(text: str, names: tuple) -> "tuple | None":
-    """``(canonical name, inline value)`` when ``text`` is a parameter of the cmdlet (an exact or unique-prefix match)."""
+def _ps_param(text: str, names: tuple, switches: tuple = ()) -> "tuple | None":
+    """``(canonical name, inline value)`` when ``text`` is a value parameter of the cmdlet (an exact or unique-prefix match).
+
+    An abbreviation that also fits one of the cmdlet's ``switches`` is ambiguous and is not a value parameter: the word after
+    it stays an operand, so `rm -f src/payments/a` names its target."""
     if not text.startswith("-") or len(text) < 2 or not text[1:2].isalpha():
         return None
     name, colon, value = text[1:].partition(":")
     lowered = name.lower()
-    matched = [candidate for candidate in names if candidate == lowered] or [c for c in names if c.startswith(lowered)]
+    matched = [candidate for candidate in names if candidate == lowered]
+    if not matched:
+        fits = {candidate for candidate in (*names, *switches) if candidate.startswith(lowered)}
+        matched = [candidate for candidate in names if candidate.startswith(lowered)] if len(fits) == 1 else []
     return (matched[0], value if colon else None) if matched else None
 
 
 def _t_powershell(verb: str, rest: list, ctx: _Ctx) -> list:
     value_params, path_params, rule = _PS_SPECS[verb]
+    value_params = (*value_params, "credential")
+    switches = _PS_SWITCHES.get(verb, ())
     named: dict = {}
     positional: list = []
     i = 0
@@ -1150,7 +1187,7 @@ def _t_powershell(verb: str, rest: list, ctx: _Ctx) -> list:
         if _CMD_SWITCH.match(text):
             i += 1
             continue
-        param = _ps_param(text, value_params)
+        param = _ps_param(text, value_params, switches)
         if param:
             name, inline = param
             if inline is not None:
@@ -1269,7 +1306,7 @@ def _shell(rest: list, ctx: _Ctx, body: "str | None", verb: str, piped: bool) ->
     if body is not None:
         _process(body, ctx, False)
     elif piped and not {"--version", "--help"} & {a.text for a in rest}:
-        _note_unnamed(ctx, verb, "stdin")
+        _note_unnamed(ctx, verb, "stdin", opaque=True)
     return None
 
 
@@ -1281,7 +1318,7 @@ def _powershell(rest: list, ctx: _Ctx, body: "str | None", verb: str, piped: boo
         if len(low) >= 2 and "-command".startswith(low) or low == "-cmd":
             tail = " ".join(a.text for a in rest[i + 1:])
             if tail.strip() == "-" and body is None and piped:
-                _note_unnamed(ctx, verb, "stdin")
+                _note_unnamed(ctx, verb, "stdin", opaque=True)
             _process(body if tail.strip() == "-" and body is not None else tail, ctx, True)
             return None
         if low in ("-encodedcommand", "-ec", "-e", "-enc") and i + 1 < len(rest):
@@ -1301,7 +1338,7 @@ def _powershell(rest: list, ctx: _Ctx, body: "str | None", verb: str, piped: boo
     if body is not None:
         _process(body, ctx, True)
     elif piped:
-        _note_unnamed(ctx, verb, "stdin")
+        _note_unnamed(ctx, verb, "stdin", opaque=True)
     return None
 
 
@@ -1311,7 +1348,7 @@ def _cmd(rest: list, ctx: _Ctx, piped: bool) -> None:
             _process(" ".join(a.text for a in rest[index + 1:]), ctx, True)
             return
     if piped:
-        _note_unnamed(ctx, "cmd", "stdin")
+        _note_unnamed(ctx, "cmd", "stdin", opaque=True)
 
 
 def _xargs(rest: list, upstream: "list | None") -> list:
@@ -1394,8 +1431,8 @@ def _entr(rest: list) -> tuple:
 
 
 def _scratch(ctx: _Ctx) -> _Ctx:
-    """A context for commands a launcher runs and only a read-only run judges: it starts where ``ctx`` is, shares nothing
-    it changes, and what it finds goes to ``Analysis.hidden``."""
+    """A context for the commands a launcher runs: it starts where ``ctx`` is, shares nothing it changes, and what it
+    finds goes to ``Analysis.hidden``."""
     sub = _Ctx(Analysis(), ctx.ps)
     sub.vars, sub.cwds, sub.stack = collections.ChainMap({}, ctx.vars), ctx.cwds[-3:], ctx.stack
     sub.depth, sub.text = ctx.depth, ctx.text
@@ -1404,7 +1441,7 @@ def _scratch(ctx: _Ctx) -> _Ctx:
 
 def _keep(ctx: _Ctx, sub: _Ctx) -> None:
     if not sub.out.ok:
-        _note_unnamed(ctx, "", "nested")
+        _note_unnamed(ctx, "", "nested", opaque=True)
     if sub.out.commands or sub.out.writes or sub.out.unnamed or sub.out.hidden:
         ctx.out.hidden.append(sub.out)
 
@@ -1616,8 +1653,13 @@ def _program_writes(verb: str, rest: list, code: list) -> bool:
         return any(_SED_WRITE.search(text) or (_SED_EXEC.search(text) and _MUTATING_TEXT.search(text)) for text in _sed_scripts(rest))
     if verb in _AWKS:
         return any(_awk_writes(text) for text in code)
-    return any(_OPEN_FOR_WRITE.search(text) or _FILE_CALL.search(text) or (_RUNS_COMMAND.search(text) and _MUTATING_TEXT.search(text))
-               for text in code)
+    return any(program_text_writes(text) for text in code)
+
+
+def program_text_writes(text: str) -> bool:
+    """True when ``text``, read as the program of an interpreter, opens a file for writing, calls one of the usual write,
+    remove, rename or create functions, or runs a command that mutates: the search an inline program gets."""
+    return bool(_OPEN_FOR_WRITE.search(text) or _FILE_CALL.search(text) or (_RUNS_COMMAND.search(text) and _MUTATING_TEXT.search(text)))
 
 
 # --- driver ------------------------------------------------------------------------
@@ -1633,11 +1675,11 @@ def _note_write(ctx: _Ctx, path: str, via: str, cwds: tuple, glob: bool, unresol
         ctx.out.writes.append(Write(path, via, cwds, glob, unresolved))
 
 
-def _note_unnamed(ctx: _Ctx, verb: str, how: str) -> None:
+def _note_unnamed(ctx: _Ctx, verb: str, how: str, opaque: bool = False) -> None:
     key = ("unnamed", verb, how)
     if key not in ctx.seen:
         ctx.seen.add(key)
-        ctx.out.unnamed.append(Unnamed(verb, how))
+        ctx.out.unnamed.append(Unnamed(verb, how, opaque))
 
 
 def _recent(ctx: _Ctx) -> tuple:
@@ -1773,7 +1815,7 @@ def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None", st
         rest = args[1:]
         if verb in ("eval", "invoke-expression", "iex"):
             if not rest and piped and verb != "eval":
-                _note_unnamed(ctx, verb, "stdin")
+                _note_unnamed(ctx, verb, "stdin", opaque=True)
             _process(" ".join(a.text for a in rest), ctx, ctx.ps or verb != "eval", scoped=False)
             return
         if verb == "trap":
@@ -1803,7 +1845,8 @@ def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None", st
             if shell:
                 _hide_text(ctx, " ".join(a.text for a in command), False)
             else:
-                _hide_command(ctx, command, False)
+                # `/_` stands for the first file the list names, which arrives on standard input: no operand of its own.
+                _hide_command(ctx, [a for a in command if a.text != "/_"], any(a.text == "/_" for a in command))
             return
         if verb == "watch":
             command = _skip_options(rest, *_WRAPPERS["watch"])
@@ -1915,7 +1958,7 @@ def _finish(args: list, ctx: _Ctx, body: "str | None", stdin: bool = False, pipe
     if _program_writes(verb, rest, code):
         _note_unnamed(ctx, verb, "program")
     if piped and body is None and not code and _reads_program_from_stdin(verb, rest):
-        _note_unnamed(ctx, verb, "stdin")
+        _note_unnamed(ctx, verb, "stdin", opaque=True)
     if verb == "patch":
         flags, operands, _ = _patch_args(rest)
         if not operands and not _patch_checks(flags):
@@ -1962,7 +2005,7 @@ def _process(text: str, ctx: _Ctx, ps: bool, scoped: bool = True) -> None:
     ``eval`` runs in the current shell (``scoped`` false) and keeps it."""
     if ctx.depth >= MAX_DEPTH:
         ctx.out.code.append(text)
-        _note_unnamed(ctx, "", "nested")
+        _note_unnamed(ctx, "", "nested", opaque=True)
         return
     saved_ps, saved_text, mark, stack = ctx.ps, ctx.text, len(ctx.cwds), ctx.stack
     ctx.ps, ctx.text = ps, text

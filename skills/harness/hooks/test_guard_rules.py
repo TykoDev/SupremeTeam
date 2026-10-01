@@ -390,6 +390,206 @@ class FrozenBoundaryTests(GuardCase):
         self.assertEqual(self.edit("src/payments/a.py"), "")
 
 
+# --- Rules B and C: a writer the analyser cannot place, or finds inside a launcher ---------------------------------
+
+# Writers whose target is not in the command line itself (a program on a pipe, operands on standard input, a diff, a
+# path built at run time) or sits inside what a launcher runs (`watch`, `entr`, `parallel`, a PowerShell script block).
+# `{P}` is the path as a shell spells it; `{PB}` is the same path with backslashes, for PowerShell. The substring rule
+# the analyser replaced refused each of them when `{P}` was a protected path and allowed them when it was not.
+LAUNCHED_WRITERS = (
+    "echo 'rm {P}' | sh", "echo 'rm {P}' | bash", "echo 'rm {P}' | zsh", "echo 'rm {P}' | dash", "echo 'rm {P}' | ksh",
+    "echo 'rm {P}' | sudo sh", "echo 'rm {P}' | sh -s", "printf 'rm {P}\\n' | sh", "echo 'touch {P}' | bash",
+    "echo 'echo x > {P}' | sh", "echo 'ls; rm {P}' | sh", "echo \"import os; os.remove('{P}')\" | python3",
+    "echo \"open('{P}','w').write('x')\" | python3", "echo \"require('fs').unlinkSync('{P}')\" | node", "echo 'unlink \"{P}\"' | perl",
+    "echo 'del {P}' | cmd",
+    "cat {P} | xargs rm", "find {P} -name '*.pyc' | xargs rm", "git ls-files {P} | xargs sed -i s/a/b/", "xargs rm < {P}",
+    "xargs -a {P} rm", "ls {P} | xargs touch", "ls {P} | xargs chmod 644", "ls {P} | xargs gzip", "ls | xargs rm {P}",
+    "ls | parallel rm {P}", "ls {P} | parallel rm", "parallel -a {P} rm", "parallel rm ::: {P}", "parallel rm :::: {P}",
+    "ls | parallel -I@@ rm @@ {P}", "ls {P} | entr rm /_", "ls | entr -s 'rm {P}'", "ls | entr sh -c 'rm {P}'",
+    "watch 'rm {P}'", "watch -n 1 'touch {P}'", "patch -p1 < {P}", "patch -p1 -i {P}", "cat {P} | patch -p1",
+    "cat {P} | git apply", "while read f; do rm $f; done < {P}", "for f in $(cat {P}); do rm $f; done", "rm $(cat {P})",
+    "rm `cat {P}`", "cat {P} | while read f; do rm \"$f\"; done", "rm $TARGET && cat {P}",
+)
+# The same shapes with nothing that writes: they pass wherever they point.
+LAUNCHED_READS = (
+    "cat {P} | bash", "cat {P} | python3 -", "cat {P} | node", "cat {P} | perl", "cat {P} | sh -s", "cat {P} | sort | bash",
+    "echo 'ls {P}' | sh", "curl -s http://h/x | sh", "git ls-files {P} | xargs wc -l", "ls {P} | xargs grep foo",
+    "ls {P} | parallel grep foo", "ls | parallel wc -l {P}", "ls {P} | entr echo changed", "watch 'ls {P}'",
+    "cat {P} | git apply --stat", "patch --dry-run -p1 < {P}", "cat {P} | wc -l", "grep -rn x {P}", "ls {P} | sort",
+    "git diff {P}", "git log -- {P}", "awk '$1 > 5' {P}", "while read f; do echo $f; done < {P}",
+)
+LAUNCHED_WRITERS_PS = (
+    "Get-ChildItem {PB} | ForEach-Object { Remove-Item $_.FullName }", "Get-ChildItem {PB} | Remove-Item",
+    "Get-ChildItem {PB} | % { Remove-Item $_ }", "Get-Content {PB} | ForEach-Object { Remove-Item $_ }",
+    "Get-ChildItem {PB} | ForEach-Object { Set-Content $_.FullName 'x' }", "Get-ChildItem {PB} | Set-Content -Value x",
+    "Get-ChildItem {PB} | Add-Content -Value x", "Get-ChildItem {PB} | New-Item -ItemType File",
+    "Get-ChildItem {PB} | ForEach-Object { Out-File $_.Name }", "Get-ChildItem {PB} | ForEach-Object { Clear-Content $_ }",
+    "Get-ChildItem {PB} | ForEach-Object { Move-Item $_ x }", "Get-ChildItem {PB} | ForEach-Object { Copy-Item x $_ }",
+    "Get-ChildItem {PB} | ForEach-Object { Rename-Item $_ y }", "Start-Job { Remove-Item {PB} }",
+    "Invoke-Command -ScriptBlock { Remove-Item {PB} }", "'Remove-Item {PB}' | Invoke-Expression", "'Remove-Item {PB}' | iex",
+    "'Remove-Item {PB}' | powershell", "'Remove-Item {PB}' | pwsh -Command -",
+)
+LAUNCHED_READS_PS = (
+    "Get-ChildItem {PB} | ForEach-Object { $_.Name }", "Get-ChildItem {PB} | Where-Object { $_.Length -gt 5 }",
+    "Get-ChildItem {PB} | Select-Object Name", "Get-ChildItem {PB} | ForEach-Object { Copy-Item $_ build }",
+)
+FROZEN_SPELLINGS = ("src/payments/a", "./src/payments/a", "src/payments")
+BLOCKED_SPELLINGS = ("config/secrets/key", "secrets")
+RECORD_SPELLINGS = ("skillset-saves/runs/r1/_state.md", ".harness-state/guard-state.json")
+UNPROTECTED_SPELLINGS = ("x", "src/other/a", "docs/a.md", "src/payments-archive/a", "mysecrets/key")
+
+
+def spell(templates, path: str) -> list:
+    return [text.replace("{PB}", path.replace("/", "\\")).replace("{P}", path) for text in templates]
+
+
+class LaunchedWriterTests(GuardCase):
+    """A freeze, a block and the single-writer rule refuse a writer the analyser cannot place, or finds inside a launcher, when
+    the command also names a protected path, as the substring rule did before the analyser; with no such path they pass."""
+
+    BLOCK = {"blocked_globs": [{"glob": "**/secrets/**", "owner": "sec"}]}
+
+    def setUp(self):
+        super().setUp()
+        (self.root / "src" / "payments").mkdir(parents=True)
+
+    def each(self, templates, paths, *, deny, tool="Bash", fragment=None):
+        for path in paths:
+            self.check(spell(templates, path), deny=deny, tool=tool, fragment=fragment)
+
+    def test_a_freeze_refuses_the_writers_that_name_a_frozen_path(self):
+        self.guard(FROZEN)
+        self.each(LAUNCHED_WRITERS, FROZEN_SPELLINGS, deny=True, fragment="frozen boundary (src/payments/**)")
+        self.each(LAUNCHED_WRITERS_PS, FROZEN_SPELLINGS, deny=True, tool="PowerShell", fragment="frozen boundary (src/payments/**)")
+
+    def test_a_block_refuses_the_same_writers_that_name_a_blocked_path(self):
+        self.guard(self.BLOCK)
+        self.each(LAUNCHED_WRITERS, BLOCKED_SPELLINGS, deny=True, fragment="frozen boundary (**/secrets/**)")
+        self.each(LAUNCHED_WRITERS_PS, BLOCKED_SPELLINGS, deny=True, tool="PowerShell", fragment="frozen boundary (**/secrets/**)")
+
+    def test_the_same_writers_pass_when_they_name_no_protected_path(self):
+        for state in (FROZEN, self.BLOCK, {**FROZEN, **self.BLOCK}):
+            self.guard(state)
+            self.each(LAUNCHED_WRITERS, UNPROTECTED_SPELLINGS, deny=False)
+            self.each(LAUNCHED_WRITERS_PS, UNPROTECTED_SPELLINGS, deny=False, tool="PowerShell")
+
+    def test_a_freeze_does_not_refuse_what_names_only_another_boundarys_path(self):
+        self.guard(FROZEN)
+        self.each(LAUNCHED_WRITERS, BLOCKED_SPELLINGS, deny=False)
+        self.guard(self.BLOCK)
+        self.each(LAUNCHED_WRITERS, FROZEN_SPELLINGS, deny=False)
+
+    def test_the_reads_pass_wherever_they_point(self):
+        for state in (FROZEN, self.BLOCK, {}):
+            self.guard(state)
+            for paths in (FROZEN_SPELLINGS, BLOCKED_SPELLINGS, RECORD_SPELLINGS, UNPROTECTED_SPELLINGS):
+                self.each(LAUNCHED_READS, paths, deny=False)
+                self.each(LAUNCHED_READS_PS, paths, deny=False, tool="PowerShell")
+
+    def test_commands_that_name_nothing_protected_are_not_refused_flat(self):
+        """The unplaceable writers are not denied outright under a boundary: `cat list | xargs rm` is ordinary work."""
+        self.guard({**FROZEN, **self.BLOCK})
+        self.check(("cat list | xargs rm", "echo 'rm x' | sh", "rm \"$f\"", "git checkout main", "git stash", "ls | parallel rm", "watch 'rm x'",
+                    "ls | entr rm /_", "patch -p1 < fix.diff", "git apply fix.diff", "rm $(cat list)", "printf 'rm a\\nrm b\\n' | bash",
+                    "find . -name '*.pyc' | xargs rm -f", "echo 'ls' | sh"), deny=False)
+        self.check(("Get-ChildItem | Remove-Item", "Get-ChildItem build | ForEach-Object { Remove-Item $_.FullName }",
+                    "'Remove-Item x' | iex"), deny=False, tool="PowerShell")
+
+    def test_what_a_launcher_runs_is_judged_like_the_command_line(self):
+        self.guard(FROZEN)
+        self.check(("watch 'rm src/payments/a'", "ls | entr -s 'rm src/payments/a'", "parallel rm ::: src/payments/a", "ls | parallel rm src/payments/{}",
+                    "ls | entr sh -c 'cd src/payments && rm a'", "watch -n 1 'cd src/payments; touch a'"), deny=True, fragment="frozen boundary")
+        self.check(("watch 'rm build/a'", "ls | entr -s 'rm build/a'", "parallel rm ::: build/a", "ls | parallel rm build/{}",
+                    "ls | entr sh -c 'cd src/other && rm a'", "watch 'ls src/payments'", "parallel cp {} build/ ::: src/payments/a"), deny=False)
+        self.check(("Start-Job { Remove-Item src\\payments\\a }", "Invoke-Command -ScriptBlock { Set-Content src\\payments\\a x }",
+                    "Get-ChildItem | ForEach-Object { Remove-Item src\\payments\\a }"), deny=True, tool="PowerShell", fragment="frozen boundary")
+        self.check(("Start-Job { Remove-Item build\\a }", "Get-ChildItem | ForEach-Object { Copy-Item $_ build\\ }"), deny=False, tool="PowerShell")
+
+    def test_a_tree_verb_inside_a_launcher_reaches_a_boundary_below_it_as_it_does_outside(self):
+        self.guard(FROZEN)
+        self.check(("rm -rf src", "watch 'rm -rf src'", "ls | entr -s 'rm -rf src'", "parallel rm -rf ::: src"), deny=True, fragment="frozen boundary")
+
+    def test_the_single_writer_rule_reads_them_with_and_without_a_boundary(self):
+        for state in ({}, FROZEN, self.BLOCK):
+            self.guard(state)
+            for path, fragment in ((RECORD_SPELLINGS[0], "save_run.py"), (RECORD_SPELLINGS[1], "guard_state.py")):
+                with self.subTest(state=sorted(state), path=path):
+                    self.each(LAUNCHED_WRITERS, [path], deny=True, fragment=fragment)
+                    self.each(LAUNCHED_WRITERS_PS, [path], deny=True, tool="PowerShell", fragment=fragment)
+        self.guard({})
+        self.each(LAUNCHED_WRITERS, UNPROTECTED_SPELLINGS, deny=False)
+
+    def test_the_single_writer_rule_judges_a_launchers_named_target_too(self):
+        self.check(("watch 'rm skillset-saves/runs/r1/_state.md'", "parallel rm ::: skillset-saves/runs/r1/_lock.md",
+                    "ls | parallel rm skillset-saves/_write.lock"), deny=True, fragment="save_run.py")
+        self.check(("ls | entr -s 'rm .harness-state/guard-state.json'", "watch 'echo {} > .harness-state/guard-state.json'"), deny=True, fragment="guard_state.py")
+        self.check(("watch 'rm build/a'", "parallel rm ::: skillset-saves/runs/r1/design/reports/report_plan.md"), deny=False)
+
+    def test_a_backslash_n_after_a_path_does_not_hide_it(self):
+        self.guard(FROZEN)
+        self.check(("printf 'rm src/payments/a\\n' | sh", "printf 'touch src/payments/a\\n\\n' | bash", "printf 'rm src\\\\payments\\\\a\\n' | sh"),
+                   deny=True, fragment="frozen boundary")
+        self.guard({})
+        self.check(("printf 'rm skillset-saves/runs/r1/_state.md\\n' | sh", "printf 'rm .harness-state/guard-state.json\\n' | sh"),
+                   deny=True)
+
+    def test_a_windows_spelling_names_the_path_in_the_text(self):
+        self.guard(FROZEN)
+        self.check(("echo 'rm src\\payments\\a' | sh", "echo 'del src\\payments\\a; rm x' | sh", "cat src\\payments\\list | xargs rm"),
+                   deny=True, fragment="frozen boundary")
+
+    def test_the_registered_hook_decides_the_same_under_every_interpreter(self):
+        self.guard(FROZEN)
+        denied = ("echo 'rm src/payments/a' | sh", "ls | parallel rm src/payments/{}", "cat src/payments/list | xargs rm", "watch 'rm src/payments/a'")
+        passed = ("cat list | xargs rm", "echo 'rm x' | sh", "cat src/payments/run.sh | bash", "git ls-files src/payments | xargs wc -l")
+        for label, python in [("current", None), *kit.older_interpreters()]:
+            for command in denied:
+                with self.subTest(interpreter=label, denied=command):
+                    result = kit.run_hook("pre_tool_use.py", kit.bash(command), self.root, python=python)
+                    self.assertEqual(result.returncode, 0)
+                    self.assertTrue(kit.denied(result.stdout.decode("utf-8")), result.stdout)
+                    self.assertIn("frozen boundary", kit.reason(result.stdout.decode("utf-8")))
+            for command in passed:
+                with self.subTest(interpreter=label, passed=command):
+                    result = kit.run_hook("pre_tool_use.py", kit.bash(command), self.root, python=python)
+                    self.assertEqual((result.returncode, result.stdout), (0, b""))
+            result = kit.run_hook("pre_tool_use.py", kit.bash("Get-ChildItem src\\payments | ForEach-Object { Remove-Item $_.FullName }", "PowerShell"),
+                                  self.root, python=python)
+            self.assertTrue(kit.denied(result.stdout.decode("utf-8")), (label, result.stdout))
+
+    def test_a_100kb_command_with_a_writer_it_cannot_place_is_decided_quickly(self):
+        self.guard(FROZEN)
+        names = " ".join(f"src/payments/f{i}" for i in range(6000))
+        for command, want in (("cat list | xargs rm; echo " + names, True), ("cat list | xargs rm; echo " + "x " * 40000, False),
+                              ("echo 'rm x' | sh; ls " + names, True), ("while read f; do rm $f; done < list; echo " + names, True)):
+            with self.subTest(length=len(command), denied=want):
+                start = time.perf_counter()
+                out = self.call(command)
+                elapsed = time.perf_counter() - start
+                self.assertEqual(kit.denied(out), want)
+                self.assertLess(elapsed, 6.0, f"{len(command)} chars took {elapsed:.1f}s")
+
+
+class PowerShellAbbreviationRuleTests(GuardCase):
+    """`rm -f src/payments/a` in the PowerShell tool (a native `rm` on Linux, `Remove-Item -f` elsewhere) was read as a filter, so
+    no rule saw the path; the substring rule refused it."""
+
+    def test_an_ambiguous_abbreviation_does_not_hide_a_frozen_write(self):
+        self.guard(FROZEN)
+        self.check(("rm -f src/payments/a", "rm -r -f src/payments", "Remove-Item -f src/payments/a", "ri -f src/payments/a",
+                    "del -f src/payments/a", "mv -f src/payments/a build/a", "cp -f a src/payments/b", "Set-Content -f src/payments/a x",
+                    "Rename-Item -f src/payments/a b", "Remove-Item -f -Recurse src/payments"), deny=True, tool="PowerShell", fragment="frozen boundary")
+        self.check(("rm -f build/x", "Remove-Item -f build/x", "mv -f build/a build/b", "cp -f src/payments/a build/", "Remove-Item -fi *.py src/other",
+                    "Get-ChildItem -f src/payments"), deny=False, tool="PowerShell")
+
+    def test_it_does_not_hide_a_core_record_or_a_write_in_a_read_only_run(self):
+        self.check(("rm -f skillset-saves/runs/r1/_state.md",), deny=True, tool="PowerShell", fragment="save_run.py")
+        self.check(("Remove-Item -f .harness-state/guard-state.json",), deny=True, tool="PowerShell", fragment="guard_state.py")
+        self.guard(READ_ONLY)
+        self.check(("rm -f x", "Remove-Item -f $tmp", "mv -f a b"), deny=True, tool="PowerShell", fragment="is recorded read-only")
+        self.check((f"rm -f skillset-saves/runs/{READ_ONLY_RUN}/investigation/a.md",), deny=False, tool="PowerShell")
+
+
 # --- Rule D -------------------------------------------------------------------------
 
 class ReadOnlyRunTests(GuardCase):
@@ -515,8 +715,9 @@ class ReadOnlyRunTests(GuardCase):
         self.check(("Get-ChildItem | Select-Object Name", "[System.IO.File]::ReadAllText('x')", "Get-ChildItem | Where-Object Length -gt 5",
                     f"'x' | Out-File skillset-saves/runs/{READ_ONLY_RUN}/investigation/o.txt"), deny=False, tool="PowerShell")
 
-    def test_the_unnamed_write_rule_is_for_a_read_only_run_only(self):
-        """A freeze and a block judge the targets a command names; a write with no named target is not theirs to guess."""
+    def test_the_unnamed_write_rule_refuses_flat_in_a_read_only_run_only(self):
+        """A freeze and a block do not refuse a write with no named target flat: only one in a command that also names
+        a protected path (see LaunchedWriterTests), as before the analyser; these name none."""
         commands = ("cat list | xargs rm -rf", "awk '{print > \"out\"}' f", "perl -e 'open(F, \">out\")'", "sed -n 'w out' f")
         for state in ({}, FROZEN, {"blocked_globs": [{"glob": "**/secrets/**", "owner": "ops"}]}):
             self.guard(state)

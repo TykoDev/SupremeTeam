@@ -18,7 +18,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import chdir, redirect_stderr, redirect_stdout
-from datetime import datetime, timedelta, timezone
+from datetime import date, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -421,13 +421,21 @@ class StackLockTests(EngineCase):
     # a stack past its date still passes (picking a supported version is the owner's decision, not
     # the gate's), so the only way the reader hears of it is the result's warnings.
 
+    TODAY = date(2026, 10, 1)
+
+    def setUp(self):
+        super().setUp()
+        # One fixed date for the engine and the test: two reads of the clock disagree for a moment at 00:00 UTC.
+        patch = mock.patch.object(engine, "utc_today", return_value=self.TODAY)
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def lock(self, **extra) -> object:
         digest = self.registry(extra=extra)
         return self.checked({"slug": "demo", "versions": [19], "overlay_sha256": digest})
 
-    @staticmethod
-    def days_ago(days: int) -> str:
-        return (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+    def days_ago(self, days: int) -> str:
+        return (self.TODAY - timedelta(days=days)).isoformat()
 
     def test_a_lock_on_a_stack_past_its_end_of_support_passes_with_a_warning(self):
         package = self.lock(support_ends={"demo": "2000-01-01"})
@@ -442,8 +450,8 @@ class StackLockTests(EngineCase):
                 self.assertEqual((package.failures, package.warnings), ([], []))
 
     def test_the_last_day_of_support_is_not_yet_past(self):
-        today = datetime.now(timezone.utc).date().isoformat()
-        self.assertEqual(self.lock(support_ends={"demo": today}).warnings, [])
+        self.assertEqual(self.lock(support_ends={"demo": self.TODAY.isoformat()}).warnings, [])
+        self.assertEqual(len(self.lock(support_ends={"demo": self.days_ago(1)}).warnings), 1)
 
     def test_an_end_of_support_that_is_not_a_date_is_reported_not_ignored(self):
         for value in ("soon", "2026-13-40", "31/07/2026", 20260731):

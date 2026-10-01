@@ -100,7 +100,8 @@ gate checks its shape, that each artifact it names exists and matches its digest
 that each `inputs` entry still hashes as recorded (stale evidence fails as
 `input hash drift`; scan and render records must carry `inputs`, probe records
 need not), and that a `pass` does not sit beside a non-zero `exit_code`. It never
-opens an artifact or re-runs a command, and each probe record that binds no
+compares an artifact's content with what its record claims and never re-runs a command (it reads `.md` and `.txt` artifacts only for blocked phrases and local links),
+and each probe record that binds no
 inputs is listed in `warnings`. See
 [`../../contracts/evidence-standards.md`](../../contracts/evidence-standards.md)
 § Binding evidence to source.

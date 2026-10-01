@@ -57,7 +57,7 @@ import _fsutil  # noqa: E402
 # reads is plain and bounded. A copy of the hooks without skills/scripts must still guard, so a missing
 # taxonomy leaves the scope at "no-run" instead of stopping every hook at import.
 try:
-    from save_taxonomy import RUN_ID  # noqa: E402
+    from save_taxonomy import RUN_ID
 except ImportError:
     RUN_ID = None
 

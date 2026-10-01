@@ -8,7 +8,7 @@ description: >
   skill behavior without naming one — and when `admiral` delegates skill or team creation.
   Routes drafting, evals, fixes, scoring, and packaging to specialists; not for general code
   review, architecture, or non-skill authoring.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 

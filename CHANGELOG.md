@@ -112,8 +112,9 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   Every document that still listed it no longer does, and a test compares the kind
   lists with `gates.yaml`.
 - The gate documents say what the validator does and no more. A typed record is the
-  submitter's own statement: the validator never opens an artifact, and each gatekeeper
-  skill says so. A flat schema-1 package outside a run still passes, with a warning, and
+  submitter's own statement: the validator never compares an artifact's content with what
+  its record claims (it reads `.md` and `.txt` artifacts only for blocked phrases and local
+  links), and each gatekeeper skill says so. A flat schema-1 package outside a run still passes, with a warning, and
   the gatekeepers are told to return REVISE for a schema-2 manifest instead of reading
   that pass as the whole contract. A `stack_lock` needs every declared version to be one
   the registry entry offers, which `commander` and the design gatekeeper now state
@@ -394,6 +395,8 @@ recorded here, or a record the skill does not carry, fails it.
 - `session-memory` 1.1.0: the writer lock, `checkpoint --drop-evidence`, the
   `uninitialized` class and the refusal reasons.
 - `taste` 1.1.0: `propose` validation, redaction by shape, lock reclaim and the error codes.
+- `skill-maker` 1.0.1: the Stage 5 hand-off names the output directory as an absolute path, the
+  parent of the `path` that `output_paths.py` prints, and leaves it out outside a run.
 - `skill-maker/skill-creator` 1.1.0: the packager takes an absolute output directory and
   refuses symlinks, secrets and run state; failed eval runs are not scored.
 - `review/security-review` 1.1.0: `scan_record.py` names its output relative to the

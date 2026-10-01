@@ -457,9 +457,13 @@ class CiDeclarationTests(unittest.TestCase):
         prose = " ".join(self.runtime["authority"]["commands"].split())
         found = re.search(r"(The installers suite needs a repository checkout.*?) The strings are written", prose)
         self.assertIsNotNone(found, "authority.commands no longer says which suites need a checkout")
-        for suite in ("installers", "hooks", "gates", "scripts", "validation"):
+        # Each suite by the way the sentence names it: a bare word would match "scripts/" in the first clause.
+        named = {"installers": r"The installers suite", "hooks": r"\bhooks \(test_documented_flags\)",
+                 "gates": r"\bgates \(the documented boundary table\)", "scripts": r"\bscripts \(test_validate_manifests\)",
+                 "validation": r"\bvalidation suites"}
+        for suite, pattern in named.items():
             with self.subTest(suite=suite):
-                self.assertIn(suite, found.group(1))
+                self.assertRegex(found.group(1), pattern)
 
     def test_pyyaml_is_declared_for_every_script_that_requires_it(self):
         used_by = next(dep["used_by"] for dep in self.runtime["runtime"]["python"]["optional_dependencies"]

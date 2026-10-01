@@ -248,7 +248,7 @@ class LockMechanismTests(RunStateCase):
             seen.append(Path(source).name)
             return real(source, target)
 
-        with mock.patch.object(save_run.os, "replace", spy):
+        with mock.patch.object(os, "replace", spy):
             self.store().create("admiral", ["README.md"], "agent", "next", {})
         self.assertTrue(seen)
         for name in seen:

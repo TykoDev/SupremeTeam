@@ -170,6 +170,62 @@ class GlobProblemTests(PathCase):
             self.assertIsNone(self.problem(f"/{self.MISSING}/payments/**"))
 
 
+@unittest.skipIf(os.name == "nt", "a leading-slash path is a POSIX notion here")
+class GlobWarningTests(PathCase):
+    """RR3-guard-2: `/lib/payments/**` is the file system's directory, not the project's `lib/payments`, and what the writer says
+    about that must not depend on whether this machine has a `/lib`."""
+
+    MISSING = "zz-nonexistent-dir"
+
+    def warning(self, raw: str):
+        return _paths.glob_warning(raw, self.root)
+
+    def test_a_leading_slash_glob_under_a_directory_every_linux_has_is_warned_with_the_project_spelling(self):
+        for raw, relative in (("/tmp/payments/**", "tmp/payments/**"), ("/etc/**", "etc/**"), ("/tmp", "tmp"), ("\\tmp\\payments\\**", "tmp/payments/**"),
+                              ("//etc/ssl/**", "etc/ssl/**")):
+            with self.subTest(raw=raw):
+                text = self.warning(raw)
+                self.assertIsNotNone(text)
+                self.assertIn(f"not the project's {relative}", text)
+                self.assertIn(f"record {relative}", text)
+                self.assertIn("absolute path outside the project", text)
+                self.assertIsNone(self.problem(raw))
+
+    def test_a_leading_slash_glob_under_a_directory_no_linux_has_is_refused_with_the_same_spelling_not_warned(self):
+        raw = f"/{self.MISSING}/payments/**"
+        self.assertFalse(os.path.isdir(f"/{self.MISSING}"))
+        self.assertIsNone(self.warning(raw))
+        self.assertIn(f"relative to the project root it is {self.MISSING}/payments/**", self.problem(raw))
+
+    def test_what_is_said_does_not_depend_on_whether_the_directory_exists(self):
+        """`/lib` here may or may not exist: with it the glob is warned about, without it refused, and both name `lib/payments/**`."""
+        real = os.path.isdir
+        for exists in (True, False):
+            with self.subTest(exists=exists), mock.patch("os.path.isdir", side_effect=lambda path, here=exists: here if path == "/lib" else real(path)):
+                said = self.warning("/lib/payments/**") if exists else self.problem("/lib/payments/**")
+                self.assertIsNotNone(said)
+                self.assertIn("lib/payments/**", said)
+                self.assertEqual(self.warning("/lib/payments/**") is None, not exists)
+
+    def test_a_path_that_says_where_it_starts_or_lies_under_the_project_is_not_warned(self):
+        for raw in ("src/payments/**", "./src/**", "**", "**/secrets/**", f"{self.root}/src/**", f"{self.root}/", "C:/other/proj/src/**",
+                    "D:\\proj\\**", "~/x/**", "*.tf"):
+            with self.subTest(raw=raw):
+                self.assertIsNone(self.warning(raw))
+
+    def test_the_spellings_that_are_refused_are_not_also_warned(self):
+        for raw in ("/", "!/etc/**", "", "..", "C:/"):
+            with self.subTest(raw=raw):
+                self.assertIsNone(self.warning(raw))
+
+    def test_windows_judges_no_leading_slash_path(self):
+        with mock.patch.object(_paths, "WINDOWS", True):
+            self.assertIsNone(self.warning("/tmp/payments/**"))
+
+    def problem(self, raw: str):
+        return _paths.glob_problem(raw, self.root)
+
+
 class DenyMatchTests(PathCase):
     def test_a_leading_double_star_matches_a_top_level_directory(self):
         """BUGH-20: fnmatch('secrets/token.txt', '**/secrets/**') is False."""

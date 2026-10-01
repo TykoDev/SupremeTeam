@@ -143,6 +143,9 @@ def _normalised(glob: str) -> str:
     problem = _paths.glob_problem(glob, _state.project_root())
     if problem:
         _refuse(f"{glob!r} cannot be matched: {problem}.")
+    warning = _paths.glob_warning(glob, _state.project_root())
+    if warning:
+        print(f"warning: {glob!r}: {warning}.", file=sys.stderr)
     return _paths.normalize_glob(glob, _state.project_root())
 
 
@@ -303,6 +306,8 @@ def cmd_status(args) -> int:
     state = _load()
     unmatchable = [(e, problem) for key in ("frozen_globs", "blocked_globs") for e in _records(state, key)
                    if _active(e) and (problem := _paths.glob_problem(_entry_glob(e), _state.project_root()))]
+    absolute = [(e, warning) for key in ("frozen_globs", "blocked_globs") for e in _records(state, key)
+                if _active(e) and (warning := _paths.glob_warning(_entry_glob(e), _state.project_root()))]
     report = {
         "path": str(_path()),
         "exists": _path().exists(),
@@ -319,6 +324,8 @@ def cmd_status(args) -> int:
         ],
         "unmatchable_entries": [_entry_glob(e) for e, _ in unmatchable],
         "unmatchable_reasons": {_entry_glob(e): reason for e, reason in unmatchable},
+        "absolute_entries": [_entry_glob(e) for e, _ in absolute],
+        "absolute_reasons": {_entry_glob(e): reason for e, reason in absolute},
     }
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
@@ -333,6 +340,10 @@ def cmd_status(args) -> int:
         if report["unmatchable_entries"]:
             print(f"WARNING unmatchable (enforce nothing; re-record with a usable glob): {report['unmatchable_entries']}")
             for glob, reason in report["unmatchable_reasons"].items():
+                print(f"  {glob!r}: {reason}")
+        if report["absolute_entries"]:
+            print(f"WARNING absolute path outside the project (check the spelling): {report['absolute_entries']}")
+            for glob, reason in report["absolute_reasons"].items():
                 print(f"  {glob!r}: {reason}")
     return 0
 

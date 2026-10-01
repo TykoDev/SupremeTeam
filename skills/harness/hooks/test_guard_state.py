@@ -361,6 +361,55 @@ class GuardStateHardeningTests(unittest.TestCase):
                 proc = self.run_guard("freeze", "--glob", spelling, "--owner", "ops")
                 self.assertEqual(proc.returncode, 0, proc.stderr)
 
+    @unittest.skipIf(os.name == "nt", "a leading-slash path is a POSIX notion here")
+    def test_a_leading_slash_glob_outside_the_project_is_recorded_with_a_warning_whatever_the_machine_has(self):
+        """RR3-guard-2: `/lib/payments/**` was recorded in silence where `/lib` exists and refused where it does not. `/tmp` and
+        `/etc` exist on every Linux, `/zz-nonexistent-dir` on none, so this does not depend on the machine."""
+        for spelling, relative in (("/tmp/payments/**", "tmp/payments/**"), ("/etc/**", "etc/**"), ("\\tmp\\payments\\**", "tmp/payments/**")):
+            for command in ("freeze", "block"):
+                with self.subTest(spelling=spelling, command=command):
+                    self.write_record({})
+                    proc = self.run_guard(command, "--glob", spelling, "--owner", "ops")
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+                    self.assertTrue(proc.stderr.startswith("warning:"), proc.stderr)
+                    self.assertIn(f"not the project's {relative}", proc.stderr)
+                    self.assertIn("absolute path outside the project", proc.stderr)
+                    recorded = self.record()["frozen_globs" if command == "freeze" else "blocked_globs"][0]["glob"]
+                    self.assertEqual(recorded, "/" + relative)
+        refused = self.run_guard("freeze", "--glob", "/zz-nonexistent-dir/payments/**", "--owner", "ops")
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("relative to the project root it is zz-nonexistent-dir/payments/**", refused.stderr)
+        self.assertNotIn("warning:", refused.stderr)
+
+    @unittest.skipIf(os.name == "nt", "a leading-slash path is a POSIX notion here")
+    def test_status_carries_the_warning_for_the_record_and_names_the_project_spelling(self):
+        self.run_guard("freeze", "--glob", "/tmp/payments/**", "--owner", "ops")
+        self.run_guard("block", "--glob", "/etc/**", "--owner", "ops")
+        self.run_guard("freeze", "--glob", "src/ok/**", "--owner", "ops")
+        report = json.loads(self.run_guard("status", "--json").stdout)
+        self.assertEqual(report["absolute_entries"], ["/tmp/payments/**", "/etc/**"])
+        self.assertIn("not the project's tmp/payments/**", report["absolute_reasons"]["/tmp/payments/**"])
+        self.assertEqual(report["unmatchable_entries"], [])
+        text = self.run_guard("status").stdout
+        self.assertIn("WARNING absolute path outside the project", text)
+        self.assertIn("record etc/**", text)
+        self.assertNotIn("src/ok", text.split("WARNING")[1])
+
+    @unittest.skipIf(os.name == "nt", "a leading-slash path is a POSIX notion here")
+    def test_a_read_only_allow_glob_outside_the_project_is_warned_about_too(self):
+        proc = self.run_guard("read-only", "--run-id", "r1", "--owner", "ops", "--allow", "/tmp/out/**", "--allow", "skillset-saves/runs/r1/**")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stderr.count("warning:"), 1)
+        self.assertIn("not the project's tmp/out/**", proc.stderr)
+
+    def test_a_glob_under_the_project_root_or_with_its_own_start_is_recorded_without_a_warning(self):
+        for spelling in (str(self.project / "src" / "payments") + "/**", "src/payments/**", "C:/other/proj/src/**", "~/x/**"):
+            with self.subTest(spelling=spelling):
+                self.write_record({})
+                proc = self.run_guard("freeze", "--glob", spelling, "--owner", "ops")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertNotIn("warning:", proc.stderr)
+
     def test_status_says_why_an_unmatchable_record_already_on_disk_enforces_nothing(self):
         self.write_record({"frozen_globs": [{"glob": f"/{self.MISSING}/payments/**", "owner": "ops"}, {"glob": "!x/**", "owner": "ops"},
                                             {"glob": "src/ok/**", "owner": "ops"}]})

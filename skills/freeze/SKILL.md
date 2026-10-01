@@ -77,7 +77,7 @@ one release, and `status` prints the stored form. A relative glob is anchored at
 that can never match would otherwise read as protection: empty, `.`, climbing out with `..`, a leading `!`,
 the root of a drive or of the file system, or an absolute path under a top-level directory this machine does not
 have. The last is the trap: `/src/payments/**` starts at the file system root, not the project root, so the
-writer refuses it and names the project-relative spelling, `src/payments/**`. The hook matches the same way: it resolves
+writer refuses it and names the project-relative spelling, `src/payments/**`. The same mistake where the directory does exist (`/lib/payments/**` on a machine with a `/lib`) is recorded, because an absolute path outside the project is a real boundary (`/etc/**`), but never in silence: the writer prints a warning on stderr (exit status unchanged) that the glob guards the file system's `/lib/payments` and not the project's `lib/payments/**`, and `status` repeats it under `absolute_entries`. Read that warning, and re-record with the relative spelling if the project's path was meant; the refusal for a missing directory stays because it is the stronger signal. The hook matches the same way: it resolves
 `..`, links and case before it compares, so a spelling of a path inside a frozen glob does not
 get around it. Prefer the forward-slash form in what you write down, because that is what you will
 read back.

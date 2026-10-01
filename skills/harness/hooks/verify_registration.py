@@ -50,7 +50,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-import _state
+import _bootstrap
+
+_bootstrap.ensure_paths()
+import _state  # noqa: E402
+from data_formats import load_data  # noqa: E402
 
 REQUIRED = [("pre", "pre_tool_use.py"), ("post", "post_tool_use.py"), ("prompt", "user_prompt_submit.py")]
 _EVENT_MAP = {"pre": "PreToolUse", "post": "PostToolUse", "prompt": "UserPromptSubmit"}
@@ -76,8 +80,9 @@ HOST_EXTRA_TOOLS = {
 # Python options that consume the following token.
 _OPTS_WITH_ARG = {"-W", "-X", "--check-hash-based-pycs", "-Q"}
 _PY_SELECTOR = re.compile(r"-\d(?:\.\d+)?(?:-\d\d)?")
-_PROJECT_VARS = ("CLAUDE_PROJECT_DIR", "SUPREMETEAM_PROJECT_DIR", "CODEX_WORKSPACE_DIR", "GITHUB_WORKSPACE")
 _HOST_SIGNALS = {"codex": ("CODEX_",), "claude": ("CLAUDE",), "copilot": ("COPILOT", "GITHUB_COPILOT")}
+
+RUNTIME_MANIFEST = Path(__file__).resolve().parents[2] / "runtime-manifest.yaml"
 
 # sha256 of each registered hook script, written under .harness-state/ when the
 # hook is registered. repair_registration.py is the writer.
@@ -115,6 +120,16 @@ def _roots() -> list[Path]:
     return roots
 
 
+def repair_command(host: str, *options: str) -> str:
+    """The command that runs the repair tool beside this verifier, wherever this copy lives.
+
+    A checkout-relative ``skills/harness/hooks/...`` path does not exist in an
+    installed copy, and a bare ``python`` may be missing or below the floor, so the
+    command names this script's directory and the interpreter running it."""
+    parts = [sys.executable, str(Path(__file__).resolve().with_name("repair_registration.py")), "--host", host, *options]
+    return " ".join(f'"{part}"' if " " in part else part for part in parts)
+
+
 def _tokens(command: str) -> list[str]:
     """Split shell-like command text without treating Windows backslashes as escapes."""
     raw = re.findall(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|\S+', command)
@@ -135,7 +150,7 @@ def _expand(token: str) -> str:
     def sub(match):
         name = match.group(1) or match.group(2) or match.group(3)
         value = os.environ.get(name)
-        if value is None and name in _PROJECT_VARS:
+        if value is None and name in _state.PROJECT_ENV:
             value = project
         return value if value is not None else match.group(0)
 
@@ -256,11 +271,12 @@ def declared_minimum(default: str = "3.13") -> str:
 
     A hardcoded second opinion would let a check report "too old" on a version
     the manifest declares supported, so the manifest wins and this fallback only
-    covers a manifest that is missing or unreadable.
+    covers a manifest that is missing or unreadable. The file is read with the
+    catalog's own loader, so it may be JSON or block YAML and a reformat of it is
+    not mistaken for an unreadable manifest.
     """
-    manifest = Path(__file__).resolve().parents[2] / "runtime-manifest.yaml"
     try:
-        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data = load_data(RUNTIME_MANIFEST)
         major, minor = (int(part) for part in str(data["runtime"]["python"]["minimum"]).split(".", 1))
         return f"{major}.{minor}"
     except Exception:
@@ -480,7 +496,7 @@ def _print(host, loaded, result, required, absent_is_missing=False):
         print(f"  warning: {warning}")
     if changed:
         print(f"  note: {', '.join(changed)} changed since registration (expected after a deliberate edit); "
-              f"record the new hash with: python skills/harness/hooks/repair_registration.py --host {host} --record-hashes")
+              f"record the new hash with: {repair_command(host, '--record-hashes')}")
     print("  observed: unverified - host firing is not proven by config inspection")
     warned = warnings or any(result[key]["coverage"] == "partial" for key, _ in required)
     print(f"  status: {'REGISTERED' if ok else 'MISSING'}{' (with warnings)' if ok and warned else ''}")
@@ -516,8 +532,8 @@ def main() -> int:
     print("\nREGISTER_PROMPT: Supreme Team harness hooks are not fully registered for the selected host scope.")
     print(f"Register the {len(REQUIRED)} commands in the active host's native hook configuration.")
     print("The scripts live in skills/harness/hooks/; see that directory's README.md for exact examples,")
-    print("or preview a scoped repair with: python skills/harness/hooks/repair_registration.py "
-          f"--host {pending[0] if len(pending) == 1 else '<host>'} --scope project")
+    print("or preview a scoped repair with: "
+          + repair_command(pending[0] if len(pending) == 1 else "<host>", "--scope", "project"))
     return 1 if not chosen or any(status is False for status in statuses) else 2
 
 

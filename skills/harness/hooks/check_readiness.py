@@ -39,7 +39,7 @@ from pathlib import Path
 
 from _saves import classify_saves
 import _state
-from verify_registration import HOSTS, declared_minimum, interpreter_warning
+from verify_registration import HOSTS, declared_minimum, interpreter_warning, repair_command
 
 
 def run_hook_verifier(host: str, project_root: Path) -> tuple[str, int, str, dict]:
@@ -235,7 +235,7 @@ def main() -> int:
     warnings = _hook_warnings(hook_states) + _firing_lines(observations["events"])
     repair_host = args.host if args.host in HOSTS else next(iter(hook_report)) if len(hook_report) == 1 else "<host>"
     needs_repair = hook_status != "registered" or coverage == "partial"
-    repair_hint = (f"python skills/harness/hooks/repair_registration.py --host {repair_host} --scope project "
+    repair_hint = (f"{repair_command(repair_host, '--scope', 'project')} "
                    "(dry run; add --apply only with owner authorization)") if needs_repair else None
 
     blockers = []

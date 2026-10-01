@@ -30,7 +30,7 @@ advisory (see [Install.md](Install.md#runtime-hooks)).
 1. **Install** — hand [Install.md](Install.md) to your agent, or run the installer for your OS from [scripts/](scripts/) (`bash ./scripts/install.sh`, or `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1`). The skill files copy without Python; the checks and hooks need **Python 3.13 or newer**. Runtime hooks are optional and registered separately (`--register-hooks`, which edits host config files and asks first on a terminal); Claude Code, Codex and GitHub Copilot take config entries, Cursor and OpenCode a plugin.
 2. **Restart your assistant** so it loads the skills, then [check the installed copy](#check-an-installation).
 3. **Start a run** — call `admiral`. It interviews you, writes the scope down, creates a run on disk, and hands off phase one. A governed run reads a lot of text; [QUICK-START.md](QUICK-START.md#what-a-run-costs) says how much and how to avoid it.
-4. **Let it flow** — small reversible edits skip the whole route and just get done (the Tier 0 fast path); security, deploy, and production work always run the full route. Hooks make that routing deterministic; without them it is advice the model may follow.
+4. **Let it flow** — small reversible edits skip the whole route and just get done (the Tier 0 fast path); security, deploy, and production work are never Tier 0 and take the full route. Routing is instruction, not enforcement: registered hooks remind the model on every prompt and refuse guarded writes, but nothing forces a request through `admiral`.
 
 ## Review gates
 

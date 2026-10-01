@@ -219,8 +219,8 @@ files change; this measures them now:
 wc -c skills/admiral/SKILL.md skills/{routing-doctrine,grill-me-doctrine,save-protocol,harness-doctrine,execution-contract}.md skills/{gates,pipelines}.yaml
 ```
 
-The Tier 0 fast path above reads none of it, which is why small work is better
-left off the full route.
+The Tier 0 fast path above needs none of it (no interview, no saved run, no gate
+package), which is why small work is better left off the full route.
 
 ## Manual install
 

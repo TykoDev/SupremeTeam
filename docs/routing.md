@@ -129,7 +129,7 @@ Every later message in the session belongs to that run, even when you never say
 The pin clears on `RUN_COMPLETE`, on `release admiral` or `/exit-admiral`, or when
 the lock is verified stale. Every release is appended to the audit trail.
 
-## Making it deterministic
+## Making it reliable
 
 `skills/harness/hooks/user_prompt_submit.py` fires on every fresh prompt and
 injects an advisory reminder: point at `admiral` when no run is active, reinforce

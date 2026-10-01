@@ -275,7 +275,9 @@ python3 scripts/install_hooks.py --target claude --hook-root "$HOME/.agents/skil
 ```
 
 Swap `--target` for your host (`codex`, `claude`, `copilot`; `cursor`/`opencode`
-write a plugin package). Skip the hook line to leave routing and guards advisory.
+write a plugin package). Add `--dry-run` first to see the change, and note that the
+default `--scope user` edits your global host config. Skip the hook line to leave
+routing and guards advisory.
 
 ## Uninstall
 

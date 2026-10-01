@@ -448,3 +448,28 @@ about 950.
     and make the Taste example pass the checker. Then clear the 19 stale ledger
     items and re-run the rubric so that `BENCHMARK.md` stops overstating the
     current state.
+
+## Remediation status
+
+The scores and findings above are the before-state and are not edited. The two
+Critical findings and four Major findings (the first four after them in the
+remediation order) are resolved. Each one has a regression test that fails on
+the pre-fix code; together the new tests produced 53 failures and 2 errors there.
+
+| Finding | Fix | Regression test |
+|---|---|---|
+| O-1 | 15 checkpoint commands in 12 skills now pass `--owner admiral` (the lock holder) and record the delegate with `--set delegated_to=`. The new test found two multi-line examples the audit missed. | `validation/test_save_prose.py` refuses any documented `save_run.py` command whose `--owner` is not the writer's lock holder |
+| H-1 | The analyser names the file a copy, link or install lands as (`dir/<name>`). Rule C reads a sync, an extract, a recursive or contents copy, `git clean` and `find -exec` editors as tree writes into a record directory. | `test_guard_rules.DirectoryDepositTests` (record deposits and neighbours) |
+| H-3 | Rule B counts `rsync`, extracts, recursive or contents copies, `Copy-Item` and `find -exec` editors aimed above a boundary as tree writes. A plain `cp a.py src/` is judged by the file it lands as. | `DirectoryDepositTests` (tree writes and neighbours) |
+| H-2 | `$PWD` resolves to the shell's directory, and the `_state.PROJECT_ENV` variables resolve to the host's values. A path led by an unresolved variable is also judged without it. Rule F reads launchers and unplaced writes as Rule B does. | `DirectoryDepositTests` (variable spellings), `test_guard_cmdscan` |
+| H-4 | Rule F covers `skills/scripts/data_formats.py` and `save_taxonomy.py`. A rule that raises `SystemExit` is counted and skipped. A taxonomy that fails its import is counted, and the guard keeps enforcing. The entry counts any `SystemExit` the guard did not take itself. | `test_guard_harness_files`, `test_pre_tool_entry.PoisonedHelperTests`, `EntryPointTests` |
+| G-1 | `check.py` finds the run directory from any depth. | `test_gate_run_layout` (depths 1 to 6, a schema-1 package with an open Critical) |
+
+Still open from this audit:
+
+- **Major, not yet fixed:** H-5, G-2, G-3, P-1, P-2, O-2, O-3, O-4/D-1, D-2 and
+  D-3, plus O-5, which is plausible but unconfirmed.
+- **All Minor and Info findings.**
+- **Root-level limits, now listed in the hooks README limits:** a `git clean -x`
+  or an archive extract aimed at the project root, rather than at a record
+  directory, is still not read as reaching the records.

@@ -262,11 +262,32 @@ class GateProseTests(unittest.TestCase):
                 self.assertIn("every declared version is one the registry entry offers", path.read_text(encoding="utf-8"))
 
     def test_every_gatekeeper_says_a_typed_record_is_the_submitters_own_statement(self):
-        """SEC-T-01: the gate never opens an artifact, so each document that describes its check has to say so."""
-        statement = re.compile(r"submitter's\s+own\s+statement.*?never\s+opens\s+an\s+artifact", re.S)
+        """SEC-T-01: the gate does not compare an artifact with its record, and says what it does read."""
+        statement = re.compile(r"submitter's\s+own\s+statement.*?never\s+compares\s+an\s+artifact's\s+content.*?"
+                               r"`\.md`\s+and\s+`\.txt`\s+artifacts", re.S)
         for name in GATEKEEPER_SKILLS:
             with self.subTest(skill=name):
                 self.assertRegex((SKILLS / name / "SKILL.md").read_text(encoding="utf-8"), statement)
+
+    def test_no_gate_document_says_the_validator_never_opens_an_artifact(self):
+        """RR3-gate-1: check.py reads `.md` and `.txt` artifacts for blocked phrases and local links, so "never opens" is false."""
+        claim = re.compile(r"(?:never\s+opens?|does\s+not\s+open|no\s+rule\s+opens)\s+(?:an\s+artifact|the\s+raw)", re.I)
+        names = (*GATEKEEPER_SKILLS,)
+        files = [SKILLS / name / "SKILL.md" for name in names]
+        files += [SKILLS / "gates.yaml", SKILLS / "harness" / "gatekeeper" / "README.md", SKILLS / "harness" / "gatekeeper" / "check.py",
+                  SKILLS / "contracts" / "evidence-standards.md", SKILLS / "contracts" / "universal-frameworks.md",
+                  SKILLS / "review" / "security-review" / "references" / "scan-evidence.md"]
+        for path in files:
+            with self.subTest(document=path.name):
+                self.assertIsNone(claim.search(path.read_text(encoding="utf-8")), f"{path} says the validator never opens an artifact")
+
+    def test_the_design_gatekeeper_is_told_to_act_on_a_stack_lock_warning(self):
+        """RR3-gate-2: the engine warns about an ended or unverified stack and passes; a procedure has to read the warning."""
+        text = (SKILLS / "design" / "gatekeeper-design" / "SKILL.md").read_text(encoding="utf-8")
+        row = next((line for line in text.splitlines() if line.startswith("|") and "stack-lock warning" in line), "")
+        self.assertIn("support_ends", row, "no failure-mode row for a stack-lock warning")
+        self.assertIn("verification_ttl_days", row)
+        self.assertIn("Do not approve silently", row)
 
     def test_every_gatekeeper_says_what_a_schema_1_result_leaves_unchecked(self):
         """SEC-T-05: a flat schema-1 package outside a run passes, so the gatekeeper is told to read the result."""

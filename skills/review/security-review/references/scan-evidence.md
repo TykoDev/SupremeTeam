@@ -35,8 +35,10 @@ clean scan, and `fail` means the scanner ran correctly and reported findings.
 The record is written by the script, never by hand: a hand-written record cannot
 carry a truthful `exit_code` or a digest of output it did not observe. The gate
 cannot tell the two apart, though: it checks the record's shape, its digests, and
-that a `pass` does not sit beside a non-zero `exit_code`, and it never opens the
-raw output. That the record is the script's own is a property of how it was made,
+that a `pass` does not sit beside a non-zero `exit_code`, and it never compares the
+raw output with the record. It does read a `.txt` artifact for blocked phrases, as it
+reads any text artifact, so a scanner that prints `TODO` or `100% complete` fails the
+check mechanically. That the record is the script's own is a property of how it was made,
 not of anything `check.py` verifies.
 
 The one sanctioned fallback for the key is

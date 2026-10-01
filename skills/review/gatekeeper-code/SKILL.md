@@ -161,8 +161,8 @@ any `inputs` those records carry still match their sources by sha256 (a render
 must carry them; a probe may not, and is then listed in `warnings`), that
 `review_verdict` and `findings` are correctly shaped typed records, and that no
 blocked phrase or broken local link is present. A typed record is the
-submitter's own statement: the validator never opens an artifact or re-runs a
-command. Exit 0 is a mechanical fact, not approval; exit 2 is an engine error
+submitter's own statement: the validator never compares an artifact's content
+with what its record claims and never re-runs a command (it reads `.md` and `.txt` artifacts only for blocked phrases and local links). Exit 0 is a mechanical fact, not approval; exit 2 is an engine error
 and never a pass.
 
 **The two key spaces do not overlap, and that is the trap.**

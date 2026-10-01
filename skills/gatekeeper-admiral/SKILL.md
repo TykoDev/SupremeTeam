@@ -159,7 +159,7 @@ It verifies, for the named boundary only:
 - the revision lineage holds one value, and the declared `owner` is the boundary's only permitted submitter
 - no blocked phrase and no broken local link is present
 
-A typed record is the submitter's own statement. The validator never opens an artifact or re-runs a command, so whether a log is the runner's own output, or a scan ran at all, is a judgement it leaves to you.
+A typed record is the submitter's own statement. The validator never compares an artifact's content with what its record claims and never re-runs a command (it reads `.md` and `.txt` artifacts only for blocked phrases and local links), so whether a log is the runner's own output, or a scan ran at all, is a judgement it leaves to you.
 
 A missing or malformed gate spec is an engine error (exit 2), never a pass, and
 exit 0 is a mechanical fact rather than approval. Reuse a prior verdict only when

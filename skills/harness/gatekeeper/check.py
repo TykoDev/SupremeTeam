@@ -46,8 +46,9 @@ says in ``warnings`` that no typed check ran.
 What is verified and what is attested: a typed record is the submitter's own
 statement. The gate checks its shape, that each artifact it names exists and
 matches its digest, that each ``inputs`` entry still hashes to what the record
-says, and that a pass does not sit beside a non-zero exit code. It does not open
-an artifact or re-run anything, and a probe record that binds no inputs is
+says, and that a pass does not sit beside a non-zero exit code. It does not compare
+an artifact's content with the record or re-run anything (``.md`` and ``.txt`` artifacts
+are read for blocked phrases and local links only), and a probe record that binds no inputs is
 listed in ``warnings`` as attested rather than tied to the source it describes.
 
 Output: a JSON report on stdout. On engine error, including any fault inside the
@@ -226,6 +227,11 @@ def filled(value: object) -> bool:
     so every field that means "someone named this" is read through here.
     """
     return isinstance(value, str) and bool(value.strip())
+
+
+def utc_today() -> date:
+    """Today in UTC, read once per check; a seam so the freshness tests fix the date instead of racing midnight."""
+    return datetime.now(timezone.utc).date()
 
 
 def parse_date(value: object) -> date | None:
@@ -929,7 +935,7 @@ class Package:
         """
         if not isinstance(registry, dict):
             return
-        today = datetime.now(timezone.utc).date()
+        today = utc_today()
         support_ends = registry.get("support_ends")
         ended = support_ends.get(slug) if isinstance(support_ends, dict) else None
         if ended is not None:

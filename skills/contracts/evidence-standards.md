@@ -117,8 +117,8 @@ matters most for `tests` and `runtime`:
   source it describes`, and whether a log describes the revision being shipped is
   the gatekeeper's judgement. A submitter who wants the drift check on a test
   log binds its inputs.
-- **Attested, never verified.** check.py does not open an artifact, re-run a
-  command, or confirm which tool produced a record. `result.status`, `tool`,
+- **Attested, never verified.** check.py does not compare an artifact's content with
+  what a record claims, re-run a command, or confirm which tool produced a record (it reads `.md` and `.txt` artifacts only for blocked phrases and local links). `result.status`, `tool`,
   `command`, and `observed_at` are the submitter's own statement, and a hash
   proves a file is unchanged since it was hashed, not that it says what the
   record claims. The one contradiction the gate can see, a `pass` beside a
@@ -173,7 +173,7 @@ mechanical column.
 | Standard | Backing | What fails |
 |----------|---------|------------|
 | Evidence that names source `inputs` stays bound to them by path and sha256 | Machine-checked by `check.py` for any typed record that carries `inputs`; the inputs are required for `scan` and `render` records only | `input hash drift (stale evidence)`, `input missing`, `input entry requires path and sha256`, and for scan and render alone `record must bind inputs (path + sha256) to the inspected source`. A `probe` record with no `inputs` passes and is listed in `warnings`. |
-| A typed record is what it claims to be | Judgement, apart from one contradiction | `check.py` checks shape, artifact digests, input digests, and that a pass does not sit beside a non-zero exit code (`result pass contradicts exit_code`, `exit_code must be an integer`). It never opens an artifact, so that a log is the runner's own output, that a scan ran, or that a capture shows the surface is for the gatekeeper. |
+| A typed record is what it claims to be | Judgement, apart from one contradiction | `check.py` checks shape, artifact digests, input digests, and that a pass does not sit beside a non-zero exit code (`result pass contradicts exit_code`, `exit_code must be an integer`). It never compares an artifact's content with its record, so that a log is the runner's own output, that a scan ran, or that a capture shows the surface is for the gatekeeper. |
 | A key declared artifact-backed points at a hashed artifact | Machine-checked by `check.py` | `evidence not artifact-backed`, `evidence references unhashed path`, `evidence references defective artifact` |
 | A named artifact exists and matches its declared digest | Machine-checked by `check.py` | `missing artifact`, `invalid artifact digest`, `artifact hash mismatch` |
 | Evidence stays inside the run's evidence root | Machine-checked by `check.py` | `escapes evidence root`, `references another run`, `input path must be project-relative` |

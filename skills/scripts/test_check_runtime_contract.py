@@ -325,6 +325,28 @@ class DocumentedCommandTests(CommandLineCase):
         self.assertIn("Ready: no", lines)
         self.assertIn("Error: project inspection: project root does not exist", lines)
 
+    def test_a_generated_directory_ahead_of_the_manifests_does_not_hide_them(self):
+        generated = {f".next/static/chunk{number:04d}.js": "x" for number in range(1_200)}
+        root = self.project({**generated, "apps/web/package.json": fixtures.package_json(dev={"vite": "^7"})})
+        process = self.cli("--detect-project", cwd=root, catalog=self.catalog)
+        lines = self.lines(process)
+        self.assertEqual(process.returncode, 0, process.stdout)
+        self.assertIn("Inspection: frontend-only; stacks=vite-spa; start candidates=0; scaffold markers=0", lines)
+        self.assertIn("Ready: yes", lines)
+
+    def test_a_walk_cut_short_is_not_ready_and_says_so(self):
+        crowd = {f"a{number:04d}.txt": "text\n" for number in range(1_001)}
+        root = self.project({**crowd, "z/package.json": fixtures.package_json(dev={"vite": "^7"})})
+        process = self.cli("--detect-project", cwd=root, catalog=self.catalog)
+        lines = self.lines(process)
+        self.assertEqual(process.returncode, 1, process.stdout)
+        self.assertIn("Ready: no", lines)
+        errors = [line for line in lines if line.startswith("Inspection error: project inspection file-count limit exceeded")]
+        self.assertEqual(len(errors), 1)
+        self.assertIn("the inspection is incomplete", errors[0])
+        self.assertIn("--project-root", errors[0])
+        self.assertFalse([line for line in lines if "no project evidence found" in line])
+
     def test_json_mode_prints_one_sorted_document(self):
         root = self.project(fixtures.VITE_TREE)
         process = self.cli("--project-root", ".", "--detect-project", "--json", cwd=root, catalog=self.catalog)

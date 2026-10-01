@@ -32,6 +32,7 @@ Block contract: prints the PreToolUse deny envelope to stdout and
 exits 0. On any internal error it exits 0 silently (fail open), letting the
 action proceed, after counting the fault by type in the hook's observation record.
 """
+from __future__ import annotations
 
 import functools
 import glob as _glob

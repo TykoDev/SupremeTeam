@@ -30,6 +30,7 @@ stdout and exits 0. On any internal error it exits 0 silently (fail open) and co
 the fault by type in the hook's observation record (`_state.record_fault`). It
 never blocks — by definition the action already executed.
 """
+from __future__ import annotations
 
 import hashlib
 import json

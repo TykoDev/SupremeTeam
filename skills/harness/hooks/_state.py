@@ -28,6 +28,7 @@ Fail-open leaves a trace: a fault a hook swallows is counted by exception type,
 never by message, in the observation record of its event (``faults`` and
 ``last_fault``), so readiness can tell a hook that fires from one that works.
 """
+from __future__ import annotations
 
 import hashlib
 import json

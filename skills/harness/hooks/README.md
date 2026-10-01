@@ -98,7 +98,7 @@ Every file in `skills/harness/hooks/` serves an explicit, non-overlapping archit
 | [`test_guard_cmdscan.py`](test_guard_cmdscan.py) | Test Suite | - | The command analyser: lexing, wrappers, write-target tables, nesting and cost. |
 | [`test_guard_paths.py`](test_guard_paths.py) | Test Suite | - | The path and glob canonicaliser: spellings, links, case, allow versus deny direction. |
 | [`test_guard_harness_files.py`](test_guard_harness_files.py) | Test Suite | - | Rule F: the hook scripts and registration files are protected while the guard is in use, and not otherwise. |
-| [`test_pre_tool_entry.py`](test_pre_tool_entry.py) | Test Suite | - | The registered PreToolUse entry fails open readably, on a fault and on a Python below the floor. |
+| [`test_pre_tool_entry.py`](test_pre_tool_entry.py) | Test Suite | - | The registered PreToolUse entry runs the guard on any interpreter (the real scripts under each older Python installed) and fails open readably, counted, on a real fault; every hook module imports on an older interpreter. |
 | [`test_state_hardening.py`](test_state_hardening.py) | Test Suite | - | Hook input decoding, fault counting, trusted state directory, grant cap and the project-root order. |
 | [`test_fsutil.py`](test_fsutil.py) | Test Suite | - | The shared atomic write and advisory lock. |
 | [`test_hooks_maintenance.py`](test_hooks_maintenance.py) | Test Suite | - | The coverage sweep (read-only runs, active runs, isolated `coverage combine`), neutralised context text, the fault trace of the post-tool and prompt hooks, and import structure. |
@@ -136,6 +136,8 @@ Per [`../../harness-doctrine.md`](../../harness-doctrine.md), every hook and hel
 ### `pre_tool_use.py` and `guard_hook.py` (Layer 3 — Action Realization)
 
 Invoked by the host before any write-capable or shell tool executes. `pre_tool_use.py` is the registered entry point that delegates to `guard_hook.py`.
+
+`pre_tool_use.py` has no interpreter gate. The supported floor is Python 3.13 (`runtime-manifest.yaml`), but a guard that switched itself off below the floor would be weaker than no floor: the guard modules import and pass the guard suites on 3.10 to 3.12, so a host registered with an older bare `python` is still guarded, and the entry simply runs the guard. Only a real failure to import or run it fails open, and then the fault is counted (see [Fault trace](#fault-trace)) and, below the floor, one line on stderr names the interpreter and the floor. Readiness and the registration check warn about a registered interpreter below the floor; neither is a precondition of the guard working.
 
 #### Rule Hierarchy and Enforcement Contract
 

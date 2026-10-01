@@ -147,7 +147,8 @@ def read_json(path: Path, *, refuse: bool = False) -> dict[str, Any] | None:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except PermissionError:
-        if refuse:
+        # Windows says the same for a directory where the record belongs, which is damage, not a refusal.
+        if refuse and not path.is_dir():
             raise
         return None
     except (OSError, ValueError, RecursionError):

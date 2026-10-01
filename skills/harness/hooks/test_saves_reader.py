@@ -363,6 +363,19 @@ class RefusedRecordTests(unittest.TestCase):
         self.assertEqual((result["status"], result["access_denied"]), ("corrupt", ["skillset-saves/runs"]), result)
         self.assertNotIn(str(self.project.root), result["detail"])
 
+    def test_a_directory_where_a_record_belongs_is_damage_not_a_refusal_even_where_the_system_says_permission_denied(self):
+        """Windows raises PermissionError for the read of a directory; only a file this account is refused is a refusal."""
+        self.project.run("a")
+        self.project.pointer("a")
+        pointer = self.project.root / "skillset-saves" / "_latest.md"
+        pointer.unlink()
+        pointer.mkdir()
+        with refusing("skillset-saves/_latest.md"):
+            result = self.project.classify()
+            self.assertFalse(_saves.has_active_run(self.project.root))
+        self.assertEqual((result["status"], result["detail"]), ("corrupt", "pointer missing or malformed"), result)
+        self.assertNotIn("access_denied", result)
+
     def test_one_run_is_classified_corrupt_with_the_path_when_its_record_is_refused(self):
         self.project.run("a")
         with refusing("runs/a/_state.md"):

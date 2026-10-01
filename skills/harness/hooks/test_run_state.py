@@ -880,6 +880,16 @@ class SecondAccountTests(RunStateCase):
                 self.assertIn("exists but this account cannot read it (permission denied)", out["reason"])
                 self.assertNotIn("no lock", out["reason"])
 
+    def test_a_directory_where_a_record_belongs_is_not_called_a_permission_problem(self):
+        """Windows raises PermissionError for the read of a directory; the writer still says what is wrong."""
+        self.create()
+        lock = self.run_dir / "_lock.md"
+        lock.unlink()
+        lock.mkdir()
+        with refusing("run-1/_lock.md"), self.assertRaises(save_run.Refused) as caught:
+            self.store().checkpoint("admiral", None, [], "active", None, {})
+        self.assertEqual(str(caught.exception), "run has no lock; create it first")
+
     def test_status_says_a_record_cannot_be_read_and_what_to_do(self):
         self.create()
         with refusing("run-1/_lock.md"):

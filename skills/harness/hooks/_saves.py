@@ -74,7 +74,8 @@ def _load(path: Path) -> tuple[dict[str, Any] | None, bool]:
     try:
         value = parse_yaml(path.read_text(encoding="utf-8"))
     except PermissionError:
-        return None, True
+        # Windows says the same for a directory where the record belongs, which is damage, not a refusal.
+        return None, not _is_directory(path)
     except (OSError, ValueError, RecursionError):
         # A parse failure, undecodable bytes and an integer literal past the interpreter's digit limit are all ValueErrors.
         return None, False
@@ -83,6 +84,13 @@ def _load(path: Path) -> tuple[dict[str, Any] | None, bool]:
 
 def _mapping(path: Path) -> dict[str, Any] | None:
     return _load(path)[0]
+
+
+def _is_directory(path: Path) -> bool:
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
 
 
 def _exists(path: Path) -> bool:

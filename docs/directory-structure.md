@@ -21,6 +21,7 @@ SupremeTeam/
 │   ├── install.sh                        # macOS and Linux installer
 │   ├── install-items.txt                 # What the installers copy
 │   ├── install_hooks.py                  # Registers hooks, then verifies them
+│   ├── superseded/                       # Registry texts earlier releases shipped; an unedited copy is replaced on upgrade
 │   └── test_install.py                   # Installer suite
 ├── docs/
 │   ├── architecture.md                   # Pipelines, tiers, execution modes
@@ -78,7 +79,7 @@ SupremeTeam/
     ├── harness/
     │   ├── hooks/                        # Lifecycle hooks, the guard, the record writers, diagnostics
     │   │   ├── pre_tool_use.py           # PreToolUse entry point; forwards to guard_hook.py
-    │   │   ├── guard_hook.py             # The guard engine: Rules A to F, one function per rule
+    │   │   ├── guard_hook.py             # The guard engine: Rules A to G, one function per rule
     │   │   ├── _cmdscan.py               # Shell command analyser: wrappers, redirects, write targets
     │   │   ├── _paths.py                 # Path and glob canonicaliser
     │   │   ├── guard_state.py            # The only writer of the guard record
@@ -88,7 +89,7 @@ SupremeTeam/
     │   │   ├── _saves.py                 # Reader that classifies saved state
     │   │   ├── _state.py                 # Project root, hook input, guard state, fault counting, heartbeat
     │   │   ├── _fsutil.py                # The shared atomic write and OS advisory lock
-    │   │   ├── _bootstrap.py             # sys.path setup, done once
+    │   │   ├── _bootstrap.py             # sys.path setup, done once; lists the files a hook runs to decide
     │   │   ├── size_audit.py             # Bounded report of oversized runtime files
     │   │   ├── audit_improve.py          # Read-only audit of saved failures
     │   │   ├── verify_registration.py    # Inspects host hook config without changing it
@@ -160,9 +161,10 @@ test, so run the suite and read its last line.
 - **Taste**, `skills/taste/`: `test_taste_prefs.py`, `test_taste_store.py`
 - **Installers**, `scripts/`: `test_install.py`
 - **Skill-creator**, `skills/skill-maker/skill-creator/scripts/`: `test_aggregate_benchmark.py`,
-  `test_encoding.py`, `test_generate_review.py`, `test_improve_description.py`,
-  `test_package_skill.py`, `test_quick_validate.py`, `test_regressions.py`,
-  `test_run_eval.py`, `test_run_loop.py`, `test_utils.py`
+  `test_documentation.py`, `test_encoding.py`, `test_entry_points.py`, `test_generate_review.py`,
+  `test_improve_description.py`, `test_older_interpreters.py`, `test_package_skill.py`,
+  `test_quick_validate.py`, `test_regressions.py`, `test_run_eval.py`, `test_run_loop.py`,
+  `test_utils.py`
 
 ## The `.yaml` specs
 

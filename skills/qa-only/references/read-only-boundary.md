@@ -50,7 +50,11 @@ Denied while the record is unreleased:
   `curl -o`, `git checkout --`, `cd`, and wrappers such as `sudo` and `sh -c`), and every
   write target must lie inside: naming one allowed path in a command that also writes
   somewhere else does not satisfy it. A git command that changes the repository and names
-  no path (`git add -A`, `git push`, `git merge`) is denied too.
+  no path (`git add -A`, `git push`, `git merge`) is denied too, and so are the index-only ones
+  (`git restore --staged .`, `git reset HEAD f`): they write no file, but they change the repository.
+  So are the usual package-manager commands that install, remove or update (`npm install`,
+  `pip install -r requirements.txt`, `uv pip install`, `sudo apt-get install`): a table of the common
+  managers, not every tool.
 
 Passing untouched:
 

@@ -299,7 +299,9 @@ failing open costs the guarantee.
   leaves the block in force, because a guard that cannot read its own grant
   stays closed.
 - **The gate engine cannot load or parse its spec.** That is an engine error,
-  exit code 2, never a pass and never a verdict. Treat it as `ESCALATE` (§0).
+  exit code 2, never a pass and never a verdict. Treat it as `ESCALATE` (§0). The exit codes
+  of every tool are tabulated under "Exit codes and streams" in the repository's `docs/harness.md`,
+  a checkout file that an installed copy does not carry.
 - **A required evidence check is unavailable.** An unavailable or errored typed
   record is a data gap, not a clean result. The verdict is `REVISE` or
   `ESCALATE` with the gap named.

@@ -7,7 +7,7 @@ description: >-
   "don't touch the payments code". Creates the lock only: lifting it belongs to
   `unfreeze`, a verdict with no boundary to `careful`,
   the combined posture to `guard`.
-version: 1.1.0
+version: 1.2.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 

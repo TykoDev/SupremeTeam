@@ -224,7 +224,7 @@ Not skills. These are the files the skills are checked against.
 | Component | Path | Purpose |
 |---|---|---|
 | **pre_tool_use.py** | `skills/harness/hooks/pre_tool_use.py` | `PreToolUse`: the registered entry point; forwards to `guard_hook.py` and fails open, readably, on a fault |
-| **guard_hook.py** | `skills/harness/hooks/guard_hook.py` | The guard engine: Rules A to F, one function per rule (destructive commands, frozen and blocked boundaries, read-only runs, single writers, the hook scripts and their registration files) plus the coverage advisory |
+| **guard_hook.py** | `skills/harness/hooks/guard_hook.py` | The guard engine: Rules A to G, one function per rule (destructive commands, frozen and blocked boundaries, read-only runs, single writers, the hook scripts and their registration files, a write the analysis cannot place) plus the coverage advisory |
 | **_cmdscan.py** | `skills/harness/hooks/_cmdscan.py` | Shell command analyser behind the guard: quoting, wrappers, heredocs, `cd`, and the write targets of the usual verbs |
 | **_paths.py** | `skills/harness/hooks/_paths.py` | Path and glob canonicaliser behind the guard: separators, `.` and `..`, `~`, drive letters, links and case |
 | **guard_state.py** | `skills/harness/hooks/guard_state.py` | The only writer of the guard record (`.harness-state/guard-state.json`) that `guard`, `freeze` and `unfreeze` request |
@@ -236,7 +236,7 @@ Not skills. These are the files the skills are checked against.
 | **_saves.py** | `skills/harness/hooks/_saves.py` | Shared reader that classifies saved state |
 | **_state.py** | `skills/harness/hooks/_state.py` | Fail-open state helper: project root, hook input decoding, guard state, fault counting, trajectories, heartbeat |
 | **_fsutil.py** | `skills/harness/hooks/_fsutil.py` | The one atomic write and the one OS advisory lock the hook-directory writers share |
-| **_bootstrap.py** | `skills/harness/hooks/_bootstrap.py` | Puts the hooks directory and `skills/scripts` on `sys.path` once, so modules import each other by name |
+| **_bootstrap.py** | `skills/harness/hooks/_bootstrap.py` | Puts the hooks directory and `skills/scripts` on `sys.path` once, so modules import each other by name, and lists the files a registered hook runs to decide |
 | **_testkit.py** | `skills/harness/hooks/_testkit.py` | Test support for the guard suites: an in-process `decide()` and a subprocess `run_hook()` |
 | **verify_registration.py** | `skills/harness/hooks/verify_registration.py` | Inspects host hook config without mutating it |
 | **repair_registration.py** | `skills/harness/hooks/repair_registration.py` | Previews a scoped registration repair; applies only with `--apply` |

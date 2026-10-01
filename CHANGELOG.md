@@ -64,7 +64,31 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 - `save_run.py block` refuses `--reason` instead of accepting and discarding it, and run
   ids are checked against the pattern the reader uses, so a writer can no longer create a
-  run id the reader would not find.
+  run id the reader would not find; only `create` is held to it, every other operation
+  takes any single path segment, so a run made under a looser id stays readable and
+  closable.
+- `checkpoint --drop-evidence` refuses to leave a run with no evidence path. Records
+  `save_run.py` writes are owner-only (0600). A hook that skips its heartbeat because a
+  writer holds the lock is no longer counted as a fault. `check_readiness.py` prints the
+  next step for the saves (`saves.next_step`) and counts only the tool hooks in
+  `hooks_coverage`. The hook-hash record covers every Python module in the hook
+  directory, and a changed file is named; `verify_registration.py` accepts a
+  registration that names the harness in any install root; a host config that is a
+  symbolic link is written through at user scope and refused at project scope.
+  `output_paths.py --kind product` refuses the version-control directory, the generated
+  roots, `skills/harness/` and the host registration files. The installers replace an
+  unedited registry from an earlier release (`scripts/superseded/`), report a failed
+  hook registration in the summary and exit with its status, and say whether an item
+  was removed because it was not selected or is no longer shipped; `install.ps1`
+  follows links on a destination before judging it.
+- `check_runtime.py` finds a root-level stack beside a nested package, combines the
+  signals of a project into one classification (a Vite frontend with a FastAPI backend
+  is `full-stack`; a tooling-only `package.json` does not make a project a frontend),
+  and reads a large lockfile, a non-UTF-8 note or a symbolic link as a warning, not a
+  failure. A project walk stopped by a limit is an error that says the inspection is
+  incomplete, and generated output directories are skipped. The skill-creator packager
+  and `package_check.py` read one residue list. The benchmark delta is the skill under
+  test minus its baseline, whatever order the configurations are named in.
 - The verifier and readiness print a repair command that exists where they run, not a
   checkout-relative one that fails in an installed copy.
 - `quick_validate` rejects extension keys no skill uses.
@@ -258,6 +282,32 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   registry origin outside the project's own `components.json` needs the user's
   approval first.
 
+- The guard's analysis costs time and memory in proportion to the length of the
+  command: a chain of relative `cd` used to square (a 74 KB chain took 94 s and a
+  100 KB one ran out of memory) and now takes a third of a second. `cd` back into a
+  directory already visited is followed, so `cd src; cd x; cd ..; cd payments; touch
+  a.py` is judged as a write into `src/payments`, which used to pass a freeze. Rule G
+  denies a write that follows a directory chain longer than 512 characters, because
+  past that point the analysis stops following it and the target directory is unknown.
+- `guard_state.py` refuses a glob that can never match, with the reason: a leading
+  `!`, the root of a drive or file system, or an absolute path under a top-level
+  directory the machine does not have (`/src/payments/**` starts at the file system
+  root; the refusal names `src/payments/**`). `status` warns about such a record
+  already on disk.
+- A guard record that cannot be read is counted (`GuardStateUnreadable`) and announced
+  in the context of every shell or write call while it lasts; the destructive-command,
+  single-writer and hook-file rules keep running without it. A guard entry that cannot
+  import is counted and prints one readable line (interpreter, floor, exception type).
+- Index-only git commands (`git restore --staged`, `git reset HEAD <path>`) are no
+  longer read as writes into a frozen tree; a read-only run denies them, and denies the
+  usual package-manager install, remove and update commands.
+- `_bootstrap.enforcement_files()` lists the files a registered hook runs to decide.
+  The README and the guard skill say Rule F is advisory (an edit made outside a
+  session, or through a tool the analyser does not know, is not seen) and that the
+  hash record of those files is what detects one afterwards. Rule F covers the whole
+  of a host registration file, not only its hook entries, and the guard skill states
+  that cost and that scoping it is the owner's decision.
+
 ### Fixed
 
 - `test_pipeline_workflows.py` ran no tests on a host without PyYAML while the
@@ -308,10 +358,14 @@ recorded here, or a record the skill does not carry, fails it.
   declared version is one the registry offers).
 - `design/design-mapper` 1.0.1: states what `check_parity.py` now refuses in an inventory.
 - `careful` 1.0.1: describes the guard as it is (it reads the command, and counts faults).
-- `freeze` 1.1.0: one record per boundary whatever the spelling, a refused glob that can
-  never match, relative globs anchored at the project root, a writer lock.
-- `guard` 1.1.0: a grant is capped at 8 hours, the hook scripts are protected (Rule F),
-  and writers serialise on a lock.
+- `freeze` 1.2.0: one record per boundary whatever the spelling, a refused glob that can
+  never match (a leading `!`, a root, an absolute path under a directory the machine
+  lacks), relative globs anchored at the project root, a writer lock, and what an
+  unreadable record means.
+- `guard` 1.2.0: a grant is capped at 8 hours, the hook scripts are protected (Rule F,
+  advisory, whole registration file), a write after an unfollowable directory chain is
+  denied (Rule G), an unreadable record is counted and announced, and writers serialise
+  on a lock.
 - `unfreeze` 1.1.0: releases by the normalised glob and records the cap on a grant.
 - `gatekeeper-admiral` 1.1.0: a REVISE row for a schema-1 result, the typed-record
   roster and what a typed record leaves unchecked.
@@ -330,4 +384,5 @@ recorded here, or a record the skill does not carry, fails it.
   manifest and gains `--fail-on-output` and `--manifest-root`.
 - `review/cso` 1.0.1: the waiver reason must be the sanctioned wording, and scan output
   paths follow the manifest.
-- `qa-only` 1.0.1: the read-only boundary reference states what the hook now denies.
+- `qa-only` 1.0.2: the read-only boundary reference states what the hook now denies,
+  including index-only git commands and package-manager installs.

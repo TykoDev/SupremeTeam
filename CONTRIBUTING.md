@@ -95,6 +95,8 @@ say so in the message.
 - Give a body to every change that alters behaviour. Say why, not what.
 - Keep moves and edits in separate commits. A commit that moves code and changes
   what it does hides the second inside the first.
+- When `skills/mcp-tools.md` changes, keep the text it replaces in `scripts/superseded/` and name it in
+  `scripts/install-items.txt`, so an installed copy that never edited the old registry is replaced on upgrade.
 - Land changes through a pull request into `dev`, not by pushing to it.
 - Never commit runtime state (`skillset-saves/`, `.harness-state/`) or anything
   shaped like a credential, not even a fake one in a test fixture.

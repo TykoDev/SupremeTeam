@@ -11,20 +11,20 @@ from __future__ import annotations
 import json
 import sys
 import unittest
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+import _catalog
+
+ROOT = _catalog.SKILLS
 SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import validate_manifests  # noqa: E402
-from data_formats import load_data  # noqa: E402
 
 
 def team_members() -> set[str]:
     """The roster, read through the same helper validate_manifests.py uses."""
-    return validate_manifests.team_members(load_data(ROOT / "team-manifest.yaml"))
+    return validate_manifests.team_members(_catalog.load_spec("team-manifest.yaml"))
 
 
 class PipelineContractTests(unittest.TestCase):
@@ -32,7 +32,7 @@ class PipelineContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.spec = json.loads((ROOT / "pipelines.yaml").read_text(encoding="utf-8"))
         cls.gates = json.loads((ROOT / "gates.yaml").read_text(encoding="utf-8"))
-        cls.ownership = load_data(ROOT / "ownership.yaml")
+        cls.ownership = _catalog.load_spec("ownership.yaml")
         cls.members = team_members()
         cls.artifact_ids = {str(item.get("id")) for item in cls.ownership.get("artifacts", [])}
 
@@ -111,8 +111,8 @@ class StageArtifactOwnershipTests(unittest.TestCase):
     """
 
     def test_every_artifact_bearing_stage_is_owned_by_the_artifact_owner(self):
-        ownership = load_data(ROOT / "ownership.yaml")
-        pipelines = load_data(ROOT / "pipelines.yaml")
+        ownership = _catalog.load_spec("ownership.yaml")
+        pipelines = _catalog.load_spec("pipelines.yaml")
         owners = {a["id"]: a.get("owner") for a in ownership["artifacts"]}
         checked = 0
         for name, pipeline in pipelines["pipelines"].items():

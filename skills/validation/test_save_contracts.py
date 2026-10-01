@@ -13,12 +13,13 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+import _catalog
+
+ROOT = _catalog.SKILLS
 SCRIPTS = ROOT / "scripts"
 HOOKS = ROOT / "harness" / "hooks"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(HOOKS))
-from data_formats import load_data  # noqa: E402
 from output_paths import resolve  # noqa: E402
 
 SAVE_RUN = HOOKS / "save_run.py"
@@ -237,7 +238,7 @@ class GeneratedRootPolicyTests(unittest.TestCase):
                     self.assertIn(first, GENERATED_ROOTS, (kind, item))
 
     def test_save_ownership_declares_exactly_the_two_roots(self):
-        save = load_data(ROOT / "save-ownership.yaml")
+        save = _catalog.load_spec("save-ownership.yaml")
         self.assertEqual(list(save["generated_roots"]), ["skillset-saves", ".harness-state"])
         self.assertIn("redesign", save["phase_directories"])
 
@@ -321,8 +322,8 @@ class PackageCheckTests(unittest.TestCase):
 
 class OwnershipAgreementTests(unittest.TestCase):
     def test_save_ownership_agrees_with_ownership_and_pipelines(self):
-        ownership = load_data(ROOT / "ownership.yaml")
-        save_ownership = load_data(ROOT / "save-ownership.yaml")
+        ownership = _catalog.load_spec("ownership.yaml")
+        save_ownership = _catalog.load_spec("save-ownership.yaml")
         classes = {c["id"]: c for c in save_ownership["classes"]}
         self.assertEqual(classes["core-run-record"]["writer"], "session-memory")
         self.assertEqual(classes["gate-verdict"]["writer"], "gatekeeper")
@@ -338,7 +339,7 @@ class OwnershipAgreementTests(unittest.TestCase):
                 self.assertNotIn("..", pattern)
 
     def test_every_pipeline_phase_has_a_save_directory(self):
-        save_ownership = load_data(ROOT / "save-ownership.yaml")
+        save_ownership = _catalog.load_spec("save-ownership.yaml")
         directories = set(save_ownership["phase_directories"])
         pipelines = json.loads((ROOT / "pipelines.yaml").read_text(encoding="utf-8"))["pipelines"]
         for name in pipelines:

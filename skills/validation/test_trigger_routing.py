@@ -47,58 +47,30 @@ import re
 import unicodedata
 import unittest
 from collections import defaultdict
-from pathlib import Path
 
-try:
-    import yaml
-except ImportError:  # PyYAML is optional; fall back to the bundled parser.
-    yaml = None
+import _catalog
 
-SKILLS = Path(__file__).resolve().parents[1]
+SKILLS = _catalog.SKILLS
 
-if yaml is None:  # pragma: no cover - exercised only on a host without PyYAML
-    import sys
-    sys.path.insert(0, str(SKILLS / "scripts"))
-    from data_formats import parse_yaml as _parse
-
-    def _load_text(text):
-        return _parse(text)
-else:
-    def _load_text(text):
-        return yaml.safe_load(text)
-
-
-def _load(path):
-    return _load_text(path.read_text(encoding="utf-8"))
-
-
-TEAM = _load(SKILLS / "team-manifest.yaml")
+TEAM = _catalog.load_spec("team-manifest.yaml")
 DOCTRINE = (SKILLS / "routing-doctrine.md").read_text(encoding="utf-8")
 FRONT_DOOR = TEAM.get("front_door")
 
-_FM = re.compile(r"^---\r?\n(.*?)\r?\n---", re.S)
 
-
-def _catalog():
+def _entries():
     """name -> (relative directory, SKILL.md text, description)."""
     found = {}
-    for md in sorted(SKILLS.rglob("SKILL.md")):
-        text = md.read_text(encoding="utf-8")
-        match = _FM.match(text)
-        if not match:
-            continue
-        front = _load_text(match.group(1))
-        if not isinstance(front, dict) or not front.get("name"):
-            continue
-        found[front["name"]] = (
-            md.parent.relative_to(SKILLS).as_posix(),
+    for name, directory in _catalog.skill_dirs().items():
+        text = (directory / "SKILL.md").read_text(encoding="utf-8")
+        found[name] = (
+            directory.relative_to(SKILLS).as_posix(),
             text,
-            str(front.get("description", "")),
+            str(_catalog.parse_frontmatter(text).get("description", "")),
         )
     return found
 
 
-CATALOG = _catalog()
+CATALOG = _entries()
 DIRS = {name: entry[0] for name, entry in CATALOG.items()}
 BODY = {name: entry[1] for name, entry in CATALOG.items()}
 DESCRIPTION = {name: entry[2] for name, entry in CATALOG.items()}

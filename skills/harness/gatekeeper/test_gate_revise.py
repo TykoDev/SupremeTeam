@@ -26,10 +26,6 @@ DEPENDENT_KEYS = ("selected_variant", "parity_evidence", "rendered_verification"
 MOCK_WAIVER = "synthetic wording that only a test spec sanctions"
 
 
-def sha256(path: Path) -> str:
-    return content_sha256(path)
-
-
 class RedesignPackage:
     """A flat schema-2 redesign-review package: four hashed mocks, one build.
 
@@ -63,7 +59,7 @@ class RedesignPackage:
         path = self.root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
-        self.hashes[rel] = sha256(path)
+        self.hashes[rel] = content_sha256(path)
         return rel
 
     def manifest(self) -> dict:

@@ -24,10 +24,6 @@ sys.path.insert(0, str(SKILLS / "scripts"))
 from data_formats import content_sha256, load_data  # noqa: E402
 
 
-def sha256(path: Path) -> str:
-    return content_sha256(path)
-
-
 def registry_entry() -> dict:
     return load_data(SKILLS / "tech-stacks" / "registry.yaml")["overlays"][0]
 
@@ -108,8 +104,8 @@ class EvidenceRootTests(unittest.TestCase):
                 "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
                 "ui_evidence": waiver("ui_evidence", decided_by="architect"),
             },
-            "artifact_hashes": {"../intake/report_grilling.md": sha256(self.fx.grilling),
-                                "reports/architecture.md": sha256(architecture), "reports/plan.md": sha256(plan)},
+            "artifact_hashes": {"../intake/report_grilling.md": content_sha256(self.fx.grilling),
+                                "reports/architecture.md": content_sha256(architecture), "reports/plan.md": content_sha256(plan)},
         }
         data.update(overrides)
         return data
@@ -145,7 +141,7 @@ class EvidenceRootTests(unittest.TestCase):
         other = RunLayoutFixture(self.root, run_id="run-b")
         data = self.design_manifest(decisions="../../run-b/intake/report_grilling.md")
         data["artifact_hashes"].pop("../intake/report_grilling.md")
-        data["artifact_hashes"]["../../run-b/intake/report_grilling.md"] = sha256(other.grilling)
+        data["artifact_hashes"]["../../run-b/intake/report_grilling.md"] = content_sha256(other.grilling)
         proc = run_cli("design-to-build", self.fx.write_manifest("design", data))
         out = result(proc)
         self.assertEqual(proc.returncode, 1)
@@ -157,7 +153,7 @@ class EvidenceRootTests(unittest.TestCase):
         for bad in ("../../../../outside.md", str(outside), "//server/share/x.md", "C:/x/outside.md"):
             with self.subTest(path=bad):
                 data = self.design_manifest()
-                data["artifact_hashes"][bad] = sha256(outside)
+                data["artifact_hashes"][bad] = content_sha256(outside)
                 proc = run_cli("design-to-build", self.fx.write_manifest("design", data))
                 out = result(proc)
                 self.assertEqual(proc.returncode, 1, proc.stdout)
@@ -180,7 +176,7 @@ class EvidenceRootTests(unittest.TestCase):
         except (OSError, NotImplementedError, AttributeError) as exc:
             self.skipTest(f"cannot create symlink here: {exc}")
         data = self.design_manifest()
-        data["artifact_hashes"]["linked.md"] = sha256(outside)
+        data["artifact_hashes"]["linked.md"] = content_sha256(outside)
         proc = run_cli("design-to-build", self.fx.write_manifest("design", data))
         out = result(proc)
         self.assertEqual(proc.returncode, 1)
@@ -197,7 +193,7 @@ class EvidenceRootTests(unittest.TestCase):
         if proc.returncode != 0:
             self.skipTest(f"cannot create junction: {proc.stderr or proc.stdout}")
         data = self.design_manifest()
-        data["artifact_hashes"]["jn/x.md"] = sha256(outside_dir / "x.md")
+        data["artifact_hashes"]["jn/x.md"] = content_sha256(outside_dir / "x.md")
         out = result(run_cli("design-to-build", self.fx.write_manifest("design", data)))
         self.assertTrue(any("via link" in f for f in out["failures"]), out["failures"])
 
@@ -222,7 +218,7 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
                 "rendered_verification": waiver("rendered_verification", "api only", "design-qa"),
                 "residual_risk": "none", "revision_lineage": "r1 <- design r1",
             },
-            "artifact_hashes": {"proof.md": sha256(proof)},
+            "artifact_hashes": {"proof.md": content_sha256(proof)},
         }
         data.update(overrides)
         return data
@@ -371,7 +367,7 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
             "evidence": {"review_verdict": "APPROVED", "findings": True, "executed_probes": "proof.md",
                          "rendered_verification": ["proof.md", "missing-capture.png"],
                          "residual_risk": "none", "revision_lineage": "r1"},
-            "artifact_hashes": {"proof.md": sha256(proof)},
+            "artifact_hashes": {"proof.md": content_sha256(proof)},
         }
         manifest.write_text(json.dumps(data), encoding="utf-8")
         proc = run_cli("review-to-delivery", manifest)
@@ -400,13 +396,13 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
                     "rendered_verification": render,
                     "residual_risk": "none", "revision_lineage": "r1 <- build r1",
                 },
-                "artifact_hashes": {"capture-desktop-light.png": sha256(capture), "probes.md": sha256(probes)},
+                "artifact_hashes": {"capture-desktop-light.png": content_sha256(capture), "probes.md": content_sha256(probes)},
             }
 
         _, out = self.check(manifest("probes.md"))
         self.assertTrue(any("must be a typed render record" in f for f in out["failures"]), out["failures"])
         good = manifest({"captures": ["capture-desktop-light.png"], "breakpoints": ["375", "1280"], "themes": ["light", "dark"],
-                         "result": {"status": "pass"}, "inputs": [{"path": "app/index.html", "sha256": sha256(surface)}]})
+                         "result": {"status": "pass"}, "inputs": [{"path": "app/index.html", "sha256": content_sha256(surface)}]})
         proc, out = self.check(good)
         self.assertEqual(proc.returncode, 0, out)
         surface.write_text("<main>changed</main>", encoding="utf-8")
@@ -426,7 +422,7 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
                          "tests": {"artifacts": ["proof.md"], "result": {"status": "pass"}},
                          "runtime": {"artifacts": ["proof.md"], "result": {"status": "pass"}},
                          "traceability": "plan->impl", "security_evidence": "we looked, it is fine"},
-            "artifact_hashes": {"proof.md": sha256(proof)},
+            "artifact_hashes": {"proof.md": content_sha256(proof)},
         }
         _, out = self.check(base, "build-to-review", "build")
         self.assertTrue(any("security_evidence must be a findings record" in f for f in out["failures"]), out["failures"])
@@ -464,8 +460,8 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
                 "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
                 "ui_evidence": waiver("ui_evidence", decided_by="architect"),
             },
-            "artifact_hashes": {"../intake/report_grilling.md": sha256(self.fx.grilling),
-                                "reports/architecture.md": sha256(architecture), "reports/plan.md": sha256(plan)},
+            "artifact_hashes": {"../intake/report_grilling.md": content_sha256(self.fx.grilling),
+                                "reports/architecture.md": content_sha256(architecture), "reports/plan.md": content_sha256(plan)},
         }
         proc, out = self.check(data, "design-to-build", "design")
         self.assertEqual(proc.returncode, 0, out)
@@ -491,11 +487,11 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
                     "scope": "api", "threat_model": "threat.md", "findings": {"items": []},
                     "vulnerability_scan": {"artifacts": ["scan.stdout.txt"], "tool": "pip-audit", "command": "pip-audit -r requirements.txt",
                                            "exit_code": 0 if status == "pass" else 1, "observed_at": "2026-09-05T00:00:00Z",
-                                           "inputs": [{"path": "requirements.txt", "sha256": sha256(lock)}], "result": {"status": status}},
+                                           "inputs": [{"path": "requirements.txt", "sha256": content_sha256(lock)}], "result": {"status": status}},
                     "denial_path_evidence": {"artifacts": ["deny.md"], "result": {"status": "pass"}},
                     "remediation_plan": "none needed", "residual_risk": "none",
                 },
-                "artifact_hashes": {"threat.md": sha256(threat), "deny.md": sha256(deny), "scan.stdout.txt": sha256(stdout)},
+                "artifact_hashes": {"threat.md": content_sha256(threat), "deny.md": content_sha256(deny), "scan.stdout.txt": content_sha256(stdout)},
             }
 
         proc, out = self.check(manifest("pass"), "security-review", "security")
@@ -515,11 +511,11 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
         data = self.review_manifest()
         proof = self.fx.phase("review") / "proof.md"
         proof.write_text("# Audit\n\nWe removed the `TODO` marker from `app.py`.\n\n> original line: TODO fix auth\n\n```\nFIXME leftover in fixture\n```\n", encoding="utf-8")
-        data["artifact_hashes"]["proof.md"] = sha256(proof)
+        data["artifact_hashes"]["proof.md"] = content_sha256(proof)
         proc, out = self.check(data)
         self.assertEqual(proc.returncode, 0, out)
         proof.write_text("# Audit\n\nTODO finish the review.\n", encoding="utf-8")
-        data["artifact_hashes"]["proof.md"] = sha256(proof)
+        data["artifact_hashes"]["proof.md"] = content_sha256(proof)
         _, out = self.check(data)
         self.assertTrue(any("blocked phrase" in f for f in out["failures"]))
 
@@ -586,8 +582,8 @@ class OverlayDigestPortabilityTests(unittest.TestCase):
                     "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
                     "ui_evidence": waiver("ui_evidence", decided_by="architect"),
                 },
-                "artifact_hashes": {"../intake/report_grilling.md": sha256(fx.grilling),
-                                    "reports/architecture.md": sha256(architecture), "reports/plan.md": sha256(plan)},
+                "artifact_hashes": {"../intake/report_grilling.md": content_sha256(fx.grilling),
+                                    "reports/architecture.md": content_sha256(architecture), "reports/plan.md": content_sha256(plan)},
             }
             proc = run_cli("design-to-build", fx.write_manifest("design", data), "--registry", str(registry))
             out = result(proc)
@@ -629,8 +625,8 @@ class ArtifactHashPortabilityTests(unittest.TestCase):
             architecture = fx.proof("design", "reports/architecture.md", "# Architecture\n\nHexagonal service.\n")
             plan = fx.proof("design", "reports/plan.md", self.BODY)
             plan.write_bytes(self.BODY.replace("\n", on_disk).encode("utf-8"))
-            hashes = {"../intake/report_grilling.md": sha256(fx.grilling),
-                      "reports/architecture.md": sha256(architecture), "reports/plan.md": recorded}
+            hashes = {"../intake/report_grilling.md": content_sha256(fx.grilling),
+                      "reports/architecture.md": content_sha256(architecture), "reports/plan.md": recorded}
             return result(run_cli("design-to-build", fx.write_manifest("design", self._package(fx, hashes))))
 
     def test_lf_hash_verifies_crlf_artifact_and_the_reverse(self):

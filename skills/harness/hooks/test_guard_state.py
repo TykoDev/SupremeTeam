@@ -268,5 +268,154 @@ class GuardStateTests(unittest.TestCase):
         self.assertEqual(out, "")
 
 
+class GuardStateHardeningTests(unittest.TestCase):
+    """SEC-04, SEC-14, BUGH-24, QR-PY-05: globs are normalised or refused when recorded, grants are capped, writes are serialised."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.project = Path(self._tmp.name).resolve()
+        (self.project / ".harness-state").mkdir(parents=True, exist_ok=True)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _env(self):
+        env = dict(os.environ)
+        env["SUPREMETEAM_PROJECT_DIR"] = str(self.project)
+        return env
+
+    def run_guard(self, *args):
+        return subprocess.run([sys.executable, str(GUARD), *args], capture_output=True, text=True, env=self._env(), cwd=self.project)
+
+    def record(self):
+        path = self.project / ".harness-state" / "guard-state.json"
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+    def write_record(self, state):
+        (self.project / ".harness-state" / "guard-state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    def pre_tool(self, payload):
+        proc = subprocess.run([sys.executable, str(PRE_TOOL)], input=json.dumps(payload), capture_output=True, text=True,
+                              env=self._env(), cwd=self.project)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout
+
+    # --- globs ---------------------------------------------------------
+
+    def test_every_spelling_of_one_glob_is_recorded_as_one_and_enforced(self):
+        for spelling in ("./src/payments/**", "src//payments/**", "src\\payments\\**", "src/x/../payments/**",
+                         str(self.project / "src" / "payments") + "/**", "src/payments/"):
+            with self.subTest(spelling=spelling):
+                self.write_record({})
+                proc = self.run_guard("freeze", "--glob", spelling, "--owner", "ops")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                normal = "src/payments" if spelling.endswith("/") else "src/payments/**"
+                self.assertEqual(json.loads(proc.stdout)["glob"], normal)
+                self.assertEqual(self.record()["frozen_globs"][0]["glob"], normal)
+                self.assertIn("deny", self.pre_tool({"tool_name": "Edit", "tool_input": {"file_path": "src/payments/a.py"}}))
+                self.assertEqual(self.pre_tool({"tool_name": "Edit", "tool_input": {"file_path": "src/other/a.py"}}), "")
+
+    def test_a_second_spelling_of_a_recorded_glob_is_a_duplicate_not_a_second_record(self):
+        self.run_guard("freeze", "--glob", "src/payments/**", "--owner", "ops")
+        for spelling in ("./src/payments/**", "src//payments/**", "src\\payments\\**"):
+            with self.subTest(spelling=spelling):
+                proc = self.run_guard("freeze", "--glob", spelling, "--owner", "someone-else")
+                self.assertEqual(proc.returncode, 1)
+                self.assertIn("already inside an active boundary", proc.stderr)
+        self.assertEqual(len(self.record()["frozen_globs"]), 1)
+
+    def test_a_glob_that_can_never_match_is_refused_when_recorded(self):
+        for spelling in ("../x/**", "..", ".", "./", "   ", "src/../../x/**"):
+            with self.subTest(spelling=spelling):
+                proc = self.run_guard("freeze", "--glob", spelling, "--owner", "ops")
+                self.assertEqual(proc.returncode, 1, proc.stdout)
+                self.assertIn("cannot be matched", proc.stderr)
+        self.assertFalse((self.project / ".harness-state" / "guard-state.json").exists())
+
+    def test_release_finds_the_record_by_any_spelling_including_one_written_before_normalising(self):
+        self.write_record({"frozen_globs": [{"glob": "./src/legacy/**", "owner": "ops", "released_at": None}]})
+        proc = self.run_guard("release", "--glob", "src/legacy/**", "--requester", "ops")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(self.record()["frozen_globs"][0]["released_at"])
+        self.run_guard("freeze", "--glob", "src/a/**", "--owner", "ops")
+        self.assertEqual(self.run_guard("release", "--glob", "./src//a/**", "--requester", "ops").returncode, 0)
+
+    def test_status_shows_the_effective_spelling_and_flags_an_unmatchable_legacy_record(self):
+        self.write_record({"frozen_globs": [{"glob": "./src/x/**", "owner": "ops"}, {"glob": "../up/**", "owner": "ops"}]})
+        report = json.loads(self.run_guard("status", "--json").stdout)
+        self.assertEqual(report["frozen_globs"], ["src/x/**", "../up/**"])
+        self.assertEqual(report["unmatchable_entries"], ["../up/**"])
+
+    def test_read_only_allow_globs_are_normalised_and_unusable_ones_refused(self):
+        proc = self.run_guard("read-only", "--run-id", "r1", "--owner", "ops", "--allow", "./skillset-saves/runs/r1/**", "--allow", ".harness-state//**")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.record()["read_only"][0]["allow"], ["skillset-saves/runs/r1/**", ".harness-state/**"])
+        refused = self.run_guard("read-only", "--run-id", "r2", "--owner", "ops", "--allow", "../outside/**")
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("cannot be matched", refused.stderr)
+
+    # --- grants --------------------------------------------------------
+
+    def test_a_grant_longer_than_the_cap_is_refused_and_one_at_the_cap_is_recorded(self):
+        too_long = self.run_guard("allow-dangerous", "--owner", "ops", "--reason", "r", "--scope", "s", "--minutes", "5000000")
+        self.assertEqual(too_long.returncode, 1)
+        self.assertIn("480", too_long.stderr)
+        self.assertNotIn("allow_dangerous", self.record())
+        just_over = self.run_guard("allow-dangerous", "--owner", "ops", "--reason", "r", "--scope", "s", "--minutes", "481")
+        self.assertEqual(just_over.returncode, 1)
+        at_cap = self.run_guard("allow-dangerous", "--owner", "ops", "--reason", "r", "--scope", "s", "--minutes", "480")
+        self.assertEqual(at_cap.returncode, 0, at_cap.stderr)
+
+    def test_a_hand_written_grant_beyond_the_cap_leaves_the_block_in_force(self):
+        far = (datetime.now(timezone.utc) + timedelta(days=3650)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.write_record({"allow_dangerous": {"owner": "ops", "reason": "x", "scope": "y",
+                                               "created_at": "2026-01-01T00:00:00Z", "expires_at": far}})
+        self.assertIn("deny", self.pre_tool({"tool_name": "Bash", "tool_input": {"command": "rm -rf --no-preserve-root /"}}))
+
+    # --- shared predicate and write ------------------------------------
+
+    def test_released_true_retires_a_record_in_the_writer_as_in_the_hook(self):
+        self.write_record({"read_only": [{"run_id": "r1", "owner": "ops", "allow": ["a/**"], "released": True}],
+                           "frozen_globs": [{"glob": "b/**", "owner": "ops", "released": True}]})
+        report = json.loads(self.run_guard("status", "--json").stdout)
+        self.assertEqual((report["read_only_runs"], report["frozen_globs"]), ([], []))
+        self.assertEqual(self.run_guard("read-only", "--run-id", "r1", "--owner", "ops", "--allow", "a/**").returncode, 0)
+
+    def test_the_record_is_replaced_atomically_with_nothing_left_behind(self):
+        self.run_guard("freeze", "--glob", "a/**", "--owner", "ops")
+        self.run_guard("freeze", "--glob", "b/**", "--owner", "ops")
+        names = sorted(path.name for path in (self.project / ".harness-state").iterdir())
+        self.assertEqual([n for n in names if n.endswith(".tmp")], [])
+        self.assertTrue(self.record()["frozen_globs"][1]["created_at"])
+
+    def test_an_unwritable_state_directory_is_a_refusal_not_a_traceback(self):
+        state = self.project / ".harness-state"
+        record = state / "guard-state.json"
+        record.mkdir()
+        proc = self.run_guard("freeze", "--glob", "a/**", "--owner", "ops")
+        self.assertEqual(proc.returncode, 1)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    # --- serialised writers --------------------------------------------
+
+    def test_a_writer_waits_for_the_lock_and_refuses_when_another_holds_it_too_long(self):
+        sys.path.insert(0, str(HOOKS))
+        import _fsutil
+
+        lock = self.project / ".harness-state" / "guard-state.json.lock"
+        with _fsutil.AdvisoryLock(lock, 5.0):
+            proc = self.run_guard("--lock-timeout", "0.2", "freeze", "--glob", "a/**", "--owner", "ops")
+            self.assertEqual(proc.returncode, 1, proc.stdout)
+            self.assertIn("another guard_state.py", proc.stderr)
+            self.assertFalse((self.project / ".harness-state" / "guard-state.json").exists())
+        self.assertEqual(self.run_guard("--lock-timeout", "0.2", "freeze", "--glob", "a/**", "--owner", "ops").returncode, 0)
+
+    def test_concurrent_writers_do_not_lose_each_others_records(self):
+        env = self._env()
+        procs = [subprocess.Popen([sys.executable, str(GUARD), "freeze", "--glob", f"zone{n}/**", "--owner", "ops"],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env, cwd=self.project) for n in range(8)]
+        for proc in procs:
+            self.assertEqual(proc.wait(timeout=60), 0)
+        self.assertEqual(sorted(entry["glob"] for entry in self.record()["frozen_globs"]), [f"zone{n}/**" for n in range(8)])
+
+
 if __name__ == "__main__":
     unittest.main()

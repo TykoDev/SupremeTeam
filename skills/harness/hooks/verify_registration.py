@@ -240,7 +240,8 @@ def _entries(objects: list[dict], event: str) -> list[tuple[str, object]]:
     """Every registered ``(command, matcher)`` pair for one event."""
     found = []
     for obj in objects:
-        groups = (obj.get("hooks") or {}).get(event) or [] if isinstance(obj, dict) else []
+        registered = obj.get("hooks") if isinstance(obj, dict) else None
+        groups = registered.get(event) if isinstance(registered, dict) else None
         for group in groups if isinstance(groups, list) else []:
             hooks = group.get("hooks") or [] if isinstance(group, dict) else []
             matcher = group.get("matcher") if isinstance(group, dict) else None

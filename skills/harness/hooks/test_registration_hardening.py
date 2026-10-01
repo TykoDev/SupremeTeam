@@ -298,6 +298,15 @@ class MatcherCoverageTests(Scratch):
         self.assertEqual(state["coverage"], "partial")
         self.assertEqual(state["missing_tools"], ["apply_patch"])
 
+    def test_a_hooks_key_of_the_wrong_shape_is_missing_not_a_crash(self):
+        for shape in (["x"], "x", {"PreToolUse": "x"}, {"PreToolUse": [5, {"hooks": "x"}, {"hooks": [7, {"command": 3}]}]}):
+            with self.subTest(shape=shape):
+                self.claude_settings({"hooks": shape})
+                result = self.run_tool("verify_registration.py", "--host", "claude")
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("status: MISSING", result.stdout)
+                self.assertNotIn("error (", result.stdout)
+
     def test_the_prompt_hook_needs_no_matcher(self):
         self.assertEqual(self.states(self.registered())["prompt"]["coverage"], "not_applicable")
 

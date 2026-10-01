@@ -602,6 +602,182 @@ def detect_stacks(
     return _detect_in_scope(registry, files, root, package, text_cache, errors)
 
 
+@dataclass
+class _Tree:
+    """The project files a classification reads, and where its read errors go."""
+
+    files: list[Path]
+    root: Path
+    relative_paths: dict[str, Path]
+    root_paths: dict[str, Path]
+    text_cache: dict[Path, str | None]
+    errors: list[str]
+    warnings: list[str]
+
+    def read(self, path: Path) -> str | None:
+        return read_cached_text(path, self.root, self.errors, self.text_cache, required=True)
+
+    def root_file(self, *names: str) -> str | None:
+        return next((relative for relative in self.root_paths if Path(relative).name.lower() in names), None)
+
+
+@dataclass
+class _Signals:
+    """What the project's files say about how it runs.
+
+    Every source of evidence adds to these before anything is decided, so the
+    first manifest found cannot hide what the rest of the tree says.
+    """
+
+    frontend: bool
+    backend: bool
+    published_ports: bool
+    manifest_seen: bool
+    evidence: list[dict[str, str]]
+    ambiguities: list[str]
+
+
+def _compose_signals(tree: _Tree, signals: _Signals) -> None:
+    compose = next(
+        (
+            (relative, path)
+            for relative, path in tree.root_paths.items()
+            if Path(relative).name.lower() in COMPOSE_NAMES
+        ),
+        None,
+    )
+    if not compose:
+        return
+    compose_data = load_cached_data(compose[1], tree.root, tree.errors, tree.warnings, tree.text_cache)
+    services = compose_data.get("services") if isinstance(compose_data, dict) else None
+    if isinstance(services, dict):
+        signals.evidence.append(_stack_evidence(compose[0], "compose services definition"))
+        signals.published_ports = any(_compose_service_has_ports(service) for service in services.values())
+        if not signals.published_ports:
+            signals.ambiguities.append("compose services were found without a ports mapping")
+
+
+def _makefile_signals(tree: _Tree, signals: _Signals) -> None:
+    makefile_paths = sorted(
+        path
+        for path in tree.files
+        if (
+            path.name.lower() == "makefile"
+            and not is_sensitive(path, tree.root)
+            and classify_path(relative_path(path, tree.root)) == "production"
+        )
+    )
+    for path in makefile_paths:
+        relative = relative_path(path, tree.root)
+        makefile_text = tree.read(path) or ""
+        makefile_frontend, makefile_backend = makefile_runtime_signals(makefile_text)
+        signals.frontend = signals.frontend or makefile_frontend
+        signals.backend = signals.backend or makefile_backend
+        if makefile_frontend or makefile_backend:
+            signals.evidence.append(_stack_evidence(relative, "Makefile runtime command"))
+
+
+def _package_signals(
+    tree: _Tree,
+    signals: _Signals,
+    package_records: list[tuple[Path, dict[str, Any]]],
+) -> None:
+    single_root_package = len(package_records) == 1 and package_records[0][0].parent == tree.root
+    for package_path, package_value in package_records:
+        package_frontend, package_backend = _package_classification_signals(package_value)
+        signals.frontend = signals.frontend or package_frontend
+        signals.backend = signals.backend or package_backend
+        signals.evidence.append(
+            _stack_evidence(
+                relative_path(package_path, tree.root),
+                "root package.json" if single_root_package else "package.json service manifest",
+            )
+        )
+
+
+def _registered_frontend_evidence(tree: _Tree) -> dict[str, str]:
+    frontend_evidence = next(
+        (
+            relative
+            for relative in sorted(tree.relative_paths)
+            if Path(relative).name.lower().startswith(
+                ("vite.config.", "next.config.", "astro.config.", "svelte.config.", "nuxt.config.")
+            )
+        ),
+        next(iter(sorted(tree.relative_paths)), "registered stack evidence"),
+    )
+    return _stack_evidence(frontend_evidence, "registered frontend stack evidence")
+
+
+def _python_signals(tree: _Tree, signals: _Signals) -> None:
+    manage = tree.root_file("manage.py")
+    if manage:
+        signals.backend = True
+        signals.evidence.append(_stack_evidence(manage, "Django management entrypoint"))
+
+    web_entry = None
+    for filename in ("main.py", "app.py"):
+        relative = tree.root_file(filename)
+        if relative:
+            text = tree.read(tree.root_paths[relative]) or ""
+            if python_imports_module(text, PYTHON_WEB_MODULES):
+                web_entry = relative
+                break
+    if web_entry:
+        signals.backend = True
+        signals.evidence.append(_stack_evidence(web_entry, "Python web runtime import"))
+
+
+def _go_signals(tree: _Tree, signals: _Signals) -> None:
+    go_mod = tree.root_file("go.mod")
+    go_entry = go_entrypoint(tree.files, tree.root, tree.text_cache, tree.errors)
+    if go_mod and go_entry:
+        signals.manifest_seen = True
+        signals.evidence.extend(
+            (_stack_evidence(go_mod, "Go module manifest"), _stack_evidence(go_entry, "Go executable entrypoint"))
+        )
+        text = tree.read(tree.relative_paths[go_entry]) or ""
+        signals.backend = signals.backend or bool(re.search(r"(?i)(?:net/http|gin-gonic|echo|fiber)", text))
+
+
+def _rust_signals(tree: _Tree, signals: _Signals) -> None:
+    cargo = tree.root_file("cargo.toml")
+    rust_entry = cargo_binary_entry(tree.files, tree.root, tree.text_cache, tree.errors) if cargo else None
+    if cargo and rust_entry:
+        signals.manifest_seen = True
+        signals.evidence.extend(
+            (_stack_evidence(cargo, "Rust package manifest"), _stack_evidence(rust_entry, "Rust executable entrypoint"))
+        )
+        manifest_text = tree.read(tree.root_paths[cargo]) or ""
+        entry_text = tree.read(tree.relative_paths[rust_entry]) or ""
+        signals.backend = signals.backend or bool(
+            re.search(r"(?i)\b(?:axum|actix|warp|rocket|hyper)\b", f"{manifest_text}\n{entry_text}")
+        )
+
+
+def _java_signals(tree: _Tree, signals: _Signals) -> None:
+    java_manifest = tree.root_file("pom.xml", "build.gradle", "build.gradle.kts")
+    if java_manifest:
+        signals.manifest_seen = True
+        signals.evidence.append(_stack_evidence(java_manifest, "Java build manifest"))
+        text = tree.read(tree.root_paths[java_manifest]) or ""
+        signals.backend = signals.backend or bool(re.search(r"(?i)(?:spring|servlet|jetty|micronaut)", text))
+
+
+def _classification(signals: _Signals) -> str:
+    # A compose file that publishes ports says how the project is deployed, not what
+    # it contains, so it decides only when nothing about the application itself does.
+    if signals.frontend and signals.backend:
+        return "full-stack"
+    if signals.frontend:
+        return "frontend-only"
+    if signals.backend:
+        return "backend-only"
+    if signals.published_ports:
+        return "container-orchestrated"
+    return "library/CLI"
+
+
 def classify_project(
     files: list[Path],
     root: Path,
@@ -613,140 +789,36 @@ def classify_project(
     packages: list[tuple[Path, dict[str, Any]]] | None = None,
 ) -> tuple[str, list[dict[str, str]], list[str]]:
     relative_paths = {relative_path(path, root): path for path in files}
-    root_paths = {
-        relative: path for relative, path in relative_paths.items() if "/" not in relative
-    }
+    tree = _Tree(
+        files=files,
+        root=root,
+        relative_paths=relative_paths,
+        root_paths={relative: path for relative, path in relative_paths.items() if "/" not in relative},
+        text_cache=text_cache,
+        errors=errors,
+        warnings=warnings,
+    )
     stack_slugs = {str(item["slug"]) for item in stacks}
     package_records = packages or []
-    classification_evidence: list[dict[str, str]] = []
-    ambiguities: list[str] = []
-    # Every source of evidence adds to these signals before anything is decided, so
-    # the first manifest found cannot hide what the rest of the tree says.
-    frontend = bool(stack_slugs & FRONTEND_STACKS)
-    backend = False
-    published_ports = False
-    manifest_seen = bool(package_records)
-
-    compose = next(
-        (
-            (relative, path)
-            for relative, path in root_paths.items()
-            if Path(relative).name.lower() in COMPOSE_NAMES
-        ),
-        None,
+    signals = _Signals(
+        frontend=bool(stack_slugs & FRONTEND_STACKS),
+        backend=False,
+        published_ports=False,
+        manifest_seen=bool(package_records),
+        evidence=[],
+        ambiguities=[],
     )
-    if compose:
-        compose_data = load_cached_data(compose[1], root, errors, warnings, text_cache)
-        services = compose_data.get("services") if isinstance(compose_data, dict) else None
-        if isinstance(services, dict):
-            classification_evidence.append(_stack_evidence(compose[0], "compose services definition"))
-            published_ports = any(_compose_service_has_ports(service) for service in services.values())
-            if not published_ports:
-                ambiguities.append("compose services were found without a ports mapping")
-
-    makefile_paths = sorted(
-        path
-        for path in files
-        if (
-            path.name.lower() == "makefile"
-            and not is_sensitive(path, root)
-            and classify_path(relative_path(path, root)) == "production"
-        )
-    )
-    for path in makefile_paths:
-        relative = relative_path(path, root)
-        makefile_text = read_cached_text(path, root, errors, text_cache, required=True) or ""
-        makefile_frontend, makefile_backend = makefile_runtime_signals(makefile_text)
-        frontend = frontend or makefile_frontend
-        backend = backend or makefile_backend
-        if makefile_frontend or makefile_backend:
-            classification_evidence.append(_stack_evidence(relative, "Makefile runtime command"))
-
-    single_root_package = len(package_records) == 1 and package_records[0][0].parent == root
-    for package_path, package_value in package_records:
-        package_frontend, package_backend = _package_classification_signals(package_value)
-        frontend = frontend or package_frontend
-        backend = backend or package_backend
-        classification_evidence.append(
-            _stack_evidence(
-                relative_path(package_path, root),
-                "root package.json" if single_root_package else "package.json service manifest",
-            )
-        )
-
+    _compose_signals(tree, signals)
+    _makefile_signals(tree, signals)
+    _package_signals(tree, signals, package_records)
     if stack_slugs & FRONTEND_STACKS and not package_records:
-        frontend_evidence = next(
-            (
-                relative
-                for relative in sorted(relative_paths)
-                if Path(relative).name.lower().startswith(
-                    ("vite.config.", "next.config.", "astro.config.", "svelte.config.", "nuxt.config.")
-                )
-            ),
-            next(iter(sorted(relative_paths)), "registered stack evidence"),
-        )
-        classification_evidence.append(_stack_evidence(frontend_evidence, "registered frontend stack evidence"))
+        signals.evidence.append(_registered_frontend_evidence(tree))
+    _python_signals(tree, signals)
+    _go_signals(tree, signals)
+    _rust_signals(tree, signals)
+    _java_signals(tree, signals)
 
-    manage = next((relative for relative in root_paths if Path(relative).name.lower() == "manage.py"), None)
-    if manage:
-        backend = True
-        classification_evidence.append(_stack_evidence(manage, "Django management entrypoint"))
-
-    web_entry = None
-    for filename in ("main.py", "app.py"):
-        relative = next((item for item in root_paths if Path(item).name.lower() == filename), None)
-        if relative:
-            text = read_cached_text(root_paths[relative], root, errors, text_cache, required=True) or ""
-            if python_imports_module(text, PYTHON_WEB_MODULES):
-                web_entry = relative
-                break
-    if web_entry:
-        backend = True
-        classification_evidence.append(_stack_evidence(web_entry, "Python web runtime import"))
-
-    go_mod = next((relative for relative in root_paths if Path(relative).name.lower() == "go.mod"), None)
-    go_entry = go_entrypoint(files, root, text_cache, errors)
-    if go_mod and go_entry:
-        manifest_seen = True
-        classification_evidence.extend(
-            (_stack_evidence(go_mod, "Go module manifest"), _stack_evidence(go_entry, "Go executable entrypoint"))
-        )
-        text = read_cached_text(relative_paths[go_entry], root, errors, text_cache, required=True) or ""
-        backend = backend or bool(re.search(r"(?i)(?:net/http|gin-gonic|echo|fiber)", text))
-
-    cargo = next((relative for relative in root_paths if Path(relative).name.lower() == "cargo.toml"), None)
-    rust_entry = cargo_binary_entry(files, root, text_cache, errors) if cargo else None
-    if cargo and rust_entry:
-        manifest_seen = True
-        classification_evidence.extend(
-            (_stack_evidence(cargo, "Rust package manifest"), _stack_evidence(rust_entry, "Rust executable entrypoint"))
-        )
-        manifest_text = read_cached_text(root_paths[cargo], root, errors, text_cache, required=True) or ""
-        entry_text = read_cached_text(relative_paths[rust_entry], root, errors, text_cache, required=True) or ""
-        backend = backend or bool(
-            re.search(r"(?i)\b(?:axum|actix|warp|rocket|hyper)\b", f"{manifest_text}\n{entry_text}")
-        )
-
-    java_manifest = next(
-        (relative for relative in root_paths if Path(relative).name.lower() in {"pom.xml", "build.gradle", "build.gradle.kts"}),
-        None,
-    )
-    if java_manifest:
-        manifest_seen = True
-        classification_evidence.append(_stack_evidence(java_manifest, "Java build manifest"))
-        text = read_cached_text(root_paths[java_manifest], root, errors, text_cache, required=True) or ""
-        backend = backend or bool(re.search(r"(?i)(?:spring|servlet|jetty|micronaut)", text))
-
-    # A compose file that publishes ports says how the project is deployed, not what
-    # it contains, so it decides only when nothing about the application itself does.
-    if frontend and backend:
-        return "full-stack", classification_evidence, ambiguities
-    if frontend:
-        return "frontend-only", classification_evidence, ambiguities
-    if backend:
-        return "backend-only", classification_evidence, ambiguities
-    if published_ports:
-        return "container-orchestrated", classification_evidence, ambiguities
-    if not manifest_seen:
-        ambiguities.append("no supported runtime classification signal was found")
-    return "library/CLI", classification_evidence, ambiguities
+    classification = _classification(signals)
+    if classification == "library/CLI" and not signals.manifest_seen:
+        signals.ambiguities.append("no supported runtime classification signal was found")
+    return classification, signals.evidence, signals.ambiguities

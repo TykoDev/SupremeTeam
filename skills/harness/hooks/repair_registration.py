@@ -20,10 +20,10 @@ Behaviour:
   * writes atomically (per-process temp file + replace) after copying the
     previous file to ``<file>.bak-<timestamp>``. The file and its backup keep the
     permission bits the original had;
-  * records the sha256 of each registered hook script, and of every Python module
-    in its directory, in ``.harness-state/hook-hashes.json`` so verify_registration
-    can report a file that changed afterwards; ``--record-hashes`` re-records them
-    on demand;
+  * records the sha256 of each registered hook script, of every Python module in
+    its directory and of the ``skills/scripts`` modules the hooks import, in
+    ``.harness-state/hook-hashes.json`` so verify_registration can report a file
+    that changed afterwards; ``--record-hashes`` re-records them on demand;
   * never replaces a symbolic link with a regular file: a user-level config that is
     a link (a dotfiles manager's) is written through, with a note saying so, and a
     project-level one, which a cloned repository can supply, is refused;
@@ -239,7 +239,7 @@ def write_with_backup(path: Path, text: str, *, private: bool = False) -> Path |
 
 
 def record_hashes(states: dict, host: str) -> Path:
-    """Merge the sha256 of every registered hook script, and of the modules in each script's directory, into the project's hash record."""
+    """Merge the sha256 of every registered hook script, and of the modules in and beside each script's directory (``verify.module_hashes``), into the project's hash record."""
     path = _state.state_dir() / verify.HASH_RECORD
     current = verify._read(path)
     sections = {name: dict(current[name]) if isinstance(current, dict) and isinstance(current.get(name), dict) else {}

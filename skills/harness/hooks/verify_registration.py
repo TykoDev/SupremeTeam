@@ -22,11 +22,11 @@ turns a registration into a failure, because each has a legitimate cause:
                version against the floor in runtime-manifest.yaml. The version is
                read by running that interpreter once with ``-I -S -c``; one inside
                the project directory is never run.
-  integrity    whether the hook script, and every other module in its directory,
-               still matches the sha256 recorded when it was registered. The
-               directory is listed, not named, so a module added to it later is
-               covered too. ``changed`` after a deliberate edit or an upgrade is
-               expected.
+  integrity    whether the hook script, every other module in its directory, and
+               the modules the hooks import from ``skills/scripts``, still match
+               the sha256 recorded when it was registered. The directory is
+               listed, not named, so a module added to it later is covered too.
+               ``changed`` after a deliberate edit or an upgrade is expected.
 
 Whether the host actually fires the hook is a separate, host-observed fact this
 verifier never claims; it is reported as ``observed: unverified``.
@@ -87,9 +87,9 @@ _HOST_SIGNALS = {"codex": ("CODEX_",), "claude": ("CLAUDE",), "copilot": ("COPIL
 
 RUNTIME_MANIFEST = Path(__file__).resolve().parents[2] / "runtime-manifest.yaml"
 
-# sha256 of each registered hook script, and of every module beside it, written
-# under .harness-state/ when the hook is registered. repair_registration.py is the
-# writer.
+# sha256 of each registered hook script, of every module beside it and of the
+# skills/scripts modules the hooks import, written under .harness-state/ when the
+# hook is registered. repair_registration.py is the writer.
 HASH_RECORD = "hook-hashes.json"
 
 # The skills folders the installers write, relative to the home directory. A host
@@ -413,16 +413,23 @@ def hook_hash(path) -> str | None:
 
 
 def module_hashes(directory) -> dict[str, str]:
-    """sha256 of every Python module a hook can import from ``directory``, found by listing it.
+    """sha256 of every Python module a hook can import from ``directory``, found by listing it, and of the modules
+    the hooks import from the ``skills/scripts`` beside it, named ``scripts/<file>``.
 
-    Naming the modules would leave out the next one added, and the guard lives in the
+    Naming the modules in ``directory`` would leave out the next one added, and the guard lives in the
     modules the three entry scripts import, not in the entry scripts. Test modules are
-    left out: no hook loads them, and editing one is not tampering."""
+    left out: no hook loads them, and editing one is not tampering. ``skills/scripts`` holds tools no hook runs,
+    so only the files ``_bootstrap.enforcement_files`` names are recorded from it."""
+    directory = Path(directory)
     found = {}
-    for path in sorted(Path(directory).glob("*.py")):
+    for path in sorted(directory.glob("*.py")):
         digest = None if path.name.startswith("test_") else hook_hash(path)
         if digest:
             found[path.name] = digest
+    for path in _bootstrap.enforcement_files(directory):
+        digest = hook_hash(path) if path.parent != directory else None
+        if digest:
+            found[f"{path.parent.name}/{path.name}"] = digest
     return found
 
 

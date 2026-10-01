@@ -21,6 +21,7 @@ from unittest import mock
 
 HOOK_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOK_DIR))
+import _bootstrap  # noqa: E402
 import repair_registration as repair  # noqa: E402
 import verify_registration as verify  # noqa: E402
 
@@ -870,6 +871,107 @@ class IntegrityTests(Scratch):
         record.write_text("{nope", encoding="utf-8")
         out = self.run_tool("verify_registration.py", "--host", "claude")
         self.assertEqual(out.returncode, 0, out.stdout)
+
+
+def _enforced_but_unrecorded(directory: Path) -> list:
+    """The files ``_bootstrap.enforcement_files`` names for ``directory`` that its hash record does not carry, or carries with another hash."""
+    recorded = verify.module_hashes(directory)
+    return [label for label, path in _enforcement_labels(directory) if recorded.get(label) != verify.hook_hash(path)]
+
+
+def _enforcement_labels(directory: Path) -> list:
+    """``(name in the record, path)`` for each enforcement file: a bare name beside the entry scripts, ``scripts/<name>`` otherwise."""
+    return [(path.name if path.parent == directory else f"{path.parent.name}/{path.name}", path)
+            for path in _bootstrap.enforcement_files(directory)]
+
+
+class EnforcementRecordTests(Scratch):
+    """SEC-06: an edit to any file a registered hook runs to decide reads `changed` and is named, not only an edit of an entry script."""
+
+    def mirrored_harness(self) -> Path:
+        """The enforcement files laid out as an install root has them (`skills/harness/hooks` beside `skills/scripts`), registered for claude."""
+        skills = self.tmp / "mirror" / "skills"
+        hooks = skills / "harness" / "hooks"
+        hooks.mkdir(parents=True)
+        (skills / "scripts").mkdir()
+        for path in _bootstrap.enforcement_files():
+            shutil.copy2(path, (hooks if path.parent == _bootstrap.HOOKS else skills / "scripts") / path.name)
+        handlers = {verify.EVENTS["claude"][key]: [{"hooks": [{"type": "command", "command": f'"{sys.executable}" -X utf8 "{hooks / script}"'}]}]
+                    for key, script in verify.REQUIRED}
+        self.claude_settings({"hooks": handlers})
+        return hooks
+
+    def verify_json(self, **env: str) -> dict:
+        out = self.run_tool("verify_registration.py", "--host", "claude", "--json", **env)
+        return json.loads(out.stdout.split("JSON_REPORT: ", 1)[1])["claude"]["hooks"]
+
+    def test_the_record_carries_every_file_the_enforcement_list_names(self):
+        self.assertEqual(_enforced_but_unrecorded(HOOK_DIR), [])
+        self.assertEqual({"scripts/data_formats.py", "scripts/save_taxonomy.py"} - set(verify.module_hashes(HOOK_DIR)), set(),
+                         "the two modules the hooks import from skills/scripts are recorded under a name that says where they are")
+
+    def test_a_file_added_to_the_list_that_the_record_does_not_hash_is_found(self):
+        """The record leaves out test modules, so naming one on the list is a file that is enforced and not recorded."""
+        with mock.patch.object(_bootstrap, "HOOK_FILES", (*_bootstrap.HOOK_FILES, "test_fsutil.py")):
+            self.assertEqual(_enforced_but_unrecorded(HOOK_DIR), ["test_fsutil.py"])
+        with mock.patch.object(_bootstrap, "SCRIPT_FILES", (*_bootstrap.SCRIPT_FILES, "check_runtime.py")):
+            self.assertEqual(_enforced_but_unrecorded(HOOK_DIR), [])  # a scripts module added to the list is recorded by name
+
+    def test_a_file_the_record_stops_covering_is_found(self):
+        real = verify.module_hashes
+        for dropped in ("_cmdscan.py", "scripts/save_taxonomy.py"):
+            with self.subTest(dropped=dropped):
+                with mock.patch.object(verify, "module_hashes", lambda directory, dropped=dropped: {k: v for k, v in real(directory).items() if k != dropped}):
+                    self.assertEqual(_enforced_but_unrecorded(HOOK_DIR), [dropped])
+
+    def test_an_edit_of_any_enforcement_file_reads_changed_and_names_the_file(self):
+        hooks = self.mirrored_harness()
+        env = {"SUPREMETEAM_HOOK_ROOT": str(hooks)}
+        self.assertEqual(self.run_tool("repair_registration.py", "--host", "claude", "--record-hashes", **env).returncode, 0)
+        self.assertEqual({h["integrity"] for h in self.verify_json(**env).values()}, {"unchanged"})
+        for label, path in _enforcement_labels(hooks):
+            original = path.read_bytes()
+            path.write_bytes(original + b"\n# edited\n")
+            try:
+                with self.subTest(file=label):
+                    reported = self.verify_json(**env)
+                    self.assertEqual({h["integrity"] for h in reported.values()}, {"changed"})
+                    self.assertEqual({tuple(h["changed_files"]) for h in reported.values()}, {(label,)})
+            finally:
+                path.write_bytes(original)
+        self.assertEqual({h["integrity"] for h in self.verify_json(**env).values()}, {"unchanged"})
+
+    def test_readiness_names_an_edited_scripts_module_as_it_names_an_edited_hook_module(self):
+        hooks = self.mirrored_harness()
+        env = {"SUPREMETEAM_HOOK_ROOT": str(hooks)}
+        self.run_tool("repair_registration.py", "--host", "claude", "--record-hashes", **env)
+        for label, path in (("scripts/data_formats.py", hooks.parent.parent / "scripts" / "data_formats.py"), ("_cmdscan.py", hooks / "_cmdscan.py")):
+            original = path.read_bytes()
+            path.write_bytes(original + b"\n# edited\n")
+            try:
+                with self.subTest(file=label):
+                    ready = json.loads(self.run_tool("check_readiness.py", "--host", "claude", "--json", **env).stdout)
+                    self.assertTrue(ready["ready"], "a changed file is a warning, not a failure")
+                    self.assertTrue(any(f"claude:{label}" in warning for warning in ready["warnings"]), ready["warnings"])
+                    self.assertEqual({tuple(state["changed_files"]) for state in ready["hooks"]["states"].values()}, {(label,)})
+            finally:
+                path.write_bytes(original)
+
+    def test_a_record_made_before_the_scripts_modules_were_recorded_reads_changed_once_and_names_them(self):
+        hooks = self.mirrored_harness()
+        env = {"SUPREMETEAM_HOOK_ROOT": str(hooks)}
+        self.run_tool("repair_registration.py", "--host", "claude", "--record-hashes", **env)
+        record = self.record()
+        for entry in record["directories"].values():
+            entry["files"] = {name: digest for name, digest in entry["files"].items() if not name.startswith("scripts/")}
+        self.write_json(self.project / ".harness-state" / verify.HASH_RECORD, record)
+        reported = self.verify_json(**env)
+        self.assertEqual({tuple(h["changed_files"]) for h in reported.values()}, {("scripts/data_formats.py", "scripts/save_taxonomy.py")})
+        self.run_tool("repair_registration.py", "--host", "claude", "--record-hashes", **env)
+        self.assertEqual({h["integrity"] for h in self.verify_json(**env).values()}, {"unchanged"})
+
+    def record(self) -> dict:
+        return json.loads((self.project / ".harness-state" / verify.HASH_RECORD).read_text(encoding="utf-8"))
 
 
 class MirrorRootTests(Scratch):

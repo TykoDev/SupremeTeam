@@ -63,16 +63,17 @@ running it, or that history is gone.
 | Exit | Meaning | Response |
 | --- | --- | --- |
 | 0 | released; the JSON acknowledgement names the glob or run, the releaser, and how many records changed | attach it as the release evidence |
-| 1 | refused — no active boundary matches, the requester is not authorized, the entry is an unowned legacy shape, or the record is corrupt; nothing changed | resolve the stated reason; a refusal is a contract violation, never something to route around |
+| 1 | refused — no active boundary matches (the glob is matched by its normalised spelling, so any spelling finds its record), the requester is not authorized, the entry is an unowned legacy shape, the record is corrupt, or another writer held the record lock past `--lock-timeout` (default 5 seconds; run it again); nothing changed | resolve the stated reason; a refusal is a contract violation, never something to route around |
 | 2 | usage error — a missing or malformed flag | fix the command; nothing was written |
 | other non-zero | the command never ran to completion — no interpreter on `PATH`, the harness not installed, or an unwritable state directory | the boundary is **still in force**; report the unfreeze as not performed |
 
 ## Fail-open semantics
 
-Per `../../harness-doctrine.md` §3 the hook *fails open*: a malformed
-`guard-state.json`, an unreadable path, or a host that does not run hooks lets the
-action proceed silently. A boundary that still reads as active in `status` may
-therefore already have been unenforced in practice, so an unreleased entry is
-never evidence that the area was actually protected in the meantime. Report what
-the record shows and what was verified, not what the hook is assumed to have
-caught.
+Per `../../harness-doctrine.md` §3 the hook *fails open*: an internal error, an
+unreadable path, or a host that does not run hooks lets the action proceed
+silently, and the hook is a text guard that reads the command a tool is about to
+run (`../../harness/hooks/README.md` § What the guard cannot see). A boundary that
+still reads as active in `status` may therefore already have been unenforced in
+practice, so an unreleased entry is never evidence that the area was actually
+protected in the meantime. Report what the record shows and what was verified, not
+what the hook is assumed to have caught.

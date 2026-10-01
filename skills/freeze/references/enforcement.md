@@ -37,8 +37,15 @@ python skills/harness/hooks/guard_state.py status
 
 `--glob` and `--owner` are required; `--scope`, `--run-id`, and `--approver`
 (repeatable) are optional. Each successful run appends exactly one owned record to
-`frozen_globs` and prints a JSON acknowledgement naming the glob, the owner, and
-the record path.
+`frozen_globs` and prints a JSON acknowledgement naming the glob as it was
+recorded (the normalised spelling, see below), the owner, and the record path.
+
+Every writer command except `status` holds one advisory lock
+(`.harness-state/guard-state.json.lock`) from reading the record to replacing it, so
+two sessions recording or releasing at once cannot lose each other's change. A
+command that cannot take the lock within `--lock-timeout` seconds (a flag before the
+subcommand, default 5) is refused with exit 1 and changes nothing: run it again. The
+lock is released with the process, so a crashed writer never wedges it.
 
 ## The frozen_globs record
 
@@ -100,21 +107,31 @@ beside it. When a freeze appears not to take effect, compare the `record:` path 
 | Exit | Meaning | Response |
 | --- | --- | --- |
 | 0 | recorded; the JSON acknowledgement names the glob and owner | quote it as the freeze evidence |
-| 1 | refused — the glob is already recorded and unreleased, the record on disk is corrupt, or an authority check failed; nothing changed | resolve the stated reason; never hand-edit the record around a refusal |
+| 1 | refused — the glob is already recorded and unreleased (in any spelling), the glob can never match (empty, `.`, or climbing out of the project), the record on disk is corrupt, an authority check failed, or another writer held the lock past `--lock-timeout`; nothing changed | resolve the stated reason; never hand-edit the record around a refusal |
 | 2 | usage error — a missing or malformed flag | fix the command; nothing was written |
 | other non-zero | the command never completed — no interpreter on `PATH`, the harness not installed, or the state directory cannot be created or written | treat the freeze as **not recorded**, say so explicitly, and hold the boundary socially until the writer can run |
 
-The duplicate check compares the glob **exactly, as a string** — no path
-normalisation of any kind runs first. Two consequences, and both produce stacked
-records rather than a refusal:
+The writer normalises a glob before it compares or stores it, so **one boundary is
+one record, whatever its spelling**. `src\payments\**`, `./src/payments/**`,
+`src//payments/**` and `<project>/src/payments/**` are all stored as
+`src/payments/**`; a second `freeze` of any of them is refused with exit 1, and a
+`release --glob` in any of those spellings lifts the one record. The same
+normalisation is applied to a record written before it existed, so an older record in
+another spelling is still found by its normalised form. A relative glob is anchored
+at the project root, which is also how the hook reads it: `src/**` does not reach
+`docs/src/`, and a boundary meant to cover a nested directory is recorded with a
+leading `**/`.
 
-- A *narrower* glob under an already-frozen path is a second boundary: `src/payments/**` and `src/payments/api/**` coexist.
-- So is the *same* boundary spelled differently. `./src/payments/**` and `src/payments/**` are different strings, so the second call is accepted and the path now carries two independent records, each needing its own release before the area is actually open.
+Two things still produce separate records, because they are different boundaries:
 
-Keep one glob per boundary, and spell it the way `status` prints it. A boundary
-reported as released while a differently-spelled duplicate is still active is the
-failure this note exists to prevent — `status` is what shows it, so read it after
-every release rather than trusting the release call's own output.
+- A *narrower* glob under an already-frozen path: `src/payments/**` and `src/payments/api/**` coexist, and releasing the broader one leaves the narrower one in force until it is released too.
+- The same glob in both keys. The duplicate check looks inside one key, so a `freeze` and a `block` of `src/payments/**` are two records; one `release --glob src/payments/**` sets `released_at` on both.
+
+`status` prints the effective boundary in its stored form, and warns about an active
+record that can never match (`unmatchable_entries`: a legacy entry that is empty or
+climbs out of the project) beside the ownerless ones. Read it after every release
+rather than trusting the release call's own output: a narrower glob that is still
+active is what it shows.
 
 ## Release, not deletion
 
@@ -126,10 +143,18 @@ alone never expires a protection.
 
 ## Fail-open semantics
 
-Per `../../harness-doctrine.md` §3 the hook *fails open*: any internal error —
-a malformed `guard-state.json`, an unreadable path, or a host that does not run
-hooks — exits silently and lets the edit proceed. A hook fault therefore means a
-write into a frozen path is *allowed*, not blocked. Treat freeze as a discipline
-aid that catches honest mistakes; for a boundary that must not change under any
-circumstances, back it with version-control protections or filesystem permissions
-in addition to the freeze. See `../../harness/hooks/README.md`.
+Per `../../harness-doctrine.md` §3 the hook *fails open*: an internal error, an
+unreadable path, or a host that does not run hooks exits silently and lets the edit
+proceed. A hook fault therefore means a write into a frozen path is *allowed*, not
+blocked. Each fault is counted by type in `.harness-state/observations/PreToolUse.json`,
+and a `guard-state.json` that cannot be read does not switch every rule off: the
+hook applies no boundary from it, but the destructive-command rule still runs.
+
+The hook is also a text guard, not a hard lock. It reads the command a tool is about
+to run and the path an edit tool names; it does not run anything, so a program that
+builds its path at run time, a script file, a tool it has no entry for, or a link made
+in the same command can write into a frozen path unseen.
+`../../harness/hooks/README.md` § What the guard cannot see lists these limits in
+full. Treat freeze as a discipline aid that catches honest mistakes; for a boundary
+that must not change under any circumstances, back it with version-control
+protections or filesystem permissions in addition to the freeze.

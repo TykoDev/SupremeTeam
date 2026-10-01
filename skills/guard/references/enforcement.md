@@ -139,8 +139,11 @@ boundary file instead of starting a second one beside it.
   `node` or `ruby` program that redirects or opens a file for writing
   (`awk '{print > "out"}'`, `sed -n 'w out'`, `python3 -c "open('x', 'w')"`). Name each target in the shell command itself, as an
   operand or a redirect (`awk '{print}' f > <allowed path>`), and it is judged like any
-  other. This applies to `read_only` only: a freeze or a block judges the targets a
-  command names. Reads pass untouched, including `awk '$1 > 5'` and `xargs grep`.
+  other. This is refused flat for `read_only` only. A freeze, a block and Rule C also read the commands a
+  launcher or script block runs (`watch 'rm src/payments/a'`) like the command line, and refuse one of these
+  writes only when the command also names a path they protect (`echo 'rm src/payments/a' | sh`,
+  `cat src/payments/list | xargs rm`); one that names none passes (`cat list | xargs rm`). Reads pass untouched,
+  including `awk '$1 > 5'` and `xargs grep`.
 - `allow_dangerous` — `false`, or an owned grant that lifts the built-in
   destructive-command block (see the next section).
 

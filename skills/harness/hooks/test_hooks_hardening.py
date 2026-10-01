@@ -50,7 +50,7 @@ class RegistrationAnalysisTests(unittest.TestCase):
     def test_environment_variable_forms_and_py_launcher_are_accepted(self):
         real = HOOK_DIR / "post_tool_use.py"
         with patch.dict(os.environ, {"SUPREMETEAM_HOOK_ROOT_TEST": str(HOOK_DIR)}):
-            for command in (f'python "$SUPREMETEAM_HOOK_ROOT_TEST/post_tool_use.py"', f'py -3.13 "%SUPREMETEAM_HOOK_ROOT_TEST%/post_tool_use.py"',
+            for command in ('python "$SUPREMETEAM_HOOK_ROOT_TEST/post_tool_use.py"', 'py -3.13 "%SUPREMETEAM_HOOK_ROOT_TEST%/post_tool_use.py"',
                             f'python -u -X utf8 "{real}"', f'FOO=bar python "{real}"'):
                 with self.subTest(command=command):
                     self.assertTrue(verify.analyse(command, "post_tool_use.py")["executable"], command)

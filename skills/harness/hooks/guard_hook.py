@@ -539,9 +539,7 @@ def rule_read_only(call: "Call") -> "str | None":
     records = call.guard.get("read_only") or []
     if not records:
         return None
-    allow = [".harness-state/**"]
-    for record in records:
-        allow += [str(g) for g in (record.get("allow") or []) if g]
+    allow = _state.read_only_allow(records)
     fold = _paths.case_insensitive_fs()
     if call.writer:
         if any(not _paths.inside_allowed(target, allow, call.root, fold=fold) for target in call.edit_targets):

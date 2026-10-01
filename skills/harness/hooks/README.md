@@ -482,8 +482,11 @@ To prevent active runs from going stale during long autonomous workflows, all th
 | `SUPREMETEAM_SESSION_ID` | Host session ID | Session identifier used to correlate hook telemetry and heartbeats. |
 | `SUPREMETEAM_SIZE_AUDIT_THRESHOLD_BYTES` | `268435456` (256 MiB) | File and directory size threshold for `size_audit.py`. |
 | `SUPREMETEAM_SIZE_AUDIT_INTERVAL_SECONDS` | `21600` (6 hours) | Throttle duration between automatic size audits. |
-| `CLAUDE_PROJECT_DIR` / `CODEX_WORKSPACE_DIR` | - | Host-specific workspace directory fallback markers. |
+| `CLAUDE_PROJECT_DIR` / `CODEX_WORKSPACE_DIR` / `GITHUB_WORKSPACE` | - | Host-specific workspace directory, tried in that order after `SUPREMETEAM_PROJECT_DIR`. |
+| `SUPREMETEAM_HARNESS_DEV` | unset | Set to exactly `1` by the person who launches the host to lift the hook-file protection (guard Rule F) for that session while developing the hooks inside a pinned run. Nothing an agent runs can set it for the host. |
 | `CLAUDE_SESSION_ID` / `CODEX_SESSION_ID` | - | Host-specific session ID fallback markers. |
+
+**Project root order.** Every hook, writer and reader in this directory resolves the project root in one place, `_state.project_root()`: the first of `SUPREMETEAM_PROJECT_DIR`, `CLAUDE_PROJECT_DIR`, `CODEX_WORKSPACE_DIR`, `GITHUB_WORKSPACE` that is set wins, and with none set the nearest ancestor of the working directory holding `skillset-saves/`, `.harness-state/` or `.git` is used (the working directory itself when there is none). A test pins the order and that no other module in the directory reads these variables.
 
 ---
 

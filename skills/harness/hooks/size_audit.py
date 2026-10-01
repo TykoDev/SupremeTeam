@@ -22,6 +22,7 @@ import sys
 import time
 from pathlib import Path
 
+import _fsutil
 import _state
 
 DEFAULT_THRESHOLD_BYTES = 256 * 1024 * 1024
@@ -30,6 +31,7 @@ DEFAULT_MAX_ENTRIES = 10_000
 DEFAULT_MAX_DEPTH = 16
 DEFAULT_MAX_SECONDS = 0.5
 MAX_FINDINGS = 8
+MAX_NAME = 100
 STAMP = Path(".harness-state/observations/size-audit.json")
 
 _CORE_FILES = {
@@ -153,20 +155,12 @@ def scan(
 
 
 def _guard_globs(root: Path) -> tuple[str, ...]:
+    """The effective frozen and blocked globs, read the way the guard reads them (``_state.load_guard_state``)."""
     try:
-        state = json.loads((root / ".harness-state" / "guard-state.json").read_text(encoding="utf-8"))
-        if not isinstance(state, dict):
-            return ()
-        patterns = []
-        for key in ("frozen_globs", "blocked_globs"):
-            for entry in state.get(key) or []:
-                if isinstance(entry, str) and entry:
-                    patterns.append(entry)
-                elif isinstance(entry, dict) and not entry.get("released_at") and entry.get("released") is not True:
-                    if isinstance(entry.get("glob"), str) and entry["glob"]:
-                        patterns.append(entry["glob"])
-        return tuple(patterns)
-    except Exception:
+        state = _state.load_guard_state(root)
+        return tuple(str(glob) for key in ("frozen_globs", "blocked_globs") for glob in state.get(key) or [] if glob)
+    except Exception as exc:
+        _state.record_fault("PostToolUse", exc)
         return ()
 
 
@@ -204,14 +198,18 @@ def maybe_scan(
         try:
             if stamp_safe and not stamp.is_symlink():
                 stamp.parent.mkdir(parents=True, exist_ok=True)
-                temporary = stamp.with_name(f"{stamp.name}.{os.getpid()}.tmp")
-                temporary.write_text(json.dumps({"checked_at": current}), encoding="utf-8")
-                os.replace(temporary, stamp)
+                _fsutil.atomic_write(stamp, json.dumps({"checked_at": current}))
         except OSError:
-            pass
+            pass  # a throttle record that cannot be written only means the next call scans again
         return result
-    except Exception:
+    except Exception as exc:
+        _state.record_fault("PostToolUse", exc)
         return None
+
+
+def _name(path: object) -> str:
+    """A path from the scan as the model may read it: file names are written by whoever ran a command, so they are neutralised and capped."""
+    return _state.safe_text(path, MAX_NAME)
 
 
 def advisory_for(result: dict | None) -> str | None:
@@ -224,12 +222,12 @@ def advisory_for(result: dict | None) -> str | None:
     threshold_mib = result["threshold_bytes"] / 1024**2
     shown = []
     if directories:
-        names = ", ".join(f"{item['path']}/ ({item['bytes'] / 1024**2:.0f} MiB)" for item in directories[:3])
+        names = ", ".join(f"{_name(item['path'])}/ ({item['bytes'] / 1024**2:.0f} MiB)" for item in directories[:3])
         suffix = f", {len(directories) - 3 + result.get('omitted_directories', 0)} more" \
             if len(directories) > 3 or result.get("omitted_directories") else ""
         shown.append(f"directories: {names}{suffix}")
     if files:
-        names = ", ".join(f"{item['path']} ({item['bytes'] / 1024**2:.0f} MiB)" for item in files[:5])
+        names = ", ".join(f"{_name(item['path'])} ({item['bytes'] / 1024**2:.0f} MiB)" for item in files[:5])
         suffix = f", {len(files) - 5 + result.get('omitted_findings', 0)} more" \
             if len(files) > 5 or result.get("omitted_findings") else ""
         shown.append(f"files: {names}{suffix}")
@@ -246,7 +244,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--json", action="store_true", help="print the diagnostic result")
     args = parser.parse_args(argv)
     if not args.json and not sys.stdin.isatty():
-        _state.read_hook_input()  # drain a host payload before this standalone hook exits
+        _state.read_hook_input("PostToolUse")  # drain a host payload before this standalone hook exits
     result = maybe_scan(args.project_root, force=args.force)
     if args.json:
         print(json.dumps(result if result is not None else {"skipped": "not-due"}))

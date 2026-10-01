@@ -243,6 +243,18 @@ def _effective_globs(entries) -> list:
     return result
 
 
+def read_only_allow(records) -> list:
+    """The globs a read-only run may change: the harness state directory plus each record's ``allow`` list.
+
+    The guard (Rule D) and the coverage sweep both ask this, so they can never disagree about
+    what a read-only run may touch."""
+    allow = [".harness-state/**"]
+    for record in records or []:
+        if isinstance(record, dict):
+            allow += [str(glob) for glob in (record.get("allow") or []) if glob]
+    return allow
+
+
 def load_guard_state(root: "str | Path | None" = None) -> dict:
     """Load the active guard/freeze boundary.
 
@@ -314,6 +326,18 @@ def safe_text(value: object, limit: int = 120) -> str:
             mapped.append(char)
     clean = " ".join("".join(mapped).split())
     return clean if len(clean) <= limit else clean[: limit - 3] + "..."
+
+
+def read_mapping(path: Path) -> "dict | None":
+    """A run record (JSON or the repository's YAML subset) as a mapping; None when it is missing, unreadable or not a mapping."""
+    _bootstrap.ensure_paths()
+    from data_formats import DataFormatError, parse_yaml  # noqa: WPS433
+
+    try:
+        value = parse_yaml(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, DataFormatError, RecursionError):
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def active_run_id(root: "str | Path | None" = None) -> str:
@@ -444,7 +468,7 @@ def refresh_run_heartbeat(data: dict, event: str) -> dict | None:
         if not runs.is_dir():
             return None
         _bootstrap.ensure_paths()
-        from _saves import _mapping, heartbeat_is_stale, inspect_saves, parse_timestamp, pointed_heartbeat  # noqa: WPS433
+        from _saves import heartbeat_is_stale, inspect_saves, parse_timestamp, pointed_heartbeat  # noqa: WPS433
 
         now = datetime.now(timezone.utc)
         pointed = pointed_heartbeat(root)
@@ -463,7 +487,7 @@ def refresh_run_heartbeat(data: dict, event: str) -> dict | None:
         run_dir = runs / run_id
         if (run_dir / "_journal.json").exists():
             return None
-        lock = _mapping(run_dir / "_lock.md")
+        lock = read_mapping(run_dir / "_lock.md")
         if not isinstance(lock, dict) or str(lock.get("status")) != "held" or lock.get("session_pin") is not True:
             return None
         beat = parse_timestamp(lock.get("heartbeat"))
@@ -474,7 +498,8 @@ def refresh_run_heartbeat(data: dict, event: str) -> dict | None:
         store = save_run.RunStore(root, run_id)
         return store.heartbeat(str(lock.get("owner") or "admiral"), source=f"hook:{event}",
                                wait=save_run.HOOK_LOCK_WAIT, min_age=_HEARTBEAT_REFRESH_AFTER)
-    except Exception:
+    except Exception as exc:
+        record_fault(event, exc)  # a heartbeat that cannot be kept lets a live run go stale, so it is counted
         return None
 
 

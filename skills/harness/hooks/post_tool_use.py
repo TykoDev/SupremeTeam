@@ -20,8 +20,14 @@ sweep (see `_sweep_coverage_residue`). Coverage data belongs to the run's
 there on the very next tool call instead of accumulating — the observed failure
 was a `.coverage` tree of over 3000 files in under two minutes.
 
+The sweep is a write, so it obeys the same boundaries as any other: it moves nothing
+inside a frozen or blocked glob, nothing at all outside a read-only run's allow list,
+and it files residue under a run only while that run is active. The one subprocess it
+starts (`coverage combine`) runs with no project directory on its import path.
+
 Contract: prints the PostToolUse additionalContext envelope to
-stdout and exits 0. On any internal error it exits 0 silently (fail open). It
+stdout and exits 0. On any internal error it exits 0 silently (fail open) and counts
+the fault by type in the hook's observation record (`_state.record_fault`). It
 never blocks — by definition the action already executed.
 """
 
@@ -34,6 +40,7 @@ import sys
 import time
 from pathlib import Path
 
+import _bootstrap
 import _paths
 import _state
 
@@ -198,17 +205,16 @@ def _inside_boundary(entry: Path, root: Path, globs: list) -> bool:
 
 
 def _phase_directories(catalog_root: Path) -> list:
-    """Declared phase directories from save-ownership.yaml; falls back on error."""
+    """Declared phase directories from save-ownership.yaml; falls back on error (and counts the fault)."""
     try:
-        from _saves import SCRIPT_ROOT  # noqa: WPS433 — puts skills/scripts on sys.path
-
-        _ = SCRIPT_ROOT
-        from data_formats import parse_yaml  # noqa: WPS433
+        _bootstrap.ensure_paths()
+        from data_formats import parse_yaml
 
         data = parse_yaml((catalog_root / "save-ownership.yaml").read_text(encoding="utf-8"))
         declared = [str(p) for p in (data.get("phase_directories") or []) if p]
         return declared or list(_FALLBACK_PHASES)
-    except Exception:
+    except Exception as exc:
+        _state.record_fault("PostToolUse", exc)
         return list(_FALLBACK_PHASES)
 
 
@@ -222,35 +228,56 @@ def _run_phase(run_dir: Path, phases: list) -> str:
     that runs tests.
     """
     try:
-        from _saves import _mapping  # noqa: WPS433
-
-        state = _mapping(run_dir / "_state.md") or {}
+        state = _state.read_mapping(run_dir / "_state.md") or {}
         marker = str(state.get("phase_state") or state.get("phase") or "").strip().lower().replace("_", "-")
         if marker:
             for phase in sorted(phases, key=len, reverse=True):
                 if marker == phase or marker.startswith(phase + "-"):
                     return phase
-    except Exception:
-        pass
+    except Exception as exc:
+        _state.record_fault("PostToolUse", exc)
     return _DEFAULT_PHASE if _DEFAULT_PHASE in phases else (phases[0] if phases else _DEFAULT_PHASE)
+
+
+def _active_run(root: Path) -> str:
+    """The id of the run that owns this project right now, or '' when none does.
+
+    Active means what the rest of the harness means by it (``_saves.inspect_saves``): a
+    coherent run with a fresh lock, either pinned by the pointer or the only held run. A
+    pointer that still names a run which has completed, been released or blocked, or
+    whose lock went stale, does not make that run the owner of new evidence."""
+    try:
+        _bootstrap.ensure_paths()
+        from _saves import inspect_saves
+
+        found = inspect_saves(root)
+    except Exception as exc:
+        _state.record_fault("PostToolUse", exc)
+        return ""
+    run_id = str(found.get("run_id") or "")
+    if found.get("status") in ("active", "orphaned") and run_id and Path(run_id).name == run_id and run_id not in {".", ".."}:
+        return run_id
+    return ""
 
 
 def _destination(root: Path) -> tuple:
     """Return ``(destination, relative_label, scoped)``.
 
     Scoped means an active run owns the residue: it lands in that run's
-    `<phase>/evidence/coverage/`. With no active run the residue goes to the
-    declared scratch class `.harness-state/test-work/coverage-residue/<ts>/` —
-    relocated, never deleted, and never gate evidence.
+    `<phase>/evidence/coverage/`. With no active run (none at all, or only a closed
+    one) the residue goes to the declared scratch class
+    `.harness-state/test-work/coverage-residue/<ts>/` — relocated, never deleted, and
+    never gate evidence. The label is shown to the model, so a run name is
+    neutralised and capped first (`_state.safe_text`).
     """
-    run_id = _state.active_run_id()
-    if run_id and run_id != "no-run":
+    run_id = _active_run(root)
+    if run_id:
         run_dir = root / "skillset-saves" / "runs" / run_id
         if run_dir.is_dir():
             catalog_root = Path(__file__).resolve().parents[2]
             phase = _run_phase(run_dir, _phase_directories(catalog_root))
             dest = run_dir / phase / "evidence" / "coverage"
-            return dest, f"skillset-saves/runs/{run_id}/{phase}/evidence/coverage", True
+            return dest, f"skillset-saves/runs/{_state.safe_text(run_id, 60)}/{_state.safe_text(phase, 40)}/evidence/coverage", True
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     dest = root / ".harness-state" / "test-work" / "coverage-residue" / stamp
     return dest, f".harness-state/test-work/coverage-residue/{stamp}", False
@@ -286,26 +313,72 @@ def _count_files(path: Path) -> int:
 def _combine(dest: Path, fragments: int) -> bool:
     """Combine relocated `.coverage.*` fragments into one data file in `dest`.
 
-    Runs only where the `coverage` module is importable, only inside the
-    destination, and only with `--keep` so the relocated fragments survive the
-    combine — the sweep never destroys data it moved.
+    Only with `--keep`, so the relocated fragments survive the combine: the sweep never
+    destroys data it moved. The child is started the way a program run by a hook with
+    someone else's files around it must be: `-P` keeps the current and script directories
+    off `sys.path` (a `coverage.py` or `coverage/` planted in the destination would
+    otherwise run with the hook's authority), the working directory is the interpreter's
+    own directory so no `.coveragerc` or `pyproject.toml` from the project is read, and
+    the fragments are named by path instead of found by the working directory. Whether
+    `coverage` is installed is answered by the child itself: not installed is a plain
+    False, the hint then says the fragments were not combined.
     """
     if fragments < 2:
         return False
     try:
-        import importlib.util
-
-        if importlib.util.find_spec("coverage") is None:
-            return False
         env = os.environ.copy()
         env["COVERAGE_FILE"] = str(dest / ".coverage")
-        args = [sys.executable, "-m", "coverage", "combine", "--keep"]
+        args = [sys.executable]
+        if sys.version_info >= (3, 11):
+            args.append("-P")
+        args += ["-m", "coverage", "combine", "--keep"]
         if (dest / ".coverage").exists():
             args.append("--append")
-        done = subprocess.run(args, cwd=str(dest), env=env, capture_output=True, text=True, timeout=60)
+        args.append(str(dest))
+        done = subprocess.run(args, cwd=str(Path(sys.executable).parent), env=env, capture_output=True, text=True, timeout=60)
         return done.returncode == 0
     except Exception:
-        return False
+        return False  # a missing interpreter or a timeout is a failed combine, which the hint reports
+
+
+def _scan_root(root: Path) -> tuple:
+    """The residue entries at the project root and whether the bounded scan stopped early."""
+    entries = []
+    truncated = False
+    for scanned, entry in enumerate(root.iterdir(), start=1):
+        if scanned > _RESIDUE_CAP:
+            truncated = True
+            break
+        if entry.name not in _GENERATED_ROOTS and _is_residue(entry.name):
+            entries.append(entry)
+    return entries, truncated
+
+
+def _held_by_read_only(entries: list, dest: Path, records: list, root: Path) -> list:
+    """The entries a read-only run may not move.
+
+    A move deletes at the project root and creates in the destination, so both ends must
+    lie inside the run's allow list (the same list the guard enforces, `read_only_allow`).
+    """
+    allow = _state.read_only_allow(records)
+    fold = _paths.case_insensitive_fs()
+
+    def writable(entry: Path) -> bool:
+        return all(_paths.inside_allowed(_paths.locate(str(end), root), allow, root, fold=fold) for end in (entry, dest / entry.name))
+
+    return [entry for entry in entries if not writable(entry)]
+
+
+def _plural(count: int, one: str, many: str) -> str:
+    return one if count == 1 else many
+
+
+def _names(entries: list) -> str:
+    return ", ".join(sorted({e.name if not e.name.startswith(".coverage.") else ".coverage.*" for e in entries}))
+
+
+def _read_only_runs(records: list) -> str:
+    return ", ".join(_state.safe_text(r.get("run_id", "?"), 40) for r in records if isinstance(r, dict)) or "?"
 
 
 def _sweep_coverage_residue(tool_name: str) -> "str | None":
@@ -313,44 +386,37 @@ def _sweep_coverage_residue(tool_name: str) -> "str | None":
 
     Guarantees: bounded to `_RESIDUE_CAP` entries; silent when the root is clean;
     never touches `skillset-saves/` or `.harness-state/` themselves; never moves
-    anything inside a frozen or blocked glob; never deletes.
+    anything inside a frozen or blocked glob, nor anything a read-only run may not
+    change (those are left in place and the hint says so); never deletes.
     """
     if str(tool_name or "").strip().lower() not in _COMMAND_TOOLS:
         return None
     try:
         root = _state.project_root().resolve()
-    except Exception:
-        return None
-    try:
-        entries = []
-        scanned = 0
-        truncated = False
-        for entry in root.iterdir():
-            scanned += 1
-            if scanned > _RESIDUE_CAP:
-                truncated = True
-                break
-            if entry.name in _GENERATED_ROOTS or not _is_residue(entry.name):
-                continue
-            entries.append(entry)
+        entries, truncated = _scan_root(root)
         if not entries:
             return None
-        globs = []
-        try:
-            guard = _state.load_guard_state()
-            globs = [str(g) for g in (list(guard.get("frozen_globs") or []) + list(guard.get("blocked_globs") or [])) if g]
-        except Exception:
-            globs = []
+        guard = _state.load_guard_state()
+        globs = [str(g) for g in (list(guard.get("frozen_globs") or []) + list(guard.get("blocked_globs") or [])) if g]
         protected = [e for e in entries if _inside_boundary(e, root, globs)]
         movable = [e for e in entries if e not in protected]
         if not movable:
             return None
         dest, label, scoped = _destination(root)
+        records = guard.get("read_only") or []
+        held = _held_by_read_only(movable, dest, records, root) if records else []
+        movable = [e for e in movable if e not in held]
+        if not movable:
+            return (f"[harness:coverage-residue] Found {len(held)} project-root coverage "
+                    f"{_plural(len(held), 'entry', 'entries')} ({_names(held)}) and left "
+                    f"{_plural(len(held), 'it', 'them')} in place: run {_read_only_runs(records)} is recorded read-only, so the sweep "
+                    f"may not move root files. Nothing was moved or deleted. " + _COVERAGE_RULE)
         dest.mkdir(parents=True, exist_ok=True)
         moved_entries = 0
         moved_files = 0
         fragments = 0
         failed = 0
+        first_failure = None
         for entry in movable:
             try:
                 files = _count_files(entry)
@@ -359,17 +425,18 @@ def _sweep_coverage_residue(tool_name: str) -> "str | None":
                 moved_files += files
                 if entry.name.startswith(".coverage."):
                     fragments += 1
-            except Exception:
+            except Exception as exc:
                 failed += 1
-                continue
+                first_failure = first_failure or exc
+        if first_failure is not None:
+            _state.record_fault("PostToolUse", first_failure)  # once per call, however many entries failed
         if not moved_entries:
             return None
         combined = _combine(dest, fragments)
-        names = sorted({e.name if not e.name.startswith(".coverage.") else ".coverage.*" for e in movable})
         hint = (
             f"[harness:coverage-residue] Moved {moved_entries} project-root coverage entr"
             f"{'y' if moved_entries == 1 else 'ies'} ({moved_files} file{'' if moved_files == 1 else 's'}) "
-            f"into {label}/ — {', '.join(names)}. "
+            f"into {label}/ — {_names(movable)}. "
         )
         if combined:
             hint += f"The {fragments} relocated .coverage.* fragments were combined there into .coverage (originals kept). "
@@ -379,13 +446,17 @@ def _sweep_coverage_residue(tool_name: str) -> "str | None":
             hint += "No active run owns this residue, so it went to the harness test-work scratch class instead of a run. "
         if protected:
             hint += f"{len(protected)} entr{'y' if len(protected) == 1 else 'ies'} inside a frozen or blocked boundary were left untouched. "
+        if held:
+            hint += (f"{len(held)} entr{'y' if len(held) == 1 else 'ies'} ({_names(held)}) left in place because run "
+                     f"{_read_only_runs(records)} is recorded read-only. ")
         if failed:
             hint += f"{failed} entr{'y' if failed == 1 else 'ies'} could not be moved and remain at the root. "
         if truncated:
             hint += f"The sweep is bounded to {_RESIDUE_CAP} project-root entries per call, so the root may still hold more. "
         hint += "Nothing was deleted. " + _COVERAGE_RULE
         return hint
-    except Exception:
+    except Exception as exc:
+        _state.record_fault("PostToolUse", exc)
         return None
 
 
@@ -411,8 +482,8 @@ def main() -> None:
         size_hint = size_audit.advisory_for(size_audit.maybe_scan())
         if size_hint:
             _pending_maintenance_hints.append(size_hint)
-    except Exception:
-        pass  # advisory maintenance must never delay or block the host action
+    except Exception as exc:
+        _state.record_fault("PostToolUse", exc)  # advisory maintenance must never delay or block the host action
 
     text = _response_text(data)
     explicit = _explicit_failure(data)
@@ -433,8 +504,8 @@ def main() -> None:
             report = audit_improve.maybe_audit()
             if report:
                 _pending_maintenance_hints.append(audit_improve.advisory_for(report))
-        except Exception:
-            pass
+        except Exception as exc:
+            _state.record_fault("PostToolUse", exc)
         _emit(
             f"This action has now failed {len(recent_same)} times in a row with the same input. "
             f"Stop retrying it verbatim — change the approach, inspect the error, or try a different tool."
@@ -470,8 +541,14 @@ def main() -> None:
         sys.exit(0)
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """The registered entry: any internal fault fails open (exit 0, no output) and is counted by type."""
     try:
         main()
-    except Exception:
-        sys.exit(0)
+    except Exception as exc:
+        _state.record_fault("PostToolUse", exc)
+
+
+if __name__ == "__main__":
+    run()
+    sys.exit(0)

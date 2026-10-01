@@ -62,11 +62,11 @@ def run_hook(script: str, payload, root: Path, **env_extra: str) -> subprocess.C
                           env=clean_env(root, **env_extra), check=False)
 
 
-def decide(payload, root: Path, module: str = "guard_hook") -> str:
-    """The stdout of ``<module>.main()`` for ``payload``, run in this process ('' when it stays silent)."""
+def decide(payload, root: Path, module: str = "guard_hook", entry: str = "main") -> str:
+    """The stdout of ``<module>.<entry>()`` for ``payload``, run in this process ('' when it stays silent)."""
     import importlib
 
-    entry = importlib.import_module(module)
+    target = importlib.import_module(module)
     saved_env = {name: os.environ.get(name) for name in (*_PROJECT_VARS, *_SESSION_VARS)}
     for name in (*_PROJECT_VARS, *_SESSION_VARS):
         os.environ.pop(name, None)
@@ -77,7 +77,7 @@ def decide(payload, root: Path, module: str = "guard_hook") -> str:
         with contextlib.redirect_stdout(out):
             real_stdin, sys.stdin = sys.stdin, stdin
             try:
-                entry.main()
+                getattr(target, entry)()
             except SystemExit:
                 pass
             finally:

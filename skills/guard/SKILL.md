@@ -8,7 +8,7 @@ description: >-
   inside limits. Only one half: confirming intent alone is
   `careful`, locking a path alone is `freeze`, and
   lifting a lock is `unfreeze`.
-version: 1.0.0
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 

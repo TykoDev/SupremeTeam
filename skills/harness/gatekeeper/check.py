@@ -67,7 +67,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 SKILLS_ROOT = Path(__file__).resolve().parents[2]
@@ -226,6 +226,18 @@ def filled(value: object) -> bool:
     so every field that means "someone named this" is read through here.
     """
     return isinstance(value, str) and bool(value.strip())
+
+
+def parse_date(value: object) -> date | None:
+    """A YYYY-MM-DD string (or the date PyYAML makes of an unquoted one), else None."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(value) if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) else None
+    except ValueError:
+        return None
 
 
 def is_sha256(value: object) -> bool:
@@ -904,6 +916,42 @@ class Package:
         unoffered = [v for v in versions if str(v) not in offered]
         if unoffered:
             self.failures.append(f"{key} versions {unoffered} not offered by registry entry {slug}")
+        self.warn_registry_freshness(key, slug, registry)
+
+    def warn_registry_freshness(self, key: str, slug: str, registry: object) -> None:
+        """Say when a lock rests on pins the registry itself marks as past their date.
+
+        A lock on an overlay whose ``support_ends`` has passed, or against a
+        registry not re-read within its own ``verification_ttl_days``, still
+        passes: choosing a supported version is the owner's decision and the
+        gate makes none. The reader of the result is told, because the lock is
+        then a statement about versions nobody has confirmed are current.
+        """
+        if not isinstance(registry, dict):
+            return
+        today = datetime.now(timezone.utc).date()
+        support_ends = registry.get("support_ends")
+        ended = support_ends.get(slug) if isinstance(support_ends, dict) else None
+        if ended is not None:
+            last_day = parse_date(ended)
+            if last_day is None:
+                self.warnings.append(f"{key}: support_ends for {slug} is not a YYYY-MM-DD date: {ended!r}")
+            elif last_day < today:
+                self.warnings.append(
+                    f"{key}: support for the {slug} stack ended on {last_day.isoformat()}; the lock passes, "
+                    "but its pinned versions are past their end of life")
+        ttl = registry.get("verification_ttl_days")
+        if ttl is None:
+            return
+        verified = parse_date(registry.get("verified_at"))
+        if isinstance(ttl, bool) or not isinstance(ttl, int) or ttl < 1 or verified is None:
+            self.warnings.append(
+                f"{key}: the tech-stack registry's verified_at and verification_ttl_days are not a date and a positive "
+                "whole number of days, so its freshness was not checked")
+        elif (today - verified).days > ttl:
+            self.warnings.append(
+                f"{key}: the tech-stack registry was last verified on {verified.isoformat()}, more than {ttl} days ago; "
+                "its pins are not known to be current")
 
     # ------------------------------------------------------------- lineage
     def check_identity(self) -> tuple[bool, set[str]]:

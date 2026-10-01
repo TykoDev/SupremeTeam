@@ -130,8 +130,11 @@ def parse_scalar(value: str) -> Any:
         except ValueError:
             pass
         else:
-            # A spelling that does not survive the round trip (3.10, 1.20) is a
-            # version, not a quantity: converting it would rename the release.
+            # A number is a float only when it prints back unchanged, so 3.10 and
+            # 1.20 stay text (a version, not a quantity: converting would rename
+            # the release). The rule is wider than versions on purpose: .5, +1.5,
+            # 1., 1.50 and 1.5e+3 also stay text, where PyYAML reads all of them
+            # (and 3.10) as floats. No shipped YAML holds an unquoted float.
             if str(number) == value:
                 return number
     return value

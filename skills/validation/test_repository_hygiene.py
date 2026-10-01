@@ -21,7 +21,7 @@ from pathlib import Path
 
 import _catalog
 from _catalog import SKILLS
-from package_check import manifest_globs, matches
+from package_check import RESIDUE_CLASSES, manifest_globs, matches
 
 REPO = SKILLS.parent
 ASSETS = REPO / "docs" / "assets"
@@ -98,6 +98,40 @@ class ProjectFileTests(unittest.TestCase):
 
 
 @CHECKOUT_ONLY
+class SkillVersionRecordTests(unittest.TestCase):
+    """RR-ci-docs-5: CONTRIBUTING said to bump a version with the behaviour, and 13 of 16 changed skills kept 1.0.0.
+
+    A test cannot tell whether a change alters behaviour, but it can hold the record: every skill that left
+    1.0.0 is listed in the changelog with the number it carries, and nothing is listed that it does not carry.
+    """
+
+    SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+    LINE = re.compile(r"^- `([^`]+)` (\S+?): ", re.M)
+
+    def setUp(self):
+        text = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+        section = re.search(r"^### Skill versions\s*$(.*?)(?=^#{1,3} |\Z)", text, re.M | re.S)
+        self.assertIsNotNone(section, "CHANGELOG.md has no 'Skill versions' list")
+        self.recorded = dict(self.LINE.findall(section.group(1)))
+        self.carried = {skill.parent.relative_to(SKILLS).as_posix(): _catalog.skill_front(skill).get("version")
+                        for skill in sorted(SKILLS.rglob("SKILL.md"))}
+
+    def test_every_version_is_three_numbers(self):
+        self.assertEqual({}, {path: version for path, version in self.carried.items()
+                              if not self.SEMVER.match(str(version))})
+
+    def test_a_skill_that_left_1_0_0_is_recorded_with_the_number_it_carries(self):
+        unrecorded = {path: version for path, version in self.carried.items()
+                      if version != "1.0.0" and self.recorded.get(path) != version}
+        self.assertEqual({}, unrecorded)
+
+    def test_nothing_is_recorded_that_the_skill_does_not_carry(self):
+        stale = {path: (version, self.carried.get(path)) for path, version in self.recorded.items()
+                 if self.carried.get(path) != version}
+        self.assertEqual({}, stale)
+
+
+@CHECKOUT_ONLY
 class GitignoreTests(unittest.TestCase):
     def setUp(self):
         self.patterns = {
@@ -112,6 +146,37 @@ class GitignoreTests(unittest.TestCase):
 
     def test_it_names_no_scratch_file_from_one_machine(self):
         self.assertEqual([], [pattern for pattern in sorted(self.patterns) if "GLM-SCORE" in pattern])
+
+    #: One path per residue class that ``package_check`` refuses, so `git add .` cannot stage
+    #: what the delivery check would then reject. ``vcs-metadata`` is the one class git never stages.
+    RESIDUE_SAMPLES = {
+        "interpreter-cache": ["skills/x/__pycache__/m.pyc", "m.pyc"],
+        "runtime-state": [".harness-state/guard-state.json", ".supremeteam/state.json"],
+        "save-state": ["skillset-saves/runs/r/_state.md"],
+        "test-scratch": ["harness-test-work/x", "gatekeeper-test-work/x"],
+        "render-scratch": [".playwright-mcp/shot.png"],
+        "coverage-residue": [".coverage", ".coverage.host.1", "htmlcov/index.html", ".nyc_output/x.json"],
+        "eval-workspace": ["skills/x/evals/workspace/out.json", "my-skill-workspace/iteration-1/out.json"],
+        "archives": ["release.zip", "my-skill.skill"],
+        "secrets": [".env", ".env.local", "server.pem", "server.key", "bundle.p12", "bundle.pfx",
+                    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".npmrc", ".netrc", ".pypirc",
+                    "credentials.json", "credentials-prod.json"],
+    }
+
+    def test_every_path_the_delivery_check_refuses_is_one_git_ignores(self):
+        """SEC-T-07: the check refused `*.pem`, `*.key`, `*.zip` and `*.skill` while `git add .` still staged them."""
+        if shutil.which("git") is None or not (REPO / ".git").exists():
+            self.skipTest("not a git checkout, or git is not installed: ignore rules cannot be evaluated")
+        self.assertEqual(set(RESIDUE_CLASSES) - {"vcs-metadata"}, set(self.RESIDUE_SAMPLES),
+                         "package_check gained or lost a residue class; give the new one a sample here")
+        paths = [path for samples in self.RESIDUE_SAMPLES.values() for path in samples]
+        ignored = set(subprocess.run(["git", "check-ignore", "--no-index", *paths], cwd=REPO, capture_output=True,
+                                     text=True, encoding="utf-8", errors="replace").stdout.splitlines())
+        self.assertEqual([], sorted(set(paths) - ignored))
+        for klass, samples in self.RESIDUE_SAMPLES.items():
+            with self.subTest(residue_class=klass):
+                self.assertTrue(all(matches(path, RESIDUE_CLASSES[klass]) for path in samples),
+                                "a sample is not residue of its class, so it proves nothing about the class")
 
 
 @CHECKOUT_ONLY

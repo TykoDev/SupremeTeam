@@ -29,9 +29,10 @@ engine error, never a pass.
 
 The table below mirrors that file. A drift test in
 `skills/harness/gatekeeper/test_gate_manifests.py` compares its boundary names and
-its backticked evidence keys with the spec and fails when those differ. The Guards
-and Submitter columns are prose that no test compares, so they are kept by hand
-and the spec's `submitter` field is the authority.
+its backticked evidence keys with the spec and fails when those differ, and
+`skills/validation/test_docs_inventory.py` compares the Submitter column with the
+spec's `submitter` field. The Guards column is prose that no test compares, so it is
+kept by hand.
 
 | Boundary | Guards | Submitter | Required evidence |
 | --- | --- | --- | --- |
@@ -90,6 +91,17 @@ decision must stand all four down on the wording that matches it.
 At manifest schema 2, keys listed in `evidence_types` have to be structured
 records rather than prose.
 
+A manifest inside a run must declare schema 2: an absent or schema-1
+`schema_version` fails, and the package is checked as schema 2 anyway. The one
+place schema 1 still passes is a flat package outside a run. Its exit 0 means the
+required keys are present and the hashes hold; no typed record, waiver wording or
+finding policy was checked, so a scan or a waiver is free text that passed. The
+result says so (`manifest_schema_version: 1` and a `warnings` entry), and the
+gatekeeper that reads such a pass returns REVISE for a schema-2 manifest instead
+of approving it. Nothing in a flat package says whether it is a legacy manifest or a
+hand-made downgrade, so the validator warns instead of failing and leaves that
+reading to the gatekeeper.
+
 | Type | Keys | Must carry |
 |---|---|---|
 | `probe` | `tests`, `runtime`, `executed_probes`, `reproduction`, `evidence_chain`, `test_matrix`, `denial_path_evidence`, `mock_parity`, `parity_evidence` | Hashed artifacts and `result.status: pass`. The executed log is the artifact. A bare count is not evidence. `inputs` are optional and re-hashed when present; a probe that omits them passes and is listed in `warnings`. |
@@ -97,7 +109,7 @@ records rather than prose.
 | `render` | `rendered_verification`, `mock_rendering` | Hashed captures, the breakpoints and themes covered, `inputs` bound to the rendered source, and pass or `inferred` with a stated limitation. |
 | `findings` | `findings`, `security_evidence`, `defects`, `accessibility_evidence` | Items with id, severity, status. Critical must be verified or not-applicable with a reason. Major must be verified, not-applicable with a reason, or deferred with a named owner and reopen trigger. |
 | `verdict` | `review_verdict` | APPROVED, or REVISE/ESCALATE with a challenge record naming `by` and `reason`. |
-| `stack_lock` | `stack_lock` | Registry slug, versions, and overlay sha256, checked against `skills/tech-stacks/registry.yaml` and the overlay file: the file must exist, its digest must match, and every declared version must be one the registry offers. |
+| `stack_lock` | `stack_lock` | Registry slug, versions, and overlay sha256, checked against `skills/tech-stacks/registry.yaml` and the overlay file: the file must exist, its digest must match, and every declared version must be one the registry offers. A lock on a slug whose `support_ends` has passed, or against a registry older than its `verification_ttl_days`, still passes and is listed in `warnings`. |
 | `revision_ref` | `approved_design_revision`, `approved_delivery` | A non-empty approved upstream revision identifier. |
 | `preference_diff` | `preference_diff` | Added, updated, deprecated, revoked, and unchanged ids, plus before/after SHA-256 digests. |
 | `confirmation` | `confirmation` | Actor, timestamp, confirmed scope, exact candidate ids, and source run. |

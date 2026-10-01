@@ -108,7 +108,12 @@ needs. Use a major bump for a change that breaks a caller, a minor bump for new
 behaviour, a patch for a fix. Leave the version alone for edits that change
 neither, such as fixing a typo or rewording an example.
 
-Record the change under Unreleased in [CHANGELOG.md](CHANGELOG.md).
+Record the change under Unreleased in [CHANGELOG.md](CHANGELOG.md), and the new
+number in its Skill versions list: one line per skill whose version is not 1.0.0, in
+the form `` - `path/under/skills` x.y.z: why ``. A test compares that list with the
+`version:` of every `SKILL.md`, so a bump with no line, or a line the skill does not
+carry, fails it. A change to a skill's references or scripts that alters what the
+skill does counts as a change to the skill.
 
 ## License
 

@@ -26,6 +26,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import package_check
 import validate_manifests
 from data_formats import load_data
 
@@ -38,6 +39,10 @@ SCRIPTS = Path(__file__).resolve().parent
 SKILLS = SCRIPTS.parent
 REPO = SKILLS.parent
 VALIDATOR = SCRIPTS / "validate_manifests.py"
+# An install carries only skills/, so the tests that read README, docs/, AGENTS.md or
+# .github/ skip there on the validator's own test for an installed copy.
+CHECKOUT_ONLY = unittest.skipUnless(validate_manifests.is_repository(SKILLS),
+                                    "installed copy: README, docs/, AGENTS.md, .github/ and scripts/ are not present")
 RUNNERS = {"windows": "windows-latest", "macos": "macos-latest", "linux": "ubuntu-latest"}
 
 
@@ -90,12 +95,14 @@ def workflow_errors(runtime: dict, workflow: dict | None, *, text: str | None = 
 class RepositoryTests(unittest.TestCase):
     """The repository's own manifest and workflow, which CI runs on every platform."""
 
+    @CHECKOUT_ONLY
     def test_the_repository_validates_clean_and_runs_the_repository_checks(self):
         report = validate_manifests.validate(SKILLS)
         self.assertEqual([], report["errors"])
         self.assertTrue(report["ok"])
         self.assertTrue(report["repository_checks"], "a checkout must run the CI and documentation checks, not skip them")
 
+    @CHECKOUT_ONLY
     def test_the_real_workflow_covers_the_manifest(self):
         errors: list[str] = []
         validate_manifests.check_ci_workflow(real_runtime(), REPO, errors)
@@ -110,6 +117,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(set(runtime["commands"]), run | skipped)
         self.assertFalse(run & skipped)
 
+    @CHECKOUT_ONLY
     def test_every_suite_command_points_at_a_directory_that_holds_tests(self):
         suites = {name: command for name, command in real_runtime()["commands"].items()
                   if command.startswith("python -m unittest discover")}
@@ -120,6 +128,7 @@ class RepositoryTests(unittest.TestCase):
                 self.assertTrue((REPO / directory).is_dir(), f"{name} points at {directory}, which does not exist")
                 self.assertTrue(list((REPO / directory).rglob("test_*.py")), f"{directory} holds no test module")
 
+    @CHECKOUT_ONLY
     def test_the_documents_list_every_command_ci_runs(self):
         """A contributor following README, CONTRIBUTING or docs/harness.md runs what CI runs.
 
@@ -136,6 +145,7 @@ class RepositoryTests(unittest.TestCase):
                     self.assertTrue(command in text, f"{document} does not list {name}: {command}")
 
 
+@CHECKOUT_ONLY
 class WorkflowPolicyTests(unittest.TestCase):
     """What the owner asked of the workflow beyond covering the manifest."""
 
@@ -341,6 +351,7 @@ class WorkflowCoverageTests(unittest.TestCase):
         errors = self.gaps(workflow)
         self.assertTrue(errors, "no single job runs every command on every platform, yet the check passed")
 
+    @CHECKOUT_ONLY
     def test_edits_to_the_real_workflow_text_are_caught_through_the_stdlib_parser(self):
         """The fixtures above are JSON; the real file is block YAML, which the stdlib subset reads."""
         text = (REPO / self.runtime["ci"]["workflow"]).read_text(encoding="utf-8")
@@ -441,6 +452,15 @@ class CiDeclarationTests(unittest.TestCase):
             with self.subTest(command=name):
                 self.assertGap(found, f"missing command {name}")
 
+    def test_the_manifest_says_which_suites_need_a_checkout(self):
+        """RR-ci-docs-2: it named the installers suite only, while four more read README, docs/ or .github/."""
+        prose = " ".join(self.runtime["authority"]["commands"].split())
+        found = re.search(r"(The installers suite needs a repository checkout.*?) The strings are written", prose)
+        self.assertIsNotNone(found, "authority.commands no longer says which suites need a checkout")
+        for suite in ("installers", "hooks", "gates", "scripts", "validation"):
+            with self.subTest(suite=suite):
+                self.assertIn(suite, found.group(1))
+
     def test_pyyaml_is_declared_for_every_script_that_requires_it(self):
         used_by = next(dep["used_by"] for dep in self.runtime["runtime"]["python"]["optional_dependencies"]
                        if dep["name"] == "PyYAML")
@@ -521,15 +541,53 @@ class DocumentationMirrorTests(unittest.TestCase):
     def test_the_taste_section_count_is_derived_from_the_tree(self):
         self.assertTrue(any("## Taste (3)" in gap for gap in self.gaps(taste=3)))
 
+    def test_a_page_that_quotes_its_own_needle_does_not_satisfy_it(self):
+        """RR-ci-docs-1: docs/skills.md explained the check by quoting `53 of them.`, which a substring search found."""
+        page = ("54 of them. The check compares only the total (`53 of them.`) and the `## Taste (2)` heading.\n"
+                "\n## Taste (3)\n")
+        gaps = self.gaps(self.texts(**{"docs/skills.md": page}))
+        self.assertTrue(any("docs/skills.md" in gap and "'53 of them.'" in gap for gap in gaps), gaps)
+        self.assertTrue(any("docs/skills.md" in gap and "'## Taste (2)'" in gap for gap in gaps), gaps)
+
+    def test_a_number_that_only_starts_with_the_expected_one_is_not_the_total(self):
+        page = "530 of them.\n\n## Taste (20)\n"
+        self.assertEqual(2, len([gap for gap in self.gaps(self.texts(**{"docs/skills.md": page})) if "docs/skills.md" in gap]))
+
     def test_a_missing_document_is_left_to_the_unreadable_report(self):
         texts = self.texts()
         del texts["README.md"]
         self.assertEqual([], self.gaps(texts))
 
+    @CHECKOUT_ONLY
     def test_every_document_the_check_reads_exists_in_the_repository(self):
         for name in validate_manifests.DOCUMENTATION_MIRRORS:
             with self.subTest(document=name):
                 self.assertTrue((REPO / name).is_file())
+
+
+class PackageManifestProseTests(unittest.TestCase):
+    """BG-22: the manifest said eight residue classes after the code had grown to ten."""
+
+    def setUp(self):
+        manifest = load_data(SKILLS / "package-manifest.yaml")
+        self.prose = " ".join(str(manifest["enforcement"]["machine_checked"]).split())
+
+    def test_the_residue_classes_it_names_are_the_ones_package_check_has(self):
+        found = re.search(r"against (\w+) residue classes \(([^)]*)\)", self.prose)
+        self.assertIsNotNone(found, "the manifest no longer says how many residue classes package_check matches")
+        count, names = found.group(1), [name.strip() for name in found.group(2).split(",")]
+        self.assertEqual(list(package_check.RESIDUE_CLASSES), names)
+        self.assertEqual(validate_manifests.NUMBER_WORDS[len(package_check.RESIDUE_CLASSES)], count)
+
+    def test_the_shared_residue_file_it_names_is_the_one_package_check_reads(self):
+        relative = package_check.SHARED_RESIDUE_FILE.relative_to(SKILLS).as_posix()
+        self.assertIn(relative, self.prose)
+        self.assertTrue(package_check.SHARED_RESIDUE_FILE.is_file())
+
+    def test_the_required_assets_it_counts_are_the_ones_package_check_has(self):
+        found = re.search(r"confirms (\w+) required assets", self.prose)
+        self.assertIsNotNone(found, "the manifest no longer says how many required assets package_check confirms")
+        self.assertEqual(validate_manifests.NUMBER_WORDS[len(package_check.REQUIRED_ASSET_GLOBS)], found.group(1))
 
 
 class CommandLineTests(unittest.TestCase):
@@ -604,6 +662,20 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual((1, False), (code, report["ok"]))
         self.assertTrue(any("does not exist, so no CI runs the declared matrix" in e for e in report["errors"]))
 
+    def test_the_repository_level_tests_skip_in_an_installed_copy(self):
+        """RR-ci-docs-2: this module ships in installs, where README, docs/ and .github/ are not, and failed there."""
+        installed = self.layout("installed-suite")
+        names = ("RepositoryTests", "WorkflowPolicyTests", "DocumentationMirrorTests",
+                 "test_edits_to_the_real_workflow_text", "test_a_complete_checkout_layout_passes")
+        proc = subprocess.run(
+            [sys.executable, "-m", "unittest", "discover", "-v", "-s", str(installed / "skills" / "scripts"),
+             "-p", "test_validate_manifests.py", *[arg for name in names for arg in ("-k", name)]],
+            cwd=installed, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        self.assertEqual(0, proc.returncode, proc.stderr[-2000:])
+        self.assertRegex(proc.stderr, r"OK \(skipped=\d+\)")
+        self.assertIn("installed copy", proc.stderr + proc.stdout)
+
+    @CHECKOUT_ONLY
     def test_a_complete_checkout_layout_passes(self):
         root = self.layout("complete")
         for name in ("AGENTS.md", "README.md", *[f"docs/{n}.md" for n in ("architecture", "skills", "gatekeepers", "directory-structure")]):

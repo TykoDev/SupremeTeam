@@ -8,7 +8,7 @@ description: >-
   validate the review package, review delivery readiness, say whether the review is
   finished enough to deliver, gate the review output, or challenge this review
   packet. Whether work is ready to *enter* review is `build/gatekeeper-build`.
-version: 1.0.0
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -156,11 +156,14 @@ python ../../harness/gatekeeper/check.py --boundary review-to-delivery --package
 ```
 
 It confirms the six required keys are present and non-falsy, that
-`executed_probes` and `rendered_verification` resolve to hashed artifacts whose
-`inputs` still match their sources by sha256, that `review_verdict` and
-`findings` are correctly shaped typed records, and that no blocked phrase or
-broken local link is present. Exit 0 is a mechanical fact, not approval; exit 2
-is an engine error and never a pass.
+`executed_probes` and `rendered_verification` resolve to hashed artifacts, that
+any `inputs` those records carry still match their sources by sha256 (a render
+must carry them; a probe may not, and is then listed in `warnings`), that
+`review_verdict` and `findings` are correctly shaped typed records, and that no
+blocked phrase or broken local link is present. A typed record is the
+submitter's own statement: the validator never opens an artifact or re-runs a
+command. Exit 0 is a mechanical fact, not approval; exit 2 is an engine error
+and never a pass.
 
 **The two key spaces do not overlap, and that is the trap.**
 `scripts/check.py` names package-shape keys — `lens_bug`, `lens_code`,
@@ -211,7 +214,7 @@ the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 ## Workflow
 
 1. Run `scripts/check.py` to verify that the consolidated review package includes the right revision lineage, core lens coverage, and optional-skip justifications before evaluating delivery readiness.
-2. Run the boundary validator against `../../gates.yaml` for `review-to-delivery` and confirm the six required evidence keys are present and non-falsy, that `executed_probes` and `rendered_verification` resolve to hashed artifacts whose `inputs` still match their sources, and that `review_verdict` carries its challenge record when it is not APPROVED. Read the required-evidence list from the spec, never from memory; a clean lens sweep says nothing about these keys.
+2. Run the boundary validator against `../../gates.yaml` for `review-to-delivery` and confirm the six required evidence keys are present and non-falsy, that `executed_probes` and `rendered_verification` resolve to hashed artifacts, that any `inputs` they carry still match their sources, and that `review_verdict` carries its challenge record when it is not APPROVED. Read the required-evidence list from the spec, never from memory; a clean lens sweep says nothing about these keys.
 3. Cross-check the submitted review evidence against the underlying specialist reports so every blocker, skip, and approval points to visible evidence.
 4. Decide whether the consolidated review package is ready for delivery, needs another review round, or must escalate, and record the narrowest justified verdict, grouped by the owner each failing key belongs to.
 5. Persist a verdict record with mandatory fixes, evidence anchors, and idempotent revision notes so the same review package is not re-gated under conflicting rationale.
@@ -243,6 +246,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 
 | Scenario | Response |
 | --- | --- |
+| The result reports `manifest_schema_version: 1`, so no typed record, waiver wording or finding policy was checked | Return `REVISE` to `code-chief` for a schema-2 manifest carrying `boundary` and `owner`. Exit 0 on a flat schema-1 package means the keys are present and the hashes hold, not that `executed_probes` was ever read as a passing probe or that `review_verdict` carries its challenge record. |
 | A mandatory specialist report is missing or older than the package revision under review | Reject the submission, name the missing or stale report, and require the owning orchestrator to resubmit a coherent package set. |
 | The package claims security leadership signoff, accepted-risk readiness, or release security posture without `review/cso` evidence or an explicit skip reason | Return REVISE and require `review/code-chief` to run the CSO lens or remove the unsupported leadership claim. |
 | Specialist findings conflict on severity, exploitability, or scope | Preserve the contradiction in the verdict record and return REVISE unless the conflict requires external judgment, in which case return ESCALATE. |

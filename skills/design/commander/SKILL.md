@@ -9,7 +9,7 @@ description: >-
   and architect this project, even when Admiral is never named. Defers to
   `admiral` when reached cold; reworking an existing UI starts at
   `design/redesign`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -82,7 +82,7 @@ Three decisions live here; `references/gate-evidence.md` carries the full
 per-key table with the must-contain, artifact-backing, typed-record, and fallback
 columns.
 
-- **What Commander authors**: `stack_lock` only — the `tech-stacks/registry.yaml` slug, the locked versions, and the overlay sha256, validated so the slug exists, the overlay digest matches both registry and file, and the versions intersect. Its one sanctioned fallback is `no new runtime or framework - existing stack unchanged`.
+- **What Commander authors**: `stack_lock` only — the `tech-stacks/registry.yaml` slug, the locked versions, and the overlay sha256, validated so the slug exists, the overlay digest matches both registry and file, and every declared version is one the registry entry offers. Its one sanctioned fallback is `no new runtime or framework - existing stack unchanged`.
 - **Which keys may be waived**: exactly three — `stack_lock`, `taste_snapshot` (`no saved Taste profile available`), and `ui_evidence` (`no user-facing surface - design system not engaged`). Each waiver is an applicability record at manifest schema 2 naming reason, scope, and decider, never a bare string.
 - **Which may not**: `decisions`, `architecture`, `interfaces`, `plan`, `acceptance`, and `security_seed`. `../../gates.yaml` `fallback_values` carries no entry for `security_seed`, so a design with no trust boundary states the recorded determination rather than waiving the key.
 

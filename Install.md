@@ -156,9 +156,11 @@ Check with `python3 --version` (macOS and Linux) or `py -3 --version` (Windows);
 none is 3.13+, ask before installing one; the skill files still copy without it,
 but hook verification and registration stay unavailable.
 
-The shell installer looks for `python3`, then `python`. If your 3.13 exists only as
-`python3.13`, make it answer to `python3` (a symlink earlier on `PATH`, or a
-virtual environment), or skip the installer's registration step and run
+The shell installer tries `python3`, `python`, `python3.14` and `python3.13`, in that
+order, and the PowerShell installer tries `py -3`, `python`, `python3`, `python3.14` and
+`python3.13`; each takes the first that answers 3.13 or newer. If your 3.13 has another
+name, make one of those names answer to it (a symlink earlier on `PATH`, or a virtual
+environment), or skip the installer's registration step and run
 `python3.13 scripts/install_hooks.py ...` yourself, as the examples below do.
 
 ### Paths and the Python command

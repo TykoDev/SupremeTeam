@@ -8,7 +8,7 @@ description: >-
   check build readiness, review build phase output, or challenge this build packet.
   Judges inside the build phase; the handoff between stages is `gatekeeper-admiral`,
   and a list of what is missing with no decision is `build/cross-check-build-confirm`.
-version: 1.0.0
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -187,8 +187,10 @@ value. Submit at schema 2: at schema 1 four of the six keys — everything but
 are documentation rather than enforcement. Schema 2 narrows that to three, since
 `security_evidence` becomes a checked `findings` record.
 
-Exit 0 is a mechanical fact, not approval; exit 2 is an engine error and never a
-pass.
+A typed record is the submitter's own statement: the validator never opens an
+artifact or re-runs a command, so whether `tests` is the runner's own log stays a
+judgement. Exit 0 is a mechanical fact, not approval; exit 2 is an engine error
+and never a pass.
 
 ### The two key spaces collide by name
 

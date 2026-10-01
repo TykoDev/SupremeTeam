@@ -187,15 +187,19 @@ structural check. It reports PASS / FAIL / UNCHECKED facts.
 python skills/design/gatekeeper-design/scripts/check.py <package-dir> [--prior <verdict>] [--blocked-phrases <file>] [--json]
 ```
 
-`--blocked-phrases` extends the shared default list (one phrase per line, `#`
-comments allowed, a line beginning `re:` is a regular expression). Both
-validators read that one list, so the same text is a hit in both.
+The default blocked-phrase list is shared: both validators compile the one list in
+`_gatecheck.py`, so the same text is a hit in both. `--blocked-phrases` is the
+wrapper scripts' option and no other tool's: it extends that list for the package
+directory scan (one phrase per line, `#` comments allowed, a line beginning `re:`
+is a regular expression), and `check.py` has no such option, so an extension file
+never reaches the manifest's artifacts, which are scanned against the defaults
+alone.
 
 Both validators fail loud. A hook that errors lets the action proceed; a gate
 that cannot prove a package clean must never approve it, so an internal error
-ends the run with an `ERROR` record and exit 2, never a hidden PASS. That covers
-a `--blocked-phrases` file that does not exist and a pattern that does not
-compile: the rule cannot be applied, so the package is not called clean.
+ends the run with an `ERROR` record and exit 2, never a hidden PASS. That covers,
+in a wrapper, a `--blocked-phrases` file that does not exist and a pattern that
+does not compile: the rule cannot be applied, so the package is not called clean.
 
 ## Regression tests
 

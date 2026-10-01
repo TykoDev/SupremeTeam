@@ -9,7 +9,7 @@ description: >-
   apply, an eval run, a description optimization, or packaging. An internal
   specialist, never the front door: a cold "write me a skill" belongs to
   `skill-maker`.
-version: 1.0.0
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 

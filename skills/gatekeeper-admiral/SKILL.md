@@ -8,7 +8,7 @@ description: >-
   the phase gate already passed, challenge the package boundary itself, or whether
   this can advance to the next stage. A single phase's own gate is its phase
   gatekeeper's. Reached cold, hand off to `admiral` first.
-version: 1.0.0
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -155,9 +155,11 @@ python ../harness/gatekeeper/check.py --boundary <design-to-build|redesign-revie
 It verifies, for the named boundary only:
 
 - every required key is present and non-falsy, and artifact-backed keys point at hashed files
-- typed records are shaped correctly and bound to their source by sha256 — `scan`, `render`, `probe`, `findings`, `verdict`, `stack_lock`, `revision_ref`, `variant_set`, `selection`, and the Taste records `preference_diff`, `confirmation`, `conflict_analysis`, `persistence_result`, `effective_profile`, `consumer_handoff`. `references/boundary-evidence.md` § 2 is the roster; read it there rather than from this line, and note that `audit` is a kind the engine implements but no key in `../gates.yaml` `evidence_types` currently carries
+- typed records are shaped correctly, every artifact they name matches its sha256, and every `inputs` entry they carry still hashes as recorded (scan and render must carry `inputs`; a probe may not, and is then listed in `warnings`) — `scan`, `render`, `probe`, `findings`, `verdict`, `stack_lock`, `revision_ref`, `variant_set`, `selection`, and the Taste records `preference_diff`, `confirmation`, `conflict_analysis`, `persistence_result`, `effective_profile`, `consumer_handoff`. `references/boundary-evidence.md` § 2 is the roster; read it there rather than from this line
 - the revision lineage holds one value, and the declared `owner` is the boundary's only permitted submitter
 - no blocked phrase and no broken local link is present
+
+A typed record is the submitter's own statement. The validator never opens an artifact or re-runs a command, so whether a log is the runner's own output, or a scan ran at all, is a judgement it leaves to you.
 
 A missing or malformed gate spec is an engine error (exit 2), never a pass, and
 exit 0 is a mechanical fact rather than approval. Reuse a prior verdict only when
@@ -293,6 +295,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | Scenario | Response |
 | --- | --- |
 | A cross-stage package mixes approvals or deliverables from different revisions | Reject the package as untrusted input, name the mixed boundaries, and require regeneration from the earliest contaminated handoff. |
+| The result reports `manifest_schema_version: 1`, which a flat manifest outside a run is allowed to have, and the boundary requires typed records | Return `REVISE` for a schema-2 manifest carrying `boundary` and `owner`. Exit 0 there means the keys are present and the hashes hold; no typed record, waiver wording or finding policy was checked, so a scan or a waiver reads as free text that passed. Inside a run the validator refuses this itself. |
 | The declared boundary does not match the attached package set, such as a build-to-review handoff without build approval lineage | Return `REVISE` with the missing boundary evidence and refuse to infer readiness from summary text alone. |
 | The declared `owner` is not the boundary's spec submitter, such as a `redesign-review` package declaring `commander` | Return `REVISE`. `../gates.yaml` names one permitted submitter per boundary, and the validator fails the package; a package submitted by the wrong owner has no approval lineage to trust. |
 | A resubmission reuses the previous submission id but changes package contents without a revision delta | Treat the prior verdict as non-transferable, require a fresh boundary summary, and flag the silent drift. |

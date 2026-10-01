@@ -46,8 +46,10 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   policy declares, including `intake/report_grilling.md`. A run directory with no
   record is classified `uninitialized`. `save_run.py checkpoint --drop-evidence`
   retires a registered path that moved or was pruned.
-- The tech-stack registry records `verified_at`, `support_ends` and a note on what
-  its digests do and do not prove.
+- The tech-stack registry records `verified_at`, `verification_ttl_days`, `support_ends` and a
+  note on what its digests do and do not prove. A stack lock on an overlay whose support has
+  ended (`vue-nuxt`, since 2026-07-31), or against a registry not re-read within its window,
+  still passes and the gate's result lists a warning.
 - The guard's modules and suites. `skills/harness/hooks/` gains `_cmdscan.py` (the
   shell command analyser), `_paths.py` (the path and glob canonicaliser),
   `_fsutil.py` (the one atomic write and OS advisory lock), `_bootstrap.py` and
@@ -67,6 +69,18 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   checkout-relative one that fails in an installed copy.
 - `quick_validate` rejects extension keys no skill uses.
 - The `audit` evidence kind is removed from the gate spec and engine: no key mapped to it.
+  Every document that still listed it no longer does, and a test compares the kind
+  lists with `gates.yaml`.
+- The gate documents say what the validator does and no more. A typed record is the
+  submitter's own statement: the validator never opens an artifact, and each gatekeeper
+  skill says so. A flat schema-1 package outside a run still passes, with a warning, and
+  the gatekeepers are told to return REVISE for a schema-2 manifest instead of reading
+  that pass as the whole contract. A `stack_lock` needs every declared version to be one
+  the registry entry offers, which `commander` and the design gatekeeper now state
+  instead of "the versions intersect". `--blocked-phrases` is the wrapper scripts'
+  option, not `check.py`'s. `package-manifest.yaml` lists the ten residue classes
+  `package_check.py` matches and the file its secret names come from, and the typed-record rosters name `mock_parity` and
+  `mock_rendering`.
 - The guard keeps one record per boundary. `guard_state.py` normalises every glob
   before it compares or stores it, so `src\payments\**`, `./src/payments/**`,
   `src//payments/**` and the absolute form of a project path are one record and one
@@ -102,7 +116,9 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   a record in the documented layout reaches the gate without a hand edit. It records
   the command with its argument boundaries, runs `--version-command` without a
   shell, and `--fail-on-output` records a scanner that prints findings and exits 0
-  as `fail`; `pass` still means only that the scanner exited 0.
+  as `fail`; `pass` still means only that the scanner exited 0. A `--version-command`
+  that cannot start, such as an unquoted Windows path, is named in the record's
+  limitations instead of leaving a null version with no reason.
 
 - Installers replace and remove only what they installed. A directory or file of
   yours that shares a name with an installed item is moved to
@@ -152,10 +168,24 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   so in its report, in an installed copy.
 - The evidence-key documentation check needs the key in backticks, so an ordinary
   English word no longer counts as documenting it.
+- More of what the documents claim is compared with the code. The Submitter column of
+  every boundary table (`docs/gatekeepers.md`, `workflow-protocol.md`, the four
+  gatekeeper skills) is compared with `gates.yaml`; every class in
+  `save-ownership.yaml` must name a writer of a declared kind and a tool that exists;
+  `docs/harness.md` tests hold that every tabulated tool exists, that a mistyped
+  option is exit 2 with nothing on stdout, and the named codes of `save_run.py` and
+  `install_hooks.py`; the save-contract tests read the hook's deny envelope instead of
+  searching its output. The documents that said these were not compared now say what is.
 - The images in `docs/assets` are re-encoded (3.6 MB to 0.5 MB) with the same
   names and aspect ratios.
+- BENCHMARK.md marks its one inferred figure (`skill-maker`'s 100, read from the deduction
+  ledger because the round labelled two rows `ship`) and says so in its opening, instead
+  of promising that nothing in it is inferred.
 - `skills/taste/taste_prefs.py` is no longer the only executable file in the tree.
-- `.gitignore` also ignores `.DS_Store`, `.env`, `.venv/` and `.claude/worktrees/`.
+- `.gitignore` also ignores `.DS_Store`, `.env`, `.venv/` and `.claude/worktrees/`, and
+  everything `package_check.py` refuses to package: key and certificate files,
+  `id_*` keys, `.npmrc`, `.netrc`, `.pypirc`, `credentials*.json`, `*.zip`, `*.skill`,
+  skill-eval workspaces and `.supremeteam/`. A test checks one path of each residue class.
 - Documentation. Commands are written for a checkout; README, Install.md,
   QUICK-START.md, AGENTS.md and the admiral skill now say once how they read in an
   installed copy (`skills/` is the install root, `python` is `python3` or `py -3`)
@@ -181,8 +211,7 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 - `design/engineer` and `design/architect` no longer require a stack lock, which
   `pipelines.yaml` orders after both; the engineer works from the detected stack
   and `design/commander` locks it afterwards. `unfreeze` is a declared owner of the
-  guard record. Skill versions: `design/engineer` 1.0.1, `design/architect` 1.0.1,
-  `admiral` 2.1.1.
+  guard record.
 
 ### Security
 
@@ -248,7 +277,9 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 - The YAML subset reader dropped `#` lines, stripped a ` #` tail and collapsed blank
   lines inside block scalars, where all three are content; every YAML file and
   frontmatter in the tree parses to the same value as before. It also keeps a
-  version such as `3.10` as text instead of the float `3.1`.
+  version such as `3.10` as text instead of the float `3.1`: a number is a float only
+  when it prints back unchanged, so `.5`, `+1.5`, `1.`, `1.50` and `1.5e+3` stay text too,
+  which PyYAML would read as floats (no shipped YAML holds an unquoted float).
 - `check_parity.py` no longer lets a void element (`<input>`, `<img>`) leave a route
   open and credit a later shell-level state to it, and rejects an inventory with no
   routes or components instead of scoring it 1.0.
@@ -259,3 +290,44 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   missing CLI, a timeout, a non-zero exit or a reply flagged as an error is an error
   with exit 1, never "0 skills registered". `run_eval.py` lost the `--queries` and
   `--turns` flags it parsed and never read.
+
+### Skill versions
+
+Each skill whose behaviour or contract changed since the first review carries a new
+`version`, by the rule in [CONTRIBUTING.md](CONTRIBUTING.md#skill-versions): a minor
+bump for new behaviour, a patch for a fix. Skills not listed are unchanged at 1.0.0. A
+test compares this list with the `version:` of every `SKILL.md`, so a bump that is not
+recorded here, or a record the skill does not carry, fails it.
+
+- `admiral` 2.1.1: how its commands read in an installed copy, the eleven save-directory
+  classes, and what `create` carries.
+- `design/architect` 1.0.1: works from the stack the project already fixes, not a lock
+  that comes later in the pipeline.
+- `design/engineer` 1.0.1: works from the detected stack, not a lock that comes later.
+- `design/commander` 1.0.1: states the stack-lock rule the engine enforces (every
+  declared version is one the registry offers).
+- `design/design-mapper` 1.0.1: states what `check_parity.py` now refuses in an inventory.
+- `careful` 1.0.1: describes the guard as it is (it reads the command, and counts faults).
+- `freeze` 1.1.0: one record per boundary whatever the spelling, a refused glob that can
+  never match, relative globs anchored at the project root, a writer lock.
+- `guard` 1.1.0: a grant is capped at 8 hours, the hook scripts are protected (Rule F),
+  and writers serialise on a lock.
+- `unfreeze` 1.1.0: releases by the normalised glob and records the cap on a grant.
+- `gatekeeper-admiral` 1.1.0: a REVISE row for a schema-1 result, the typed-record
+  roster and what a typed record leaves unchecked.
+- `design/gatekeeper-design` 1.1.0: as `gatekeeper-admiral`, and the stack-lock and
+  selection rules the engine now enforces.
+- `build/gatekeeper-build` 1.1.0: as `gatekeeper-admiral`, with its package guard and
+  optional slots.
+- `review/gatekeeper-code` 1.1.0: as `gatekeeper-admiral`, with its package guard and
+  optional slots.
+- `session-memory` 1.1.0: the writer lock, `checkpoint --drop-evidence`, the
+  `uninitialized` class and the refusal reasons.
+- `taste` 1.1.0: `propose` validation, redaction by shape, lock reclaim and the error codes.
+- `skill-maker/skill-creator` 1.1.0: the packager takes an absolute output directory and
+  refuses symlinks, secrets and run state; failed eval runs are not scored.
+- `review/security-review` 1.1.0: `scan_record.py` names its output relative to the
+  manifest and gains `--fail-on-output` and `--manifest-root`.
+- `review/cso` 1.0.1: the waiver reason must be the sanctioned wording, and scan output
+  paths follow the manifest.
+- `qa-only` 1.0.1: the read-only boundary reference states what the hook now denies.

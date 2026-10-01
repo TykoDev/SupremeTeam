@@ -8,8 +8,9 @@ The roster is declared in
 [`skills/team-manifest.yaml`](../skills/team-manifest.yaml), and the validation
 suites check every pipeline owner, gate submitter, and artifact writer against it.
 Those checks read the manifest, not this page: `validate_manifests.py` compares
-this page only with the total (`53 of them.`) and the `## Taste (2)` heading, so
-the tables below are kept by hand and the manifest is the authority.
+this page only with the opening total and the count in the Taste heading, and
+`test_docs_inventory.py` adds the section counts up to the number of skills in the
+tree, so the tables below are kept by hand and the manifest is the authority.
 
 For the flat machine-readable index with paths, see [AGENTS.md](../AGENTS.md).
 

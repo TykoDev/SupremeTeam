@@ -181,8 +181,13 @@ for how the other tools use the same numbers.
 ## Exit codes and streams
 
 The tools do not share one scheme, so read a code with the tool that returned it.
-This table documents what each does today; it is a description, not a contract the
-tests hold, and no code changes with it.
+This table documents what each does today and no code changes with it. Tests hold
+three things about it (`skills/validation/test_docs_inventory.py`,
+`ExitCodeTableTests`): every tool it names exists, a mistyped option is exit 2 with
+nothing on stdout in each of them, and the named codes of `save_run.py` and
+`install_hooks.py` are the ones it gives. The rest is description. Aligning the
+schemes, or giving usage errors a code of their own, would change what callers
+read, so it is a decision and not a documentation fix.
 
 | Tool | 0 | 1 | 2 | 3 | Reports go to |
 |---|---|---|---|---|---|

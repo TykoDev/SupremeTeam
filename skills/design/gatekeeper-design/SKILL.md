@@ -8,7 +8,7 @@ description: >-
   readiness, or challenge the packet — even when they only ask "is the design
   done?". Defers the other gates to `build/gatekeeper-build`,
   `review/gatekeeper-code`, `gatekeeper-admiral`.
-version: 1.0.0
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -208,8 +208,9 @@ equals `selection.chosen`, and when it is not, all four carry the matching
 wording. Judgment keeps the differentiation of the four directions
 (`../../design-doctrine.md` §9), whether each draft actually stayed a mock, and
 whether the parity records actually bind to the inventory: `inputs` is optional
-on a `probe`, so the validator does not require it. See
-`../../harness/gatekeeper/README.md`.
+on a `probe`, so the validator does not require it. A typed record is the
+submitter's own statement: the validator never opens an artifact or re-runs a
+command. See `../../harness/gatekeeper/README.md`.
 
 ### The two key spaces collide by name
 
@@ -304,6 +305,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 
 | Scenario | Response |
 | --- | --- |
+| The result reports `manifest_schema_version: 1`, so no typed record, waiver wording or finding policy was checked | Return `REVISE` to `commander` (or `redesign` at `redesign-review`) for a schema-2 manifest carrying `boundary` and `owner`. Exit 0 on a flat schema-1 package means the keys are present and the hashes hold, not that `stack_lock` was checked against the registry or that a waiver used the sanctioned wording. |
 | The architecture describes components, flows, or interfaces that are absent from the plan or implementation spec | Return `REVISE` and require a single coherent system view before build can rely on it. |
 | The package claims API readiness but endpoints lack request/response schemas, auth/authorization, error envelope, idempotency, or contract tests | Return `REVISE` and require the API endpoint contract template before the design package can exit. |
 | The package claims frontend readiness but lacks route inventory, screen-state coverage, API/data dependency mapping, form validation behavior, or breakpoint evidence | Return `REVISE` and require the UI/UX Handoff section before the design package can exit. |

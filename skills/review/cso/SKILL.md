@@ -9,7 +9,7 @@ description: >-
   audit, a threat model, a hardening round, or a challenge to accepted risk. A single
   dimension goes to the lens that owns it: `review/security-review` scans,
   `review/mr-robot` probes.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 

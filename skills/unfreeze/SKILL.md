@@ -7,7 +7,7 @@ description: >-
   when they only say "we're done, open it back up". Lifts existing boundaries only: creating
   a path lock belongs to `freeze`, a verdict with no boundary to
   `careful`, the combined posture to `guard`.
-version: 1.0.0
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 

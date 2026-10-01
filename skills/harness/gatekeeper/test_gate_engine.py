@@ -18,6 +18,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import chdir, redirect_stderr, redirect_stdout
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -359,10 +360,10 @@ class ResultRecordConsistencyTests(EngineCase):
 class StackLockTests(EngineCase):
     """A stack lock names an overlay the registry offers, at versions it offers, with the file present."""
 
-    def registry(self, *, overlay_file: bool = True, versions: object = (19, 15)) -> str:
+    def registry(self, *, overlay_file: bool = True, versions: object = (19, 15), extra: dict | None = None) -> str:
         """A one-overlay registry under the scratch directory; returns the overlay's real digest."""
         tech_stacks = self.root / "catalog" / "tech-stacks"
-        tech_stacks.mkdir(parents=True)
+        tech_stacks.mkdir(parents=True, exist_ok=True)
         overlay = tech_stacks / "demo.md"
         overlay.write_text("# Demo overlay\n\nPinned guidance.\n", encoding="utf-8")
         digest = content_sha256(overlay)
@@ -373,14 +374,17 @@ class StackLockTests(EngineCase):
             entry["versions"] = list(versions)
         registry = tech_stacks / "registry.yaml"
         registry.write_text(json.dumps({"schema_version": 1, "kind": "supremeteam-tech-stack-registry",
-                                        "overlays": [entry]}), encoding="utf-8")
+                                        "overlays": [entry], **(extra or {})}), encoding="utf-8")
         self.spec["_registry_path"] = str(registry)
         return digest
 
-    def failures(self, record: dict) -> list[str]:
+    def checked(self, record: dict):
         package = self.package("design-to-build")
         package.check_stack_lock("stack_lock", record)
-        return package.failures
+        return package
+
+    def failures(self, record: dict) -> list[str]:
+        return self.checked(record).failures
 
     def test_a_lock_on_an_offered_overlay_and_versions_passes(self):
         digest = self.registry()
@@ -411,6 +415,78 @@ class StackLockTests(EngineCase):
         (self.root / "catalog" / "tech-stacks" / "demo.md").write_text("# Edited\n", encoding="utf-8")
         self.assertEqual(self.failures({"slug": "demo", "versions": [19], "overlay_sha256": digest}),
                          ["stack_lock overlay file digest does not match declared overlay_sha256"])
+
+
+    # QR-13: the registry recorded `support_ends` and `verified_at`, and nothing read them. A lock on
+    # a stack past its date still passes (picking a supported version is the owner's decision, not
+    # the gate's), so the only way the reader hears of it is the result's warnings.
+
+    def lock(self, **extra) -> object:
+        digest = self.registry(extra=extra)
+        return self.checked({"slug": "demo", "versions": [19], "overlay_sha256": digest})
+
+    @staticmethod
+    def days_ago(days: int) -> str:
+        return (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+
+    def test_a_lock_on_a_stack_past_its_end_of_support_passes_with_a_warning(self):
+        package = self.lock(support_ends={"demo": "2000-01-01"})
+        self.assertEqual(package.failures, [])
+        self.assertEqual(len(package.warnings), 1, package.warnings)
+        self.assertIn("support for the demo stack ended on 2000-01-01", package.warnings[0])
+
+    def test_a_stack_still_in_support_or_another_stacks_date_is_not_a_warning(self):
+        for extra in ({"support_ends": {"demo": "2999-12-31"}}, {"support_ends": {"other": "2000-01-01"}}, {}):
+            with self.subTest(extra=extra):
+                package = self.lock(**extra)
+                self.assertEqual((package.failures, package.warnings), ([], []))
+
+    def test_the_last_day_of_support_is_not_yet_past(self):
+        today = datetime.now(timezone.utc).date().isoformat()
+        self.assertEqual(self.lock(support_ends={"demo": today}).warnings, [])
+
+    def test_an_end_of_support_that_is_not_a_date_is_reported_not_ignored(self):
+        for value in ("soon", "2026-13-40", "31/07/2026", 20260731):
+            with self.subTest(value=value):
+                package = self.lock(support_ends={"demo": value})
+                self.assertEqual(package.failures, [])
+                self.assertEqual([w for w in package.warnings if "is not a YYYY-MM-DD date" in w], package.warnings)
+
+    def test_a_registry_not_verified_within_its_own_ttl_warns(self):
+        package = self.lock(verified_at=self.days_ago(200), verification_ttl_days=180)
+        self.assertEqual(package.failures, [])
+        self.assertEqual(len(package.warnings), 1, package.warnings)
+        self.assertIn("more than 180 days ago", package.warnings[0])
+
+    def test_a_registry_verified_within_its_ttl_does_not_warn(self):
+        for age in (0, 179, 180):
+            with self.subTest(age=age):
+                self.assertEqual(self.lock(verified_at=self.days_ago(age), verification_ttl_days=180).warnings, [])
+
+    def test_a_registry_that_declares_no_ttl_is_not_held_to_one(self):
+        self.assertEqual(self.lock(verified_at="2000-01-01").warnings, [])
+
+    def test_a_ttl_the_gate_cannot_apply_is_reported(self):
+        for extra in ({"verification_ttl_days": 180}, {"verification_ttl_days": 180, "verified_at": "yesterday"},
+                      {"verification_ttl_days": 0, "verified_at": "2026-10-01"}, {"verification_ttl_days": True, "verified_at": "2026-10-01"},
+                      {"verification_ttl_days": "180", "verified_at": "2026-10-01"}):
+            with self.subTest(extra=extra):
+                package = self.lock(**extra)
+                self.assertEqual(package.failures, [])
+                self.assertEqual(len(package.warnings), 1, package.warnings)
+                self.assertIn("freshness was not checked", package.warnings[0])
+
+    def test_the_shipped_registry_warns_for_the_stack_whose_support_has_ended(self):
+        """vue-nuxt locks Nuxt 3, whose end of life passed on 2026-07-31; the other overlays carry no date."""
+        shipped = engine.load_data(engine.REGISTRY_PATH)
+        by_slug = {entry["slug"]: entry for entry in shipped["overlays"]}
+        for slug, expect_warning in (("vue-nuxt", True), ("angular", False)):
+            with self.subTest(slug=slug):
+                self.spec.pop("_registry_path", None)
+                entry = by_slug[slug]
+                package = self.checked({"slug": slug, "versions": list(entry["versions"][:1]), "overlay_sha256": entry["sha256"]})
+                self.assertEqual(package.failures, [])
+                self.assertEqual(any("ended on 2026-07-31" in warning for warning in package.warnings), expect_warning)
 
 
 class ConsumerHandoffBindingTests(EngineCase):

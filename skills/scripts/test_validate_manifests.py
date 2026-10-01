@@ -176,9 +176,11 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIs(False, job["strategy"]["fail-fast"])
         self.assertLessEqual(int(job["timeout-minutes"]), 60)
 
-    def test_the_pyyaml_variant_is_confirmed_not_assumed(self):
-        confirm = next(step for step in self.steps() if "find_spec('yaml')" in str(step.get("run", "")))
-        self.assertIn("matrix.pyyaml", json.dumps(confirm))
+    def test_the_pyyaml_variant_reaches_the_tests_that_check_it(self):
+        """The validation suite fails a leg whose PyYAML does not match what the leg promises."""
+        self.assertEqual("${{ matrix.pyyaml }}", self.workflow["jobs"]["suites"]["env"]["SUPREMETEAM_PYYAML"])
+        helper = (SKILLS / "validation" / "_catalog.py").read_text(encoding="utf-8")
+        self.assertIn('"SUPREMETEAM_PYYAML"', helper)
 
     @unittest.skipIf(yaml is None, "PyYAML is optional; the repository parser already loaded the file")
     def test_pyyaml_and_the_repository_parser_read_the_same_workflow(self):
@@ -442,9 +444,10 @@ class CiDeclarationTests(unittest.TestCase):
     def test_pyyaml_is_declared_for_every_script_that_requires_it(self):
         used_by = next(dep["used_by"] for dep in self.runtime["runtime"]["python"]["optional_dependencies"]
                        if dep["name"] == "PyYAML")
+        test_support = ("test_", "_catalog.py")
         importers = sorted(
             path.relative_to(SKILLS).as_posix() for path in SKILLS.rglob("*.py")
-            if not path.name.startswith("test_") and re.search(r"^\s*import yaml\b", path.read_text(encoding="utf-8"), re.M))
+            if not path.name.startswith(test_support) and re.search(r"^\s*import yaml\b", path.read_text(encoding="utf-8"), re.M))
         self.assertEqual(importers, sorted(used_by))
 
 

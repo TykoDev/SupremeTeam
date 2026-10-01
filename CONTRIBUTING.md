@@ -45,7 +45,14 @@ python -m venv .venv
 ```
 
 (`.venv\Scripts\python` on Windows.) A bare virtual environment has no
-third-party packages, which is the supported baseline.
+third-party packages, which is the supported baseline. CI sets
+`SUPREMETEAM_PYYAML` to `with` or `without`, and the validation suite fails a
+leg whose interpreter disagrees, so a broken install cannot turn tests into
+skips. Leave it unset on your machine.
+
+The validation tests read the catalog with `skills/scripts/data_formats.py`, the
+parser production uses, through `skills/validation/_catalog.py`. A test that
+needs PyYAML says so in its skip message.
 
 ## Continuous integration
 

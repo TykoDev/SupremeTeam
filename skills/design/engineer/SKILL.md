@@ -9,7 +9,7 @@ description: >-
   the per-slice spec inside it. Returns to `design/commander`; defers architecture to
   `design/architect`, milestones to `design/planner`, code to
   `build/bob-the-builder`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 

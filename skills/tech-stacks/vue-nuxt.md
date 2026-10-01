@@ -19,7 +19,7 @@
 - Use setup stores for intentional cross-component state and keep composables independent per consumer.
 
 ## Migration and versioning
-- Treat Nuxt 3 as the legacy baseline: Nuxt 3 reaches end of life on 31 July 2026; keep Vue 3.5, Nuxt 3.14+, its lockfile-selected Vite version, and the Nitro version aligned.
+- Treat Nuxt 3 as the legacy baseline: its end of life is 31 July 2026 (`support_ends` in the registry), which is already past at the registry's `verified_at`, so a new project should not lock it and an existing one needs a migration plan; while it stays locked, keep Vue 3.5, Nuxt 3.14+, its lockfile-selected Vite version, and the Nitro version aligned.
 - Move older component patterns toward Composition API and `<script setup>` in slices that preserve page and hydration behavior.
 - Review auto-import additions, shared schema changes, and server endpoint serialization together when moving files across Nuxt directories.
 - Treat SSR, static generation, and adapter changes as different deployment contracts even when page source stays the same.

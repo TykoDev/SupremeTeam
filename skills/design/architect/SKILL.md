@@ -8,7 +8,7 @@ description: >-
   specs, or propose four redesign directions — even when the ask is just "how
   should this be structured?". Defers requirements to `design/researcher`,
   milestones to `design/planner`, slices to `design/engineer`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 

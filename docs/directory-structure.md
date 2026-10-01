@@ -94,6 +94,18 @@ SupremeTeam/
     └── qa/, qa-only/, benchmark/
 ```
 
+## The `.yaml` specs
+
+Three specs (`gates.yaml`, `pipelines.yaml`, `runtime-manifest.yaml`) are JSON
+documents that carry a `.yaml` extension; the rest are block YAML. JSON is valid
+YAML, so any YAML reader loads all of them, and the stdlib reader in
+`skills/scripts/data_formats.py`, which the harness uses when PyYAML is absent,
+accepts JSON first and a supported YAML subset after it. Renaming the three to
+`.json` would break every path that names them, so the extension stays. Load a
+spec with `data_formats.load_data` rather than assuming one format, and keep it in
+the format it is in: reformatting one as block YAML would have to stay inside the
+subset that reader supports.
+
 ## What never gets committed
 
 | Path | What it holds | Status |

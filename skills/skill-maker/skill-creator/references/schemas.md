@@ -305,12 +305,12 @@ Output from Benchmark mode. Located at `benchmarks/<timestamp>/benchmark.json`.
 - `runs[]`: Individual run results
   - `eval_id`: Numeric eval identifier
   - `eval_name`: Human-readable eval name (used as section header in the viewer); `eval_metadata.json`'s `eval_name`, else the eval directory's name
-  - `configuration`: Must be `"with_skill"` or `"without_skill"` (the viewer uses this exact string for grouping and color coding)
+  - `configuration`: Must be `"with_skill"` or `"without_skill"`, or `"new_skill"` or `"old_skill"` when an existing skill is being improved (the viewer uses these exact strings for grouping and color coding)
   - `run_number`: Integer run number (1, 2, 3...)
   - `result`: Nested object with `pass_rate`, `passed`, `total`, `time_seconds`, `tokens`, `errors`; `time_seconds` and `tokens` are `null` when the run recorded none (`timing.json` is where they come from)
 - `run_summary`: Statistical aggregates per configuration
   - `with_skill` / `without_skill`: Each contains `pass_rate`, `time_seconds`, `tokens` objects with `mean` and `stddev` fields. The whole entry is `null` for a configuration with no graded run, and `time_seconds` or `tokens` is `null` when no run of it recorded that metric
-  - `delta`: Difference strings like `"+0.50"`, `"+13.0"`, `"+1700"`; each is `null` when either side has no data for it
+  - `delta`: Difference strings like `"+0.50"`, `"+13.0"`, `"+1700"`, always the skill under test minus its baseline (`with_skill` or `new_skill` minus `without_skill` or `old_skill`, so an improvement over an `old_skill` baseline is positive too); each is `null` when either side has no data for it. `aggregate_benchmark.py` lists the skill under test first; names it does not recognise keep name order, first minus second
 - `notes`: Freeform observations from the analyzer
 
 **Important:** The viewer reads these field names exactly. Using `config` instead of `configuration`, or putting `pass_rate` at the top level of a run instead of nested under `result`, will cause the viewer to show empty/zero values. Always reference this schema when generating benchmark.json manually.

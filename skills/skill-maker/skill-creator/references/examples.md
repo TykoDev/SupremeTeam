@@ -179,7 +179,7 @@ OK: Successfully packaged skill to: /work/project/skillset-saves/runs/2026-04-12
 ```
 
 - `evals/` at the skill root, `.git`, `node_modules`, `__pycache__`, `*.pyc`, and `.DS_Store` are skipped by design; the archive is rooted at the folder name.
-- A symlink, a secret (`.env`, `*.pem`, `*.key`) or run state in the folder is refused instead: every offender is listed, no archive is written, and the exit status is 1.
+- A symlink, a secret (`.env`, `*.pem`, `id_rsa`, `.npmrc`, ...) or run state in the folder is refused instead: every offender is listed, no archive is written, and the exit status is 1.
 - Returned: the `.skill` path, the contents list, and the validation line with its digest.
 
 ---

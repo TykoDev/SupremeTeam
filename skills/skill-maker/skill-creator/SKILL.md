@@ -273,9 +273,11 @@ stops and asks for a directory rather than writing into the skill.
 
 It skips `evals/` at the root, `.git`, `node_modules`, `__pycache__`, `.pyc` and `.DS_Store`.
 It refuses, listing every offender and writing nothing, a symlink, a secret (`.env`, `.env.*`,
-`*.pem`, `*.key`) or run state (`.harness-state`, `skillset-saves`) anywhere in the folder:
-remove it from the source rather than working around the refusal. Point the user to the
-resulting file path.
+key and certificate files, SSH identity files, `.npmrc`, `.netrc`, `.pypirc`, `credentials*.json`) or
+run state (`.harness-state`, `.supremeteam`, `skillset-saves`) anywhere in the folder: remove it
+from the source rather than working around the refusal. The exact names are
+`scripts/residue-classes.json`, the list `skills/scripts/package_check.py` reads too, so a name
+added there is refused by both. Point the user to the resulting file path.
 
 When updating an existing skill:
 - Preserve the original name — use the same directory name and `name` frontmatter
@@ -392,14 +394,18 @@ orphaned — the ones not invoked directly are imported by the ones that are.
 | `run_loop.py` | 5 | The optimization loop: eval → improve → re-eval with a train/test split |
 | `generate_report.py` | 5 | Renders `run_loop.py` output as an HTML report (imported by `run_loop.py`) |
 | `aggregate_benchmark.py` | 3 | Aggregates run results into benchmark statistics with the with-skill/baseline delta |
-| `utils.py` | — | Shared helpers, including SKILL.md frontmatter parsing. Imported, never invoked |
+| `utils.py` | — | Shared helpers, including SKILL.md frontmatter parsing and link detection. Imported, never invoked |
+| `residue-classes.json` | 6 | Data, not a script: the secret and run-state names the packager refuses, shared with `skills/scripts/package_check.py` |
 | `__init__.py` | — | Marks `scripts` as a package so `python -m scripts.<name>` works |
 | `test_*.py` | — | Regression tests, one module per script or behavior, below |
 
 **Regression tests.** The `scripts/test_*.py` modules cover each script's failure paths:
 frontmatter validation and parser parity, packaging refusals and output location, the eval
-subprocess and pipe handling, failed runs that are not measurements, the benchmark layouts,
-the viewer's embedding, symlink and server rules, and UTF-8 on a Windows code page. None
+subprocess and pipe handling, failed runs that are not measurements, the benchmark layouts and
+which configuration the delta is measured from, the viewer's embedding, symlink and server rules, link
+detection and annotations on interpreters older than 3.12, the secret list shared with `package_check.py`, how each
+script starts (as a module or by path), the prose that points at the packager, and UTF-8 on a Windows
+code page. None
 runs the `claude` CLI or opens a network connection. Run them after changing anything under
 `scripts/` or `eval-viewer/`, from the skill-creator directory:
 

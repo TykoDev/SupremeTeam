@@ -4,12 +4,14 @@ Aggregate individual run results into benchmark summary statistics.
 
 Reads grading.json files from run directories and produces:
 - run_summary with mean, stddev, min, max for each metric
-- delta between with_skill and without_skill configurations
+- delta between the primary configuration (with_skill, or new_skill) and its
+  baseline (without_skill, or old_skill): primary minus baseline, primary listed first
 
 Run as a module from the skill-creator directory, so the `scripts` package
-resolves:
+resolves, or by path from anywhere:
 
     python -m scripts.aggregate_benchmark <benchmark_dir> [--skill-name NAME]
+    python <skill-creator>/scripts/aggregate_benchmark.py <benchmark_dir> [--skill-name NAME]
 
 Example:
     python -m scripts.aggregate_benchmark benchmarks/2026-01-15T10-30-00/
@@ -52,6 +54,8 @@ Exit codes:
     1  the directory is missing or holds no graded run; nothing is written
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import math
@@ -60,9 +64,32 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from scripts.utils import configure_stdout
+try:
+    from scripts.utils import configure_stdout
+except ModuleNotFoundError:  # run by path, where only this directory is on sys.path
+    from utils import configure_stdout
 
 RUN_DIR = re.compile(r"run-(\d+)")
+
+# The configuration names the viewer recognises, in the order they are preferred.
+PRIMARY_CONFIGS = ("with_skill", "new_skill")
+BASELINE_CONFIGS = ("without_skill", "old_skill")
+
+
+def ordered_configs(configs) -> list[str]:
+    """The primary configuration, then its baseline, then the rest, each group in name order.
+
+    The delta is primary minus baseline, so which is which comes from the names:
+    in name order alone old_skill sorts ahead of with_skill and an improvement
+    reads as a regression. Names that are none of these keep plain name order.
+    """
+    names = sorted(configs)
+    primary = next((name for name in PRIMARY_CONFIGS if name in names), None)
+    baseline = next((name for name in BASELINE_CONFIGS if name in names), None)
+    rest = [name for name in names if name not in (primary, baseline)]
+    primary = primary or (rest.pop(0) if rest else None)
+    baseline = baseline or (rest.pop(0) if rest else None)
+    return [name for name in (primary, baseline, *rest) if name is not None]
 
 
 def calculate_stats(values: list[float]) -> dict:
@@ -273,7 +300,7 @@ def aggregate_results(results: dict) -> dict:
     its runs recorded; a delta needs both sides and is None otherwise.
     """
     run_summary = {}
-    configs = list(results.keys())
+    configs = ordered_configs(results)
 
     for config in configs:
         runs = results.get(config, [])
@@ -288,7 +315,7 @@ def aggregate_results(results: dict) -> dict:
             "tokens": _stats_or_none([r["tokens"] for r in runs if r["tokens"] is not None]),
         }
 
-    # Delta between the first two configs, when both have data
+    # Primary minus baseline, the first two of ordered_configs, when both have data
     primary = run_summary.get(configs[0]) if len(configs) >= 2 else None
     baseline = run_summary.get(configs[1]) if len(configs) >= 2 else None
 
@@ -315,7 +342,7 @@ def generate_benchmark(benchmark_dir: Path, skill_name: str = "", skill_path: st
 
     # Build runs array for benchmark.json
     runs = []
-    for config in results:
+    for config in ordered_configs(results):
         for result in results[config]:
             runs.append({
                 "eval_id": result["eval_id"],

@@ -260,7 +260,7 @@ Delegate to **skill-creator** in Package mode.
 
 **Handoff includes:**
 - Skill directory path
-- Output directory: the active run's `skillset-saves/runs/{run-id}/skill-creation/packages/` (resolved with `python skills/scripts/output_paths.py --run-id <run-id> --phase skill-creation --kind packages --name <skill>.skill` — all four are required; the resolver rejects an empty `--run-id`, `--phase`, or `--name`), or `.harness-state/packages/` outside a run; never the skill directory or the project root
+- Output directory, as an absolute path: the active run's `skillset-saves/runs/{run-id}/skill-creation/packages/`, which is the parent of the `path` that `python skills/scripts/output_paths.py --run-id <run-id> --phase skill-creation --kind packages --name <skill>.skill` prints (all four arguments are required; the resolver rejects an empty `--run-id`, `--phase`, or `--name`, and prints the archive's file path while the packager takes its directory). Outside a run, omit it and the packager writes `.harness-state/packages/` under the project root. Never the skill directory or the project root
 
 **Expected return:**
 - `.skill` file path

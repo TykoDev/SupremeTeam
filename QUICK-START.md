@@ -4,6 +4,12 @@ Five steps. The first one is the only one that is strictly required. Supreme Tea
 needs **Python 3.13 or newer** for the runtime harness, hook verification, and
 readiness checks.
 
+Creating a skill with `skill-maker` needs nothing more, with one exception: its
+optional description-optimization stage runs the `claude` CLI, which must be on
+your `PATH` and signed in, and every run is a paid model call (about 20 queries
+x 3 runs per iteration). Skip that stage if you do not want it; the rest of
+skill creation, including packaging, works without the CLI.
+
 ## 1. Install the skills
 
 Pick one of the two setup options below.

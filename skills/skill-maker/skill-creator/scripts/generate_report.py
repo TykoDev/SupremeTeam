@@ -7,9 +7,10 @@ Distinguishes between train and test queries. An empty history (a loop that
 stopped before its first measurement) renders the page with no rows.
 
 Run as a module from the skill-creator directory, so the `scripts` package
-resolves:
+resolves, or by path from anywhere:
 
     python -m scripts.generate_report <results.json | -> [-o report.html] [--skill-name NAME]
+    python <skill-creator>/scripts/generate_report.py <results.json | -> [...]
 """
 
 import argparse
@@ -18,7 +19,10 @@ import json
 import sys
 from pathlib import Path
 
-from scripts.utils import configure_stdout
+try:
+    from scripts.utils import configure_stdout
+except ModuleNotFoundError:  # run by path, where only this directory is on sys.path
+    from utils import configure_stdout
 
 
 def generate_html(data: dict, auto_refresh: bool = False, skill_name: str = "") -> str:

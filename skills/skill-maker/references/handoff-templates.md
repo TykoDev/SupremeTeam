@@ -186,7 +186,7 @@ improvement (original was already optimal), say so — do not force changes.
 [Absolute path to skill directory]
 
 ### Output directory
-[Resolved destination — never the skill directory and never the project root]
+[Absolute path of the resolved destination — never the skill directory and never the project root]
 
 Inside a run, resolve it rather than composing it by hand — all four arguments
 are required, and the resolver rejects an empty `--run-id`, `--phase`, or
@@ -194,7 +194,11 @@ are required, and the resolver rejects an empty `--run-id`, `--phase`, or
 
     python skills/scripts/output_paths.py --run-id <run-id> --phase skill-creation --kind packages --name <skill>.skill
 
-Outside a run the destination is `.harness-state/packages/`.
+The resolver prints the archive's file path; the packager takes its directory,
+so the output directory is the parent of the `path` it prints.
+
+Outside a run, leave it out: the packager writes `.harness-state/packages/`
+under the project root.
 
 ### Expected deliverable
 - `.skill` file path

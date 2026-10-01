@@ -1096,10 +1096,15 @@ VITE_TREE = {"package.json": package_json(dev={"vite": "^7"})}
 #: The inspection limits by their documented values. The tests build trees that cross
 #: them instead of patching the module's constants, so they hold wherever the walker lives.
 INSPECTION_LIMITS = {"files": 1_000, "directories": 1_000, "depth": 32, "bytes": 10_000_000}
+#: Directories the project's own tooling regenerates: never evidence, often thousands of files.
+GENERATED_DIRECTORIES = {
+    ".next", ".nuxt", ".svelte-kit", ".output", ".turbo", "htmlcov", "venv",
+    ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+}
 
 
 class WalkAndLimitTests(FixtureTreeCase):
-    """Benign project traits are reported and skipped; only an unusable root fails the run."""
+    """Benign project traits are reported and skipped; an unusable root or a walk cut short fails the run."""
 
     def test_symlinked_entries_are_skipped_with_a_warning_and_the_walk_continues(self):
         root = self.project({**VITE_TREE, "elsewhere/package.json": package_json(dependencies={"next": "^15"})})
@@ -1172,56 +1177,81 @@ class WalkAndLimitTests(FixtureTreeCase):
         self.assertTrue(inspection["errors"][0].startswith("main.py: cannot read text"))
         self.assertEqual(slugs(inspection), [])
 
-    def test_the_file_count_limit_is_a_warning_and_keeps_the_names_that_sort_first(self):
+    def test_the_file_count_limit_makes_the_inspection_incomplete_and_keeps_the_names_that_sort_first(self):
         fillers = {f"z{number:04d}.txt": "# TODO\n" for number in range(INSPECTION_LIMITS["files"] + 1)}
-        inspection = self.inspect_tree({**VITE_TREE, **fillers}, scaffold=True)
-        self.assertClean(inspection)
-        self.assertEqual(
-            inspection["warnings"],
-            ["project inspection file-count limit exceeded; the walk stopped early and results may be incomplete"],
-        )
+        report = self.report({**VITE_TREE, **fillers}, scaffold=True)
+        inspection = report["project_inspection"]
+        self.assertFalse(inspection["ok"])
+        self.assertFalse(report["ok"])
+        self.assertEqual(len(inspection["errors"]), 1)
+        self.assertTrue(inspection["errors"][0].startswith("project inspection file-count limit exceeded; the walk stopped early"))
+        self.assertIn("inspection is incomplete", inspection["errors"][0])
         self.assertEqual(slugs(inspection), ["vite-spa"])
         scanned = {row["file"] for row in inspection["scaffold_markers"]}
         self.assertIn("z0998.txt", scanned)
         self.assertNotIn("z0999.txt", scanned)
         self.assertNotIn("z1000.txt", scanned)
 
-    def test_the_directory_count_limit_is_a_warning(self):
+    def test_the_directory_count_limit_makes_the_inspection_incomplete(self):
         root = self.project({"a/package.json": package_json(dev={"vite": "^7"})})
         for number in range(INSPECTION_LIMITS["directories"] + 1):
             (root / f"d{number:04d}").mkdir()
         inspection = self.check_root(root)["project_inspection"]
-        self.assertClean(inspection)
-        self.assertEqual(
-            inspection["warnings"],
-            ["project inspection directory-count limit exceeded; the walk stopped early and results may be incomplete"],
-        )
+        self.assertFalse(inspection["ok"])
+        self.assertEqual(len(inspection["errors"]), 1)
+        self.assertTrue(inspection["errors"][0].startswith("project inspection directory-count limit exceeded; the walk stopped early"))
         self.assertEqual([item["path"] for item in inspection["manifests"]], ["a/package.json"])
 
-    def test_the_total_byte_limit_is_a_warning(self):
+    def test_the_total_byte_limit_makes_the_inspection_incomplete(self):
         half = INSPECTION_LIMITS["bytes"] // 2
         tree = {"a.bin": b"\0" * (half + 1_000_000), **VITE_TREE, "z.bin": b"\0" * half}
         inspection = self.inspect_tree(tree)
-        self.assertClean(inspection)
-        self.assertEqual(
-            inspection["warnings"],
-            ["project inspection total-byte limit exceeded; the walk stopped early and results may be incomplete"],
-        )
+        self.assertFalse(inspection["ok"])
+        self.assertEqual(len(inspection["errors"]), 1)
+        self.assertTrue(inspection["errors"][0].startswith("project inspection total-byte limit exceeded; the walk stopped early"))
         self.assertEqual([item["path"] for item in inspection["manifests"]], ["package.json"])
         self.assertEqual(slugs(inspection), ["vite-spa"])
 
-    def test_the_depth_limit_skips_one_branch_and_the_walk_continues(self):
+    def test_the_depth_limit_makes_the_inspection_incomplete_and_the_walk_continues(self):
         deep = "/".join(["n"] * (INSPECTION_LIMITS["depth"] + 2))
         tree = {
             f"{deep}/package.json": package_json(dependencies={"astro": "^5"}),
             "z/package.json": package_json(dev={"vite": "^7"}),
         }
         inspection = self.inspect_tree(tree)
-        self.assertClean(inspection)
-        self.assertEqual(len(inspection["warnings"]), 1)
-        self.assertTrue(inspection["warnings"][0].startswith("n/n/n/"))
-        self.assertTrue(inspection["warnings"][0].endswith(": skipped, inspection depth limit exceeded"))
+        self.assertFalse(inspection["ok"])
+        self.assertEqual(len(inspection["errors"]), 1)
+        self.assertTrue(inspection["errors"][0].startswith("n/n/n/"))
+        self.assertIn(": inspection depth limit exceeded; the directory was not examined", inspection["errors"][0])
         self.assertEqual(slugs(inspection), ["vite-spa"])
+
+    def test_a_walk_cut_short_does_not_blame_the_working_directory_for_the_missing_evidence(self):
+        """Nothing found because the walk stopped is not a reason to run from the project root."""
+        fillers = {f"a{number:04d}.txt": "text\n" for number in range(INSPECTION_LIMITS["files"] + 1)}
+        report = self.report({**fillers, "z/package.json": package_json(dev={"vite": "^7"})})
+        inspection = report["project_inspection"]
+        self.assertEqual(inspection["stacks"], [])
+        self.assertEqual(inspection["manifests"], [])
+        self.assertFalse(report["ok"])
+        self.assertEqual(inspection["warnings"], [])
+        self.assertIn("file-count limit exceeded", inspection["errors"][0])
+
+    def test_generated_output_does_not_use_up_the_walk(self):
+        """A build directory that sorts before the manifests, a Next.js .next/, must not hide them."""
+        generated = {f".next/static/chunk{number:04d}.js": "x" for number in range(INSPECTION_LIMITS["files"] + 200)}
+        inspection = self.inspect_tree({**generated, "apps/web/package.json": package_json(dev={"vite": "^7"})})
+        self.assertClean(inspection)
+        self.assertEqual(inspection["warnings"], [])
+        self.assertEqual(slugs(inspection), ["vite-spa"])
+
+    def test_every_generated_directory_name_is_left_out_of_the_walk(self):
+        for name in sorted(GENERATED_DIRECTORIES):
+            with self.subTest(directory=name):
+                inspection = self.inspect_tree(
+                    {**VITE_TREE, f"{name}/package.json": package_json(dependencies={"astro": "^5"}), f"x/{name}/package.json": "{"}
+                )
+                self.assertClean(inspection)
+                self.assertEqual([item["path"] for item in inspection["manifests"]], ["package.json"])
 
     def test_an_unreadable_subdirectory_is_a_warning_and_an_unreadable_root_is_an_error(self):
         root = self.project({**VITE_TREE, "locked/package.json": package_json(dependencies={"astro": "^5"})})

@@ -8,6 +8,7 @@ documented exit 2.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -18,6 +19,7 @@ from pathlib import Path
 from package_check import REQUIRED_ASSET_GLOBS, RESIDUE_CLASSES, matches
 
 SCRIPTS = Path(__file__).resolve().parent
+SKILLS_DIR = SCRIPTS.parent
 PACKAGE_CHECK = SCRIPTS / "package_check.py"
 
 
@@ -73,6 +75,83 @@ class ResidueClassTests(unittest.TestCase):
                          ".github/workflows/x.yml"):
             with self.subTest(relative=relative):
                 self.assertIsNone(residue_class(relative))
+
+
+class SharedResidueListTests(unittest.TestCase):
+    """RR-V5-3: the secret and run-state names are one list, read from the skill packager's directory."""
+
+    SHARED = SKILLS_DIR / "skill-maker" / "skill-creator" / "scripts" / "residue-classes.json"
+
+    def test_the_shared_classes_match_what_the_checker_listed_before_it_read_them(self):
+        self.assertEqual(RESIDUE_CLASSES["runtime-state"],
+                         [".harness-state/**", "**/.harness-state/**", ".supremeteam/**", "**/.supremeteam/**"])
+        self.assertEqual(RESIDUE_CLASSES["save-state"], ["skillset-saves/**", "**/skillset-saves/**"])
+        self.assertEqual(RESIDUE_CLASSES["secrets"], [
+            "**/.env", "**/.env.*", "**/*.pem", "**/*.key", "**/*.p12", "**/*.pfx",
+            "**/id_rsa", "**/id_dsa", "**/id_ecdsa", "**/id_ed25519",
+            "**/.npmrc", "**/.netrc", "**/.pypirc", "**/credentials*.json",
+        ])
+
+    def test_the_shared_file_names_are_lower_case_because_matching_folds_case(self):
+        shared = json.loads(self.SHARED.read_text(encoding="utf-8"))
+        self.assertEqual(sorted(shared), ["runtime-state", "save-state", "secrets"])
+        for names in shared.values():
+            self.assertEqual(names, [name.lower() for name in names])
+
+    def shadow_tree(self, shared_text: str | None) -> tuple[Path, Path]:
+        """A copy of the checker beside a residue list of the test's choosing, and a root to check."""
+        holder = tempfile.TemporaryDirectory()
+        self.addCleanup(holder.cleanup)
+        base = Path(holder.name).resolve()
+        scripts = base / "skills" / "scripts"
+        scripts.mkdir(parents=True)
+        for name in ("package_check.py", "data_formats.py"):
+            shutil.copy(SCRIPTS / name, scripts / name)
+        if shared_text is not None:
+            listing = base / "skills" / "skill-maker" / "skill-creator" / "scripts" / "residue-classes.json"
+            listing.parent.mkdir(parents=True)
+            listing.write_text(shared_text, encoding="utf-8")
+        (base / "manifest.json").write_text(json.dumps({"include": ["**/*"], "exclude": []}), encoding="utf-8")
+        root = base / "root"
+        root.mkdir()
+        return scripts / "package_check.py", root
+
+    def run_shadow(self, checker: Path, root: Path) -> subprocess.CompletedProcess:
+        manifest = checker.parents[2] / "manifest.json"
+        return subprocess.run([sys.executable, str(checker), "--root", str(root), "--manifest", str(manifest)],
+                              capture_output=True, text=True, check=False)
+
+    def test_a_name_added_to_the_list_is_caught_without_touching_the_checker(self):
+        shared = json.loads(self.SHARED.read_text(encoding="utf-8"))
+        shared["secrets"].append("*.vault")
+        shared["runtime-state"].append(".scratchpad")
+        checker, root = self.shadow_tree(json.dumps(shared))
+        (root / "app").mkdir()
+        (root / "app" / "prod.vault").write_text("x", encoding="utf-8")
+        (root / "app" / ".scratchpad").mkdir()
+        (root / "app" / ".scratchpad" / "notes.md").write_text("x", encoding="utf-8")
+        process = self.run_shadow(checker, root)
+        self.assertEqual({row["path"]: row["class"] for row in json.loads(process.stdout)["violations"]},
+                         {"app/prod.vault": "secrets", "app/.scratchpad/notes.md": "runtime-state"})
+
+    def test_a_list_that_cannot_be_used_is_an_engine_error_and_never_a_pass(self):
+        broken = {
+            "missing": None,
+            "not json": "{",
+            "not a mapping": "[]",
+            "a class is missing": json.dumps({"secrets": [".env"], "runtime-state": [".harness-state"]}),
+            "an empty class": json.dumps({"secrets": [], "runtime-state": ["a"], "save-state": ["b"]}),
+            "a name that is not text": json.dumps({"secrets": [1], "runtime-state": ["a"], "save-state": ["b"]}),
+        }
+        for label, text in broken.items():
+            with self.subTest(list=label):
+                checker, root = self.shadow_tree(text)
+                process = self.run_shadow(checker, root)
+                self.assertEqual(process.returncode, 2, process.stdout + process.stderr)
+                self.assertNotIn("Traceback", process.stderr)
+                report = json.loads(process.stdout)
+                self.assertFalse(report["ok"])
+                self.assertIn("residue-classes.json", report["engine_error"])
 
 
 class PackageRootCase(unittest.TestCase):

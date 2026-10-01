@@ -14,10 +14,15 @@ bytes of whatever it points at under an innocent name. The contents of a nested
 ``.git/`` directory are a violation too (a vendored repository ships its whole
 history); the root ``.git`` is the checkout's own and is never selected.
 
+The secret and run-state names (the ``secrets``, ``runtime-state`` and
+``save-state`` classes) are read from ``skill-maker/skill-creator/scripts/
+residue-classes.json``, the list the skill packager refuses by as well, so a
+name added there is caught by both.
+
 Exit 0 when the enumerated set is clean, 1 when residue or a missing required
 file is found, 2 on manifest/engine error, including a manifest that is not a
-mapping of string lists. The JSON report lists every violation with the class
-it matched.
+mapping of string lists or a residue list that cannot be read. The JSON report
+lists every violation with the class it matched.
 """
 from __future__ import annotations
 
@@ -33,10 +38,43 @@ if str(SKILLS / "scripts") not in sys.path:
     sys.path.insert(0, str(SKILLS / "scripts"))
 from data_formats import load_data  # noqa: E402
 
+# The skill packager refuses the same secret and run-state names, and it must run
+# without this directory, so the list lives with it and is read from there.
+SHARED_RESIDUE_FILE = SKILLS / "skill-maker" / "skill-creator" / "scripts" / "residue-classes.json"
+SHARED_RESIDUE_CLASSES = ("runtime-state", "save-state", "secrets")
+
+
+def shared_residue(path: Path = SHARED_RESIDUE_FILE) -> dict[str, list[str]]:
+    """The residue names package_skill.py also refuses, or a ValueError naming what is wrong with the file."""
+    try:
+        data = load_data(path)
+    except ValueError as exc:  # DataFormatError is a ValueError
+        raise ValueError(f"cannot use the residue list {path}: {exc}") from exc
+    if (
+        not isinstance(data, dict)
+        or set(data) != set(SHARED_RESIDUE_CLASSES)
+        or not all(isinstance(names, list) and names and all(isinstance(name, str) and name for name in names)
+                   for names in data.values())
+    ):
+        raise ValueError(f"{path} must map {', '.join(SHARED_RESIDUE_CLASSES)} to non-empty lists of names")
+    return data
+
+
+def tree_globs(directories: list[str]) -> list[str]:
+    """Every file under each named directory, at the root and at any depth."""
+    return [glob for name in directories for glob in (f"{name}/**", f"**/{name}/**")]
+
+
+try:
+    _SHARED = shared_residue()
+except ValueError as exc:  # DataFormatError is a ValueError
+    print(json.dumps({"ok": False, "engine_error": str(exc)}))
+    raise SystemExit(2) from exc
+
 RESIDUE_CLASSES = {
     "interpreter-cache": ["**/__pycache__/**", "**/*.pyc"],
-    "runtime-state": [".harness-state/**", "**/.harness-state/**", ".supremeteam/**", "**/.supremeteam/**"],
-    "save-state": ["skillset-saves/**", "**/skillset-saves/**"],
+    "runtime-state": tree_globs(_SHARED["runtime-state"]),
+    "save-state": tree_globs(_SHARED["save-state"]),
     "test-scratch": ["harness-test-work/**", "**/harness-test-work/**", "gatekeeper-test-work/**", "**/gatekeeper-test-work/**", "**/.harness-state/test-work/**"],
     "render-scratch": [".playwright-mcp/**", "**/.playwright-mcp/**"],
     # Coverage data and reports are run evidence under
@@ -46,11 +84,7 @@ RESIDUE_CLASSES = {
     "eval-workspace": ["**/*-workspace/**", "**/evals/workspace/**"],
     "archives": ["**/*.skill", "**/*.zip"],
     "vcs-metadata": ["**/.git/**"],
-    "secrets": [
-        "**/.env", "**/.env.*", "**/*.pem", "**/*.key", "**/*.p12", "**/*.pfx",
-        "**/id_rsa", "**/id_dsa", "**/id_ecdsa", "**/id_ed25519",
-        "**/.npmrc", "**/.netrc", "**/.pypirc", "**/credentials*.json",
-    ],
+    "secrets": [f"**/{name}" for name in _SHARED["secrets"]],
 }
 REQUIRED_ASSET_GLOBS = [
     "skills/gates.yaml",

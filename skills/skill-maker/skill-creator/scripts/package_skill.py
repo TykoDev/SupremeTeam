@@ -33,24 +33,29 @@ Output:
 
 Refused, listing every offender and writing nothing: a symlink or junction
 anywhere in the folder (its target's bytes would be zipped under an innocent
-name), a secret (.env, .env.*, *.pem, *.key) or run state (.harness-state,
-skillset-saves). These are the residue classes of skills/scripts/package_check.py
-that can occur in a skill folder; they are refused rather than skipped so that
-the folder gets cleaned instead of hiding the next one.
+name), a secret (.env, key and certificate files, SSH identities, .npmrc,
+credentials*.json, ...) or run state (.harness-state, .supremeteam,
+skillset-saves). The names are in residue-classes.json beside this script, the
+list skills/scripts/package_check.py reads as well, so the two cannot drift; they
+are refused rather than skipped so that the folder gets cleaned instead of hiding
+the next one.
 
 Exit codes:
     0  the archive was written; its path is printed
     1  the skill folder is missing, is not a directory, has no SKILL.md,
        fails quick_validate, holds something refused above, the output
-       location is unusable, or the archive could not be created
+       location is unusable, residue-classes.json cannot be read, or the
+       archive could not be created
 """
+
+from __future__ import annotations
 
 import fnmatch
 import sys
 import zipfile
 from pathlib import Path
 from scripts.quick_validate import validate_skill
-from scripts.utils import ProjectRootError, configure_stdout, find_project_root
+from scripts.utils import ProjectRootError, configure_stdout, find_project_root, is_link, load_residue_classes
 
 # Skipped without comment: regenerable, or owned by another tool.
 EXCLUDE_DIRS = {"__pycache__", "node_modules", ".git"}
@@ -60,8 +65,7 @@ EXCLUDE_FILES = {".DS_Store"}
 ROOT_EXCLUDE_DIRS = {"evals"}
 # Refused, not skipped: a secret or run state in the source folder is a defect
 # to remove, and skipping it would hide the next one (package_check.py's stance).
-REFUSE_DIRS = {".harness-state", "skillset-saves"}
-REFUSE_GLOBS = {".env", ".env.*", "*.pem", "*.key"}
+# The names are in residue-classes.json, which package_check.py reads too.
 
 # Phase 6 runs from this directory, so a relative run path would resolve into it.
 CREATOR_DIR = Path(__file__).resolve().parents[1]
@@ -75,10 +79,6 @@ def _default_output_dir() -> Path:
     the skill's own directory.
     """
     return find_project_root() / ".harness-state" / "packages"
-
-
-def _is_link(path: Path) -> bool:
-    return path.is_symlink() or path.is_junction()
 
 
 def should_exclude(rel_path: Path) -> bool:
@@ -96,13 +96,14 @@ def should_exclude(rel_path: Path) -> bool:
     return any(fnmatch.fnmatch(name, pat) for pat in EXCLUDE_GLOBS)
 
 
-def refusal_class(rel_path: Path) -> str | None:
+def refusal_class(rel_path: Path, residue: dict[str, list[str]]) -> str | None:
     """Why a file must not be packaged at all, or None. Matched case-insensitively:
     `.ENV` is as much a secret as `.env`, and only some filesystems fold case."""
     parts = [part.lower() for part in rel_path.parts]
-    if any(part in REFUSE_DIRS for part in parts):
+    state_dirs = {name.lower() for kind in ("runtime-state", "save-state") for name in residue[kind]}
+    if any(part in state_dirs for part in parts):
         return "run state"
-    if any(fnmatch.fnmatchcase(parts[-1], pat) for pat in REFUSE_GLOBS):
+    if any(fnmatch.fnmatchcase(parts[-1], pattern.lower()) for pattern in residue["secrets"]):
         return "secret"
     return None
 
@@ -159,18 +160,24 @@ def package_skill(skill_path, output_dir=None):
 
     skill_filename = output_path / f"{skill_name}.skill"
 
+    try:
+        residue = load_residue_classes()
+    except ValueError as e:
+        print(f"ERROR: {e}")
+        return None
+
     # Decide everything before the archive exists, so a refusal leaves nothing behind.
     to_add: list[tuple[Path, Path]] = []
     refused: list[str] = []
     for file_path in sorted(skill_path.rglob('*')):
-        link = _is_link(file_path)
+        link = is_link(file_path)
         if not link and (not file_path.is_file() or file_path.resolve() == skill_filename):
             continue
         arcname = file_path.relative_to(skill_path.parent)
         if should_exclude(arcname):
             print(f"  Skipped: {arcname}")
             continue
-        reason = "symlink" if link else refusal_class(arcname)
+        reason = "symlink" if link else refusal_class(arcname, residue)
         if reason:
             refused.append(f"{arcname} ({reason})")
         else:

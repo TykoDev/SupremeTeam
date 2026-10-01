@@ -166,6 +166,9 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   English word no longer counts as documenting it.
 - The images in `docs/assets` are re-encoded (3.6 MB to 0.5 MB) with the same
   names and aspect ratios.
+- BENCHMARK.md marks its one inferred figure (`skill-maker`'s 100, read from the deduction
+  ledger because the round labelled two rows `ship`) and says so in its opening, instead
+  of promising that nothing in it is inferred.
 - `skills/taste/taste_prefs.py` is no longer the only executable file in the tree.
 - `.gitignore` also ignores `.DS_Store`, `.env`, `.venv/` and `.claude/worktrees/`, and
   everything `package_check.py` refuses to package: key and certificate files,

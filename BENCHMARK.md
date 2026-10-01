@@ -2,8 +2,9 @@
 
 Measured state of the Supreme Team catalog: what scores what, how each number was
 produced, and what it does not cover. Every figure here was observed, not
-estimated — where a measurement was not taken, this file says so rather than
-inferring one.
+estimated, with one exception that is marked where it appears: the `skill-maker`
+score is inferred (see Skills). Where a measurement was not taken, this file says so
+rather than inferring one.
 
 **When these were measured.** The scores and routing figures below are as
 published in this file's 2026-09-18 revision, on the 52-skill catalog of that date.
@@ -73,7 +74,7 @@ security, structure, documentation — 10 points each.
 | `review/quality-review` | 100 |
 | `setup-browser-cookies` | 100 |
 | `setup-deploy` | 100 |
-| `skill-maker` | 100 |
+| `skill-maker` | 100 (inferred, see below) |
 | `build/gatekeeper-build` | 99 |
 | `design/architect` | 99 |
 | `design/commander` | 99 |
@@ -99,9 +100,11 @@ security, structure, documentation — 10 points each.
 
 The 2026-09-18 data listed `ship` twice, at 100 and at 98. The deduction ledger
 below gives `ship` 98 (D3 −2), and `skill-maker`, the one skill with no row, has no
-deduction, so the 100 row labelled `ship` is read as `skill-maker`'s. With that
-reading the 52 rows are the 52 skills the catalog held then, once each, and the
-band counts and means above stand.
+deduction, so the 100 row labelled `ship` is read as `skill-maker`'s. That is an
+inference from the ledger, not a measurement: the round did not label that row. With
+that reading the 52 rows are the 52 skills the catalog held then, once each, and the
+band counts and means above stand. Without it, 51 skills are scored: the mean is still
+99.4, the lowest still 97, and 30 skills score 100.
 
 </details>
 

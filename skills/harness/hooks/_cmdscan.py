@@ -18,7 +18,10 @@ does and returns structure the guard rules apply to:
 * ``unnamed``: the writes whose target is not in the command at all (a mutating verb
   that ``xargs`` feeds from standard input, an inline program that redirects or opens
   a file, a shell that reads its program from a pipe, the targets inside a diff), which
-  a rule that needs every target named (a read-only run) cannot accept.
+  a rule that needs every target named (a read-only run) cannot accept;
+* ``hidden``: the analyses of commands a launcher runs that only a read-only run judges
+  (``parallel``, ``entr``, a PowerShell script block), kept apart so a freeze and a
+  block see the command line exactly as they did before the launcher was read.
 
 It is a text analysis, not a sandbox. It does not execute, resolve a path built at run
 time, follow a script file, or know a tool it has no entry for; where it cannot tell it
@@ -32,6 +35,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import collections
 import os
 import posixpath
 import re
@@ -67,8 +71,8 @@ class Write:
 class Unnamed:
     """A write the command does not name a target for: ``how`` is ``stdin`` (the verb's operands arrive on standard
     input, or a shell or interpreter reads its program there), ``program`` (an inline program redirects or opens a
-    file), ``diff`` (``patch`` or ``git apply`` writes the files its diff names) or ``nested`` (text below ``MAX_DEPTH``, with
-    no verb)."""
+    file), ``diff`` (``patch`` or ``git apply`` writes the files its diff names) or ``nested`` (text the analysis
+    could not read: below ``MAX_DEPTH``, or unbalanced inside a launcher; no verb)."""
     verb: str
     how: str
 
@@ -80,6 +84,7 @@ class Analysis:
     writes: list = field(default_factory=list)
     code: list = field(default_factory=list)
     unnamed: list = field(default_factory=list)
+    hidden: list = field(default_factory=list)
     # A ``cd`` led past ``MAX_CWD`` characters: the directory of the writes after it is not known.
     lost_directory: bool = False
 
@@ -1339,6 +1344,85 @@ def _xargs(rest: list, upstream: "list | None") -> list:
     return [(nested + words, False)]
 
 
+_PARALLEL_ARG = frozenset({"-j", "--jobs", "-n", "--max-args", "-N", "-L", "--max-lines", "-a", "--arg-file", "-S", "--sshlogin",
+                           "-d", "--delimiter", "-E", "--eof", "--results", "--tmpdir", "--colsep", "-C", "--timeout",
+                           "--retries", "--delay", "--load"})
+_PLACEHOLDER = re.compile(r"\{(?:|\.|/|//|/\.|#|%)\}")
+
+
+def _parallel(rest: list, upstream: "list | None") -> list:
+    """``(command, fed)`` for what GNU parallel runs, as ``_xargs`` gives them: the arguments after ``:::`` or from a
+    literal upstream stage replace ``{}`` or are appended; with none to read, the operands arrive unread."""
+    i = 0
+    replace = None
+    while i < len(rest):
+        text = rest[i].text
+        if text in ("-I", "--replace") and i + 1 < len(rest):
+            replace = rest[i + 1].text
+            i += 2
+        elif text.startswith("-I") and len(text) > 2:
+            replace = text[2:]
+            i += 1
+        elif text in _PARALLEL_ARG and i + 1 < len(rest):
+            i += 2
+        elif text.startswith("-") and len(text) > 1:
+            i += 1
+        else:
+            break
+    tail = rest[i:]
+    cut = next((index for index, arg in enumerate(tail) if arg.text in (":::", "::::")), len(tail))
+    nested = list(tail[:cut])
+    if cut < len(tail) and tail[cut].text == ":::":
+        words = [arg for arg in tail[cut + 1:] if arg.text not in (":::", "::::")]
+    else:
+        words = [_Arg(word) for word in (upstream or [])]
+    replace = replace or ("{}" if any("{}" in arg.text for arg in nested) else None)
+    placed = bool(replace) or any(_PLACEHOLDER.search(arg.text) for arg in nested)
+    if not words:
+        return [(nested, not placed)]
+    if replace:
+        return [([_Arg(a.text.replace(replace, word.text), a.glob, a.unresolved) for a in nested], False) for word in words]
+    return [(nested, False)] if placed else [(nested + words, False)]
+
+
+def _entr(rest: list) -> tuple:
+    """``(words, shell)`` of what entr runs on a change: after its flags, a command, or with ``-s`` a shell command line."""
+    i = 0
+    shell = False
+    while i < len(rest) and rest[i].text.startswith("-") and len(rest[i].text) > 1:
+        shell = shell or "s" in rest[i].text[1:]
+        i += 1
+    return rest[i:], shell
+
+
+def _scratch(ctx: _Ctx) -> _Ctx:
+    """A context for commands a launcher runs and only a read-only run judges: it starts where ``ctx`` is, shares nothing
+    it changes, and what it finds goes to ``Analysis.hidden``."""
+    sub = _Ctx(Analysis(), ctx.ps)
+    sub.vars, sub.cwds, sub.stack = collections.ChainMap({}, ctx.vars), ctx.cwds[-3:], ctx.stack
+    sub.depth, sub.text = ctx.depth, ctx.text
+    return sub
+
+
+def _keep(ctx: _Ctx, sub: _Ctx) -> None:
+    if not sub.out.ok:
+        _note_unnamed(ctx, "", "nested")
+    if sub.out.commands or sub.out.writes or sub.out.unnamed or sub.out.hidden:
+        ctx.out.hidden.append(sub.out)
+
+
+def _hide_command(ctx: _Ctx, args: list, fed: bool) -> None:
+    sub = _scratch(ctx)
+    _exec(args, sub, None, None, fed)
+    _keep(ctx, sub)
+
+
+def _hide_text(ctx: _Ctx, text: str, ps: bool) -> None:
+    sub = _scratch(ctx)
+    _process(text, sub, ps)
+    _keep(ctx, sub)
+
+
 def _reads_program_from_stdin(verb: str, rest: list) -> bool:
     """True for an interpreter given neither program text nor a script file, which reads its program from standard input."""
     operands = [a.text for a in rest if not a.text.startswith("-") or a.text == "-"]
@@ -1678,6 +1762,21 @@ def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None", st
             for command, fed in _xargs(rest, upstream):
                 _exec(command, ctx, None, None, fed)
             return
+        if verb == "parallel":
+            for command, fed in _parallel(rest, upstream):
+                _hide_command(ctx, command, fed)
+            return
+        if verb == "entr":
+            command, shell = _entr(rest)
+            if shell:
+                _hide_text(ctx, " ".join(a.text for a in command), False)
+            else:
+                _hide_command(ctx, command, False)
+            return
+        if verb == "watch":
+            command = _skip_options(rest, *_WRAPPERS["watch"])
+            if len(command) == 1 and len(command[0].text.split()) > 1:
+                _hide_text(ctx, command[0].text, False)
         wrapper = _WRAPPERS.get(verb)
         if wrapper is None or (verb == "command" and rest and rest[0].text in ("-v", "-V")):
             break

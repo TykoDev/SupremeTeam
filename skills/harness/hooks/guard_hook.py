@@ -394,14 +394,16 @@ class Call:
         derived = [word if _paths.is_absolute(word) else posixpath.join(start, word) for word in words for start in starts]
         return derived if strict and words else [*starts, *derived]
 
-    def shell_targets(self, strict: bool = False) -> list:
-        """``(write, [Target])`` for every write the analyser found.
+    def shell_targets(self, strict: bool = False, analysis=None) -> list:
+        """``(write, [Target])`` for every write the analyser found (in ``analysis``, the call's own by default).
 
         Deny rules consider every directory a ``cd`` may have left the shell in; the allow-list rule
         only the one it last set. A wildcard word is also expanded against the disk."""
-        if strict not in self._shell_targets:
+        analysis = analysis or self.analysis
+        key = (id(analysis), strict)
+        if key not in self._shell_targets:
             found = []
-            for write in self.analysis.writes:
+            for write in analysis.writes:
                 bases = self._bases(write, strict)
                 texts = [write.path]
                 if write.glob and not write.unresolved:
@@ -412,8 +414,8 @@ class Call:
                         except (OSError, ValueError):
                             continue
                 found.append((write, [self.locate(text, bases) for text in dict.fromkeys(texts)]))
-            self._shell_targets[strict] = found
-        return self._shell_targets[strict]
+            self._shell_targets[key] = found
+        return self._shell_targets[key]
 
 
 def _mentioned(texts, call: "Call", boundaries) -> "_paths.Boundary | None":
@@ -537,12 +539,12 @@ _UNNAMED_REASON = (
 )
 
 
-def _unscoped_git(call: "Call") -> bool:
+def _unscoped_git(analysis) -> bool:
     """A git command that changes the repository or tree and names no path to judge (``git add -A``, ``git push``).
 
     An index-only command (``git restore --staged .``) names pathspecs but writes no file, so it is the repository
     it changes and counts here. ``git apply --check`` and its kin only report, and change nothing."""
-    for command in call.analysis.commands:
+    for command in analysis.commands:
         if command.verb != "git":
             continue
         sub, operands, _, flags = _cmdscan.git_parts(command.argv)
@@ -565,6 +567,15 @@ def _dry_vias(analysis) -> frozenset:
             if sub == "apply":
                 checks["git apply"] = checks.get("git apply", True) and _cmdscan.git_dry_run(sub, flags)
     return frozenset(via for via, dry in checks.items() if dry)
+
+
+def _analyses(analysis):
+    """The analysis of the command line and, below it, those of the commands a launcher runs that only a read-only run reads."""
+    pending = [analysis]
+    while pending:
+        current = pending.pop()
+        yield current
+        pending.extend(current.hidden)
 
 
 # Package managers change the dependency directory, a lockfile or the machine without naming a path, so a read-only
@@ -604,9 +615,9 @@ def _changes_packages(command) -> bool:
     return any(word in _PACKAGE_MANAGERS[verb] for word in operands[:3])
 
 
-def _installs_packages(call: "Call") -> bool:
+def _installs_packages(analysis) -> bool:
     """A package manager command that installs, removes or updates packages (``npm install``, ``sudo apt-get install -y jq``)."""
-    return any(_changes_packages(command) for command in call.analysis.commands)
+    return any(_changes_packages(command) for command in analysis.commands)
 
 
 def rule_read_only(call: "Call") -> "str | None":
@@ -626,15 +637,17 @@ def rule_read_only(call: "Call") -> "str | None":
         if _textual_mutates(call.command) and _mentioned([call.command], call, [_paths.Boundary(g, call.root) for g in allow]) is None:
             return _read_only_reason(records)
         return None
-    dry = _dry_vias(call.analysis)
-    for write, targets in call.shell_targets(strict=True):
-        if write.via in dry:
-            continue
-        if write.unresolved or any(not _paths.inside_allowed(target, allow, call.root, fold=fold) for target in targets):
+    analyses = list(_analyses(call.analysis))
+    for analysis in analyses:
+        dry = _dry_vias(analysis)
+        for write, targets in call.shell_targets(strict=True, analysis=analysis):
+            if write.via in dry:
+                continue
+            if write.unresolved or any(not _paths.inside_allowed(target, allow, call.root, fold=fold) for target in targets):
+                return _read_only_reason(records)
+        if _unscoped_git(analysis) or _installs_packages(analysis):
             return _read_only_reason(records)
-    if _unscoped_git(call) or _installs_packages(call):
-        return _read_only_reason(records)
-    return _read_only_reason(records) + _UNNAMED_REASON if call.analysis.unnamed else None
+    return _read_only_reason(records) + _UNNAMED_REASON if any(analysis.unnamed for analysis in analyses) else None
 
 
 # --- Rule C: single writers --------------------------------------------------------------------------

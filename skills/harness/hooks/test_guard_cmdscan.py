@@ -781,6 +781,64 @@ class DiffApplierTests(unittest.TestCase):
 
 
 
+def hidden(text: str, ps: bool = False) -> list:
+    """What the commands a launcher runs would write, as ``(sorted paths, unnamed)`` for each analysis below the line's own."""
+    out, pending = [], list(analyse(text, ps).hidden)
+    while pending:
+        item = pending.pop(0)
+        out.append((sorted(write.path for write in item.writes), [(u.verb, u.how) for u in item.unnamed]))
+        pending.extend(item.hidden)
+    return out
+
+
+# Commands a launcher runs, which only a read-only run reads: the main analysis stays what it was.
+LAUNCHED = (
+    ("ls | parallel rm", [([], [("rm", "stdin")])]),
+    ("ls | parallel rm {}", [(["{}"], [])]),
+    ("ls | parallel -j4 rm {}", [(["{}"], [])]),
+    ("ls | parallel -j 4 rm", [([], [("rm", "stdin")])]),
+    ("ls | parallel --will-cite -N1 touch", [([], [("touch", "stdin")])]),
+    ("parallel rm ::: a b c", [(["a", "b", "c"], [])]),
+    ("parallel -a list rm", [([], [("rm", "stdin")])]),
+    ("parallel rm :::: list", [([], [("rm", "stdin")])]),
+    ("parallel -I@@ rm @@ ::: a", [(["a"], [])]),
+    ("ls | parallel -I@@ rm @@", [(["@@"], [])]),
+    ("ls | parallel mv {} out/", [(["out/", "{}"], [])]),
+    ("ls | parallel cp {} out/", [(["out/"], [])]),
+    ("ls | parallel gzip", [([], [("gzip", "stdin")])]),
+    ("ls | parallel rm {.}", [(["{.}"], [])]),
+    ("echo a b | parallel rm", [(["a", "b"], [])]),
+    ("ls | entr rm /_", [(["/_"], [])]),
+    ("ls | entr -r rm /_", [(["/_"], [])]),
+    ("ls | entr -s 'rm x; touch y'", [(["x", "y"], [])]),
+    ("ls | entr sh -c 'rm x'", [(["x"], [])]),
+    ("watch 'rm x'", [(["x"], [])]),
+    ("watch -n 1 'touch x'", [(["x"], [])]),
+    ("ls | parallel parallel rm", [([], []), ([], [("rm", "stdin")])]),
+)
+LAUNCHED_READS = (
+    "ls | parallel echo {}", "ls | parallel -j4 wc -l {}", "ls | parallel grep x", "parallel echo ::: a b c", "ls | parallel sed -n 1p",
+    "ls | entr echo changed", "ls | entr -s 'make test'", "watch -n 5 ls", "watch 'ls -l'", "watch -n1 df",
+)
+
+class LauncherTests(unittest.TestCase):
+    """The commands a launcher (``parallel``, ``entr``, ``watch``) runs: read for the read-only rule only, in analyses of their own, so the main analysis stays what it was."""
+
+    def test_what_a_launcher_runs_is_read_only_for_the_read_only_rule(self):
+        for text, expected in LAUNCHED:
+            with self.subTest(command=text):
+                self.assertEqual(sorted(hidden(text)), sorted(expected), text)
+                main = analyse(text)
+                self.assertEqual((main.writes, main.unnamed), ([], []), text)
+                self.assertFalse({c.verb for c in main.commands} & {"rm", "touch", "mv", "gzip", "cp"}, text)
+
+    def test_a_launcher_that_runs_a_read_finds_nothing(self):
+        for text in LAUNCHED_READS:
+            with self.subTest(command=text):
+                self.assertTrue(all(not paths and not named for paths, named in hidden(text)), text)
+
+
+
 class WorkingDirectoryCostTests(unittest.TestCase):
     """RR-guard-2: a chain of relative ``cd`` makes each directory the previous one plus a segment, so what the analysis
     keeps for it must stop growing, and what it cannot follow must say so."""

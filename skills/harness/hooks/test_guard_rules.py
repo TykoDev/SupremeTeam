@@ -551,6 +551,23 @@ class ReadOnlyRunTests(GuardCase):
                     "cat f | node -p '1+1'", "cat f | perl -ne 'print'", "cat f | ruby -ne 'print'", "echo hi | grep h"), deny=False)
         self.check(("bash <<< 'rm x'", "sh <<< 'echo y > out'", "bash <<EOF\ntouch a\nEOF", "bash -c 'rm x'"), deny=True, fragment="is recorded read-only")
 
+    def test_parallel_and_the_launchers_like_it_are_read_for_what_they_run(self):
+        self.check((
+            "ls | parallel rm", "ls | parallel rm {}", "ls | parallel -j4 rm {}", "ls | parallel -j 4 rm", "parallel rm ::: a b c", "parallel -a list rm",
+            "parallel rm :::: list", "parallel -I@@ rm @@ ::: a", "ls | parallel mv {} skillset-saves/runs/r1/x/", "ls | parallel gzip",
+            "ls | parallel touch skillset-saves/runs/r1/a", "ls | parallel rm {.}", "ls | entr rm /_", "ls | entr -s 'rm x'", "ls | entr sh -c 'rm x'",
+            "watch 'rm x'", "watch -n 1 'touch x'", "watch -n1 rm x", "ls | parallel parallel rm",
+        ), deny=True, fragment="is recorded read-only")
+        self.check((
+            "ls | parallel echo {}", "ls | parallel -j4 wc -l {}", "ls | parallel grep x", "parallel echo ::: a b c", "ls | parallel sed -n 1p",
+            f"ls | parallel cp {{}} skillset-saves/runs/{READ_ONLY_RUN}/investigation/", "ls | entr echo changed", "ls | entr -s 'make test'",
+            "watch -n 5 ls", "watch 'ls -l'", "ls | while read f; do echo \"$f\"; done", "ls | while read f; do wc -l \"$f\"; done",
+        ), deny=False)
+
+    def test_a_loop_that_feeds_a_mutator_is_denied(self):
+        self.check(("ls | while read f; do rm \"$f\"; done", "find . -name x | while read f; do touch \"$f\"; done", "while read f; do rm \"$f\"; done < list",
+                    "for f in *.pyc; do rm $f; done", "ls | xargs -I{} sh -c 'rm {}'"), deny=True, fragment="is recorded read-only")
+
     def test_patch_and_git_apply_are_denied_unless_they_only_check(self):
         self.check((
             "patch -p1 < fix.diff", "patch -p1 -i fix.diff", "cat fix.diff | patch -p1", "patch < fix.diff", "git apply fix.patch", "git apply < fix.patch",

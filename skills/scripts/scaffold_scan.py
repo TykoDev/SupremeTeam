@@ -219,23 +219,39 @@ def _comment_only(line: str, language: str | None) -> bool:
     return stripped.startswith(("//", "/*", "*", "*/"))
 
 
-def _block_matches(
-    lines: list[str],
-    index: int,
-    language: str | None,
-    code_lines: list[str] | None = None,
-) -> list[tuple[str, str]]:
-    detection_lines = code_lines if code_lines is not None else lines
-    line = detection_lines[index]
-    source_line = lines[index]
+def _brace_header_pattern(language: str | None) -> str | None:
+    if language == "javascript":
+        return (
+            r"^\s*(?:"
+            r"(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+\w+\([^)]*\)(?:\s*:\s*[^{}]+)?|"
+            r"(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)"
+            r"(?:\s*:\s*[^{}]+)?\s*=>|"
+            r"(?:(?:public|private|protected|static|abstract|async|get|set|override)\s+)*"
+            r"(?!if\b|for\b|while\b|switch\b|catch\b)[A-Za-z_$][\w$]*\s*\([^)]*\)"
+            r"(?:\s*:\s*[^{}]+)?"
+            r")\s*(?:\{\s*)?$"
+        )
+    if language == "go":
+        return r"^\s*func\s+(?:\([^)]*\)\s*)?\w+\([^)]*\)(?:\s*\([^)]*\))?(?:\s+[^{}]+)?\s*(?:\{\s*)?$"
+    if language in {"csharp", "java"}:
+        visibility = "public|private|protected|internal" if language == "csharp" else "public|private|protected"
+        return rf"^\s*(?:{visibility})\b[^{{}};]*\([^)]*\)\s*(?:\{{\s*)?$"
+    return None
 
-    if language == "python" and re.match(
+
+def _empty_python_function(
+    lines: list[str],
+    detection_lines: list[str],
+    index: int,
+) -> list[tuple[str, str]]:
+    line = detection_lines[index]
+    if re.match(
         r"^\s*(?:async\s+)?def\s+\w+\([^)]*\)(?:\s*->\s*[^:\n]+)?\s*:\s*(?:pass|\.\.\.)(?:\s*#.*)?$",
         line,
     ):
-        return [("EMPTY FUNCTION", source_line)]
+        return [("EMPTY FUNCTION", lines[index])]
 
-    if language == "python" and re.match(
+    if re.match(
         r"^\s*(?:async\s+)?def\s+\w+\([^)]*\)(?:\s*->\s*[^:\n]+)?\s*:\s*(?:#.*)?$",
         line,
     ):
@@ -256,7 +272,7 @@ def _block_matches(
                 has_more_body = False
                 while next_index < len(detection_lines):
                     candidate = detection_lines[next_index]
-                    if not candidate.strip() or _comment_only(candidate, language):
+                    if not candidate.strip() or _comment_only(candidate, "python"):
                         next_index += 1
                         continue
                     if len(candidate) - len(candidate.lstrip()) > header_indent:
@@ -267,96 +283,91 @@ def _block_matches(
                     next_index += 1
                 if not has_more_body:
                     return [("EMPTY FUNCTION", "\n".join(lines[index:body_index + 1]))]
+    return []
 
-    def empty_brace_block(header_pattern: str) -> tuple[str, str] | None:
-        inline = re.match(
-            r"^(?P<header>.*\{)\s*(?P<body>//.*|/\*.*\*/)?\s*\}\s*;?\s*$",
-            line,
-        )
-        if inline and (inline.group("body") is None or _comment_only(inline.group("body"), language)):
-            if re.match(header_pattern, inline.group("header")):
-                return "EMPTY FUNCTION", source_line
-        if not re.match(header_pattern, line):
-            return None
-        open_index = index
-        if "{" not in line:
-            open_index = next(
-                (
-                    candidate
-                    for candidate in range(index + 1, min(len(detection_lines), index + 21))
-                    if detection_lines[candidate].strip()
-                ),
-                -1,
-            )
-            if open_index == -1 or detection_lines[open_index].strip() != "{":
-                return None
-        close_index = next(
-            (
-                candidate
-                for candidate in range(open_index + 1, min(len(detection_lines), open_index + 21))
-                if detection_lines[candidate].strip() in {"}", "};"}
-            ),
-            None,
-        )
-        if close_index is None:
-            return None
-        if any(
-            detection_lines[candidate].strip() and not _comment_only(detection_lines[candidate], language)
-            for candidate in range(open_index + 1, close_index)
-        ):
-            return None
-        return "EMPTY FUNCTION", "\n".join(lines[index:close_index + 1])
 
-    if language == "javascript":
-        block = empty_brace_block(
-            r"^\s*(?:"
-            r"(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+\w+\([^)]*\)(?:\s*:\s*[^{}]+)?|"
-            r"(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)"
-            r"(?:\s*:\s*[^{}]+)?\s*=>|"
-            r"(?:(?:public|private|protected|static|abstract|async|get|set|override)\s+)*"
-            r"(?!if\b|for\b|while\b|switch\b|catch\b)[A-Za-z_$][\w$]*\s*\([^)]*\)"
-            r"(?:\s*:\s*[^{}]+)?"
-            r")\s*(?:\{\s*)?$"
-        )
-        if block:
-            return [block]
-
-    if language == "go":
-        block = empty_brace_block(
-            r"^\s*func\s+(?:\([^)]*\)\s*)?\w+\([^)]*\)(?:\s*\([^)]*\))?(?:\s+[^{}]+)?\s*(?:\{\s*)?$"
-        )
-        if block:
-            return [block]
-
-    if language in {"csharp", "java"}:
-        visibility = "public|private|protected|internal" if language == "csharp" else "public|private|protected"
-        block = empty_brace_block(
-            rf"^\s*(?:{visibility})\b[^{{}};]*\([^)]*\)\s*(?:\{{\s*)?$"
-        )
-        if block:
-            return [block]
-
-    if language == "ruby" and re.match(r"^\s*def\s+\w+", detection_lines[index]):
-        end = next(
+def _empty_brace_block(
+    lines: list[str],
+    detection_lines: list[str],
+    index: int,
+    language: str | None,
+    header_pattern: str,
+) -> tuple[str, str] | None:
+    line = detection_lines[index]
+    inline = re.match(
+        r"^(?P<header>.*\{)\s*(?P<body>//.*|/\*.*\*/)?\s*\}\s*;?\s*$",
+        line,
+    )
+    if inline and (inline.group("body") is None or _comment_only(inline.group("body"), language)):
+        if re.match(header_pattern, inline.group("header")):
+            return "EMPTY FUNCTION", lines[index]
+    if not re.match(header_pattern, line):
+        return None
+    open_index = index
+    if "{" not in line:
+        open_index = next(
             (
                 candidate
                 for candidate in range(index + 1, min(len(detection_lines), index + 21))
-                if detection_lines[candidate].strip() == "end"
+                if detection_lines[candidate].strip()
             ),
-            None,
+            -1,
         )
-        if end is not None:
-            body = [
-                line.strip()
-                for line in detection_lines[index + 1:end]
-                if line.strip() and not line.lstrip().startswith("#")
-            ]
-            if body in (["nil"], ["..."]):
-                return [("EMPTY FUNCTION", "\n".join(lines[index:end + 1]))]
+        if open_index == -1 or detection_lines[open_index].strip() != "{":
+            return None
+    close_index = next(
+        (
+            candidate
+            for candidate in range(open_index + 1, min(len(detection_lines), open_index + 21))
+            if detection_lines[candidate].strip() in {"}", "};"}
+        ),
+        None,
+    )
+    if close_index is None:
+        return None
+    if any(
+        detection_lines[candidate].strip() and not _comment_only(detection_lines[candidate], language)
+        for candidate in range(open_index + 1, close_index)
+    ):
+        return None
+    return "EMPTY FUNCTION", "\n".join(lines[index:close_index + 1])
 
-    if language == "shell" and re.match(
+
+def _empty_ruby_function(
+    lines: list[str],
+    detection_lines: list[str],
+    index: int,
+) -> list[tuple[str, str]]:
+    if not re.match(r"^\s*def\s+\w+", detection_lines[index]):
+        return []
+    end = next(
+        (
+            candidate
+            for candidate in range(index + 1, min(len(detection_lines), index + 21))
+            if detection_lines[candidate].strip() == "end"
+        ),
+        None,
+    )
+    if end is not None:
+        body = [
+            line.strip()
+            for line in detection_lines[index + 1:end]
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        if body in (["nil"], ["..."]):
+            return [("EMPTY FUNCTION", "\n".join(lines[index:end + 1]))]
+    return []
+
+
+def _empty_shell_function(
+    lines: list[str],
+    detection_lines: list[str],
+    index: int,
+) -> list[tuple[str, str]]:
+    line = detection_lines[index]
+    if re.match(
         r"^\s*(?:(?:function\s+)?[A-Za-z_][A-Za-z0-9_-]*\s*(?:\(\s*\))?)\s*\{\s*$",
-        detection_lines[index],
+        line,
     ):
         end = next(
             (
@@ -374,17 +385,36 @@ def _block_matches(
             ]
             if body and all(item in {":", "true"} for item in body):
                 return [("EMPTY FUNCTION", "\n".join(lines[index:end + 1]))]
-    if language == "shell":
-        inline = re.match(
-            r"^\s*(?:(?:function\s+)?[A-Za-z_][A-Za-z0-9_-]*\s*(?:\(\s*\))?)\s*"
-            r"\{(?P<body>.*?)\}\s*$",
-            line,
-        )
-        if inline:
-            body = [item.strip() for item in inline.group("body").split(";") if item.strip()]
-            if body and all(item in {":", "true"} for item in body):
-                return [("EMPTY FUNCTION", source_line)]
+    inline = re.match(
+        r"^\s*(?:(?:function\s+)?[A-Za-z_][A-Za-z0-9_-]*\s*(?:\(\s*\))?)\s*"
+        r"\{(?P<body>.*?)\}\s*$",
+        line,
+    )
+    if inline:
+        body = [item.strip() for item in inline.group("body").split(";") if item.strip()]
+        if body and all(item in {":", "true"} for item in body):
+            return [("EMPTY FUNCTION", lines[index])]
     return []
+
+
+def _block_matches(
+    lines: list[str],
+    index: int,
+    language: str | None,
+    code_lines: list[str] | None = None,
+) -> list[tuple[str, str]]:
+    detection_lines = code_lines if code_lines is not None else lines
+    if language == "python":
+        return _empty_python_function(lines, detection_lines, index)
+    if language == "ruby":
+        return _empty_ruby_function(lines, detection_lines, index)
+    if language == "shell":
+        return _empty_shell_function(lines, detection_lines, index)
+    header_pattern = _brace_header_pattern(language)
+    if header_pattern is None:
+        return []
+    block = _empty_brace_block(lines, detection_lines, index, language, header_pattern)
+    return [block] if block else []
 
 
 def find_scaffold_markers(files: list[Path], root: Path, errors: list[str]) -> list[dict[str, Any]]:

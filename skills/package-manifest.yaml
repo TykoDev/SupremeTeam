@@ -1,5 +1,6 @@
 schema_version: 1
 package: Supreme Team
+license: MIT
 root: .
 include:
   - "**/*"
@@ -43,14 +44,15 @@ authority:
     packaging tool are not the control: scripts/package_check.py enumerates what
     this file selects and rejects residue before an archive is written.
   who_reads_this_file: >-
-    No test opens this file. scripts/package_check.py does, as the default value
-    of its --manifest argument, and two suites run that script without passing
-    --manifest - so they enumerate against this manifest even when their --root is
-    a temporary fixture. That indirection is what makes the include and exclude
-    globs test-enforced; nothing else here is. scripts/validate_manifests.py
-    check_package reads the delivery_contract booleans and the required exclude
-    patterns, and no test runs validate_manifests.py check_package, so those
-    checks run only when a person or CI invokes the script.
+    scripts/package_check.py reads this file as the default value of its
+    --manifest argument, and two suites run that script without passing it, so
+    they enumerate against this manifest even when their --root is a temporary
+    fixture. That indirection is what makes the include and exclude globs
+    test-enforced. scripts/validate_manifests.py check_package reads the
+    delivery_contract booleans and the required exclude patterns;
+    scripts/test_validate_manifests.py runs the validator over this repository and
+    CI runs the script, so those checks are enforced too.
+    validation/test_repository_hygiene.py reads the license field.
 enforcement:
   machine_checked: >-
     scripts/package_check.py enumerates every file the include and exclude globs
@@ -68,8 +70,8 @@ enforcement:
     scripts/validate_manifests.py check_package requires the five top-level keys,
     requires cache_files_are_publishable, runtime_state_is_publishable, and
     save_state_is_publishable to be false, and requires five specific exclude
-    patterns to be present - but no test runs it, so that half is enforced only
-    when the script is invoked.
+    patterns to be present. scripts/test_validate_manifests.py runs it over this
+    repository, and CI runs the script on every declared platform.
   judgement: >-
     global_taste_state_is_publishable, taste_export_policy,
     generated_interpreter_caches, verification, applies_to, authority, and this

@@ -84,9 +84,23 @@ python skills/scripts/check_runtime.py
 python skills/scripts/validate_manifests.py
 python skills/scripts/package_check.py --root .
 python skills/harness/hooks/check_readiness.py --host auto
+```
+
+## Run the tests
+
+Seven suites, standard library only, Python 3.13 or newer. Run them from a
+repository checkout. CI runs these same commands on Windows, macOS and Linux,
+on Python 3.13 and 3.14, with and without PyYAML installed
+([CONTRIBUTING.md](CONTRIBUTING.md) explains how to run one suite or all of them).
+
+```bash
 python -m unittest discover -s skills/harness/hooks -p "test_*.py"
 python -m unittest discover -s skills/harness/gatekeeper -p "test_*.py"
 python -m unittest discover -s skills/validation -p "test_*.py"
+python -m unittest discover -s skills/scripts -p "test_*.py"
+python -m unittest discover -s skills/taste -p "test_*.py"
+python -m unittest discover -s scripts -p "test_*.py"
+python -m unittest discover -s skills/skill-maker/skill-creator -p "test_*.py"
 ```
 
 ## Documentation
@@ -105,6 +119,12 @@ python -m unittest discover -s skills/validation -p "test_*.py"
 | [docs/persistent-saves.md](docs/persistent-saves.md) | Save layout, locks, resume |
 | [docs/direct-invocation.md](docs/direct-invocation.md) | Calling skills directly |
 | [docs/directory-structure.md](docs/directory-structure.md) | Where everything lives |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Running the suites, the fail-open and fail-loud rules, commits, skill versions |
+| [CHANGELOG.md](CHANGELOG.md) | What changed |
+
+## License
+
+Supreme Team is released under the [MIT License](LICENSE). Copyright (c) 2026 TykoDev.
 
 <p align="center">
     <sub>Built by <a href="https://github.com/TykoDev">TykoDev</a> · Supreme Team</sub>

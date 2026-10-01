@@ -25,7 +25,6 @@ asserts the gate notices.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import subprocess
 import sys
@@ -33,25 +32,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
-try:
-    import yaml
-except ModuleNotFoundError:  # pragma: no cover - environment without PyYAML
-    yaml = None
+import _catalog
+from _catalog import SKILLS
+from data_formats import content_sha256
 
-SKILLS = Path(__file__).resolve().parent.parent
+# The specs are read the way the gate reads them, with data_formats, so this module
+# runs on a host without PyYAML instead of skipping the one end-to-end gate test.
 REPO = SKILLS.parent
 CHECK = SKILLS / "harness" / "gatekeeper" / "check.py"
-if str(SKILLS / "scripts") not in sys.path:
-    sys.path.insert(0, str(SKILLS / "scripts"))
-from data_formats import content_sha256  # noqa: E402
-
-if yaml is None:  # pragma: no cover
-    raise unittest.SkipTest("PyYAML is required for the pipeline workflow contracts")
-
-GATES = yaml.safe_load((SKILLS / "gates.yaml").read_text(encoding="utf-8"))
-PIPELINES = yaml.safe_load((SKILLS / "pipelines.yaml").read_text(encoding="utf-8"))
-OWNERSHIP = yaml.safe_load((SKILLS / "ownership.yaml").read_text(encoding="utf-8"))
-REGISTRY = yaml.safe_load((SKILLS / "tech-stacks" / "registry.yaml").read_text(encoding="utf-8"))
+GATES = _catalog.load_spec("gates.yaml")
+PIPELINES = _catalog.load_spec("pipelines.yaml")
+OWNERSHIP = _catalog.load_spec("ownership.yaml")
+REGISTRY = _catalog.load_spec("tech-stacks/registry.yaml")
 
 #: The first registry overlay, used to build a stack_lock the gate will accept.
 #: Reading it rather than hardcoding means the fixture follows the registry, and

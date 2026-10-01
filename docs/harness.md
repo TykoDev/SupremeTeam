@@ -185,10 +185,19 @@ check, and fails open.
 
 ## Tests
 
+Seven suites and three validators, Python 3.13 or newer, standard library only.
+CI runs this list on Windows, macOS and Linux with and without PyYAML;
+`skills/runtime-manifest.yaml` (`commands`, `ci`) is the list it runs and
+`skills/scripts/validate_manifests.py` fails when the workflow drifts from it.
+
 ```bash
 python -m unittest discover -s skills/harness/hooks -p "test_*.py"
 python -m unittest discover -s skills/harness/gatekeeper -p "test_*.py"
 python -m unittest discover -s skills/validation -p "test_*.py"
+python -m unittest discover -s skills/scripts -p "test_*.py"
+python -m unittest discover -s skills/taste -p "test_*.py"
+python -m unittest discover -s scripts -p "test_*.py"
+python -m unittest discover -s skills/skill-maker/skill-creator -p "test_*.py"
 python skills/scripts/validate_manifests.py
 python skills/scripts/check_runtime.py
 python skills/scripts/package_check.py --root .

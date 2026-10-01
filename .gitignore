@@ -7,6 +7,13 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# Local environments, credentials and machine files.
+.venv/
+.env
+.env.*
+.DS_Store
+.claude/worktrees/
+
 # Coverage residue. Coverage data belongs in the run at
 # skillset-saves/runs/<run>/<phase>/evidence/coverage/ (output_paths.py --kind
 # coverage); anything matching these at the project root is residue a step left
@@ -16,6 +23,3 @@ __pycache__/
 .coverage/
 htmlcov/
 .nyc_output/
-GLM-SCORE.html
-GLM-SCORE-2.html
-GLM-SCORE-3.html

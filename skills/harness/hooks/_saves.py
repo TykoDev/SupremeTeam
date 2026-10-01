@@ -269,8 +269,21 @@ def _closed(record: SaveRecord) -> dict[str, Any]:
     return result
 
 
-def inspect_saves(project_root: Path, *, now: datetime | None = None) -> dict[str, Any]:
-    """Return a deterministic classification and evidence for saved state."""
+def _lock_is_held(run_dir: Path) -> bool:
+    lock = _mapping(run_dir / "_lock.md")
+    return bool(lock) and _string(lock.get("status")).lower() == "held"
+
+
+def inspect_saves(project_root: Path, *, now: datetime | None = None, only_held: bool = False) -> dict[str, Any]:
+    """Return a deterministic classification and evidence for saved state.
+
+    ``only_held`` reads one small record per run, its lock, and classifies in full
+    only the runs whose lock is held and the run the pointer names, which skips the
+    parse of every closed run in a long history (about a quarter of the time at a
+    thousand runs). A coherent held run always has a held lock, so ``active``,
+    ``orphaned``, ``stale``, ``conflicting`` and a ``corrupt`` pointer come out as
+    they do without it; the answers that describe closed runs (``complete``,
+    ``inactive``, ``uninitialized``, ``unreadable``) are not meaningful with it."""
     now = now or datetime.now(timezone.utc)
     root = project_root.resolve() / "skillset-saves"
     if not root.exists():
@@ -289,6 +302,8 @@ def inspect_saves(project_root: Path, *, now: datetime | None = None) -> dict[st
         return {"status": "corrupt", "detail": f"pointer target run {pointer_run_id} does not exist", "run_id": ""}
 
     run_dirs = sorted((path for path in runs_dir.iterdir() if path.is_dir()), key=lambda path: path.name)
+    if only_held:
+        run_dirs = [path for path in run_dirs if path.name == pointer_run_id or _lock_is_held(path)]
     records = [_record(project_root.resolve(), path, now, verify_evidence=path.name == pointer_run_id) for path in run_dirs]
     active = [record for record in records if record.coherent and record.status in ACTIVE_STATUSES and not record.stale]
     stale = [record for record in records if record.coherent and record.status in ACTIVE_STATUSES and record.stale]
@@ -374,6 +389,9 @@ def classify_saves(project_root: Path, *, now: datetime | None = None) -> tuple[
 
 
 def has_active_run(project_root: Path) -> bool:
-    """Return true only for a coherent fresh active or recoverable orphaned run."""
-    status, _ = classify_saves(project_root)
-    return status in {"active", "orphaned"}
+    """Return true only for a coherent fresh active or recoverable orphaned run.
+
+    A prompt and a guarded write both ask, so it classifies only the runs that can
+    answer yes: see ``inspect_saves(only_held=True)``. The answer is the full
+    classification's."""
+    return str(inspect_saves(project_root, only_held=True)["status"]) in {"active", "orphaned"}

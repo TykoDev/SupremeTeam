@@ -23,11 +23,13 @@ from pathlib import Path
 
 SKILLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILLS / "scripts"))
+sys.path.insert(0, str(SKILLS / "harness" / "hooks"))
 from data_formats import load_data  # noqa: E402
 
 # An upper-case event name ordered appended: "append `SESSION_PIN_RELEASE`", "appends the `X`".
 ORDERED_APPEND = re.compile(r"\bappend(?:s|ed)?\s+(?:the\s+)?`([A-Z][A-Z_]{5,})`")
-OWNED = ("admiral/SKILL.md", "admiral/references/contracts.md", "mcp-tools.md", "routing-doctrine.md", "save-protocol.md")
+OWNED = ("admiral/SKILL.md", "admiral/references/contracts.md", "admiral/agent/agent-protocol.md", "mcp-tools.md",
+         "routing-doctrine.md", "save-protocol.md")
 
 
 class ProseMatchesTheWriterTests(unittest.TestCase):
@@ -51,6 +53,23 @@ class ProseMatchesTheWriterTests(unittest.TestCase):
         for key in ("hook_registration_status", "mcp_registry_check", "runtime_readiness_check", "session_pin_release"):
             with self.subTest(key=key):
                 self.assertIn(f"--set {key}=", contracts)
+
+    def test_every_document_that_lists_the_trail_or_the_statuses_lists_the_writers(self):
+        """agent-protocol.md kept an eleven-event list after the writer learned `refused` and `degraded`, and its status
+        vocabulary lacked `uninitialized`; both lists repeat what save-protocol.md and `NEXT_STEPS` state."""
+        from _saves import NEXT_STEPS
+
+        def events(path: Path) -> set[str]:
+            text = path.read_text(encoding="utf-8")
+            sentence = re.search(r"trail\s+(?:holds\s+\w+\s+events\s+and\s+no\s+others|can\s+only\s+ever\s+contain):(.*?)\.\s", text, re.S).group(1)
+            return set(re.findall(r"`([a-z][a-z-]*)`", sentence.split(" with its ")[0]))
+
+        protocol = events(SKILLS / "save-protocol.md")
+        self.assertEqual(len(protocol), 13)
+        self.assertEqual(events(SKILLS / "admiral" / "agent" / "agent-protocol.md"), protocol)
+        agent = (SKILLS / "admiral" / "agent" / "agent-protocol.md").read_text(encoding="utf-8")
+        listed = re.search(r"SAVE_STATUS_CHECK — status: \{([^}]*)\}", agent).group(1).split("|")
+        self.assertEqual(set(listed), set(NEXT_STEPS))
 
     def test_the_staleness_window_the_prose_states_is_the_constant(self):
         """The window was restated as the words "30 minutes" in five places, one constant in code."""

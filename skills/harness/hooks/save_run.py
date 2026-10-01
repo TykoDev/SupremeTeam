@@ -63,6 +63,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -158,9 +159,21 @@ def _as_int(value: Any, default: int = 0) -> int:
 _why = _fsutil.why
 
 
+@contextlib.contextmanager
+def owner_only():
+    """Create files for this user alone, whatever the umask: a run record names owners, evidence paths and
+    hashes that another account sharing the project directory has no need to read. Directories keep their default."""
+    previous = os.umask(0o077)
+    try:
+        yield
+    finally:
+        os.umask(previous)
+
+
 def atomic_write(path: Path, data: str | bytes) -> None:
     try:
-        _fsutil.atomic_write(path, data, notes=WRITE_NOTES)
+        with owner_only():
+            _fsutil.atomic_write(path, data, notes=WRITE_NOTES)
     except OSError as exc:
         raise Degraded(f"write failed for {path.name}: {_why(exc)}") from exc
 
@@ -298,8 +311,11 @@ class RunStore:
         line = json.dumps({"at": now_iso(), "event": event, **payload}, sort_keys=True)
         try:
             self.run_dir.mkdir(parents=True, exist_ok=True)
-            with open(self.audit_path, "a", encoding="utf-8", newline="\n") as handle:
+            with owner_only(), open(self.audit_path, "a", encoding="utf-8", newline="\n") as handle:
                 handle.write(line + "\n")
+            # A trail an earlier writer created is not replaced, so it is narrowed here.
+            with contextlib.suppress(OSError):
+                self.audit_path.chmod(0o600)
         except OSError as exc:
             raise Degraded(f"audit append failed: {_why(exc)}") from exc
 

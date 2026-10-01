@@ -37,7 +37,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _saves import classify_saves
+from _saves import NEXT_STEPS, classify_saves
 import _state
 from verify_registration import HOSTS, declared_minimum, interpreter_warning, repair_command
 
@@ -189,6 +189,8 @@ def main() -> int:
     py_status, py_detail = python_status(min_major, min_minor)
     hook_status, hook_code, hook_output, hook_report = run_hook_verifier(args.host, project_root)
     saves_status, saves_detail = classify_saves(project_root)
+    # An active run needs no instruction; every other classification has a next step, the one `save_run.py status` prints.
+    saves_next = "" if saves_status == "active" else NEXT_STEPS.get(saves_status, "")
 
     # Independent capabilities: a missing hook degrades deterministic
     # enforcement; it does not remove the ability to read saves or run the
@@ -259,7 +261,7 @@ def main() -> int:
         "python": {"status": py_status, "detail": py_detail},
         "hooks": {"status": hook_status, "exit_code": hook_code, "detail": hook_output, "required": args.require_hooks,
                   "selected_hosts": list(hook_report), "states": hook_states, "observations": observations["events"]},
-        "saves": {"status": saves_status, "detail": saves_detail, "project_root": str(project_root)},
+        "saves": {"status": saves_status, "detail": saves_detail, "next_step": saves_next, "project_root": str(project_root)},
         "capabilities": capabilities,
         "warnings": warnings,
         "blockers": blockers,
@@ -275,6 +277,8 @@ def main() -> int:
         print(f"Python: {py_status} - {py_detail}")
         print(f"Hooks: {hook_status} - verifier exit {hook_code} (hosts: {hosts}; {'required' if args.require_hooks else 'optional'})")
         print(f"Saves: {saves_status} - {saves_detail}")
+        if saves_next:
+            print(f"  next: {saves_next}")
         print("Capabilities: " + ", ".join(f"{key}={value}" for key, value in capabilities.items()))
         if hook_status != "registered":
             print("\nHook verifier output:")

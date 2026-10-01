@@ -27,6 +27,8 @@ from __future__ import annotations
 import errno
 import json
 import os
+import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -741,6 +743,91 @@ class AuditTrailTests(RunStateCase):
         pointer.mkdir()
         self.save("checkpoint")
         self.assertNotIn(str(self.project), (self.run_dir / "_audit-trail.md").read_text(encoding="utf-8"))
+
+
+@unittest.skipUnless(os.name == "posix", "POSIX permission bits")
+class SavedFileModeTests(RunStateCase):
+    """SEC-19: the writer took whatever mode the umask gave, so a permissive umask left every record world-readable."""
+
+    def setUp(self):
+        super().setUp()
+        previous = os.umask(0)
+        self.addCleanup(os.umask, previous)
+
+    def modes(self) -> dict[str, int]:
+        saves = self.project / "skillset-saves"
+        # `_write.lock` is the empty mutex file and holds no record.
+        return {path.relative_to(saves).as_posix(): stat.S_IMODE(path.stat().st_mode)
+                for path in saves.rglob("*") if path.is_file() and path.name != "_write.lock"}
+
+    def test_every_record_the_writer_creates_is_owner_only_whatever_the_umask(self):
+        self.create()
+        self.assertEqual(self.save("checkpoint", "--evidence", "b.md")[0], 0)
+        self.assertEqual(self.save("heartbeat")[0], 0)
+        self.assertEqual(self.save("release")[0], 0)
+        self.assertEqual(self.save("checkpoint")[0], 0)
+        self.assertEqual(self.save("complete")[0], 0)
+        modes = self.modes()
+        for name in ("_latest.md", "runs/run-1/_state.md", "runs/run-1/_lock.md", "runs/run-1/_audit-trail.md",
+                     "runs/run-1/_history/rev-1.state.json"):
+            self.assertIn(name, modes)
+        self.assertEqual({name: oct(mode) for name, mode in modes.items() if mode != 0o600}, {}, modes)
+
+    def test_the_heartbeat_a_hook_makes_keeps_the_lock_record_owner_only(self):
+        self.create()
+        os.chmod(self.run_dir / "_lock.md", 0o644)
+        self.assertEqual(self.save("heartbeat")[0], 0)
+        self.assertEqual(stat.S_IMODE((self.run_dir / "_lock.md").stat().st_mode), 0o600)
+
+    def test_an_audit_trail_an_earlier_writer_created_is_narrowed_at_the_next_event(self):
+        self.create()
+        os.chmod(self.run_dir / "_audit-trail.md", 0o644)
+        self.assertEqual(self.save("checkpoint")[0], 0)
+        self.assertEqual(stat.S_IMODE((self.run_dir / "_audit-trail.md").stat().st_mode), 0o600)
+
+    def test_directories_keep_the_default_mode(self):
+        self.create()
+        self.assertEqual(stat.S_IMODE((self.project / "skillset-saves").stat().st_mode), 0o777)
+
+    def test_the_umask_is_restored_after_every_write(self):
+        self.create()
+        self.assertEqual(os.umask(0), 0)
+
+
+class TrailVocabularyTests(RunStateCase):
+    """save-protocol.md says which events the trail holds. Every one of them has to be producible and nothing else may appear."""
+
+    def documented(self) -> set[str]:
+        text = (HOOK_DIR.parents[1] / "save-protocol.md").read_text(encoding="utf-8")
+        sentence = re.search(r"The trail holds \w+ events and no others:(.*?)\.\s", text, re.S).group(1)
+        return set(re.findall(r"`([a-z][a-z-]*)`", sentence.split(" with its ")[0]))
+
+    def test_the_writer_emits_exactly_the_documented_events(self):
+        self.create("README.md", "notes.md")
+        self.assertEqual(self.save("checkpoint", "--expect-revision", "9")[0], 1)                  # refused
+        self.assertEqual(self.save("release")[0], 0)                                                 # released
+        self.assertEqual(self.save("checkpoint")[0], 0)                                              # resume
+        self.assertEqual(self.save("block")[0], 0)                                                   # blocked
+        self.assertEqual(self.save("checkpoint", "--reopen")[0], 0)                                  # reopen
+        self.assertEqual(self.save("complete")[0], 0)                                                # complete
+        self.assertEqual(self.save("checkpoint", "--reopen")[0], 0)
+        self.age_records(45)
+        self.assertEqual(self.save("recover", "--reason", "stale")[0], 0)                            # recover
+        with crash_when_writing("_state.md"), self.assertRaises(save_run.Degraded):
+            self.store().checkpoint("admiral", None, [], "active", None, {})
+        self.assertEqual(self.save("recover", "--rollback")[0], 0)                                   # rollback
+        state = self.state()
+        with crash_when_writing("_state.md"), self.assertRaises(save_run.Degraded):
+            self.store().checkpoint("admiral", None, [], "active", None, {})
+        state["revision"] += 1
+        (self.run_dir / "_state.md").write_text(json.dumps(state), encoding="utf-8")
+        self.assertEqual(self.save("recover", "--rollback")[0], 0)                                   # rollforward
+        pointer = self.project / "skillset-saves" / "_latest.md"
+        pointer.unlink()
+        pointer.mkdir()
+        self.assertEqual(self.save("checkpoint")[0], 2)                                              # pointer-degraded, degraded
+        seen = {event["event"] for event in self.events()}
+        self.assertEqual(seen, self.documented())
 
 
 if __name__ == "__main__":

@@ -181,6 +181,31 @@ class ReadinessSemanticsTests(Scratch):
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertTrue(any("--require-active-run" in blocker for blocker in data["blockers"]), data["blockers"])
 
+    def test_readiness_says_what_to_do_about_the_saves_it_found(self):
+        # DX-19: only the hooks had a remediation line; `status` had a next step and readiness did not.
+        self.claude_settings(self.registered())
+        result, data = self.readiness("--host", "auto")
+        self.assertEqual(data["saves"]["status"], "missing")
+        self.assertIn("save_run.py create", data["saves"]["next_step"])
+        text = self.run_tool("check_readiness.py", "--host", "auto").stdout
+        self.assertIn("Saves: missing", text)
+        self.assertIn("  next: no run exists yet", text)
+        (self.project / "skillset-saves" / "runs" / "r1" / "intake").mkdir(parents=True)
+        result, data = self.readiness("--host", "auto")
+        self.assertEqual(data["saves"]["status"], "uninitialized")
+        self.assertIn("run save_run.py create", data["saves"]["next_step"])
+
+    def test_an_active_run_needs_no_instruction(self):
+        self.claude_settings(self.registered())
+        (self.project / "README.md").write_text("x\n", encoding="utf-8")
+        created = subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), "create", "--project-root", str(self.project),
+                                  "--run-id", "r1", "--evidence", "README.md"], capture_output=True, text=True, check=False,
+                                 env=plain_env(self.home))
+        self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
+        _, data = self.readiness("--host", "auto")
+        self.assertEqual((data["saves"]["status"], data["saves"]["next_step"]), ("active", ""))
+        self.assertNotIn("  next:", self.run_tool("check_readiness.py", "--host", "auto").stdout)
+
     def test_project_root_reaches_the_hook_inspection(self):
         # BUGH-19: the hooks live in the other project; the working directory is a bare one.
         other = self.tmp / "other"

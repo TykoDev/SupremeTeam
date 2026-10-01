@@ -9,7 +9,9 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -281,6 +283,23 @@ class OptionalRootTests(StateCase):
                 with self.subTest(winner=name):
                     self.assertEqual(str(_state.project_root()), f"/{name.lower()}")
                     del os.environ[name]
+
+
+class LoadByPathTests(StateCase):
+    """A tool outside this directory may load ``_state.py`` by path (the gate engine compares its root markers with these)."""
+
+    def test_state_loads_by_path_from_any_directory_with_nothing_on_sys_path(self):
+        code = ("import importlib.util, sys\n"
+                "spec = importlib.util.spec_from_file_location('hooks_state_under_test', sys.argv[1])\n"
+                "state = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(state)\n"
+                "print(state.ROOT_MARKERS == state._ROOT_MARKERS, state.PROJECT_ENV[0])\n")
+        with tempfile.TemporaryDirectory() as elsewhere:
+            env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+            proc = subprocess.run([sys.executable, "-P", "-c", code, str(HOOK_DIR / "_state.py")], capture_output=True, text=True,
+                                  cwd=elsewhere, env=env, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "True SUPREMETEAM_PROJECT_DIR")
 
 
 class StateWriteTests(StateCase):

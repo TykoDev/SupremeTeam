@@ -40,8 +40,17 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-import _bootstrap
-import _fsutil
+try:
+    import _bootstrap
+except ModuleNotFoundError:  # loaded by path (a tool that reads ROOT_MARKERS), not run from this directory
+    import importlib.util
+
+    _spec = importlib.util.spec_from_file_location("_bootstrap", Path(__file__).resolve().with_name("_bootstrap.py"))
+    _bootstrap = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_bootstrap)
+    sys.modules["_bootstrap"] = _bootstrap
+_bootstrap.ensure_paths()
+import _fsutil  # noqa: E402
 
 # Maximum trajectory signatures retained per identity (bounded memory).
 _MAX_TRAJ = 40
@@ -55,6 +64,8 @@ _SESSION_ENV = ("SUPREMETEAM_SESSION_ID", "CLAUDE_SESSION_ID", "CODEX_SESSION_ID
 # working directory keeps runtime state at the project root even when a
 # script is invoked from a subdirectory (save-ownership.yaml generated_roots).
 ROOT_MARKERS = ("skillset-saves", ".harness-state", ".git")
+# The old private name: skills/harness/gatekeeper/test_gate_wrappers.py pins the gate engine's own list against this one.
+_ROOT_MARKERS = ROOT_MARKERS
 # The one documented order: an explicit Supreme Team variable beats a host's own
 # workspace variable, and any variable beats the marker walk from the working
 # directory. Every hook-directory reader and writer resolves the root here.

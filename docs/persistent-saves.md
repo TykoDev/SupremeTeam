@@ -131,6 +131,19 @@ Every record the writer creates (state, lock, pointer, journal, history snapshot
 the audit trail) is readable by its owner alone, whatever the umask; directories keep
 the default, and `_write.lock` is an empty mutex file.
 
+That makes a project directory shared by two operating-system accounts a place where
+the second account cannot see the first one's runs, and it does not take that for an
+empty save root. A record that exists and that the account is refused is classified
+`corrupt` with `access_denied` naming the file (`skillset-saves/runs/<id>/_lock.md
+exists but this account cannot read it (permission denied)`), never as a missing or
+malformed one. `create`, resuming a released run and `recover` refuse beside it with
+that path and reason; every other operation on that run says the same instead of
+"no lock"; the readiness diagnostic prints it under `Saves:` with its next step; and
+the hook-file gate and the session-pin reminder count it as a held run, because it
+may be one and the second account cannot tell. The way forward is the first account
+completing or releasing the run, or the records being made readable to the second.
+Nothing changes for an account that can read them.
+
 Reclaiming a stale lock requires `recover --reason`, which writes the stale lock's
 path, heartbeat, owner, and sha256 into the audit trail before taking it. Nothing
 disappears quietly.
@@ -145,6 +158,8 @@ directory that holds intake's report and no record yet: run `create`. `status`
 also classifies the run you asked about as `requested_run` and says what to do
 next; the readiness diagnostic prints the same next step under `Saves:` unless a run
 is active. Only a coherent fresh active or orphaned record reinforces the session pin.
+`corrupt` with `access_denied` is not damage but a record this account cannot read
+(above): it is neither resumed nor overwritten, and the guard treats it as held.
 
 `_latest.md` is a pointer, not the truth. When it is missing, stale, or disagrees
 with a reclaimable run, scan `runs/` before concluding there is nothing to resume.

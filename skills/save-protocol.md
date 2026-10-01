@@ -150,7 +150,12 @@ prompt-submit hook, and the gate checker's run-root verification.
    has written its report and `create` has not run: the next step is `create`,
    not recovery. `status` also classifies the `--run-id` you passed on its own
    as `requested_run`, and names the `next_step` for the classification. Only a
-   coherent fresh active or orphaned record reinforces the session pin.
+   coherent fresh active or orphaned record reinforces the session pin. A record
+   that exists and that this account cannot read (every record is owner-only, so a
+   second operating-system account sharing the project directory cannot read the
+   first one's) is `corrupt` with `access_denied` naming it, never absent or
+   malformed: it may be a held run, so `create` and every operation that would pin
+   a run refuse beside it, and the guard counts it as held.
 2. Verify lock owner, heartbeat, status, revision lineage, and referenced
    artifacts. Heartbeat contract: the heartbeat is an ISO-8601 `heartbeat:`
    timestamp field inside the run's `_lock.md`, refreshed on every checkpoint or
@@ -414,6 +419,12 @@ so deleting any of those three pointers fails the suite.
 - A run directory holds intake's report and no record (`uninitialized`). Nothing
   is wrong: run `create` with the report as evidence. It is not `corrupt`, and it
   is not a run to recover.
+- A record exists that this account cannot read (`corrupt` with `access_denied`,
+  the reason `permission denied`): the first account's owner-only records, seen
+  from a second account. `create`, a resume of a released run and `recover` are
+  refused with the path and the reason, and every other operation on that run says
+  the same. It is not damage and not a run to recover: the account that owns the
+  run completes or releases it, or its records are made readable to this one.
 - The write lock is busy: `refused`, with a message to retry, after waiting
   `--lock-timeout` seconds. Another `save_run.py` process holds
   `skillset-saves/_write.lock`; the operating system releases it when that

@@ -37,7 +37,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _saves import NEXT_STEPS, classify_saves
+from _saves import inspect_saves, next_step
 import _state
 from verify_registration import HOSTS, MATCHERS, REQUIRED, declared_minimum, interpreter_warning, repair_command
 
@@ -147,7 +147,7 @@ def python_status(min_major: int, min_minor: int) -> tuple[str, str]:
     return "too_old", f"Python {label} is older than required >= {min_major}.{min_minor}"
 
 
-def _hook_warnings(hook_states: dict) -> list[str]:
+def _hook_warnings(hook_states: dict, hash_record: "str | None") -> list[str]:
     """What is wrong with hooks that are registered, without making them unregistered."""
     warnings: list[str] = []
     changed = sorted({f"{name.split(':', 1)[0]}:{file}" for name, state in hook_states.items()
@@ -162,8 +162,14 @@ def _hook_warnings(hook_states: dict) -> list[str]:
         if state["coverage"] == "partial":
             warnings.append(f"{name}: the registered matcher misses {', '.join(state['missing_tools'])}")
     if changed:
-        warnings.append(f"hook files changed since registration ({', '.join(changed)}); expected after a deliberate edit or an "
-                        "upgrade, restore them if you made neither; re-record with repair_registration.py --host <host> --record-hashes")
+        warnings.append(f"hook files changed since registration ({', '.join(changed)}; by the record in {hash_record}); expected after a "
+                        "deliberate edit or an upgrade, restore them if you made neither; re-record with "
+                        "repair_registration.py --host <host> --record-hashes")
+    for host in sorted({name.split(":", 1)[0] for name, state in hook_states.items()
+                        if state["registered"] and state["integrity"] == "unrecorded"}):
+        warnings.append(f"{host}: the hook files have no record in {hash_record}, so an edit of them is not noticed from "
+                        f"this project (a registration records them in the project it ran from); record them here with "
+                        f"{repair_command(host, '--record-hashes')}")
     return warnings
 
 
@@ -189,9 +195,12 @@ def main() -> int:
     project_root = (Path(args.project_root).expanduser() if args.project_root else _state.project_root()).resolve()
     py_status, py_detail = python_status(min_major, min_minor)
     hook_status, hook_code, hook_output, hook_report = run_hook_verifier(args.host, project_root)
-    saves_status, saves_detail = classify_saves(project_root)
+    saves = inspect_saves(project_root)
+    saves_status, saves_detail = str(saves["status"]), str(saves["detail"])
+    # A record this account cannot read is classified corrupt but is not damage: it is named, and may hold the pin.
+    access_denied = list(saves.get("access_denied") or [])
     # An active run needs no instruction; every other classification has a next step, the one `save_run.py status` prints.
-    saves_next = "" if saves_status == "active" else NEXT_STEPS.get(saves_status, "")
+    saves_next = "" if saves_status == "active" else next_step(saves)
 
     # Independent capabilities: a missing hook degrades deterministic
     # enforcement; it does not remove the ability to read saves or run the
@@ -213,6 +222,8 @@ def main() -> int:
                 "interpreter": state.get("interpreter"),
                 "observed": state.get("observed", "unverified"),
             }
+    # One record per project, so every host's report names the same file.
+    hash_record = next((host_report["hash_record"] for host_report in hook_report.values() if host_report.get("hash_record")), None)
     observations = _observations_for(project_root, hook_states)
     registered = [s for s in hook_states.values() if s["registered"]]
     interpreters = [s["interpreter"] for s in registered if s["interpreter"]]
@@ -240,12 +251,12 @@ def main() -> int:
         "hooks_interpreter": interpreter,
         "hooks_observed": observations["summary"],
         "hooks_faults": observations["faults"],
-        "saves_readable": saves_status not in {"missing", "unreadable"},
+        "saves_readable": saves_status not in {"missing", "unreadable"} and not access_denied,
         "active_run": saves_status == "active",
         "deterministic_validators": True,
     }
 
-    warnings = _hook_warnings(hook_states) + _firing_lines(observations["events"])
+    warnings = _hook_warnings(hook_states, hash_record) + _firing_lines(observations["events"])
     repair_host = args.host if args.host in HOSTS else next(iter(hook_report)) if len(hook_report) == 1 else "<host>"
     needs_repair = hook_status != "registered" or coverage == "partial"
     repair_hint = (f"{repair_command(repair_host, '--scope', 'project')} "
@@ -265,14 +276,16 @@ def main() -> int:
         elif interpreter in {"too_old", "not_found"}:
             blockers.append(f"the registered interpreter is {interpreter.replace('_', ' ')} (--require-hooks)")
     if args.require_active_run and saves_status != "active":
-        blockers.append(f"no active pinned run (saves are {saves_status}; --require-active-run)")
+        blockers.append(f"no active pinned run (saves are {saves_status}{f': {saves_detail}' if access_denied else ''}; --require-active-run)")
     ready = not blockers
 
     report = {
         "python": {"status": py_status, "detail": py_detail},
         "hooks": {"status": hook_status, "exit_code": hook_code, "detail": hook_output, "required": args.require_hooks,
-                  "selected_hosts": list(hook_report), "states": hook_states, "observations": observations["events"]},
-        "saves": {"status": saves_status, "detail": saves_detail, "next_step": saves_next, "project_root": str(project_root)},
+                  "selected_hosts": list(hook_report), "states": hook_states, "observations": observations["events"],
+                  "hash_record": hash_record},
+        "saves": {"status": saves_status, "detail": saves_detail, "next_step": saves_next, "project_root": str(project_root),
+                  "access_denied": access_denied},
         "capabilities": capabilities,
         "warnings": warnings,
         "blockers": blockers,

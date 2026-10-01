@@ -13,6 +13,7 @@ had been pruned read as `corrupt`.
 """
 from __future__ import annotations
 
+import errno
 import json
 import re
 import subprocess
@@ -27,6 +28,7 @@ HOOK_DIR = Path(__file__).resolve().parent
 SAVE_RUN = HOOK_DIR / "save_run.py"
 sys.path.insert(0, str(HOOK_DIR))
 import _saves  # noqa: E402
+from test_run_state import refusing  # noqa: E402
 
 NOW = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
 
@@ -284,6 +286,127 @@ class HasActiveRunTests(unittest.TestCase):
                 build(self.project)
                 expected = self.project.classify()["status"] in {"active", "orphaned"}
                 self.assertEqual(_saves.has_active_run(self.project.root), expected, self.project.classify())
+
+
+class RefusedRecordTests(unittest.TestCase):
+    """RR3-state-1: records are owner-only since SEC-19, and an account that could not read one read it as no run.
+
+    The permission error is simulated at the read, which is the same call that fails for a second account (and for
+    a process that bypasses file modes, as root does, so these run everywhere)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.project = SavedProject(Path(tmp.name).resolve(), now=datetime.now(timezone.utc))
+
+    def test_a_record_this_account_cannot_read_is_neither_absent_nor_damaged(self):
+        cases = {
+            "the lock of a held run": ("runs/a/_lock.md", "skillset-saves/runs/a/_lock.md", "a"),
+            "the state of a held run": ("runs/a/_state.md", "skillset-saves/runs/a/_state.md", "a"),
+            "the pointer": ("skillset-saves/_latest.md", "skillset-saves/_latest.md", ""),
+        }
+        for label, (tail, path, run_id) in cases.items():
+            with self.subTest(label):
+                self.project.run("a")
+                self.project.pointer("a")
+                with refusing(tail):
+                    result = self.project.classify()
+                    self.assertEqual(_saves.has_active_run(self.project.root), True)
+                self.assertEqual((result["status"], result["access_denied"], result["run_id"]), ("corrupt", [path], run_id), result)
+                self.assertIn(f"{path} exists but this account cannot read it (permission denied)", result["detail"])
+                self.assertNotIn("missing", result["detail"])
+                self.assertEqual(_saves.next_step(result), _saves.ACCESS_DENIED_STEP)
+
+    def test_a_refused_lock_is_a_possible_pin_even_when_the_run_may_be_closed(self):
+        self.project.run("done", status="complete")
+        self.project.pointer("done")
+        with refusing("runs/done/_lock.md"):
+            result = self.project.classify()
+            self.assertTrue(_saves.has_active_run(self.project.root))
+        self.assertEqual((result["status"], result["access_denied"]), ("corrupt", ["skillset-saves/runs/done/_lock.md"]))
+
+    def test_a_readable_released_lock_is_a_closed_run_whatever_else_is_refused(self):
+        self.project.run("done", status="complete")
+        self.project.pointer("done")
+        with refusing("runs/done/_state.md"):
+            result = self.project.classify()
+            self.assertFalse(_saves.has_active_run(self.project.root))
+        self.assertEqual(result["status"], "corrupt")
+        self.assertNotIn("access_denied", result)
+        self.assertIn("cannot read it (permission denied)", result["detail"])
+
+    def test_a_refused_record_never_hides_a_readable_held_run_and_outranks_every_answer_that_says_none(self):
+        arrangements = {
+            "beside a live run": (lambda p: (p.run("a"), p.pointer("a"), p.run("b")), "runs/b/_lock.md", "active"),
+            "beside a stale run": (lambda p: (p.run("a", heartbeat=-45), p.pointer("a", updated=-45), p.run("b")), "runs/b/_lock.md", "corrupt"),
+            "beside a complete run": (lambda p: (p.run("a", status="complete"), p.pointer("a"), p.run("b")), "runs/b/_lock.md", "corrupt"),
+            "beside closed runs and an orphan": (lambda p: (p.run("a", status="released"), p.pointer("a"), p.run("b"), p.run("c")),
+                                                 "runs/c/_state.md", "orphaned"),
+        }
+        for label, (build, tail, status) in arrangements.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                project = SavedProject(Path(tmp).resolve(), now=datetime.now(timezone.utc))
+                build(project)
+                with refusing(tail):
+                    result = project.classify()
+                    self.assertEqual(result["status"], status, result)
+                    self.assertTrue(_saves.has_active_run(project.root))
+
+    def test_a_directory_this_account_cannot_list_is_not_read_as_nothing(self):
+        """`Path.iterdir` raised out of the classifier, which `status` reported as an engine error and the hooks as a fault."""
+        self.project.run("a")
+        self.project.pointer("a")
+        with mock.patch.object(Path, "iterdir", side_effect=PermissionError(errno.EACCES, "Permission denied",
+                                                                            str(self.project.runs))):
+            result = self.project.classify()
+            self.assertTrue(_saves.has_active_run(self.project.root))
+        self.assertEqual((result["status"], result["access_denied"]), ("corrupt", ["skillset-saves/runs"]), result)
+        self.assertNotIn(str(self.project.root), result["detail"])
+
+    def test_a_directory_where_a_record_belongs_is_damage_not_a_refusal_even_where_the_system_says_permission_denied(self):
+        """Windows raises PermissionError for the read of a directory; only a file this account is refused is a refusal."""
+        self.project.run("a")
+        self.project.pointer("a")
+        pointer = self.project.root / "skillset-saves" / "_latest.md"
+        pointer.unlink()
+        pointer.mkdir()
+        with refusing("skillset-saves/_latest.md"):
+            result = self.project.classify()
+            self.assertFalse(_saves.has_active_run(self.project.root))
+        self.assertEqual((result["status"], result["detail"]), ("corrupt", "pointer missing or malformed"), result)
+        self.assertNotIn("access_denied", result)
+
+    def test_one_run_is_classified_corrupt_with_the_path_when_its_record_is_refused(self):
+        self.project.run("a")
+        with refusing("runs/a/_state.md"):
+            result = _saves.inspect_run(self.project.root, "a", now=self.project.now)
+        self.assertEqual((result["state"], result["access_denied"]), ("corrupt", ["skillset-saves/runs/a/_state.md"]), result)
+        self.assertIn("cannot read it (permission denied)", result["detail"])
+
+    def test_has_active_run_agrees_with_the_classification_when_a_record_cannot_be_read(self):
+        """The answer is the classification's: active, orphaned, or a record that may be a held run."""
+        arrangements = {
+            "the lock of a live run": (lambda p: (p.run("r"), p.pointer("r")), "runs/r/_lock.md", True),
+            "the state of a live run": (lambda p: (p.run("r"), p.pointer("r")), "runs/r/_state.md", True),
+            "the pointer of a live run": (lambda p: (p.run("r"), p.pointer("r")), "/_latest.md", True),
+            "the lock of a run that may be closed": (lambda p: p.pointer("closed-03"), "runs/closed-03/_lock.md", True),
+            "the lock of a stale run": (lambda p: (p.run("r", heartbeat=-45), p.pointer("r", updated=-45)), "runs/r/_lock.md", True),
+            "the lock of a closed run among others": (lambda p: p.run("x", status="released"), "runs/x/_lock.md", True),
+            "the state of a closed run with a readable lock": (lambda p: (p.run("x", status="released"), p.pointer("x")),
+                                                                "runs/x/_state.md", False),
+            "the lock of a closed run beside an orphan": (lambda p: (p.run("r"), p.pointer("closed-03")), "runs/closed-03/_lock.md", True),
+            "a record that is not there beside an orphan": (lambda p: p.run("r"), "runs/nothing/_lock.md", True),
+        }
+        for label, (build, tail, expected) in arrangements.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                project = SavedProject(Path(tmp).resolve(), now=datetime.now(timezone.utc))
+                for index in range(10):
+                    project.run(f"closed-{index:02d}", status="complete", heartbeat=-600 - index)
+                build(project)
+                with refusing(tail):
+                    full = project.classify()
+                    self.assertEqual(_saves.has_active_run(project.root), expected, full)
+                    self.assertEqual(full["status"] in {"active", "orphaned"} or bool(full.get("access_denied")), expected, full)
 
 
 class SharedConstantsTests(unittest.TestCase):

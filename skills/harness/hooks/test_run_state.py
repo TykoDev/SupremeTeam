@@ -25,6 +25,7 @@ was counted as a hook fault.
 from __future__ import annotations
 
 import errno
+import io
 import json
 import os
 import re
@@ -34,7 +35,7 @@ import sys
 import tempfile
 import time
 import unittest
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -45,6 +46,7 @@ SAVE_RUN = HOOK_DIR / "save_run.py"
 sys.path.insert(0, str(HOOK_DIR))
 import _saves  # noqa: E402
 import _state  # noqa: E402
+import _testkit as kit  # noqa: E402
 import run_heartbeat  # noqa: E402
 import save_run  # noqa: E402
 
@@ -97,6 +99,33 @@ def crash_when_writing(name: str):
 
     with mock.patch.object(save_run, "atomic_write", failing):
         yield
+
+
+@contextmanager
+def refusing(*tails: str):
+    """Reads of the records ending in these paths raise PermissionError, as they do for an account that owner-only records exclude."""
+    real = Path.read_text
+
+    def read_text(self, *args, **kwargs):
+        if any(self.as_posix().endswith(tail) for tail in tails):
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        return real(self, *args, **kwargs)
+
+    with mock.patch.object(Path, "read_text", read_text):
+        yield
+
+
+def modes_are_enforced() -> bool:
+    """False for a process that bypasses file modes (root, Windows): a record with no permission bits can still be read."""
+    with tempfile.TemporaryDirectory() as tmp:
+        probe = Path(tmp) / "probe"
+        probe.write_text("x", encoding="utf-8")
+        probe.chmod(0)
+        try:
+            probe.read_text(encoding="utf-8")
+        except PermissionError:
+            return True
+        return False
 
 
 class RunStateCase(unittest.TestCase):
@@ -793,6 +822,118 @@ class SavedFileModeTests(RunStateCase):
     def test_the_umask_is_restored_after_every_write(self):
         self.create()
         self.assertEqual(os.umask(0), 0)
+
+
+class SecondAccountTests(RunStateCase):
+    """RR3-state-1: records are owner-only since SEC-19, so a second account sharing the project directory read the first
+    one's run as no run: its `create` passed the one-held-run check, and the hook-file gate went quiet for it.
+
+    The refused read is simulated where it happens, so these run for every account; the cases below the line use a
+    real file with no permission bits and run wherever the file modes bind the process."""
+
+    OWNER_ONLY = ("run-1/_state.md", "run-1/_lock.md", "/_latest.md")
+
+    def in_process(self, *args: str, run_id: str = "run-1") -> tuple[int, dict]:
+        """The writer's own entry point, run here so a read this module refuses is refused for it."""
+        argv = ["save_run.py", *args, "--project-root", str(self.project), f"--run-id={run_id}"]
+        out = io.StringIO()
+        with mock.patch.object(sys, "argv", argv), redirect_stdout(out):
+            code = save_run.main()
+        return code, json.loads(out.getvalue())
+
+    def test_create_refuses_beside_a_record_it_cannot_read_and_names_it(self):
+        self.create()
+        before = (self.project / "skillset-saves" / "_latest.md").read_bytes()
+        with refusing(*self.OWNER_ONLY):
+            code, out = self.in_process("create", "--evidence", "README.md", run_id="run-2")
+        self.assertEqual(code, 1, out)
+        self.assertIn("skillset-saves/_latest.md exists but this account cannot read it (permission denied)", out["reason"])
+        self.assertNotIn("missing", out["reason"])
+        self.assertFalse((self.project / "skillset-saves" / "runs" / "run-2").exists(), "a refused create leaves no directory")
+        self.assertEqual((self.project / "skillset-saves" / "_latest.md").read_bytes(), before, "the pointer is not overwritten")
+
+    def test_the_refusal_names_the_record_whichever_one_it_is(self):
+        for tail, path in (("run-1/_lock.md", "runs/run-1/_lock.md"), ("run-1/_state.md", "runs/run-1/_state.md")):
+            with self.subTest(tail):
+                self.create()
+                with refusing(tail), self.assertRaises(save_run.Refused) as caught:
+                    self.store("run-2").create("admiral", ["README.md"], "agent", "next", {})
+                self.assertIn(f"skillset-saves/{path} exists but this account cannot read it", str(caught.exception))
+                self.assertIn("ask the account that owns the run", str(caught.exception))
+                self.setUp()
+
+    def test_resuming_or_recovering_beside_a_record_it_cannot_read_is_refused_too(self):
+        self.create()
+        self.assertEqual(self.save("release")[0], 0)
+        self.save("create", "--evidence", "README.md", run_id="run-2")
+        with refusing("run-2/_lock.md"), self.assertRaises(save_run.Refused) as caught:
+            self.store().checkpoint("admiral", None, [], "active", None, {})
+        self.assertIn("run-2/_lock.md exists but this account cannot read it", str(caught.exception))
+
+    def test_every_operation_on_a_run_it_cannot_read_says_so_instead_of_saying_there_is_no_lock(self):
+        self.create()
+        for operation, extra in (("checkpoint", ()), ("heartbeat", ()), ("complete", ()), ("release", ()), ("block", ()),
+                                 ("recover", ("--reason", "why"))):
+            with self.subTest(operation), refusing("run-1/_state.md", "run-1/_lock.md"):
+                code, out = self.in_process(operation, *extra)
+                self.assertEqual(code, 1, out)
+                self.assertIn("exists but this account cannot read it (permission denied)", out["reason"])
+                self.assertNotIn("no lock", out["reason"])
+
+    def test_a_directory_where_a_record_belongs_is_not_called_a_permission_problem(self):
+        """Windows raises PermissionError for the read of a directory; the writer still says what is wrong."""
+        self.create()
+        lock = self.run_dir / "_lock.md"
+        lock.unlink()
+        lock.mkdir()
+        with refusing("run-1/_lock.md"), self.assertRaises(save_run.Refused) as caught:
+            self.store().checkpoint("admiral", None, [], "active", None, {})
+        self.assertEqual(str(caught.exception), "run has no lock; create it first")
+
+    def test_status_says_a_record_cannot_be_read_and_what_to_do(self):
+        self.create()
+        with refusing("run-1/_lock.md"):
+            result = self.store("run-1").status()
+        self.assertEqual((result["status"], result["access_denied"]), ("corrupt", ["skillset-saves/runs/run-1/_lock.md"]), result)
+        self.assertIn("cannot read it (permission denied)", result["detail"])
+        self.assertEqual(result["next_step"], _saves.ACCESS_DENIED_STEP)
+        self.assertEqual(result["requested_run"]["state"], "corrupt")
+        self.assertEqual(result["requested_run"]["access_denied"], ["skillset-saves/runs/run-1/_lock.md"])
+
+    def test_a_run_the_account_can_read_is_refused_and_resumed_as_before(self):
+        """Nothing changes for the account that owns the records."""
+        self.create()
+        self.assertEqual(self.save("create", "--evidence", "README.md", run_id="run-2")[1]["reason"].split(" (")[0],
+                         "another run holds the session pin")
+        self.assertEqual(self.save("checkpoint", "--expect-revision", "1")[0], 0)
+        self.assertEqual(self.save("status")[1]["status"], "active")
+
+    def test_the_hook_file_gate_stays_engaged_for_a_run_whose_records_it_cannot_read(self):
+        """Rule F asks whether a run is held; an account that cannot read the records used to hear no."""
+        self.create()
+        hook_script = f"{HOOK_DIR.as_posix()}/guard_hook.py"
+        saved = {name: os.environ.pop(name, None) for name in ("SUPREMETEAM_HARNESS_DEV",)}
+        self.addCleanup(lambda: [os.environ.__setitem__(name, value) for name, value in saved.items() if value is not None])
+        self.assertTrue(kit.denied(kit.decide(kit.edit(hook_script), self.project)), "the owner is protected")
+        with refusing(*self.OWNER_ONLY):
+            output = kit.decide(kit.edit(hook_script), self.project)
+        self.assertTrue(kit.denied(output), "a second account is protected too")
+
+    @unittest.skipUnless(modes_are_enforced(), "this process bypasses file modes")
+    def test_a_record_with_no_permission_bits_is_refused_for_real(self):
+        self.create()
+        lock, state = self.run_dir / "_lock.md", self.run_dir / "_state.md"
+        self.addCleanup(lambda: [path.chmod(0o600) for path in (lock, state)])
+        lock.chmod(0)
+        code, out = self.save("create", "--evidence", "README.md", run_id="run-2")
+        self.assertEqual(code, 1, out)
+        self.assertIn("skillset-saves/runs/run-1/_lock.md exists but this account cannot read it (permission denied)", out["reason"])
+        self.assertFalse((self.project / "skillset-saves" / "runs" / "run-2").exists())
+        state.chmod(0)
+        code, out = self.save("status")
+        self.assertEqual((code, out["status"]), (0, "corrupt"), out)
+        self.assertEqual(sorted(out["access_denied"]), ["skillset-saves/runs/run-1/_lock.md", "skillset-saves/runs/run-1/_state.md"])
+        self.assertIn("and 1 more record exist but this account cannot read them", out["detail"])
 
 
 class TrailVocabularyTests(RunStateCase):

@@ -39,6 +39,9 @@ NEXT_STEPS = {
     "complete": "start a new run, or revise this one with checkpoint --reopen",
     "unreadable": "confirm skillset-saves/runs holds readable run records, then escalate",
 }
+# `corrupt` with `access_denied`: the record is there and this account may not read it, which is not damage.
+ACCESS_DENIED_STEP = ("ask the account that owns the run to complete or release it, or make its records readable to this "
+                      "account; never overwrite them")
 
 
 @dataclass(frozen=True)
@@ -59,15 +62,66 @@ class SaveRecord:
     pending: bool = False
     # Registered evidence that no longer exists, reported only where it was checked.
     evidence_missing: tuple[str, ...] = ()
+    # Records this account is refused and that decide whether the run holds the pin: see `_record`.
+    denied: tuple[str, ...] = ()
+
+
+def _load(path: Path) -> tuple[dict[str, Any] | None, bool]:
+    """The mapping a record holds, and whether this account was refused the file.
+
+    A record that exists and cannot be read by this account (owner-only records, another account sharing the
+    project directory) is not an absent or a damaged one: it may be a held run."""
+    try:
+        value = parse_yaml(path.read_text(encoding="utf-8"))
+    except PermissionError:
+        # Windows says the same for a directory where the record belongs, which is damage, not a refusal.
+        return None, not _is_directory(path)
+    except (OSError, ValueError, RecursionError):
+        # A parse failure, undecodable bytes and an integer literal past the interpreter's digit limit are all ValueErrors.
+        return None, False
+    return (value if isinstance(value, dict) else None), False
 
 
 def _mapping(path: Path) -> dict[str, Any] | None:
+    return _load(path)[0]
+
+
+def _is_directory(path: Path) -> bool:
     try:
-        value = parse_yaml(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, RecursionError):
-        # A parse failure, undecodable bytes and an integer literal past the interpreter's digit limit are all ValueErrors.
-        return None
-    return value if isinstance(value, dict) else None
+        return path.is_dir()
+    except OSError:
+        return False
+
+
+def _exists(path: Path) -> bool:
+    """``Path.exists``, which raises under a directory this account may not search: that path cannot be shown absent."""
+    try:
+        return path.exists()
+    except PermissionError:
+        return True
+
+
+def refusal(path: str, more: int = 0) -> str:
+    if more:
+        return f"{path} and {more} more record{'s' * (more > 1)} exist but this account cannot read them (permission denied)"
+    return f"{path} exists but this account cannot read it (permission denied)"
+
+
+def _refused(paths: list[str], run_id: str = "") -> dict[str, Any]:
+    """The classification for a record this account cannot read, which may be a held run.
+
+    `corrupt` is the classification whose next step is to preserve and escalate; ``access_denied`` names the
+    paths and is what tells a permission from damage."""
+    return {"status": "corrupt", "detail": f"{refusal(paths[0], len(paths) - 1)}; a run this account cannot see may hold the session pin",
+            "run_id": run_id, "access_denied": paths}
+
+
+def next_step(result: dict[str, Any]) -> str:
+    """What to do about a classification, which for a record this account cannot read is not what `corrupt` says."""
+    status = str(result.get("status", ""))
+    if status == "corrupt" and result.get("access_denied"):
+        return ACCESS_DENIED_STEP
+    return NEXT_STEPS.get(status, "")
 
 
 def _string(value: Any) -> str:
@@ -137,19 +191,21 @@ def _resolve_evidence(project_root: Path, paths: tuple[str, ...]) -> tuple[str, 
     return "", tuple(missing)
 
 
-def _pointer(root: Path) -> tuple[str, str, datetime | None, str]:
-    path = root / POINTER
-    data = _mapping(path)
+def _pointer(root: Path) -> tuple[str, str, datetime | None, str, bool]:
+    """The pointer's run id, revision and update time, why it gives none, and whether this account was refused it."""
+    data, refused = _load(root / POINTER)
+    if refused:
+        return "", "", None, "pointer cannot be read by this account (permission denied)", True
     if data is None:
-        return "", "", None, "pointer missing or malformed"
+        return "", "", None, "pointer missing or malformed", False
     if data.get("schema_version") != SCHEMA_VERSION:
-        return "", "", None, "pointer schema_version is invalid"
+        return "", "", None, "pointer schema_version is invalid", False
     run_id = _string(data.get("run_id"))
     revision = _revision(data.get("revision"))
     updated = parse_timestamp(data.get("updated_at"))
     if not run_id or not revision or updated is None:
-        return "", "", None, "pointer requires run_id, revision, and updated_at"
-    return run_id, revision, updated, "pointer valid"
+        return "", "", None, "pointer requires run_id, revision, and updated_at", False
+    return run_id, revision, updated, "pointer valid", False
 
 
 def pointed_heartbeat(project_root: Path) -> datetime | None:
@@ -173,9 +229,9 @@ def _record(project_root: Path, run_dir: Path, now: datetime, *, verify_evidence
     was later pruned, and skipping the stat calls keeps a long history cheap."""
     state_path = run_dir / "_state.md"
     lock_path = run_dir / "_lock.md"
-    pending = not state_path.exists() and not lock_path.exists() and not (run_dir / JOURNAL).exists()
-    state = _mapping(state_path)
-    lock = _mapping(lock_path)
+    pending = not _exists(state_path) and not _exists(lock_path) and not _exists(run_dir / JOURNAL)
+    state, state_refused = _load(state_path)
+    lock, lock_refused = _load(lock_path)
     run_id = run_dir.name
     state_run_id = _string(state.get("run_id")) if state else ""
     revision = _revision(state.get("revision")) if state else ""
@@ -188,6 +244,10 @@ def _record(project_root: Path, run_dir: Path, now: datetime, *, verify_evidence
     lock_owner = _string(lock.get("owner")) if lock else ""
     lock_status = _string(lock.get("status")).lower() if lock else ""
     lock_pin = _bool(lock.get("session_pin")) if lock else None
+    refused = [path.relative_to(project_root).as_posix() for path, flag in ((state_path, state_refused), (lock_path, lock_refused)) if flag]
+    # The lock is what pins. A run whose lock this account cannot read may hold the pin, and so may one whose lock says
+    # held and whose state it cannot read; a readable released lock is a closed run whatever else is refused.
+    pinning = lock_refused or (state_refused and lock_status == "held")
 
     reason = "coherent"
     coherent = True
@@ -195,6 +255,8 @@ def _record(project_root: Path, run_dir: Path, now: datetime, *, verify_evidence
     missing: tuple[str, ...] = ()
     if pending:
         coherent, reason = False, "run directory holds no state or lock; create has not run"
+    elif refused:
+        coherent, reason = False, refusal(refused[0])
     elif not state or state.get("schema_version") != SCHEMA_VERSION:
         coherent, reason = False, "state is missing or schema-invalid"
     elif state_run_id != run_id:
@@ -254,6 +316,7 @@ def _record(project_root: Path, run_dir: Path, now: datetime, *, verify_evidence
         reason=reason,
         pending=pending,
         evidence_missing=missing if coherent else (),
+        denied=tuple(refused) if pinning else (),
     )
 
 
@@ -270,8 +333,17 @@ def _closed(record: SaveRecord) -> dict[str, Any]:
 
 
 def _lock_is_held(run_dir: Path) -> bool:
-    lock = _mapping(run_dir / "_lock.md")
-    return bool(lock) and _string(lock.get("status")).lower() == "held"
+    """A lock that says held, or that this account cannot read and so cannot show to say anything else."""
+    lock, refused = _load(run_dir / "_lock.md")
+    return refused or (bool(lock) and _string(lock.get("status")).lower() == "held")
+
+
+def _project_path(project_root: Path, filename: object) -> str:
+    """The project-relative spelling of the path a permission error names, so no absolute path is reported."""
+    try:
+        return Path(str(filename)).relative_to(project_root.resolve()).as_posix()
+    except ValueError:
+        return "skillset-saves"
 
 
 def inspect_saves(project_root: Path, *, now: datetime | None = None, only_held: bool = False) -> dict[str, Any]:
@@ -283,8 +355,20 @@ def inspect_saves(project_root: Path, *, now: datetime | None = None, only_held:
     thousand runs). A coherent held run always has a held lock, so ``active``,
     ``orphaned``, ``stale``, ``conflicting`` and a ``corrupt`` pointer come out as
     they do without it; the answers that describe closed runs (``complete``,
-    ``inactive``, ``uninitialized``, ``unreadable``) are not meaningful with it."""
-    now = now or datetime.now(timezone.utc)
+    ``inactive``, ``uninitialized``, ``unreadable``) are not meaningful with it.
+
+    A record or a directory this account is refused is not read as absent or damaged:
+    the answer is ``corrupt`` with ``access_denied`` naming the paths. Unless a readable
+    run already shows the pin held, such a record outranks every answer that says no
+    run is, because it may be one (a second account sharing the project directory
+    cannot read the owner-only records of the first)."""
+    try:
+        return _classify(project_root, now or datetime.now(timezone.utc), only_held)
+    except PermissionError as exc:
+        return _refused([_project_path(project_root, exc.filename)])
+
+
+def _classify(project_root: Path, now: datetime, only_held: bool) -> dict[str, Any]:
     root = project_root.resolve() / "skillset-saves"
     if not root.exists():
         return {"status": "missing", "detail": "skillset-saves does not exist", "run_id": ""}
@@ -293,7 +377,9 @@ def inspect_saves(project_root: Path, *, now: datetime | None = None, only_held:
         return {"status": "missing", "detail": "skillset-saves/runs does not exist", "run_id": ""}
 
     pointer_exists = (root / POINTER).exists()
-    pointer_run_id, pointer_revision, pointer_updated_at, pointer_reason = _pointer(root)
+    pointer_run_id, pointer_revision, pointer_updated_at, pointer_reason, pointer_refused = _pointer(root)
+    if pointer_refused:
+        return _refused([f"{root.name}/{POINTER}"])
     if pointer_exists and not pointer_run_id:
         return {"status": "corrupt", "detail": pointer_reason, "run_id": ""}
     if pointer_run_id and (Path(pointer_run_id).name != pointer_run_id or pointer_run_id in {".", ".."}):
@@ -312,6 +398,8 @@ def inspect_saves(project_root: Path, *, now: datetime | None = None, only_held:
     pointer_record = next((record for record in records if record.run_id == pointer_run_id), None)
     if pointer_run_id and pointer_record is None:
         return {"status": "corrupt", "detail": f"pointer target run {pointer_run_id} has no readable state", "run_id": pointer_run_id}
+    if pointer_record is not None and pointer_record.denied:
+        return _refused(list(pointer_record.denied), pointer_record.run_id)
     if pointer_record is not None and not pointer_record.coherent:
         return {"status": "corrupt", "detail": pointer_record.reason, "run_id": pointer_record.run_id}
     if pointer_record is not None and pointer_revision != pointer_record.revision:
@@ -337,6 +425,9 @@ def inspect_saves(project_root: Path, *, now: datetime | None = None, only_held:
             else f"coherent active run {record.run_id} is not addressed by the latest pointer"
         )
         return {"status": "orphaned", "detail": detail, "run_id": record.run_id, "run_status": record.status}
+    refused = [record for record in records if record.denied]
+    if refused:
+        return _refused([path for record in refused for path in record.denied], refused[0].run_id)
     if stale:
         record = stale[0]
         return {"status": "stale", "detail": f"run {record.run_id}: {STALE_REASON}",
@@ -361,9 +452,13 @@ def inspect_run(project_root: Path, run_id: str, *, now: datetime | None = None)
     now = now or datetime.now(timezone.utc)
     root = project_root.resolve()
     run_dir = root / "skillset-saves" / "runs" / run_id
-    if not run_dir.is_dir():
-        return {"run_id": run_id, "state": "absent", "detail": f"run {run_id} has no directory"}
-    record = _record(root, run_dir, now, verify_evidence=True)
+    try:
+        if not run_dir.is_dir():
+            return {"run_id": run_id, "state": "absent", "detail": f"run {run_id} has no directory"}
+        record = _record(root, run_dir, now, verify_evidence=True)
+    except PermissionError as exc:
+        path = _project_path(root, exc.filename)
+        return {"run_id": run_id, "state": "corrupt", "detail": refusal(path), "access_denied": [path]}
     if record.pending:
         state = "uninitialized"
     elif not record.coherent:
@@ -379,19 +474,24 @@ def inspect_run(project_root: Path, run_id: str, *, now: datetime | None = None)
         result["revision"] = int(record.revision)
     if record.evidence_missing:
         result["evidence_missing"] = list(record.evidence_missing)
+    if record.denied:
+        result["access_denied"] = list(record.denied)
     return result
 
 
 def classify_saves(project_root: Path, *, now: datetime | None = None) -> tuple[str, str]:
-    """Compatibility wrapper for readiness's human-readable output."""
+    """The classification as a ``(status, detail)`` pair, for a caller that wants no more."""
     result = inspect_saves(project_root, now=now)
     return str(result["status"]), str(result["detail"])
 
 
 def has_active_run(project_root: Path) -> bool:
-    """Return true only for a coherent fresh active or recoverable orphaned run.
+    """Return true for a coherent fresh active or recoverable orphaned run, and for a record this account cannot read.
 
     A prompt and a guarded write both ask, so it classifies only the runs that can
     answer yes: see ``inspect_saves(only_held=True)``. The answer is the full
-    classification's."""
-    return str(inspect_saves(project_root, only_held=True)["status"]) in {"active", "orphaned"}
+    classification's, and it errs toward a held run: a record this account is refused
+    may be one, and the protections that ask (the hook-file gate, the pin reminder)
+    stay on rather than go quiet because the owner-only record could not be read."""
+    result = inspect_saves(project_root, only_held=True)
+    return str(result["status"]) in {"active", "orphaned"} or bool(result.get("access_denied"))

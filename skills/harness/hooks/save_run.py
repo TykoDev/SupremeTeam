@@ -85,7 +85,7 @@ from data_formats import content_sha256  # noqa: E402
 from save_taxonomy import (  # noqa: E402
     ACTIVE_STATUSES, HISTORY, JOURNAL, POINTER, RUN_ID, RUN_ID_RULE, SCHEMA_VERSION, TERMINAL_STATUSES, WRITE_LOCK,
 )
-from _saves import NEXT_STEPS, heartbeat_is_stale, inspect_run, inspect_saves, parse_timestamp  # noqa: E402
+from _saves import ACCESS_DENIED_STEP, heartbeat_is_stale, inspect_run, inspect_saves, next_step, parse_timestamp, refusal  # noqa: E402
 import _fsutil  # noqa: E402
 import _state  # noqa: E402
 
@@ -141,9 +141,16 @@ def new_run_id(run_id: str) -> str:
     return run_id
 
 
-def read_json(path: Path) -> dict[str, Any] | None:
+def read_json(path: Path, *, refuse: bool = False) -> dict[str, Any] | None:
+    """The record as a mapping, or None. ``refuse`` lets a permission error through, for a caller that must not
+    take a record this account may not read for one that is absent."""
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
+    except PermissionError:
+        # Windows says the same for a directory where the record belongs, which is damage, not a refusal.
+        if refuse and not path.is_dir():
+            raise
+        return None
     except (OSError, ValueError, RecursionError):
         return None
     return value if isinstance(value, dict) else None
@@ -280,15 +287,28 @@ class RunStore:
 
     # --------------------------------------------------------------- records
     def current(self) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        return read_json(self.state_path), read_json(self.lock_path)
+        """The run's state and lock. A record this account cannot read refuses, naming it: it is not a missing one."""
+        records = []
+        for path in (self.state_path, self.lock_path):
+            try:
+                records.append(read_json(path, refuse=True))
+            except PermissionError as exc:
+                raise Refused(f"{refusal(self.rel(path))}: {ACCESS_DENIED_STEP}") from exc
+        return records[0], records[1]
 
     def competing_owner(self, owner: str) -> str | None:
         """Another coherent held run in this save root blocks a new pin.
 
         A *stale* held run blocks too: creating or resuming beside it would
         leave two held runs, which the reader classifies as ``conflicting`` so
-        neither could be pinned. Reclaim it with ``recover`` or close it first."""
+        neither could be pinned. Reclaim it with ``recover`` or close it first.
+
+        A record this account cannot read refuses too, with the path and the reason: it
+        may be a held run, and the one-held-run rule cannot be kept beside a run nobody
+        here can see (owner-only records, a second account sharing the directory)."""
         result = inspect_saves(self.project_root)
+        if result.get("access_denied"):
+            raise Refused(f"{result['detail']}: {next_step(result)}")
         if result["status"] in {"active", "orphaned", "conflicting", "stale"} and result.get("run_id") != self.run_id:
             return f"{result['status']}: {result['detail']}"
         return None
@@ -703,10 +723,10 @@ class RunStore:
             result["status"] = "interrupted"
             requested["state"] = "interrupted"
         result["requested_run"] = requested
-        state, lock = self.current()
+        state, lock = read_json(self.state_path), read_json(self.lock_path)
         result["revision"] = state.get("revision") if state else None
         result["owner"] = lock.get("owner") if lock else None
-        result["next_step"] = NEXT_STEPS.get(str(result["status"]), "")
+        result["next_step"] = next_step(result)
         result["result"] = "ok"
         return result
 

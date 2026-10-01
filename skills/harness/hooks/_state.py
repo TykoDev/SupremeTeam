@@ -65,6 +65,9 @@ except ImportError:
 _MAX_TRAJ = 40
 # Trajectory files older than this are pruned on the next append.
 _TRAJ_RETENTION_SECONDS = 7 * 24 * 3600
+# A hook never holds up the host, so an append waits this long (seconds) for a competing writer and then goes on
+# without the lock, which can cost the entry that writer made. Only a test that must see every append raises it.
+TRAJECTORY_LOCK_WAIT = 0.25
 
 _SESSION_ENV = ("SUPREMETEAM_SESSION_ID", "CLAUDE_SESSION_ID", "CODEX_SESSION_ID", "COPILOT_SESSION_ID", "GITHUB_RUN_ID")
 
@@ -549,7 +552,7 @@ def load_trajectory(identity: str) -> list:
 def append_trajectory(identity: str, entry: dict) -> list:
     """Append one step signature and return the bounded recent history."""
     path = _traj_path(identity)
-    with _fsutil.AdvisoryLock(path.parent / ".append.lock", 0.25, create_dir=True, fail_open=True):
+    with _fsutil.AdvisoryLock(path.parent / ".append.lock", TRAJECTORY_LOCK_WAIT, create_dir=True, fail_open=True):
         history = load_trajectory(identity)
         history.append(entry)
         history = history[-_MAX_TRAJ:]

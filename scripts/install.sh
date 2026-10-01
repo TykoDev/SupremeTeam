@@ -419,16 +419,27 @@ item_state() {
     fi
 }
 
-# True when $1/$2 is a regular file that is byte for byte a copy an earlier release
-# shipped (install-items.txt, supersedes): it was never edited, so it is the
-# installer's own. cmp rather than a digest, so the proof needs no hashing tool.
+# True when two files hold the same text once the CR of every CRLF is dropped, the
+# fold the catalog's own hashes use: a copy from an earlier release that a Windows
+# checkout gave CRLF line endings is the same file. install.ps1 folds the same way.
+same_text() {
+    local cr
+    cr="$(printf '\r')"
+
+    cmp -s <(sed "s/$cr\$//" < "$1") <(sed "s/$cr\$//" < "$2")
+}
+
+# True when $1/$2 is a regular file that is a copy an earlier release shipped
+# (install-items.txt, supersedes), whichever line endings its checkout gave it: it was
+# never edited, so it is the installer's own. cmp rather than a digest, so the proof
+# needs no hashing tool.
 superseded_seed() {
     local path="$1/$2" pair
 
     [[ -f "$path" && ! -L "$path" ]] || return 1
 
     for pair in ${superseded_pairs[@]+"${superseded_pairs[@]}"}; do
-        if [[ "${pair%%:*}" == "$2" ]] && cmp -s -- "$path" "$script_dir/superseded/${pair#*:}"; then
+        if [[ "${pair%%:*}" == "$2" ]] && same_text "$path" "$script_dir/superseded/${pair#*:}"; then
             return 0
         fi
     done

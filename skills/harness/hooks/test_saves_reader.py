@@ -399,6 +399,32 @@ class RefusedRecordTests(unittest.TestCase):
         self.assertEqual((result["status"], result["access_denied"]), ("corrupt", ["skillset-saves/runs/a"]), result)
         self.assertEqual((single["state"], single["access_denied"]), ("corrupt", ["skillset-saves/runs/a"]), single)
 
+    def test_evidence_under_a_directory_this_account_may_not_search_is_unverifiable_and_the_run_keeps_its_classification(self):
+        """RR3-state-10: the project's own file is not a run record. The refusal read as one, to the owner of the run, and the run
+        as `corrupt`; it is now reported beside the answer the run's own records give."""
+        evidence = ("docs/private/spec.md",)
+        arrangements = {
+            "a live run": (lambda p: (p.run("a", evidence=evidence), p.pointer("a")), "active", True),
+            "an orphan": (lambda p: p.run("a", evidence=evidence), "orphaned", True),
+            "a stale run": (lambda p: (p.run("a", evidence=evidence, heartbeat=-45), p.pointer("a", updated=-45)), "stale", False),
+            "a complete run": (lambda p: (p.run("a", status="complete", evidence=evidence), p.pointer("a")), "complete", False),
+        }
+        for label, (build, status, held) in arrangements.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                project = SavedProject(Path(tmp).resolve(), now=datetime.now(timezone.utc))
+                build(project)
+                with unsearchable("docs/private"):
+                    result = project.classify()
+                    single = _saves.inspect_run(project.root, "a", now=project.now)
+                    self.assertEqual(_saves.has_active_run(project.root), held, result)
+                self.assertEqual(result["status"], status, result)
+                self.assertEqual(result["evidence_unverifiable"], list(evidence), result)
+                self.assertIn("1 registered evidence path(s) cannot be checked by this account (permission denied)", result["detail"])
+                self.assertEqual(single["evidence_unverifiable"], list(evidence), single)
+                self.assertNotIn("access_denied", result)
+                self.assertNotIn("access_denied", single)
+                self.assertNotEqual(single["state"], "corrupt", single)
+
     def test_the_probes_tell_a_path_that_is_not_there_from_one_that_cannot_be_reached(self):
         self.project.run("a")
         runs, there, gone = self.project.runs, self.project.runs / "a", self.project.runs / "nothing"

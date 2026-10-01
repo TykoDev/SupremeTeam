@@ -989,6 +989,19 @@ class SecondAccountTests(RunStateCase):
         self.assertEqual(out["reason"], "evidence path cannot be read by this account (permission denied): docs/private/spec.md")
         self.assertFalse(self.run_dir.exists())
 
+    def test_status_reports_evidence_it_cannot_check_beside_the_run_s_own_classification(self):
+        evidence = self.project / "docs" / "private" / "spec.md"
+        evidence.parent.mkdir(parents=True)
+        evidence.write_text("x\n", encoding="utf-8")
+        self.create("docs/private/spec.md")
+        with unsearchable("docs/private"):
+            result = self.store().status()
+            held = _saves.has_active_run(self.project)
+        self.assertEqual((result["status"], result["evidence_unverifiable"]), ("active", ["docs/private/spec.md"]), result)
+        self.assertNotIn("access_denied", result)
+        self.assertEqual(result["requested_run"]["state"], "active", result)
+        self.assertTrue(held)
+
     def test_status_classifies_a_directory_it_may_not_search_instead_of_raising(self):
         self.create()
         with unsearchable("skillset-saves/runs"):
@@ -1127,6 +1140,23 @@ class UnsearchableDirectoryTests(RunStateCase):
             code, out = self.bound_save("checkpoint", "--evidence", "docs/private/spec.md")
         self.assertEqual((code, out["result"]), (1, "refused"), out)
         self.assertEqual(out["reason"], "evidence path cannot be read by this account (permission denied): docs/private/spec.md")
+
+    def test_evidence_in_a_directory_that_cannot_be_searched_does_not_make_the_owners_run_corrupt(self):
+        """RR3-state-10: a `chmod` of an evidence directory read, to the owner of the run, as another account's unreadable run."""
+        evidence = self.project / "docs" / "private" / "spec.md"
+        evidence.parent.mkdir(parents=True)
+        evidence.write_text("x\n", encoding="utf-8")
+        self.assertEqual(self.save("checkpoint", "--evidence", "docs/private/spec.md")[0], 0)
+        with self.closed("docs/private"):
+            code, out = self.bound_save("status")
+            self.assertEqual((code, out.get("status")), (0, "active"), out)
+            self.assertNotIn("access_denied", out)
+            self.assertEqual(out["evidence_unverifiable"], ["docs/private/spec.md"], out)
+            self.assertEqual(out["requested_run"]["state"], "active", out)
+            held = self.child([sys.executable, "-c", self.HAS_ACTIVE_RUN, str(HOOK_DIR), str(self.project)])
+            self.assertEqual(held.stdout.strip(), "True", held.stderr)
+            code, out = self.bound_save("heartbeat")
+            self.assertEqual((code, out["result"]), (0, "ok"), out)
 
     def test_the_hooks_and_readiness_see_the_run_they_cannot_reach(self):
         for label, relative in self.ARRANGEMENTS.items():

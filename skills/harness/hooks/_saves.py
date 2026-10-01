@@ -66,6 +66,8 @@ class SaveRecord:
     pending: bool = False
     # Registered evidence that no longer exists, reported only where it was checked.
     evidence_missing: tuple[str, ...] = ()
+    # Registered evidence under a directory this account may not search: not missing, and not a run record it was refused.
+    evidence_unverifiable: tuple[str, ...] = ()
     # Records this account is refused and that decide whether the run holds the pin: see `_record`.
     denied: tuple[str, ...] = ()
 
@@ -206,19 +208,25 @@ def _unsafe_evidence(paths: tuple[str, ...]) -> str:
     return ""
 
 
-def _resolve_evidence(project_root: Path, paths: tuple[str, ...]) -> tuple[str, tuple[str, ...]]:
-    """Return ``(escape reason, paths that do not exist)`` for project-relative evidence."""
+def _resolve_evidence(project_root: Path, paths: tuple[str, ...]) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """Return ``(escape reason, paths that do not exist, paths this account cannot check)`` for project-relative evidence.
+
+    Evidence is the project's own file, not a run record: one under a directory this account may not search is
+    reported as unverifiable and leaves the run's classification to its records."""
     root = project_root.resolve()
-    missing = []
+    missing, unverifiable = [], []
     for value in paths:
         try:
             resolved = (root / value).resolve()
             resolved.relative_to(root)
         except (OSError, ValueError):
-            return f"evidence path escapes project root {value!r}", ()
-        if not path_exists(resolved):
-            missing.append(value)
-    return "", tuple(missing)
+            return f"evidence path escapes project root {value!r}", (), ()
+        try:
+            if not path_exists(resolved):
+                missing.append(value)
+        except PermissionError:
+            unverifiable.append(value)
+    return "", tuple(missing), tuple(unverifiable)
 
 
 def _pointer(root: Path) -> tuple[str, str, datetime | None, str, bool]:
@@ -283,6 +291,7 @@ def _record(project_root: Path, run_dir: Path, now: datetime, *, verify_evidence
     coherent = True
     stale = False
     missing: tuple[str, ...] = ()
+    unverifiable: tuple[str, ...] = ()
     if pending:
         coherent, reason = False, "run directory holds no state or lock; create has not run"
     elif refused:
@@ -317,7 +326,7 @@ def _record(project_root: Path, run_dir: Path, now: datetime, *, verify_evidence
         coherent, reason = False, unsafe
     else:
         held = status in ACTIVE_STATUSES
-        escape, missing = _resolve_evidence(project_root, evidence) if held or verify_evidence else ("", ())
+        escape, missing, unverifiable = _resolve_evidence(project_root, evidence) if held or verify_evidence else ("", (), ())
         if escape:
             coherent, reason = False, escape
         elif missing and held:
@@ -346,6 +355,7 @@ def _record(project_root: Path, run_dir: Path, now: datetime, *, verify_evidence
         reason=reason,
         pending=pending,
         evidence_missing=missing if coherent else (),
+        evidence_unverifiable=unverifiable if coherent else (),
         denied=tuple(refused) if pinning else (),
     )
 
@@ -359,6 +369,15 @@ def _closed(record: SaveRecord) -> dict[str, Any]:
     if record.evidence_missing:
         result["evidence_missing"] = list(record.evidence_missing)
         result["detail"] += f"; {len(record.evidence_missing)} registered evidence path(s) no longer exist"
+    return _unverified(result, record)
+
+
+def _unverified(result: dict[str, Any], record: SaveRecord) -> dict[str, Any]:
+    """Say which registered evidence this account could not check, beside the classification the run's records give."""
+    if record.evidence_unverifiable:
+        result["evidence_unverifiable"] = list(record.evidence_unverifiable)
+        result["detail"] += (f"; {len(record.evidence_unverifiable)} registered evidence path(s) cannot be checked by this "
+                             f"account (permission denied)")
     return result
 
 
@@ -447,21 +466,21 @@ def _classify(project_root: Path, now: datetime, only_held: bool) -> dict[str, A
     if active:
         record = active[0]
         if pointer_run_id == record.run_id and pointer_revision == record.revision and not pointer_stale:
-            return {"status": "active", "detail": f"latest run {record.run_id} is coherent and pinned",
-                    "run_id": record.run_id, "run_status": record.status}
+            return _unverified({"status": "active", "detail": f"latest run {record.run_id} is coherent and pinned",
+                                "run_id": record.run_id, "run_status": record.status}, record)
         detail = (
             f"latest pointer is stale for coherent active run {record.run_id}"
             if pointer_stale
             else f"coherent active run {record.run_id} is not addressed by the latest pointer"
         )
-        return {"status": "orphaned", "detail": detail, "run_id": record.run_id, "run_status": record.status}
+        return _unverified({"status": "orphaned", "detail": detail, "run_id": record.run_id, "run_status": record.status}, record)
     refused = [record for record in records if record.denied]
     if refused:
         return _refused([path for record in refused for path in record.denied], refused[0].run_id)
     if stale:
         record = stale[0]
-        return {"status": "stale", "detail": f"run {record.run_id}: {STALE_REASON}",
-                "run_id": record.run_id, "run_status": record.status}
+        return _unverified({"status": "stale", "detail": f"run {record.run_id}: {STALE_REASON}",
+                            "run_id": record.run_id, "run_status": record.status}, record)
     if corrupt and not any(record.coherent for record in records):
         return {"status": "corrupt", "detail": corrupt[0].reason, "run_id": corrupt[0].run_id}
     if pointer_record is not None:
@@ -504,6 +523,8 @@ def inspect_run(project_root: Path, run_id: str, *, now: datetime | None = None)
         result["revision"] = int(record.revision)
     if record.evidence_missing:
         result["evidence_missing"] = list(record.evidence_missing)
+    if record.evidence_unverifiable:
+        result["evidence_unverifiable"] = list(record.evidence_unverifiable)
     if record.denied:
         result["access_denied"] = list(record.denied)
     return result

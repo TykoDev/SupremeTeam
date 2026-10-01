@@ -16,7 +16,10 @@
 # Core components are always installed: the Admiral pipeline spine, the runtime
 # harness (hooks, save lifecycle, gate validators), the orchestration contracts
 # (gates, pipelines, ownership, manifests, canonical contracts, tech-stack
-# registry, shared scripts, validation suites), and the root doctrine files.
+# registry, shared scripts, validation suites), the root doctrine files, and the
+# licence. An install carries only skills/, so the notice the MIT licence asks to
+# travel with copies is skills/LICENSE, a byte-for-byte copy of the repository's
+# LICENSE that scripts/test_install.py keeps identical.
 core admiral
 core gatekeeper-admiral
 core session-memory
@@ -44,6 +47,7 @@ core performance-doctrine.md
 core routing-doctrine.md
 core save-protocol.md
 core taste-doctrine.md
+core LICENSE
 
 # The MCP registry ships as a blank template that admiral fills in on first use.
 seed mcp-tools.md

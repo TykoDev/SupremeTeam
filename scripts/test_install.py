@@ -834,6 +834,57 @@ class InstallerBehaviourTests(unittest.TestCase):
         self.assertEqual(parsed, documented)
         self.assertFalse(box.dest.exists())
 
+    def stub_hook_helper(self, box: Sandbox) -> Path:
+        """A stand-in for install_hooks.py that records the arguments it was given."""
+        record = box.root / "helper-args"
+        (box.repo / "scripts" / "install_hooks.py").write_text(
+            f"import pathlib, sys\npathlib.Path({str(record)!r}).write_text(' '.join(sys.argv[1:]))\n", encoding="utf-8")
+        return record
+
+    def test_copilot_is_a_target_that_registers_hooks_and_installs_no_mirror(self):
+        """The hook helper supports Copilot; the installers did not let anyone name it."""
+        box = Sandbox(self)
+        record = self.stub_hook_helper(box)
+        result = box.install("--target", "Copilot", "--register-hooks", "--hooks-yes")
+        self.assertEqual(result.returncode, 0, listing(result))
+        self.assertIn("--target copilot", record.read_text(encoding="utf-8"))
+        for line in ("Host targets: copilot", "Host mirrors: none", f"Installed items: {len(ITEMS.selected())} in 1 location(s)",
+                     "Hook registration: completed"):
+            self.assertIn(line, result.stdout)
+        self.assertEqual([entry.name for entry in box.home.iterdir()], [".agents"], "Copilot has no skills folder to mirror into")
+
+    def test_auto_never_selects_copilot(self):
+        box = Sandbox(self)
+        (box.home / ".config" / "github-copilot").mkdir(parents=True)
+        result = box.install()
+        self.assertEqual(result.returncode, 0, listing(result))
+        self.assertIn("Host targets: none detected", result.stdout)
+
+    def test_the_target_help_and_the_unknown_target_message_name_copilot(self):
+        box = Sandbox(self)
+        self.assertIn("opencode, copilot", box.run("--help").stdout)
+        refused = box.install("--target", "windsurf")
+        self.assertEqual(refused.returncode, 1, listing(refused))
+        self.assertIn("opencode, or copilot", refused.stderr)
+
+    def test_a_host_whose_python_is_only_python3_13_still_registers_hooks(self):
+        """DX-12: the probe tried python3 and python, so a host with only a versioned name warned and then refused."""
+        box = Sandbox(self)
+        (box.bin / "python3").rename(box.bin / "python3.13")
+        record = self.stub_hook_helper(box)
+        result = box.install("--target", "claude", "--claude-destination", str(box.home / ".claude" / "skills"), "--register-hooks", "--hooks-yes")
+        self.assertEqual(result.returncode, 0, listing(result))
+        self.assertNotIn("no Python", result.stderr)
+        self.assertIn("--target claude", record.read_text(encoding="utf-8"))
+
+    def test_without_any_python_the_warning_stays_and_registration_is_refused(self):
+        box = Sandbox(self)
+        (box.bin / "python3").unlink()
+        result = box.install("--target", "claude", "--claude-destination", str(box.home / ".claude" / "skills"), "--register-hooks")
+        self.assertEqual(result.returncode, 1, listing(result))
+        self.assertIn("no Python 3.13+ interpreter was found", result.stderr)
+        self.assertIn("Python 3.13 or newer is required to register runtime harness hooks", result.stderr)
+
 
 @unittest.skipUnless(RUNS_BASH, "the installer tests run install.sh under bash on a POSIX host")
 class RealCatalogTests(unittest.TestCase):
@@ -863,6 +914,7 @@ class RealCatalogTests(unittest.TestCase):
             self.assertEqual(installed, source, f"{name} differs from skills/{name}")
         self.assertEqual(read_manifest(dest).items, ITEMS.selected())
         self.assertEqual(sorted(entry.name for entry in dest.iterdir()), sorted([*ITEMS.selected(), MANIFEST]))
+        self.assertEqual((dest / "LICENSE").read_bytes(), (REPO / "LICENSE").read_bytes(), "the install carries the licence notice")
 
 
 class ItemListTests(unittest.TestCase):
@@ -888,6 +940,12 @@ class ItemListTests(unittest.TestCase):
         self.assertFalse(set(ITEMS.legacy) & set(ITEMS.selected()), "a legacy directory must not be a current item")
         for team, members in ITEMS.teams.items():
             self.assertEqual(len(members), len(set(members)), team)
+
+    def test_the_installed_licence_is_the_repository_licence(self):
+        """An install carries only skills/, so the licence notice travels as the core item skills/LICENSE."""
+        self.assertIn("LICENSE", ITEMS.core)
+        self.assertEqual((SKILLS / "LICENSE").read_bytes(), (REPO / "LICENSE").read_bytes(),
+                         "skills/LICENSE has to stay a copy of the repository LICENSE")
 
     def test_standalone_teams_match_the_team_manifest(self):
         roster = load_data(SKILLS / "team-manifest.yaml")
@@ -1118,7 +1176,26 @@ class PowerShellParityTests(unittest.TestCase):
         self.assertEqual([name.strip('" ').lower() for name in teams.split(",")], list(ITEMS.teams))
         targets = re.search(r'ValidateSet\("Auto", (.*?)\)\]\s*\[string\[\]\]\$Target', self.ps, re.S).group(1)
         hosts = [name.strip('" ').lower() for name in targets.split(",")]
-        self.assertEqual(hosts, re.search(r"codex\|claude\|cursor\|opencode\)", self.sh).group(0)[:-1].split("|"))
+        self.assertEqual(hosts, re.search(r"^\s+(codex(?:\|[a-z]+)+)\)$", self.sh, re.M).group(1).split("|"))
+        self.assertIn("copilot", hosts, "the hook helper supports Copilot, so both installers must let it be named")
+
+    def test_both_name_every_host_where_they_tell_the_operator_which_to_pass(self):
+        hosts = ("codex", "claude", "cursor", "opencode", "copilot")
+        skipped = re.search(r'Hook registration skipped: no host targets were detected\. Pass ([^"\n]*?) to choose explicitly', self.ps).group(1)
+        for host in hosts:
+            self.assertIn(host, skipped.lower())
+        usage = re.search(r"One of: (.*?)\.\n", self.sh).group(1)
+        self.assertEqual(usage.split(", ")[1:], list(hosts))
+        refusal = re.search(r"Unknown target '\$target'\. Use ([^\"]*?)\.\"", self.sh).group(1)
+        for host in hosts:
+            self.assertIn(host, refusal)
+
+    def test_both_probe_the_same_interpreter_names_and_the_powershell_one_adds_the_py_launcher(self):
+        names = re.search(r"for candidate in ((?:python[\d.]*\s*)+); do", self.sh).group(1).split()
+        self.assertEqual(names, ["python3", "python", "python3.14", "python3.13"])
+        powershell = re.findall(r'Command = "(py(?:thon[\d.]*)?)"', self.ps)
+        self.assertEqual(sorted(powershell), sorted(["py", *names]))
+        self.assertEqual(powershell[-2:], names[-2:], "the versioned names are the last resort in both, newest first")
 
     def test_both_refuse_the_same_destinations_in_the_same_words(self):
         for message in ("Refusing to install into the filesystem root", "it is your home directory or one of its parents",

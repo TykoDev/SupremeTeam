@@ -9,16 +9,14 @@ heartbeat, and referenced evidence agree.
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SCRIPT_ROOT = Path(__file__).resolve().parents[2] / "scripts"
-if str(SCRIPT_ROOT) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_ROOT))
+import _bootstrap
 
+_bootstrap.ensure_paths()
 from data_formats import DataFormatError, parse_yaml  # noqa: E402
 from save_taxonomy import (  # noqa: E402
     ACTIVE_STATUSES, FUTURE_SKEW_SECONDS, JOURNAL, POINTER, SCHEMA_VERSION, STALE_AFTER_SECONDS, TERMINAL_STATUSES,

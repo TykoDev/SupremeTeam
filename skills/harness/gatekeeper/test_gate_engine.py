@@ -284,7 +284,7 @@ class ResultRecordConsistencyTests(EngineCase):
     """A typed record is the submitter's own statement; the gate refuses the contradiction it can see."""
 
     EXTRA = {
-        "probe": {}, "audit": {},
+        "probe": {},
         "scan": {"tool": "pip-audit", "command": "pip-audit -r requirements.txt", "observed_at": "2026-09-05T00:00:00Z"},
         "render": {"breakpoints": ["375", "1280"], "themes": ["light", "dark"]},
     }
@@ -305,11 +305,10 @@ class ResultRecordConsistencyTests(EngineCase):
                     self.assertIn(f"tests result pass contradicts exit_code {code}", package.failures)
 
     def test_a_pass_with_a_zero_or_an_absent_exit_code_is_not_contradicted(self):
-        for kind in ("probe", "audit"):
-            for fields in ({"exit_code": 0}, {}, {"exit_code": None}):
-                with self.subTest(kind=kind, fields=fields):
-                    package = self.check(kind, self.record(kind, **fields))
-                    self.assertFalse(any("exit_code" in f for f in package.failures), package.failures)
+        for fields in ({"exit_code": 0}, {}, {"exit_code": None}):
+            with self.subTest(fields=fields):
+                package = self.check("probe", self.record("probe", **fields))
+                self.assertFalse(any("exit_code" in f for f in package.failures), package.failures)
 
     def test_an_exit_code_that_is_not_an_integer_is_refused(self):
         for kind in self.EXTRA:
@@ -336,11 +335,9 @@ class ResultRecordConsistencyTests(EngineCase):
         return self.record(kind, inputs=[{"path": "src.py", "sha256": content_sha256(source)}])
 
     def test_a_probe_that_binds_no_inputs_is_listed_as_attested(self):
-        for kind in ("probe", "audit"):
-            with self.subTest(kind=kind):
-                package = self.check(kind, self.record(kind))
-                self.assertEqual(package.failures, [])
-                self.assertEqual(package.warnings, ["tests binds no inputs: attested, not tied to the source it describes"])
+        package = self.check("probe", self.record("probe"))
+        self.assertEqual(package.failures, [])
+        self.assertEqual(package.warnings, ["tests binds no inputs: attested, not tied to the source it describes"])
 
     def test_a_probe_with_verified_inputs_is_not_listed(self):
         package = self.check("probe", self.bound_record())
@@ -453,6 +450,12 @@ class EvidenceKindTests(EngineCase):
 
     def test_every_kind_the_shipped_spec_declares_is_one_the_engine_dispatches(self):
         self.assertLessEqual(set(self.spec["evidence_types"].values()), engine.EVIDENCE_KINDS)
+
+    def test_no_kind_is_a_rule_nothing_applies(self):
+        """QR-14: `audit` had a rule and a validator and no key mapped to it, which reads as coverage the gate never gives."""
+        mapped = set(self.spec["evidence_types"].values())
+        self.assertEqual(set(self.spec["evidence_type_rules"]), mapped)
+        self.assertEqual(engine.EVIDENCE_KINDS, mapped)
 
     def test_every_known_kind_reaches_a_validator(self):
         for kind in sorted(engine.EVIDENCE_KINDS):

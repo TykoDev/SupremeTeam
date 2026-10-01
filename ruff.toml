@@ -1,0 +1,35 @@
+# Lint configuration for every Python file in the repository.
+#
+# CI runs `ruff check .` in the `lint` job of .github/workflows/ci.yml, at the
+# ruff version pinned there. There is no formatter and no type checker: the rules
+# below find defects (a name that is never used, a name that is never defined, a
+# statement that cannot parse, bugbear's likely mistakes), not taste.
+#
+# What each group covers, and why it is on:
+#   F       pyflakes: unused imports and locals, undefined names, f-strings with no
+#           placeholders.
+#   B       bugbear: mutable defaults, loop variables captured by closures, a zip
+#           that silently truncates.
+#   E4, E7  import position and statement shape (one statement per line). The
+#           `# noqa: E402` markers on the imports that follow a deliberate sys.path
+#           edit are live because E4 is on.
+#   E9, PLE syntax errors and the pylint rules that are errors outright.
+#   W       whitespace the interpreter would reject or an editor would hide.
+#   RUF100  a `# noqa` that suppresses nothing, so a marker cannot outlive its cause.
+#
+# Rules left out on purpose: line length (a large share of the prose-heavy tests
+# and manifests are wide by design), print (stdout is the hook protocol channel),
+# and the pyupgrade, simplify and comprehension families, whose fixes would change
+# code that is not broken.
+target-version = "py313"
+
+# Outside the tree that package_check.py enumerates (`.harness-state/**` is
+# excluded from every package), so a local run leaves nothing to ship.
+cache-dir = ".harness-state/ruff-cache"
+
+[lint]
+select = ["E4", "E7", "E9", "F", "B", "PLE", "W", "RUF100"]
+# W291: improve_description.py ends a sentence of the prompt it sends a model with a
+# space inside a triple-quoted string. Trailing whitespace there is part of the
+# prompt, so removing it is a change to behaviour, not a lint fix.
+ignore = ["W291"]

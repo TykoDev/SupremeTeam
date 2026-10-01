@@ -23,6 +23,7 @@ violated or unreadable.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -629,7 +630,11 @@ def validate(root: Path) -> dict[str, Any]:
 
 
 def main() -> int:
-    root = Path(sys.argv[1]) if len(sys.argv) > 1 else SKILLS
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("skills_dir", nargs="?", type=Path, default=SKILLS, metavar="SKILLS_DIR",
+                        help="the skills/ directory to validate, not the repository root "
+                             "(default: the skills/ directory this script sits in)")
+    root = parser.parse_args().skills_dir
     report = validate(root)
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if report["ok"] else 1

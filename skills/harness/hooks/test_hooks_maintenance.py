@@ -472,7 +472,7 @@ class ImportStructureTests(unittest.TestCase):
     """QR-PY-14 / QR-PY-04: one bootstrap, no private cross-module imports, one project-root resolver."""
 
     OWNED = ("guard_hook", "guard_state", "pre_tool_use", "post_tool_use", "user_prompt_submit", "size_audit", "audit_improve",
-             "_state", "_cmdscan", "_paths", "_fsutil", "_bootstrap")
+             "_state", "_cmdscan", "_paths", "_fsutil", "_bootstrap", "save_run", "_saves", "verify_registration", "repair_registration")
     HOOK_MODULES = {path.stem for path in HOOK_DIR.glob("*.py")} | {"data_formats", "save_taxonomy"}
 
     def tree(self, name: str) -> ast.Module:

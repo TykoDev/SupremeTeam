@@ -63,8 +63,9 @@ Options:
                               design, build, review,
                               browser, release, safety, testing
   --target NAME             Install host-native support for one host. Repeatable.
-                              One of: auto, codex, claude, cursor, opencode.
-                              Default: auto.
+                              One of: auto, codex, claude, cursor, opencode, copilot.
+                              Default: auto. copilot has no skills folder, so it only
+                              takes part in --register-hooks, and auto never picks it.
   --destination PATH        Override the default agent skill path.
   --codex-destination PATH  Override the Codex skill path.
   --register-hooks          Register runtime harness hooks for selected hosts. This edits
@@ -753,7 +754,7 @@ resolve_targets() {
                     fi
                 done
                 ;;
-            codex|claude|cursor|opencode)
+            codex|claude|cursor|opencode|copilot)
                 if [[ "$normalized" == codex ]]; then
                     codex_target_explicit=1
                 fi
@@ -763,7 +764,7 @@ resolve_targets() {
                 add_selected_target "$normalized"
                 ;;
             *)
-                die "Unknown target '$target'. Use auto, codex, claude, cursor, or opencode."
+                die "Unknown target '$target'. Use auto, codex, claude, cursor, opencode, or copilot."
                 ;;
         esac
     done
@@ -798,7 +799,7 @@ python_satisfies_minimum() {
 
 find_compatible_python() {
     local candidate
-    for candidate in python3 python; do
+    for candidate in python3 python python3.14 python3.13; do
         if command -v "$candidate" >/dev/null 2>&1 && python_satisfies_minimum "$candidate"; then
             printf '%s' "$candidate"
             return 0
@@ -826,7 +827,7 @@ find_python() {
 
 register_harness_hooks() {
     if [[ ${#selected_targets[@]} -eq 0 ]]; then
-        printf 'Hook registration skipped: no host targets were detected. Pass --target codex, --target claude, --target cursor, or --target opencode to choose explicitly.\n'
+        printf 'Hook registration skipped: no host targets were detected. Pass --target codex, --target claude, --target cursor, --target opencode, or --target copilot to choose explicitly.\n'
         return
     fi
 

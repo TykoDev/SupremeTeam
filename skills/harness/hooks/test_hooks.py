@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 HOOK_DIR = Path(__file__).resolve().parent
 import _state  # noqa: E402  (HOOK_DIR is on sys.path)
+import _testkit as kit  # noqa: E402
 
 # Test scratch lives under the project's .harness-state/, one of the two
 # sanctioned generated roots (save-ownership.yaml generated_roots).
@@ -51,12 +52,6 @@ def _run_hook(script: str, payload, project_dir: Path) -> subprocess.CompletedPr
         env=env,
         check=False,
     )
-
-
-def _write_guard(project_dir: Path, state: dict) -> None:
-    state_dir = project_dir / ".harness-state"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "guard-state.json").write_text(json.dumps(state), encoding="utf-8")
 
 
 def _write_run_state(project_dir: Path, run_id: str, state_body: str, *, latest: bool = True) -> None:
@@ -115,7 +110,7 @@ class PreToolUseTests(unittest.TestCase):
 
     def test_legacy_unbounded_allow_dangerous_flag_cannot_bypass_guard(self):
         with _project_dir() as project:
-            _write_guard(project, {"allow_dangerous": True})
+            kit.write_guard(project, {"allow_dangerous": True})
             result = _run_hook(
                 "pre_tool_use.py",
                 {"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}},
@@ -126,7 +121,7 @@ class PreToolUseTests(unittest.TestCase):
 
     def test_frozen_boundary_blocks_writes_but_not_reads(self):
         with _project_dir() as project:
-            _write_guard(project, {"frozen_globs": ["src/payments/**"]})
+            kit.write_guard(project, {"frozen_globs": ["src/payments/**"]})
             read_result = _run_hook(
                 "pre_tool_use.py",
                 {"tool_name": "PowerShell", "tool_input": {"command": "Get-Content src/payments/file.txt"}},
@@ -142,7 +137,7 @@ class PreToolUseTests(unittest.TestCase):
 
     def test_leading_wildcard_blocked_glob_matches_shell_path(self):
         with _project_dir() as project:
-            _write_guard(project, {"blocked_globs": ["**/secrets/**"]})
+            kit.write_guard(project, {"blocked_globs": ["**/secrets/**"]})
             result = _run_hook(
                 "pre_tool_use.py",
                 {"tool_name": "PowerShell", "tool_input": {"command": "Set-Content app/secrets/token.txt x"}},
@@ -153,7 +148,7 @@ class PreToolUseTests(unittest.TestCase):
     def test_frozen_relative_glob_blocks_edit_of_absolute_windows_path(self):
         # Hosts report absolute target paths; a relative frozen glob must still catch them.
         with _project_dir() as project:
-            _write_guard(project, {"frozen_globs": ["src/payments/**"]})
+            kit.write_guard(project, {"frozen_globs": ["src/payments/**"]})
             result = _run_hook(
                 "pre_tool_use.py",
                 {"tool_name": "Edit", "tool_input": {"file_path": "D:\\proj\\src\\payments\\charge.py"}},
@@ -164,7 +159,7 @@ class PreToolUseTests(unittest.TestCase):
 
     def test_frozen_relative_glob_blocks_write_of_absolute_path(self):
         with _project_dir() as project:
-            _write_guard(project, {"frozen_globs": ["src/payments/**"]})
+            kit.write_guard(project, {"frozen_globs": ["src/payments/**"]})
             result = _run_hook(
                 "pre_tool_use.py",
                 {"tool_name": "Write", "tool_input": {"file_path": "D:/proj/src/payments/charge.py"}},
@@ -174,7 +169,7 @@ class PreToolUseTests(unittest.TestCase):
 
     def test_read_only_command_on_absolute_frozen_path_still_allowed(self):
         with _project_dir() as project:
-            _write_guard(project, {"frozen_globs": ["src/payments/**"]})
+            kit.write_guard(project, {"frozen_globs": ["src/payments/**"]})
             result = _run_hook(
                 "pre_tool_use.py",
                 {"tool_name": "PowerShell", "tool_input": {"command": "Get-Content D:\\proj\\src\\payments\\charge.py"}},
@@ -185,7 +180,7 @@ class PreToolUseTests(unittest.TestCase):
 
     def test_absolute_path_outside_frozen_glob_is_allowed(self):
         with _project_dir() as project:
-            _write_guard(project, {"frozen_globs": ["src/payments/**"]})
+            kit.write_guard(project, {"frozen_globs": ["src/payments/**"]})
             result = _run_hook(
                 "pre_tool_use.py",
                 {"tool_name": "Edit", "tool_input": {"file_path": "D:\\proj\\src\\billing\\charge.py"}},
@@ -369,7 +364,7 @@ class CoverageResidueSweepTests(unittest.TestCase):
 
     def test_frozen_boundary_entries_are_never_moved(self):
         with _project_dir() as project:
-            _write_guard(project, {"frozen_globs": ["htmlcov/**"], "blocked_globs": [".nyc_output/**"]})
+            kit.write_guard(project, {"frozen_globs": ["htmlcov/**"], "blocked_globs": [".nyc_output/**"]})
             _write_run_state(project, "frozen-run", "state: BUILD_ACTIVE\n")
             _drop_residue(project)
             context = self._context(_run_hook("post_tool_use.py", _bash(), project))

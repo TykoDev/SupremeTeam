@@ -14,6 +14,7 @@ from unittest.mock import patch
 HOOK_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOK_DIR))
 import verify_registration as verify  # noqa: E402
+import _testkit as kit  # noqa: E402
 
 
 def env_for(project: Path, home: Path | None = None, **extra: str) -> dict:
@@ -111,10 +112,6 @@ class TrajectoryIsolationTests(unittest.TestCase):
 
 
 class FreezeRecordTests(unittest.TestCase):
-    def _write_guard(self, project: Path, state: dict) -> None:
-        (project / ".harness-state").mkdir(parents=True, exist_ok=True)
-        (project / ".harness-state" / "guard-state.json").write_text(json.dumps(state), encoding="utf-8")
-
     def _edit(self, project: Path, path: str) -> str:
         payload = json.dumps({"tool_name": "Edit", "tool_input": {"file_path": str(project / path)}})
         proc = subprocess.run([sys.executable, str(HOOK_DIR / "pre_tool_use.py")], input=payload, text=True, capture_output=True,
@@ -124,16 +121,16 @@ class FreezeRecordTests(unittest.TestCase):
     def test_old_freeze_record_stays_effective_until_released(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
-            self._write_guard(project, {"frozen_globs": [{"glob": "src/payments/**", "owner": "ops", "scope": "release",
+            kit.write_guard(project, {"frozen_globs": [{"glob": "src/payments/**", "owner": "ops", "scope": "release",
                                                           "created_at": "2000-01-01T00:00:00Z", "run_id": "old", "released_at": None}]})
             self.assertIn("deny", self._edit(project, "src/payments/a.py"))
-            self._write_guard(project, {"frozen_globs": [{"glob": "src/payments/**", "owner": "ops", "released_at": "2026-09-05T00:00:00Z"}]})
+            kit.write_guard(project, {"frozen_globs": [{"glob": "src/payments/**", "owner": "ops", "released_at": "2026-09-05T00:00:00Z"}]})
             self.assertEqual(self._edit(project, "src/payments/a.py").strip(), "")
 
     def test_mixed_string_and_record_entries(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
-            self._write_guard(project, {"frozen_globs": ["infra/*.tf", {"glob": "src/payments/**", "owner": "ops"}]})
+            kit.write_guard(project, {"frozen_globs": ["infra/*.tf", {"glob": "src/payments/**", "owner": "ops"}]})
             self.assertIn("deny", self._edit(project, "infra/main.tf"))
             self.assertIn("deny", self._edit(project, "src/payments/a.py"))
             self.assertEqual(self._edit(project, "src/other/a.py").strip(), "")

@@ -24,8 +24,8 @@ from unittest.mock import patch
 
 CREATOR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CREATOR))
-from scripts import aggregate_benchmark, generate_report, improve_description, package_skill, run_eval, run_loop
-from scripts.utils import parse_skill_md
+from scripts import aggregate_benchmark, generate_report, improve_description, package_skill, run_eval, run_loop  # noqa: E402
+from scripts.utils import parse_skill_md  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("generate_review_encoding_test", CREATOR / "eval-viewer" / "generate_review.py")
 generate_review = importlib.util.module_from_spec(_spec)

@@ -342,7 +342,7 @@ def safe_text(value: object, limit: int = 120) -> str:
 def read_mapping(path: Path) -> "dict | None":
     """A run record (JSON or the repository's YAML subset) as a mapping; None when it is missing, unreadable or not a mapping."""
     _bootstrap.ensure_paths()
-    from data_formats import DataFormatError, parse_yaml  # noqa: WPS433
+    from data_formats import DataFormatError, parse_yaml
 
     try:
         value = parse_yaml(Path(path).read_text(encoding="utf-8"))
@@ -479,7 +479,7 @@ def refresh_run_heartbeat(data: dict, event: str) -> dict | None:
         if not runs.is_dir():
             return None
         _bootstrap.ensure_paths()
-        from _saves import heartbeat_is_stale, inspect_saves, parse_timestamp, pointed_heartbeat  # noqa: WPS433
+        from _saves import heartbeat_is_stale, inspect_saves, parse_timestamp, pointed_heartbeat
 
         now = datetime.now(timezone.utc)
         pointed = pointed_heartbeat(root)
@@ -504,7 +504,7 @@ def refresh_run_heartbeat(data: dict, event: str) -> dict | None:
         beat = parse_timestamp(lock.get("heartbeat"))
         if beat is None or heartbeat_is_stale(beat, now) or (now - beat).total_seconds() < _HEARTBEAT_REFRESH_AFTER:
             return None
-        import save_run  # noqa: WPS433
+        import save_run
 
         store = save_run.RunStore(root, run_id)
         return store.heartbeat(str(lock.get("owner") or "admiral"), source=f"hook:{event}",

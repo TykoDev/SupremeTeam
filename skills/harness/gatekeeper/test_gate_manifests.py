@@ -6,7 +6,12 @@ evidence root is the manifest's own directory. Run-layout behaviour (sibling
 evidence, typed records, verdict reuse) lives in test_gate_run_layout.py.
 """
 from __future__ import annotations
-import json, re, subprocess, sys, tempfile, unittest
+import json
+import re
+import subprocess
+import sys
+import tempfile
+import unittest
 from pathlib import Path
 
 SKILLS = Path(__file__).resolve().parents[2]
@@ -40,15 +45,20 @@ def load_spec():
 class BoundaryManifestTests(unittest.TestCase):
     def run_check(self, boundary, package, artifact="# Evidence\nObserved.\n", prior=None,
                   corrupt_hash=False, gates=None):
-        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name); art = root / ARTIFACT; art.write_text(artifact, encoding="utf-8")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        art = root / ARTIFACT
+        art.write_text(artifact, encoding="utf-8")
         package.setdefault("artifact_hashes", {})[art.name] = (
             "0" * 64 if corrupt_hash else content_sha256(art)
         )
-        manifest = root / "package.json"; manifest.write_text(json.dumps(package), encoding="utf-8")
+        manifest = root / "package.json"
+        manifest.write_text(json.dumps(package), encoding="utf-8")
         cmd = [sys.executable, str(CHECK), "--boundary", boundary, "--package", str(manifest)]
         if prior:
-            prior_path = root / "prior.json"; prior_path.write_text(json.dumps(prior), encoding="utf-8")
+            prior_path = root / "prior.json"
+            prior_path.write_text(json.dumps(prior), encoding="utf-8")
             cmd += ["--prior", str(prior_path)]
         if gates:
             cmd += ["--gates", gates]
@@ -189,15 +199,19 @@ class BoundaryManifestTests(unittest.TestCase):
     # --- lineage, hashes, scanning
     def test_mixed_and_stale_revision_fail(self):
         p = self.package("review-to-delivery")
-        p["revisions"] = ["r1", "r2"]; p["verdict_revision"] = "r0"
-        r = self.run_check("review-to-delivery", p); out = json.loads(r.stdout)
-        self.assertEqual(r.returncode, 1); self.assertTrue(out["mixed_revisions"])
+        p["revisions"] = ["r1", "r2"]
+        p["verdict_revision"] = "r0"
+        r = self.run_check("review-to-delivery", p)
+        out = json.loads(r.stdout)
+        self.assertEqual(r.returncode, 1)
+        self.assertTrue(out["mixed_revisions"])
         self.assertIn("stale verdict revision", out["failures"])
 
     def test_hash_mismatch_blocked_phrase_and_broken_link_fail(self):
         r = self.run_check("design-to-build", self.package("design-to-build"),
                            "# Evidence\nTODO trust me [missing](gone.md)\n")
-        out = json.loads(r.stdout); self.assertEqual(r.returncode, 1)
+        out = json.loads(r.stdout)
+        self.assertEqual(r.returncode, 1)
         self.assertTrue(any("blocked phrase" in f for f in out["failures"]))
         self.assertTrue(any("broken link" in f for f in out["failures"]))
         mismatch = self.run_check("design-to-build", self.package("design-to-build"), corrupt_hash=True)
@@ -221,24 +235,29 @@ class BoundaryManifestTests(unittest.TestCase):
     def test_hash_mismatched_artifact_is_still_scanned(self):
         r = self.run_check("design-to-build", self.package("design-to-build"),
                            "# Evidence\nTODO pending\n", corrupt_hash=True)
-        out = json.loads(r.stdout); self.assertEqual(r.returncode, 1)
+        out = json.loads(r.stdout)
+        self.assertEqual(r.returncode, 1)
         self.assertTrue(any("artifact hash mismatch" in f for f in out["failures"]))
         self.assertTrue(any("blocked phrase" in f for f in out["failures"]))
 
     def test_unchanged_revision_drift_fails(self):
-        prior = self.package("design-to-build"); prior["artifact_hashes"] = {ARTIFACT: "different"}
+        prior = self.package("design-to-build")
+        prior["artifact_hashes"] = {ARTIFACT: "different"}
         r = self.run_check("design-to-build", self.package("design-to-build"), prior=prior)
         self.assertEqual(r.returncode, 1)
         self.assertTrue(json.loads(r.stdout)["idempotency_drift"])
 
     def test_empty_revisions_fails(self):
-        p = self.package("design-to-build"); p["revisions"] = []
+        p = self.package("design-to-build")
+        p["revisions"] = []
         r = self.run_check("design-to-build", p)
-        out = json.loads(r.stdout); self.assertEqual(r.returncode, 1)
+        out = json.loads(r.stdout)
+        self.assertEqual(r.returncode, 1)
         self.assertIn("revisions must contain exactly one value", out["failures"])
 
     def test_submitter_mismatch_is_rejected(self):
-        p = self.package("design-to-build"); p["owner"] = "build-management"
+        p = self.package("design-to-build")
+        p["owner"] = "build-management"
         r = self.run_check("design-to-build", p)
         self.assertEqual(r.returncode, 1)
         self.assertTrue(any("submitter mismatch" in f for f in json.loads(r.stdout)["failures"]))
@@ -379,4 +398,5 @@ class GateSpecContractTests(unittest.TestCase):
                                 "the four gatekeepers must between them document every boundary")
 
 
-if __name__ == "__main__": unittest.main()
+if __name__ == "__main__":
+    unittest.main()

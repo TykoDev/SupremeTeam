@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HOOK_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOK_DIR))
@@ -677,6 +679,111 @@ class IntegrityTests(Scratch):
         record.write_text("{nope", encoding="utf-8")
         out = self.run_tool("verify_registration.py", "--host", "claude")
         self.assertEqual(out.returncode, 0, out.stdout)
+
+
+class InstalledCopyTests(Scratch):
+    """DX-06: the repair command a diagnostic prints has to exist where the diagnostic runs."""
+
+    def installed_hooks(self) -> Path:
+        """The hooks directory as an installer lays it out: `<root>/harness/hooks` beside `<root>/scripts`, no checkout around it."""
+        root = self.tmp / "installed-skills"
+        keep = shutil.ignore_patterns("__pycache__", "test_*", "_testkit.py")
+        shutil.copytree(HOOK_DIR, root / "harness" / "hooks", ignore=keep)
+        shutil.copytree(HOOK_DIR.parents[1] / "scripts", root / "scripts", ignore=keep)
+        return root / "harness" / "hooks"
+
+    def assert_runs_from_here(self, command: str, hooks: Path) -> None:
+        tokens = verify._tokens(command)
+        self.assertEqual(Path(tokens[1]), hooks / "repair_registration.py", command)
+        self.assertTrue(Path(tokens[1]).is_absolute() and Path(tokens[1]).is_file(), command)
+        preview = subprocess.run(tokens, text=True, capture_output=True, cwd=str(self.project), env=plain_env(self.home), check=False)
+        self.assertEqual(preview.returncode, 1, preview.stdout + preview.stderr)
+        self.assertIn("proposed", preview.stdout)
+
+    def test_the_verifier_prints_a_repair_command_that_runs_in_an_installed_copy(self):
+        hooks = self.installed_hooks()
+        self.claude_settings({"theme": "dark"})
+        out = subprocess.run([sys.executable, str(hooks / "verify_registration.py"), "--host", "claude"], text=True, capture_output=True,
+                             cwd=str(self.project), env=plain_env(self.home), check=False)
+        self.assertEqual(out.returncode, 1, out.stdout + out.stderr)
+        line = next(line for line in out.stdout.splitlines() if "preview a scoped repair with: " in line)
+        self.assert_runs_from_here(line.split("preview a scoped repair with: ", 1)[1], hooks)
+
+    def test_readiness_prints_a_repair_command_that_runs_in_an_installed_copy(self):
+        hooks = self.installed_hooks()
+        self.claude_settings({"theme": "dark"})
+        out = subprocess.run([sys.executable, str(hooks / "check_readiness.py"), "--host", "claude", "--json"], text=True, capture_output=True,
+                             cwd=str(self.project), env=plain_env(self.home), check=False)
+        hint = json.loads(out.stdout)["repair_hint"]
+        self.assert_runs_from_here(hint.split(" (dry run", 1)[0], hooks)
+
+    def test_the_hash_note_names_the_same_command(self):
+        command = verify.repair_command("claude", "--record-hashes")
+        self.assertEqual(verify._tokens(command)[1:], [str(HOOK_DIR / "repair_registration.py"), "--host", "claude", "--record-hashes"])
+        self.assertEqual(verify._tokens(command)[0], sys.executable)
+
+
+class DeclaredMinimumTests(unittest.TestCase):
+    """QR-PY-16: the floor is read with the catalog's loader, so reformatting the manifest cannot hide it."""
+
+    def read(self, text: str | None) -> str:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "runtime-manifest.yaml"
+            if text is not None:
+                manifest.write_text(text, encoding="utf-8")
+            with mock.patch.object(verify, "RUNTIME_MANIFEST", manifest):
+                return verify.declared_minimum()
+
+    def test_a_manifest_written_as_json_is_read(self):
+        self.assertEqual(self.read('{"schema_version": 1, "runtime": {"python": {"minimum": "3.77"}}}'), "3.77")
+
+    def test_a_manifest_written_as_block_yaml_is_read_not_replaced_by_the_default(self):
+        self.assertEqual(self.read('schema_version: 1\nruntime:\n  python:\n    minimum: "3.77"\n'), "3.77")
+
+    def test_a_missing_or_unreadable_manifest_falls_back_to_the_default(self):
+        self.assertEqual(self.read(None), "3.13")
+        self.assertEqual(self.read("{not a manifest"), "3.13")
+
+    def test_the_real_manifest_declares_the_floor_the_default_names(self):
+        self.assertEqual(verify.declared_minimum(default="0.0"), "3.13")
+
+
+class RepairWriteTests(Scratch):
+    """QR-PY-05: the repair tool's writer has the guarantees of the shared one."""
+
+    def test_a_transient_sharing_violation_on_the_replace_is_retried(self):
+        settings = self.claude_settings({"theme": "dark"})
+        real = os.replace
+        attempts = []
+
+        def flaky(source, target):
+            if Path(target) == settings:
+                attempts.append(source)
+                if len(attempts) < 3:
+                    raise PermissionError(13, "sharing violation")
+            return real(source, target)
+
+        with mock.patch.object(os, "replace", flaky), mock.patch("_fsutil.time.sleep"):
+            repair.write_with_backup(settings, '{"theme": "light"}\n')
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(json.loads(settings.read_text(encoding="utf-8")), {"theme": "light"})
+        self.assertEqual(list(settings.parent.glob("*.tmp")), [])
+
+    def test_the_bytes_are_flushed_to_disk_before_the_replace(self):
+        settings = self.claude_settings({})
+        with mock.patch.object(os, "fsync", wraps=os.fsync) as fsync:
+            repair.write_with_backup(settings, "{}\n")
+        self.assertGreaterEqual(fsync.call_count, 2, "the backup and the new file are both synced")
+
+    def test_the_hash_record_is_written_with_the_shared_atomic_write(self):
+        import _fsutil
+
+        script = str(HOOK_DIR / "pre_tool_use.py")
+        with mock.patch.dict(os.environ, {"SUPREMETEAM_PROJECT_DIR": str(self.project)}):
+            with mock.patch("_fsutil.atomic_write", wraps=_fsutil.atomic_write) as writer:
+                record = repair.record_hashes({"pre": {"registered": True, "script": script}}, "claude")
+        self.assertTrue(any(call.args[0] == record for call in writer.call_args_list))
+        self.assertIn(verify.hash_key(script), json.loads(record.read_text(encoding="utf-8"))["hooks"])
 
 
 if __name__ == "__main__":

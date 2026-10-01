@@ -12,7 +12,7 @@ import zipfile
 
 CREATOR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CREATOR))
-from scripts import package_skill as ps
+from scripts import package_skill as ps  # noqa: E402
 
 SKILL_MD = "---\nname: sample\ndescription: Does a thing\n---\nbody\n"
 

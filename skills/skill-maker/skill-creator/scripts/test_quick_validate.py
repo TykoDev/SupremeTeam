@@ -77,6 +77,31 @@ class FallbackParserTests(unittest.TestCase):
         self.assertEqual("description", find("description: Use when: X"))
 
 
+class AllowedKeyTests(unittest.TestCase):
+    """The catalog extension keys are the ones the catalog's skills use, and no others."""
+
+    CATALOG = Path(__file__).resolve().parents[3]
+
+    def test_a_key_no_skill_uses_is_not_quietly_accepted(self):
+        for key in ("family", "role", "auth_context", "mcp_servers", "canonical"):
+            with self.subTest(key=key):
+                ok, message = verdict(STDLIB, f"name: sample\ndescription: ok\nversion: 1.0.0\n{key}: x")
+                self.assertFalse(ok, message)
+                self.assertIn(f"Unexpected key(s) in SKILL.md frontmatter: {key}", message)
+
+    def test_the_one_catalog_extension_is_accepted(self):
+        ok, message = verdict(STDLIB, "name: sample\ndescription: ok\nversion: 1.0.0")
+        self.assertTrue(ok, message)
+
+    def test_every_skill_in_the_catalog_still_validates(self):
+        skills = sorted(self.CATALOG.rglob("SKILL.md"))
+        self.assertGreater(len(skills), 40, "the catalog was not found where this test expects it")
+        for skill in skills:
+            with self.subTest(skill=skill.parent.name):
+                ok, message = STDLIB.validate_skill(skill.parent)
+                self.assertTrue(ok, message)
+
+
 @unittest.skipUnless(HAVE_YAML, "PyYAML is not installed; there is no second parser to compare against")
 class ParityTests(unittest.TestCase):
     def test_both_parsers_agree_on_every_case(self):

@@ -63,7 +63,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
-import os  # noqa: F401  (run-state tests patch os.replace through this name)
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -78,14 +77,11 @@ try:
 except ImportError:  # POSIX
     msvcrt = None
 
-SCRIPT_ROOT = Path(__file__).resolve().parents[2] / "scripts"
-if str(SCRIPT_ROOT) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_ROOT))
+import _bootstrap
 
+_bootstrap.ensure_paths()
 from data_formats import content_sha256  # noqa: E402
 from save_taxonomy import ACTIVE_STATUSES, HISTORY, JOURNAL, POINTER, SCHEMA_VERSION, TERMINAL_STATUSES, WRITE_LOCK  # noqa: E402
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _saves import NEXT_STEPS, heartbeat_is_stale, inspect_run, inspect_saves, parse_timestamp  # noqa: E402
 import _fsutil  # noqa: E402
 import _state  # noqa: E402
@@ -125,8 +121,9 @@ def sha256_file(path: Path) -> str:
 
 
 def safe_run_id(run_id: str) -> str:
-    if not run_id or run_id in {".", ".."} or Path(run_id).name != run_id or any(c in run_id for c in "\\/:*?\"<>|"):
-        raise Refused(f"unsafe run id {run_id!r}")
+    """The reader's pattern, so a run the writer accepts is one the hooks can see."""
+    if not _state.RUN_ID.fullmatch(run_id):
+        raise Refused(f"unsafe run id {run_id!r}: use 1 to 128 letters, digits, '.', '_' or '-', starting with a letter, digit or '_'")
     return run_id
 
 
@@ -704,6 +701,9 @@ def main() -> int:
         store = RunStore(Path(args.project_root) if args.project_root else _state.project_root(), args.run_id,
                          lock_timeout=max(0.0, args.lock_timeout))
         extra = parse_extra(args.set)
+        if args.operation == "block" and args.reason:
+            raise Refused("block does not record a reason, so --reason is refused instead of dropped; it belongs to recover "
+                          "and checkpoint --drop-evidence. Say why the run is blocked with --next-action or --set key=value")
         if args.operation == "create":
             result = store.create(args.owner, args.evidence, args.execution_mode, args.next_action or "select earliest incomplete boundary", extra)
         elif args.operation == "checkpoint":

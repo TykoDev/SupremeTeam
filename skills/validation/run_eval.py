@@ -8,17 +8,17 @@ routing question and still never fire, because the host's skill loader has to
 have registered it first.
 
 That distinction is not hypothetical here. Claude Code discovers skills at
-``.claude/skills/<name>/SKILL.md`` — one level deep. This catalog once nested 46
-of its 52 skills a level below that, so the loader registered five while
+``.claude/skills/<name>/SKILL.md`` — one level deep. This catalog once nested most
+of its skills a level below that, so the loader registered five while
 ``routing-doctrine.md`` called fifteen of the nested ones "invokable directly at
 any time". No structural test could see it: every document involved was
 internally consistent, and only installing the tree and asking the host revealed
 the gap.
 
-The layout now follows the routing classes. The 21 skills a user may reach
-directly sit at the catalog root and register; the 31 internal specialists stay
-nested, where the loader does not offer them, which is what "reached only through
-the owning sub-orchestrator" means expressed in the filesystem. ``--registration``
+The layout now follows the routing classes. The skills a user may reach directly
+sit at the catalog root and register; the internal specialists stay nested, where
+the loader does not offer them, which is what "reached only through the owning
+sub-orchestrator" means expressed in the filesystem. ``--registration``
 re-measures that split, and is worth rerunning whenever a skill is added or moved.
 
 Both sessions start in the same small project, written by ``seed_workspace``, so

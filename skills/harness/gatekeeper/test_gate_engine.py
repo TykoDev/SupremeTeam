@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import chdir, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -498,6 +498,11 @@ class BlockedPhraseTests(EngineCase):
     LITERALS = ("trust me", "works on my machine", "100% complete", "no issues whatsoever", "lorem ipsum",
                 "placeholder content", "as an ai language model", "i cannot actually")
 
+    def setUp(self):
+        super().setUp()
+        # The wrappers refuse a package outside any project, so the scratch directory is one.
+        (self.root / ".git").mkdir()
+
     def phrase_file(self, text: str | None) -> Path:
         path = self.root / "phrases.txt"
         if text is not None:
@@ -510,7 +515,7 @@ class BlockedPhraseTests(EngineCase):
         (package / "summary.md").write_text("# Report\n\nThe change adds a validated endpoint.\n", encoding="utf-8")
         manifest = gc.Manifest(boundary="test", sub_orchestrator="test", artifacts=())
         out = io.StringIO()
-        with redirect_stdout(out):
+        with chdir(self.root), redirect_stdout(out):
             code = gc.main_with_manifest(manifest, [str(package), "--json", *extra])
         return code, json.loads(out.getvalue())
 
@@ -573,7 +578,7 @@ class BlockedPhraseTests(EngineCase):
         (package / "summary.md").write_text("# Report\n\nThis is internal only.\n", encoding="utf-8")
         manifest = gc.Manifest(boundary="test", sub_orchestrator="test", artifacts=())
         out = io.StringIO()
-        with redirect_stdout(out):
+        with chdir(self.root), redirect_stdout(out):
             code = gc.main_with_manifest(manifest, [str(package), "--json", "--blocked-phrases",
                                                     str(self.phrase_file("internal only\n"))])
         self.assertEqual(code, 1)

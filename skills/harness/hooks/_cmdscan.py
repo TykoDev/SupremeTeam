@@ -17,7 +17,7 @@ does and returns structure the guard rules apply to:
   guard searches them for protected paths instead;
 * ``unnamed``: the writes whose target is not in the command at all (a mutating verb
   that ``xargs`` feeds from standard input, an inline program that redirects or opens
-  a file, a shell that reads its program from a pipe), which
+  a file, a shell that reads its program from a pipe, the targets inside a diff), which
   a rule that needs every target named (a read-only run) cannot accept.
 
 It is a text analysis, not a sandbox. It does not execute, resolve a path built at run
@@ -67,7 +67,7 @@ class Write:
 class Unnamed:
     """A write the command does not name a target for: ``how`` is ``stdin`` (the verb's operands arrive on standard
     input, or a shell or interpreter reads its program there), ``program`` (an inline program redirects or opens a
-    file) or ``nested`` (text below ``MAX_DEPTH``, with
+    file), ``diff`` (``patch`` or ``git apply`` writes the files its diff names) or ``nested`` (text below ``MAX_DEPTH``, with
     no verb)."""
     verb: str
     how: str
@@ -815,9 +815,22 @@ def _t_sort(rest, ctx):
     return [values[name] for name in ("-o", "--output") if name in values]
 
 
+def _patch_args(rest):
+    return _split(rest, frozenset({"-o", "--output", "-i", "--input", "-p", "-d", "--directory", "-r", "--reject-file",
+                                   "-B", "-z", "-F", "-V"}), frozenset("oipdrBzFV"))
+
+
+def _patch_checks(flags) -> bool:
+    return "--dry-run" in flags or "--check" in flags or _has_short(flags, "C")
+
+
+def patch_dry_run(argv) -> bool:
+    """True for a ``patch`` that only checks (``--dry-run``, ``--check``, ``-C``): it changes no file."""
+    return _patch_checks(_patch_args([_Arg(word) for word in argv])[0])
+
+
 def _t_patch(rest, ctx):
-    flags, operands, values = _split(rest, frozenset({"-o", "--output", "-i", "--input", "-p", "-d", "--directory", "-r",
-                                                      "--reject-file", "-B", "-z", "-F", "-V"}), frozenset("oipdrBzFV"))
+    flags, operands, values = _patch_args(rest)
     return operands + [values[name] for name in ("-o", "--output") if name in values]
 
 
@@ -1000,6 +1013,12 @@ def git_index_only(sub: str, flags) -> bool:
     if sub == "reset":
         return not any(flag in ("--hard", "--merge", "--keep") for flag in flags)
     return False
+
+
+def git_dry_run(sub: str, flags) -> bool:
+    """True for a ``git apply`` that only reports (``--check``, ``--stat``, ``--numstat``, ``--summary``) and does not
+    ``--apply``: the diff names files, and the patch file the command line names is only read."""
+    return sub == "apply" and "--apply" not in flags and any(f in ("--check", "--stat", "--numstat", "--summary") for f in flags)
 
 
 def _t_git(rest, ctx):
@@ -1766,6 +1785,14 @@ def _finish(args: list, ctx: _Ctx, body: "str | None", stdin: bool = False, pipe
         _note_unnamed(ctx, verb, "program")
     if piped and body is None and not code and _reads_program_from_stdin(verb, rest):
         _note_unnamed(ctx, verb, "stdin")
+    if verb == "patch":
+        flags, operands, _ = _patch_args(rest)
+        if not operands and not _patch_checks(flags):
+            _note_unnamed(ctx, verb, "diff")
+    elif verb == "git":
+        sub, _, _, flags = git_parts(rest)
+        if sub == "apply" and not git_dry_run(sub, flags):
+            _note_unnamed(ctx, verb, "diff")
     if _DOTNET_FILE.search(args[0].text):
         ctx.out.code.append(ctx.text)
         _note_unnamed(ctx, verb, "program")

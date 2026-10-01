@@ -551,6 +551,21 @@ class ReadOnlyRunTests(GuardCase):
                     "cat f | node -p '1+1'", "cat f | perl -ne 'print'", "cat f | ruby -ne 'print'", "echo hi | grep h"), deny=False)
         self.check(("bash <<< 'rm x'", "sh <<< 'echo y > out'", "bash <<EOF\ntouch a\nEOF", "bash -c 'rm x'"), deny=True, fragment="is recorded read-only")
 
+    def test_patch_and_git_apply_are_denied_unless_they_only_check(self):
+        self.check((
+            "patch -p1 < fix.diff", "patch -p1 -i fix.diff", "cat fix.diff | patch -p1", "patch < fix.diff", "git apply fix.patch", "git apply < fix.patch",
+            "git apply -p1 fix.patch", "git apply --apply --stat fix.patch", "cat fix.patch | git apply", "git diff | git apply -R", "git apply",
+            f"git apply skillset-saves/runs/{READ_ONLY_RUN}/investigation/fix.patch",
+        ), deny=True, fragment="is recorded read-only")
+        self.check((
+            "git apply --check fix.patch", "git apply --stat fix.patch", "git apply --numstat fix.patch", "git apply --summary fix.patch",
+            "git apply --check < fix.patch", "git apply --stat < fix.patch", "cat fix.patch | git apply --stat", "patch --dry-run -p1 < fix.diff",
+            "patch --dry-run -p1 -i fix.diff", "patch -C -p1 < fix.diff", "cat fix.diff | patch --dry-run -p1", "patch --check -p1 < fix.diff",
+            "patch --dry-run file.txt fix.diff", "git diff", "git log --oneline", "git ls-files | xargs wc -l",
+        ), deny=False)
+        self.check(("patch --dry-run file.txt fix.diff && patch file.txt fix.diff", "git apply --check fix.patch && git apply fix.patch"),
+                   deny=True, fragment="is recorded read-only")
+
     def test_a_released_record_is_inert(self):
         self.guard({"read_only": [{"run_id": "r1", "owner": "ops", "allow": [ALLOW], "released": True}]})
         self.check(("echo x > src/app.py", "git add -A"), deny=False)

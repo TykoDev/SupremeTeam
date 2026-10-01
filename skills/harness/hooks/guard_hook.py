@@ -531,7 +531,7 @@ def _read_only_reason(records) -> str:
 # target lies inside, and one the analyser cannot place cannot satisfy it.
 _UNNAMED_REASON = (
     " A write whose target is not in the command (operands that arrive on standard input, as with `xargs rm`, a program "
-    "read from a pipe, or a redirect or file open inside an awk, sed, perl, python, ruby "
+    "read from a pipe, the files named inside a diff, or a redirect or file open inside an awk, sed, perl, python, ruby "
     "or node program) cannot be shown to be inside them: name each target in the shell command itself, as an operand "
     "or a redirect."
 )
@@ -541,14 +541,30 @@ def _unscoped_git(call: "Call") -> bool:
     """A git command that changes the repository or tree and names no path to judge (``git add -A``, ``git push``).
 
     An index-only command (``git restore --staged .``) names pathspecs but writes no file, so it is the repository
-    it changes and counts here."""
+    it changes and counts here. ``git apply --check`` and its kin only report, and change nothing."""
     for command in call.analysis.commands:
         if command.verb != "git":
             continue
         sub, operands, _, flags = _cmdscan.git_parts(command.argv)
+        if _cmdscan.git_dry_run(sub, flags):
+            continue
         if sub in _GIT_REPO_WRITERS and not (sub in _GIT_PATHSPEC and operands and not _cmdscan.git_index_only(sub, flags)):
             return True
     return False
+
+
+def _dry_vias(analysis) -> frozenset:
+    """The write labels of ``git apply`` and ``patch`` when every one of them only checks: the file such a command names
+    is read, not written."""
+    checks: dict = {}
+    for command in analysis.commands:
+        if command.verb == "patch":
+            checks["patch"] = checks.get("patch", True) and _cmdscan.patch_dry_run(command.argv)
+        elif command.verb == "git":
+            sub, _, _, flags = _cmdscan.git_parts(command.argv)
+            if sub == "apply":
+                checks["git apply"] = checks.get("git apply", True) and _cmdscan.git_dry_run(sub, flags)
+    return frozenset(via for via, dry in checks.items() if dry)
 
 
 # Package managers change the dependency directory, a lockfile or the machine without naming a path, so a read-only
@@ -610,7 +626,10 @@ def rule_read_only(call: "Call") -> "str | None":
         if _textual_mutates(call.command) and _mentioned([call.command], call, [_paths.Boundary(g, call.root) for g in allow]) is None:
             return _read_only_reason(records)
         return None
+    dry = _dry_vias(call.analysis)
     for write, targets in call.shell_targets(strict=True):
+        if write.via in dry:
+            continue
         if write.unresolved or any(not _paths.inside_allowed(target, allow, call.root, fold=fold) for target in targets):
             return _read_only_reason(records)
     if _unscoped_git(call) or _installs_packages(call):

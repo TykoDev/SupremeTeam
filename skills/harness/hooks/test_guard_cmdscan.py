@@ -741,6 +741,46 @@ class PipedProgramTests(unittest.TestCase):
 
 
 
+# patch and git apply write the files their diff names, unless they only check.
+DIFF_APPLIERS = (
+    "patch -p1 < fix.diff", "patch -p1 -i fix.diff", "cat fix.diff | patch -p1", "patch < fix.diff", "patch -d src -p1 < fix.diff",
+    "git apply fix.patch", "git apply < fix.patch", "git apply -p1 fix.patch", "git apply --apply --stat fix.patch", "cat fix.patch | git apply",
+    "git diff | git apply -R", "git -C repo apply fix.patch", "sudo patch -p1 < fix.diff",
+)
+DIFF_CHECKS = (
+    "git apply --check fix.patch", "git apply --stat fix.patch", "git apply --numstat fix.patch", "git apply --summary fix.patch",
+    "git apply --check < fix.patch", "cat fix.patch | git apply --stat", "git apply --check --index fix.patch",
+    "patch --dry-run -p1 < fix.diff", "patch --dry-run -p1 -i fix.diff", "patch -C -p1 < fix.diff", "cat fix.diff | patch --dry-run -p1",
+    "patch --check -p1 < fix.diff", "patch file.txt fix.diff",
+)
+
+
+
+class DiffApplierTests(unittest.TestCase):
+    """``patch`` and ``git apply`` write the files their diff names, which the command line does not: unnamed unless they only check."""
+
+    def test_patch_and_git_apply_write_the_files_their_diff_names(self):
+        for text in DIFF_APPLIERS:
+            with self.subTest(command=text):
+                self.assertEqual([u.how for u in analyse(text).unnamed], ["diff"], text)
+
+    def test_a_check_or_a_named_file_is_not_a_diff_applied(self):
+        for text in DIFF_CHECKS:
+            with self.subTest(command=text):
+                self.assertEqual(analyse(text).unnamed, [], text)
+
+    def test_the_helpers_agree_with_the_analyser_about_what_only_checks(self):
+        self.assertTrue(_cmdscan.git_dry_run("apply", ["--check"]))
+        self.assertTrue(_cmdscan.git_dry_run("apply", ["--stat", "--numstat"]))
+        self.assertFalse(_cmdscan.git_dry_run("apply", ["--check", "--apply"]))
+        self.assertFalse(_cmdscan.git_dry_run("apply", []))
+        self.assertFalse(_cmdscan.git_dry_run("commit", ["--check"]))
+        self.assertTrue(_cmdscan.patch_dry_run(("--dry-run", "-p1")))
+        self.assertTrue(_cmdscan.patch_dry_run(("-C", "-p1")))
+        self.assertFalse(_cmdscan.patch_dry_run(("-p1",)))
+
+
+
 class WorkingDirectoryCostTests(unittest.TestCase):
     """RR-guard-2: a chain of relative ``cd`` makes each directory the previous one plus a segment, so what the analysis
     keeps for it must stop growing, and what it cannot follow must say so."""

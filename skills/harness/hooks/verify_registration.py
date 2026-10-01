@@ -130,7 +130,7 @@ def _roots() -> list[Path]:
         roots.insert(0, Path(explicit).expanduser().resolve())
     for relative in INSTALL_ROOTS:
         installed = (Path.home() / relative / "harness" / "hooks").resolve()
-        if installed not in roots and (installed / REQUIRED[0][1]).is_file():
+        if installed not in roots and all((installed / script).is_file() for _, script in REQUIRED):
             roots.append(installed)
     return roots
 

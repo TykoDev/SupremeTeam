@@ -511,8 +511,8 @@ class RunStore:
         published while this call waited is seen, never overwritten. ``min_age``
         marks the optional refresh a hook makes: it skips the write when another
         writer already refreshed the heartbeat, and when the writer lock stays busy
-        for ``wait``, because whoever holds it is writing this run and nothing is
-        due. Without ``min_age`` a busy lock is refused, so a caller that needs the
+        for ``wait``, because whoever holds it is writing to the saves and a refresh
+        is not due on its account. Without ``min_age`` a busy lock is refused, so a caller that needs the
         refresh learns it did not happen."""
         try:
             with self.exclusive(wait):

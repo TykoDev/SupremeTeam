@@ -339,10 +339,30 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 - A guard record that cannot be read is counted (`GuardStateUnreadable`) and announced
   in the context of every shell or write call while it lasts; the destructive-command,
   single-writer and hook-file rules keep running without it. A guard entry that cannot
-  import is counted and prints one readable line (interpreter, floor, exception type).
+  import is counted; below Python 3.13 it also prints one readable line (interpreter, floor,
+  exception type), and on 3.13 and newer it prints nothing.
 - Index-only git commands (`git restore --staged`, `git reset HEAD <path>`) are no
   longer read as writes into a frozen tree; a read-only run denies them, and denies the
   usual package-manager install, remove and update commands.
+- A read-only run denies a write whose target is not in the command. A mutating verb that
+  `xargs`, `parallel`, `entr` or `watch` runs with no operand of its own (`cat list | xargs
+  rm -rf`, `ls | parallel rm {}`), a shell, PowerShell, cmd or interpreter that reads its
+  program from a pipe (`echo 'rm x' | sh`), a PowerShell cmdlet fed by the pipeline or run in
+  a script block (`Get-ChildItem *.pyc | Remove-Item`, `... | ForEach-Object { Remove-Item
+  $_ }`), `patch` and `git apply` (their targets are inside the diff; `--check`, `--dry-run`,
+  `--stat`, `--numstat` and `--summary` still pass), and an inline `awk`, `sed`, `perl`,
+  `python`, `node`, `ruby`, `php`, `lua` or R program that redirects, opens a file for writing
+  or runs a command that mutates now read as writes with no named target, and Rule D refuses
+  them with a reason that says to name each target in the command. Round 1 refused them by
+  substring; since round 2 they passed. `awk '$1 > 5'` and every read still pass.
+- `guard_state.py` warns on stderr (exit status unchanged) about any leading-slash glob that is
+  not under the project root, whether or not its first directory exists on the machine:
+  `freeze --glob /lib/payments/**` guards the file system's `/lib/payments`, not the project's
+  `lib/payments/**`. `status` lists it under `absolute_entries` with the project-relative
+  spelling. The refusal for a missing directory stays.
+- The guard follows `cd -`, `pushd`, `popd` and a bare `cd`: after `cd
+  skillset-saves/runs/r1/investigation && cd - && touch notes.md` a read-only run used to judge
+  the write in the allowed directory the shell had left.
 - `_bootstrap.enforcement_files()` lists the files a registered hook runs to decide.
   The README and the guard skill say Rule F is advisory (an edit made outside a
   session, or through a tool the analyser does not know, is not seen) and that the
@@ -400,14 +420,16 @@ recorded here, or a record the skill does not carry, fails it.
   declared version is one the registry offers).
 - `design/design-mapper` 1.0.1: states what `check_parity.py` now refuses in an inventory.
 - `careful` 1.0.1: describes the guard as it is (it reads the command, and counts faults).
-- `freeze` 1.2.0: one record per boundary whatever the spelling, a refused glob that can
+- `freeze` 1.3.0: one record per boundary whatever the spelling, a refused glob that can
   never match (a leading `!`, a root, an absolute path under a directory the machine
-  lacks), relative globs anchored at the project root, a writer lock, and what an
+  lacks), a warning for a leading-slash glob outside the project that names a directory that
+  exists, relative globs anchored at the project root, a writer lock, and what an
   unreadable record means.
-- `guard` 1.2.0: a grant is capped at 8 hours, the hook scripts are protected (Rule F,
+- `guard` 1.3.0: a grant is capped at 8 hours, the hook scripts are protected (Rule F,
   advisory, whole registration file), a write after an unfollowable directory chain is
-  denied (Rule G), an unreadable record is counted and announced, and writers serialise
-  on a lock.
+  denied (Rule G, with its own failure-mode row), a read-only run denies writes with no
+  named target (pipes, launchers, PowerShell blocks, diffs), an unreadable record is counted
+  and announced, and writers serialise on a lock.
 - `unfreeze` 1.1.0: releases by the normalised glob and records the cap on a grant.
 - `gatekeeper-admiral` 1.1.0: a REVISE row for a schema-1 result, the typed-record
   roster and what a typed record leaves unchecked.
@@ -428,5 +450,6 @@ recorded here, or a record the skill does not carry, fails it.
   manifest and gains `--fail-on-output` and `--manifest-root`.
 - `review/cso` 1.0.1: the waiver reason must be the sanctioned wording, and scan output
   paths follow the manifest.
-- `qa-only` 1.0.2: the read-only boundary reference states what the hook now denies,
-  including index-only git commands and package-manager installs.
+- `qa-only` 1.0.3: the read-only boundary reference states what the hook now denies,
+  including index-only git commands, package-manager installs and writes with no named
+  target.

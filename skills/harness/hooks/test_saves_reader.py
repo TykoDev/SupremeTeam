@@ -437,7 +437,7 @@ class RefusedRecordTests(unittest.TestCase):
                     self.assertEqual(full["status"] in {"active", "orphaned"} or bool(full.get("access_denied")), expected, full)
 
 
-class AccessDeniedWayForwardTests(unittest.TestCase):
+class AccessDeniedProseTests(unittest.TestCase):
     """RR3-state-7: the way forward named for a record this account cannot read was the owner completing or releasing the
     run, which changes nothing for a second account: the records of a closed run are as owner-only as a held run's."""
 
@@ -450,6 +450,14 @@ class AccessDeniedWayForwardTests(unittest.TestCase):
         self.assertIn("readable to this account", step)
         self.assertIn("never overwrite them", step)
         self.assertNotIn("ask the account that owns the run", step)
+
+    def test_the_hooks_readme_does_not_say_has_active_run_is_true_only_for_a_readable_lock(self):
+        """RR3-state-8: since a record this account cannot read counts as held, "only when a coherent lock exists" was false."""
+        text = " ".join((HOOK_DIR / "README.md").read_text(encoding="utf-8").split())
+        bullet = re.search(r"- `has_active_run\(project_root\)`:(.*?)- `read_latest_pointer", text).group(1)
+        self.assertNotIn("only when", bullet)
+        self.assertIn("a record this account cannot read", bullet)
+        self.assertIn("which may be a held run", bullet)
 
     def test_every_document_that_repeats_it_says_the_same_and_none_keeps_the_old_remedy(self):
         for relative in self.DOCUMENTS:

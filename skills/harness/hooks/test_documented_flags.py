@@ -25,6 +25,8 @@ HOOK_DIR = Path(__file__).resolve().parent
 SKILLS = HOOK_DIR.parents[1]
 REPO = SKILLS.parent
 DOCS = [REPO / "README.md", REPO / "QUICK-START.md", REPO / "Install.md", HOOK_DIR / "README.md"]
+# The documents name `scripts/install*`, which an installed copy does not carry.
+CHECKOUT = (REPO / "README.md").is_file() and (REPO / "scripts" / "install_hooks.py").is_file()
 
 _PYTHON_COMMAND = re.compile(r"""\b(?:python3?|py\s+-3)\s+["']?(?P<script>[^\s"'`|<>]+\.py)["']?(?P<args>[^`\n|]*)""")
 _WRAPPER_COMMAND = re.compile(r"\binstall\.(?P<kind>sh|ps1)\b(?P<args>[^`\n|]*)")
@@ -186,6 +188,7 @@ class DocumentedFlagTests(unittest.TestCase):
         return problems_in(path.read_text(encoding="utf-8"), path.relative_to(REPO).as_posix() if REPO in path.parents else path.name,
                            self.index, self.shell, self.powershell)
 
+    @unittest.skipUnless(CHECKOUT, "not a checkout: the documents name scripts/install*, which an installed copy does not carry")
     def test_every_documented_flag_exists_in_the_script_it_is_given_to(self):
         total = 0
         for path in DOCS:
@@ -196,6 +199,7 @@ class DocumentedFlagTests(unittest.TestCase):
             self.assertEqual(problems, [], "\n".join(problems))
         self.assertGreaterEqual(total, 15, "the scan found almost no command lines, so it proved nothing")
 
+    @unittest.skipUnless(CHECKOUT, "not a checkout: the hooks README names scripts/install_hooks.py, which an installed copy does not carry")
     def test_the_hooks_readme_commands_are_all_found_and_checked(self):
         problems, checked = self.check(HOOK_DIR / "README.md")
         self.assertEqual(problems, [], "\n".join(problems))

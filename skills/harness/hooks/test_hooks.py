@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 import uuid
 from contextlib import contextmanager
@@ -16,12 +17,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 HOOK_DIR = Path(__file__).resolve().parent
-import _state  # noqa: E402  (HOOK_DIR is on sys.path)
-import _testkit as kit  # noqa: E402
+import _testkit as kit  # noqa: E402  (HOOK_DIR is on sys.path)
 
-# Test scratch lives under the project's .harness-state/, one of the two
-# sanctioned generated roots (save-ownership.yaml generated_roots).
-_DEFAULT_TMP_ROOT = _state.project_root() / ".harness-state" / "test-work"
+# Test scratch lives in the system temporary directory, never in the project the suite happens to run
+# in: an installed copy has no business writing into its user's .harness-state.
+_DEFAULT_TMP_ROOT = Path(tempfile.gettempdir()) / f"supremeteam-hook-tests-{getattr(os, 'getuid', lambda: 'user')()}"
 TEST_TMP_ROOT = Path(os.environ.get("SUPREMETEAM_HOOK_TEST_TMP", _DEFAULT_TMP_ROOT))
 
 
@@ -328,8 +328,21 @@ class CoverageResidueSweepTests(unittest.TestCase):
         """Bounded work is a doctrine requirement, not an optimisation: the hook
         runs on every command action and must never walk an unbounded tree."""
         import post_tool_use
+        from unittest import mock
 
-        self.assertEqual(post_tool_use._RESIDUE_CAP, 5000)
+        cap = 12
+
+        def scan(entries: int) -> tuple:
+            with _project_dir() as project:
+                for number in range(entries):
+                    (project / f".coverage.host.{number}").write_text("", encoding="utf-8")
+                with mock.patch.object(post_tool_use, "_RESIDUE_CAP", cap):
+                    found, truncated = post_tool_use._scan_root(project)
+            return len(found), truncated
+
+        self.assertEqual(scan(cap + 30), (cap, True), "the scan looks at no more entries than the bound and says it stopped")
+        self.assertEqual(scan(cap), (cap, False), "a root with exactly the bound's entries is read in full")
+        self.assertGreater(post_tool_use._RESIDUE_CAP, 0)
 
     def test_recorded_phase_state_selects_the_run_phase(self):
         with _project_dir() as project:

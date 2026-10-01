@@ -667,6 +667,33 @@ class UnnamedWriteTests(unittest.TestCase):
         self.assertEqual([entry.how for entry in analyse(text).unnamed], ["nested"])
         self.assertEqual(unnamed("sh -c 'sh -c \"touch x\"'"), [])
 
+    def test_a_program_the_analysis_cannot_read_is_opaque_and_a_write_it_found_is_not(self):
+        """`Unnamed.opaque`: a shell or interpreter on a pipe (or text it could not read) may write; the others do."""
+        for text, ps in (("echo 'rm x' | sh", False), ("cat f | bash -s", False), ("echo x | sudo sh", False), ("echo x | python3 -", False),
+                         ("echo x | node", False), ("echo x | perl", False), ("echo x | cmd", False), ("'Remove-Item x' | iex", True),
+                         ("'Remove-Item x' | powershell", True), ("'Remove-Item x' | pwsh -Command -", True)):
+            with self.subTest(opaque=text):
+                self.assertEqual([entry.opaque for entry in analyse(text, ps=ps).unnamed], [True], text)
+        for text, ps in (("cat list | xargs rm", False), ("ls | xargs gzip", False), ("awk '{print > \"o\"}' f", False),
+                         ("python3 -c \"open('x','w')\"", False), ("patch -p1 < f.diff", False), ("git apply f.diff", False),
+                         ("Get-ChildItem | Remove-Item", True), ("[IO.File]::Delete('x')", True)):
+            with self.subTest(found=text):
+                self.assertEqual([entry.opaque for entry in analyse(text, ps=ps).unnamed], [False], text)
+        for text in ("ls | parallel rm", "ls | entr rm /_"):
+            with self.subTest(launched=text):
+                self.assertEqual([u.opaque for item in analyse(text).hidden for u in item.unnamed], [False], text)
+        nested = "touch x"
+        for _ in range(12):
+            nested = "sh -c " + "'" + nested.replace("'", "'\\''") + "'"
+        self.assertEqual([entry.opaque for entry in analyse(nested).unnamed], [True])
+
+    def test_program_text_writes_is_the_search_an_inline_program_gets(self):
+        for text, writes in (("import os; os.remove('x')", True), ("open('x', 'w').write('y')", True), ("require('fs').unlinkSync('x')", True),
+                             ("unlink \"x\"", True), ("File.delete('x')", True), ("system('rm x')", True),
+                             ("print(1 > 0)", False), ("print(open('f').read())", False), ("ls src/payments", False), ("x => x * 2", False)):
+            with self.subTest(text=text):
+                self.assertEqual(_cmdscan.program_text_writes(text), writes, text)
+
     def test_the_same_unnamed_write_is_reported_once(self):
         self.assertEqual(unnamed("ls | xargs rm; ls | xargs rm; ls | xargs rm"), [("rm", "stdin")])
         self.assertEqual(len(unnamed("awk '{print > \"a\"}' f; awk '{print > \"b\"}' f")), 1)
@@ -791,7 +818,7 @@ def hidden(text: str, ps: bool = False) -> list:
     return out
 
 
-# Commands a launcher runs, which only a read-only run reads: the main analysis stays what it was.
+# Commands a launcher runs, kept in analyses of their own: the main analysis stays what it was.
 LAUNCHED = (
     ("ls | parallel rm", [([], [("rm", "stdin")])]),
     ("ls | parallel rm {}", [(["{}"], [])]),
@@ -808,8 +835,9 @@ LAUNCHED = (
     ("ls | parallel gzip", [([], [("gzip", "stdin")])]),
     ("ls | parallel rm {.}", [(["{.}"], [])]),
     ("echo a b | parallel rm", [(["a", "b"], [])]),
-    ("ls | entr rm /_", [(["/_"], [])]),
-    ("ls | entr -r rm /_", [(["/_"], [])]),
+    # `/_` stands for the first file the list names: it arrives on standard input, so it is no operand of its own.
+    ("ls | entr rm /_", [([], [("rm", "stdin")])]),
+    ("ls | entr -r rm /_", [([], [("rm", "stdin")])]),
     ("ls | entr -s 'rm x; touch y'", [(["x", "y"], [])]),
     ("ls | entr sh -c 'rm x'", [(["x"], [])]),
     ("watch 'rm x'", [(["x"], [])]),
@@ -822,9 +850,9 @@ LAUNCHED_READS = (
 )
 
 class LauncherTests(unittest.TestCase):
-    """The commands a launcher (``parallel``, ``entr``, ``watch``) runs: read for the read-only rule only, in analyses of their own, so the main analysis stays what it was."""
+    """The commands a launcher (``parallel``, ``entr``, ``watch``) runs are kept in analyses of their own, so the main analysis stays what it was."""
 
-    def test_what_a_launcher_runs_is_read_only_for_the_read_only_rule(self):
+    def test_what_a_launcher_runs_is_kept_apart_from_the_command_line(self):
         for text, expected in LAUNCHED:
             with self.subTest(command=text):
                 self.assertEqual(sorted(hidden(text)), sorted(expected), text)

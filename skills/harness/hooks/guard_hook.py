@@ -327,6 +327,9 @@ _WRITE_TOOLS = frozenset({"edit", "write", "notebookedit", "multiedit", "apply_p
 _PATH_KEYS = ("file_path", "filePath", "path", "notebook_path", "target_file")
 _PATCH_FILE = re.compile(r"^\*\*\* (?:Update File|Add File|Delete File|Move to):\s*(.+?)\s*$", re.MULTILINE)
 _WORD = re.compile(r"[^\s'\"`;&|<>(){}\[\],=]+")
+_SEPARATORS = re.compile(r"[\\/]+")
+# A backslash-n, -r or -t that ends a word in the command text (`printf 'rm a/b\n' | sh`): the path before it is the path.
+_WORD_END_ESCAPE = re.compile(r"\\[nrt](?=[\s'\"`]|$)")
 _GLOB_LIMIT = 100
 # Commands that remove, move or rewrite a whole tree: aimed at a directory above a boundary they reach into it.
 _TREE_VIA = frozenset({"rm", "rmdir", "mv", "shred", "unlink", "remove-item", "move-item", "rename-item", "rename", "find",
@@ -424,7 +427,7 @@ def _mentioned(texts, call: "Call", boundaries) -> "_paths.Boundary | None":
     seen: set = set()
     for text in texts:
         for word in _WORD.findall(text):
-            low = word.lower()
+            low = _SEPARATORS.sub("/", word.lower())  # a Windows spelling (`src\payments\a`) holds the same fragments
             if low in seen:
                 continue
             seen.add(low)
@@ -438,15 +441,28 @@ def _mentioned(texts, call: "Call", boundaries) -> "_paths.Boundary | None":
     return None
 
 
-def _shell_hit(call: "Call", boundaries, tree_via=_TREE_VIA) -> "_paths.Boundary | None":
-    """The first boundary a shell write lies on, or one a tree-wide command aimed above it reaches into."""
-    for write, targets in call.shell_targets():
+def _shell_hit(call: "Call", boundaries, tree_via=_TREE_VIA, analysis=None) -> "_paths.Boundary | None":
+    """The first boundary a shell write lies on, or one a tree-wide command aimed above it reaches into.
+
+    ``analysis`` is the command line's own by default; pass one of the nested analyses (see ``_analyses``) to judge
+    the writes of a command a launcher or script block runs."""
+    for write, targets in call.shell_targets(analysis=analysis):
         above = write.via in tree_via
         for target in targets:
             for boundary in boundaries:
                 if boundary.matches(target) or (above and boundary.covers(target)):
                     return boundary
     return None
+
+
+def _analyses(analysis):
+    """The analysis of the command line and, below it, those of the commands a launcher or script block runs
+    (``parallel``, ``entr``, ``watch``, a PowerShell ``{ ... }``): findings the analyser keeps apart from the line's own."""
+    pending = [analysis]
+    while pending:
+        current = pending.pop()
+        yield current
+        pending.extend(current.hidden)
 
 
 # --- Rule B: frozen and blocked boundaries ---------------------------------------------------------
@@ -456,6 +472,12 @@ def _shell_hit(call: "Call", boundaries, tree_via=_TREE_VIA) -> "_paths.Boundary
 # that merely *references* a frozen path is NOT a write and must pass: blocking it would violate the
 # doctrine's Principles (inert on a competent action). When mutation cannot be determined the
 # command is treated as non-mutating and proceeds (fail open per Principles).
+#
+# The commands a launcher or script block runs (`watch 'rm src/payments/a'`, `parallel rm ::: src/payments/a`, a
+# PowerShell `{ Remove-Item ... }`) are judged exactly as the command line is. A write whose target the analyser cannot
+# place (`echo 'rm src/payments/a' | sh`, `cat src/payments/list | xargs rm`, a diff fed to `patch`, `rm "$f"`) is
+# judged by the text: it is refused when the command also spells a boundary path, which is the substring rule this
+# analyser replaced, kept for the one case where the analysis cannot say.
 _SHELL_MUTATION = re.compile(
     r">>?|>\|"                                                      # output redirection
     r"|(?<![\w.-])(?:rm|mv|cp|ln|dd|tee|truncate|shred|install|"    # mutating coreutils
@@ -473,6 +495,42 @@ _NOT_A_WRITE = re.compile(r"\d*[<>]&\s*(?:\d+|-)|&?\d*>>?\s*/dev/(?:null|stdout|
 
 def _textual_mutates(cmd: str) -> bool:
     return bool(_SHELL_MUTATION.search(_NOT_A_WRITE.sub(" ", cmd)))
+
+
+# The words the substring rule counted as a mutation, for a command whose program the analyser cannot read: a shell or
+# interpreter on a pipe says nothing of what it writes, so the text has to spell one of these (and the cmd verbs that do
+# what `rm`, `mv` and `cp` do, for `echo 'del a' | cmd`). `_SHELL_MUTATION` also counts every interpreter and `sort`, which
+# would refuse `cat src/payments/run.py | python3`.
+_SPELLED_MUTATION = re.compile(
+    r">>?|>\|"
+    r"|(?<![\w.-])(?:rm|mv|cp|ln|dd|tee|truncate|shred|install|mkdir|rmdir|touch|chmod|chown|unlink|rename|"
+    r"del|erase|rd|ren|move|copy|xcopy|robocopy)(?![\w-])"
+    r"|\bsed\s+-[a-z]*i|\bperl\s+-[a-z]*i\b"
+    r"|\bgit\s+(?:add|commit|checkout|restore|reset|rm|mv|apply|stash|clean|push)\b"
+    r"|(?<![\w.-])(?:Set-Content|Add-Content|Clear-Content|Out-File|Remove-Item|Move-Item|Copy-Item|New-Item|Rename-Item)(?![\w-])"
+    r"|(?<![\w.-])(?:ni|ri|rni|mi|ci|sc|ac|clc)(?![\w-])",
+    re.IGNORECASE,
+)
+
+
+def _unplaced_command(call: "Call", analyses) -> "str | None":
+    """The command text to search for a protected path, when it holds a write the analyser cannot place; else None.
+
+    Such a write could land anywhere, so it cannot be shown to stay outside a boundary. The substring rule that preceded
+    the analyser refused a command that spelled a boundary path next to a mutating word; this keeps that reason where
+    the analysis cannot give a better one:
+
+    * a write the analyser found but cannot place (operands on standard input, the files named inside a diff, a redirect
+      or file open inside an inline program, a path built at run time) is a write whatever the words say;
+    * a program it cannot read (a shell or interpreter on a pipe, text it could not parse) is a write only if the text also
+      spells a mutating word, or a program write the analyser knows from inline code (``os.remove(...)``), so
+      ``cat src/payments/run.sh | bash`` is not refused."""
+    unnamed = [entry for analysis in analyses for entry in analysis.unnamed]
+    found = any(not entry.opaque for entry in unnamed) or any(write.unresolved for analysis in analyses for write in analysis.writes)
+    opaque = any(entry.opaque for entry in unnamed)
+    if found or (opaque and (_SPELLED_MUTATION.search(_NOT_A_WRITE.sub(" ", call.command)) or _cmdscan.program_text_writes(call.command))):
+        return _WORD_END_ESCAPE.sub(" ", call.command)
+    return None
 
 
 def _frozen_boundaries(call: "Call") -> list:
@@ -495,7 +553,15 @@ def rule_frozen(call: "Call") -> "str | None":
     if not call.shell:
         return None
     if call.analysis.ok:
-        hit = _shell_hit(call, boundaries) or _mentioned(call.analysis.code, call, boundaries)
+        hit = None
+        analyses = list(_analyses(call.analysis))
+        for analysis in analyses:
+            hit = _shell_hit(call, boundaries, analysis=analysis) or _mentioned(analysis.code, call, boundaries)
+            if hit:
+                break
+        text = _unplaced_command(call, analyses) if hit is None else None
+        if text is not None:
+            hit = _mentioned([text], call, boundaries)
     else:
         hit = _mentioned([call.command], call, boundaries) if _textual_mutates(call.command) else None
     if hit:
@@ -567,15 +633,6 @@ def _dry_vias(analysis) -> frozenset:
             if sub == "apply":
                 checks["git apply"] = checks.get("git apply", True) and _cmdscan.git_dry_run(sub, flags)
     return frozenset(via for via, dry in checks.items() if dry)
-
-
-def _analyses(analysis):
-    """The analysis of the command line and, below it, those of the commands a launcher runs that only a read-only run reads."""
-    pending = [analysis]
-    while pending:
-        current = pending.pop()
-        yield current
-        pending.extend(current.hidden)
 
 
 # Package managers change the dependency directory, a lockfile or the machine without naming a path, so a read-only

@@ -55,6 +55,9 @@ MIME_OVERRIDES = {
 # The server binds 127.0.0.1; these are the only names a request may address it by.
 LOOPBACK_HOSTNAMES = {"localhost", "127.0.0.1"}
 
+# winnt.h IO_REPARSE_TAG_MOUNT_POINT, which marks a junction (see _is_link).
+MOUNT_POINT_REPARSE_TAG = 0xA0000003
+
 # Feedback is a few paragraphs per run; anything larger is not the viewer talking.
 MAX_FEEDBACK_BYTES = 1_000_000
 
@@ -68,8 +71,21 @@ def get_mime_type(path: Path) -> str:
 
 
 def _is_link(path: Path) -> bool:
-    """Symlinks and Windows junctions: a skill under test can plant one to read a host file."""
-    return path.is_symlink() or path.is_junction()
+    """Symlinks and Windows junctions: a skill under test can plant one to read a host file.
+
+    Path.is_junction() arrived in Python 3.12; older interpreters see a junction as the
+    mount-point reparse tag. scripts/utils.py carries the same function (this file runs
+    standalone, so it cannot import it).
+    """
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    if is_junction is not None:
+        return is_junction()
+    try:
+        return getattr(path.lstat(), "st_reparse_tag", 0) == MOUNT_POINT_REPARSE_TAG
+    except OSError:
+        return False
 
 
 def _read_text(path: Path) -> str | None:

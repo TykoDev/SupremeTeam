@@ -50,7 +50,7 @@ import sys
 import zipfile
 from pathlib import Path
 from scripts.quick_validate import validate_skill
-from scripts.utils import ProjectRootError, configure_stdout, find_project_root
+from scripts.utils import ProjectRootError, configure_stdout, find_project_root, is_link
 
 # Skipped without comment: regenerable, or owned by another tool.
 EXCLUDE_DIRS = {"__pycache__", "node_modules", ".git"}
@@ -75,10 +75,6 @@ def _default_output_dir() -> Path:
     the skill's own directory.
     """
     return find_project_root() / ".harness-state" / "packages"
-
-
-def _is_link(path: Path) -> bool:
-    return path.is_symlink() or path.is_junction()
 
 
 def should_exclude(rel_path: Path) -> bool:
@@ -163,7 +159,7 @@ def package_skill(skill_path, output_dir=None):
     to_add: list[tuple[Path, Path]] = []
     refused: list[str] = []
     for file_path in sorted(skill_path.rglob('*')):
-        link = _is_link(file_path)
+        link = is_link(file_path)
         if not link and (not file_path.is_file() or file_path.resolve() == skill_filename):
             continue
         arcname = file_path.relative_to(skill_path.parent)

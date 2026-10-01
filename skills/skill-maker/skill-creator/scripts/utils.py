@@ -7,6 +7,10 @@ from pathlib import Path
 # checkout, or a harness root (save-ownership.yaml generated_roots).
 PROJECT_MARKERS = (".claude", ".git", ".harness-state", "skillset-saves")
 
+# winnt.h IO_REPARSE_TAG_MOUNT_POINT, which marks a junction. The stat module only
+# defines it on Windows, and this check has to be importable everywhere.
+MOUNT_POINT_REPARSE_TAG = 0xA0000003
+
 
 class ProjectRootError(Exception):
     """No project directory could be determined safely."""
@@ -19,6 +23,24 @@ def configure_stdout() -> None:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, OSError):
             pass
+
+
+def is_link(path: Path) -> bool:
+    """True for a symlink or a Windows junction, on every supported interpreter.
+
+    Path.is_junction() arrived in Python 3.12 and the packager must also run on older
+    ones, where a junction is the mount-point reparse tag that only Windows reports.
+    eval-viewer/generate_review.py carries the same function because it runs standalone.
+    """
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    if is_junction is not None:
+        return is_junction()
+    try:
+        return getattr(path.lstat(), "st_reparse_tag", 0) == MOUNT_POINT_REPARSE_TAG
+    except OSError:
+        return False
 
 
 def find_project_root(explicit: Path | None = None, start: Path | None = None) -> Path:

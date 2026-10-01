@@ -147,7 +147,7 @@ def python_status(min_major: int, min_minor: int) -> tuple[str, str]:
     return "too_old", f"Python {label} is older than required >= {min_major}.{min_minor}"
 
 
-def _hook_warnings(hook_states: dict) -> list[str]:
+def _hook_warnings(hook_states: dict, hash_record: "str | None") -> list[str]:
     """What is wrong with hooks that are registered, without making them unregistered."""
     warnings: list[str] = []
     changed = sorted({f"{name.split(':', 1)[0]}:{file}" for name, state in hook_states.items()
@@ -162,8 +162,14 @@ def _hook_warnings(hook_states: dict) -> list[str]:
         if state["coverage"] == "partial":
             warnings.append(f"{name}: the registered matcher misses {', '.join(state['missing_tools'])}")
     if changed:
-        warnings.append(f"hook files changed since registration ({', '.join(changed)}); expected after a deliberate edit or an "
-                        "upgrade, restore them if you made neither; re-record with repair_registration.py --host <host> --record-hashes")
+        warnings.append(f"hook files changed since registration ({', '.join(changed)}; by the record in {hash_record}); expected after a "
+                        "deliberate edit or an upgrade, restore them if you made neither; re-record with "
+                        "repair_registration.py --host <host> --record-hashes")
+    for host in sorted({name.split(":", 1)[0] for name, state in hook_states.items()
+                        if state["registered"] and state["integrity"] == "unrecorded"}):
+        warnings.append(f"{host}: the hook files have no record in {hash_record}, so an edit of them is not noticed from "
+                        f"this project (a registration records them in the project it ran from); record them here with "
+                        f"{repair_command(host, '--record-hashes')}")
     return warnings
 
 
@@ -216,6 +222,8 @@ def main() -> int:
                 "interpreter": state.get("interpreter"),
                 "observed": state.get("observed", "unverified"),
             }
+    # One record per project, so every host's report names the same file.
+    hash_record = next((host_report["hash_record"] for host_report in hook_report.values() if host_report.get("hash_record")), None)
     observations = _observations_for(project_root, hook_states)
     registered = [s for s in hook_states.values() if s["registered"]]
     interpreters = [s["interpreter"] for s in registered if s["interpreter"]]
@@ -248,7 +256,7 @@ def main() -> int:
         "deterministic_validators": True,
     }
 
-    warnings = _hook_warnings(hook_states) + _firing_lines(observations["events"])
+    warnings = _hook_warnings(hook_states, hash_record) + _firing_lines(observations["events"])
     repair_host = args.host if args.host in HOSTS else next(iter(hook_report)) if len(hook_report) == 1 else "<host>"
     needs_repair = hook_status != "registered" or coverage == "partial"
     repair_hint = (f"{repair_command(repair_host, '--scope', 'project')} "
@@ -274,7 +282,8 @@ def main() -> int:
     report = {
         "python": {"status": py_status, "detail": py_detail},
         "hooks": {"status": hook_status, "exit_code": hook_code, "detail": hook_output, "required": args.require_hooks,
-                  "selected_hosts": list(hook_report), "states": hook_states, "observations": observations["events"]},
+                  "selected_hosts": list(hook_report), "states": hook_states, "observations": observations["events"],
+                  "hash_record": hash_record},
         "saves": {"status": saves_status, "detail": saves_detail, "next_step": saves_next, "project_root": str(project_root),
                   "access_denied": access_denied},
         "capabilities": capabilities,

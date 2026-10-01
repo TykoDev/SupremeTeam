@@ -229,10 +229,17 @@ is idempotent, and leaves unrelated keys alone. It registers the Python that run
 it (`--python-command` names another), started with `-X utf8`, and records the
 sha256 of the hook scripts, of every Python module beside them and of the two `skills/scripts` modules they import, in
 `.harness-state/hook-hashes.json` of the project it ran from, so a later edit to any
-of them shows up in `verify_registration.py` (a note, expected after an edit or an
-upgrade, never a failure). A host config that is a symbolic link, as a dotfiles
-manager leaves it, is never replaced by a regular file: the user-level one is
-written through to its target and a project-level one is refused. Afterward open
+of them shows up in `verify_registration.py` run from that project (a note, expected
+after an edit or an upgrade, never a failure). The record belongs to that one
+project: in any other project the same edit reads `REGISTERED`, with `integrity: not
+checked` and a readiness warning naming the record that is not there, until that
+project records its own (`repair_registration.py --host <host> --record-hashes`).
+A host config that is a symbolic link, as a dotfiles manager leaves it, is never
+replaced by a regular file. It is written through to its target at user scope, and
+for a path the helper is given on the command line (`--claude-settings`,
+`--codex-hooks`, `--copilot-hooks`); it is refused at project and local scope,
+where a cloned repository could have planted the link. `repair_registration.py`
+takes only `--scope`, so it writes through at user scope alone. Afterward open
 `/hooks` or restart the host. Without hooks, entry routing and tool guards are
 advisory only.
 

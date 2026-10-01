@@ -26,7 +26,11 @@ turns a registration into a failure, because each has a legitimate cause:
                the modules the hooks import from ``skills/scripts``, still match
                the sha256 recorded when it was registered. The directory is
                listed, not named, so a module added to it later is covered too.
-               ``changed`` after a deliberate edit or an upgrade is expected.
+               ``changed`` after a deliberate edit or an upgrade is expected. The
+               record belongs to the project the registration ran from: any other
+               project reads ``unrecorded``, where an edit of the hook files is not
+               noticed, until it records its own, and the output names the record
+               compared against.
 
 Whether the host actually fires the hook is a separate, host-observed fact this
 verifier never claims; it is reported as ``observed: unverified``.
@@ -440,6 +444,12 @@ def _load_record(section: str) -> dict:
     return found if isinstance(found, dict) else {}
 
 
+def record_path() -> Path:
+    """The hash record this project is compared against, whether or not it exists yet."""
+    directory = _state.existing_state_dir()
+    return (directory or _state.project_root() / ".harness-state") / HASH_RECORD
+
+
 def load_hash_record() -> dict:
     """The recorded script hashes, read without creating the state directory."""
     return _load_record("hooks")
@@ -561,9 +571,18 @@ def _print(host, loaded, result, required, absent_is_missing=False):
             changed.extend(name for name in state["changed_files"] or [script] if name not in changed)
     for warning in warnings:
         print(f"  warning: {warning}")
+    recorded = record_path()
+    states = {result[key]["integrity"] for key, _ in required if result[key]["registered"]}
     if changed:
-        print(f"  note: {', '.join(sorted(changed))} changed since registration (expected after a deliberate edit or an upgrade; "
-              f"if you made neither, restore the files). Record the new hashes with: {repair_command(host, '--record-hashes')}")
+        print(f"  note: {', '.join(sorted(changed))} changed since registration, by the record in {recorded} (expected after a "
+              f"deliberate edit or an upgrade; if you made neither, restore the files). Record the new hashes with: "
+              f"{repair_command(host, '--record-hashes')}")
+    elif "unrecorded" in states:
+        print(f"  integrity: not checked, {recorded} holds no record of these hook files. A registration records them in the "
+              f"project it ran from, so an edit of them is not noticed from here until this project records them: "
+              f"{repair_command(host, '--record-hashes')}")
+    elif states == {"unchanged"}:
+        print(f"  integrity: the hook files match the record in {recorded}")
     print("  observed: unverified - host firing is not proven by config inspection")
     warned = warnings or any(result[key]["coverage"] == "partial" for key, _ in required)
     print(f"  status: {'REGISTERED' if ok else 'MISSING'}{' (with warnings)' if ok and warned else ''}")
@@ -589,6 +608,7 @@ def main() -> int:
         print("\n[auto]\n  status: MISSING - no host configuration was found, so no hook is registered anywhere.")
     if args.json:
         report = {h: {"status": "registered" if s is True else "missing" if s is False else "unknown",
+                      "hash_record": str(record_path()),
                       "hooks": {k: v for k, v in r.items()},
                       "config_files": [{"path": str(p), "state": "read" if v is not None else "absent" if not p.exists() else "unreadable"} for p, v in files]}
                   for (h, files, r, _), s in zip(checks, statuses, strict=True)}

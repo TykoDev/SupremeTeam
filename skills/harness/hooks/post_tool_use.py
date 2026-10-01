@@ -261,7 +261,7 @@ def _destination(root: Path) -> tuple:
     declared scratch class `.harness-state/test-work/coverage-residue/<ts>/` —
     relocated, never deleted, and never gate evidence.
     """
-    run_id = _state._active_run_id()
+    run_id = _state.active_run_id()
     if run_id and run_id != "no-run":
         run_dir = root / "skillset-saves" / "runs" / run_id
         if run_dir.is_dir():

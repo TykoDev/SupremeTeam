@@ -185,7 +185,7 @@ Not skills, but load-bearing. See [architecture.md](architecture.md),
 
 | Component | Purpose |
 |---|---|
-| `harness/hooks/` | Three lifecycle hooks, the `save_run.py` and `guard_state.py` writers, the shared `_saves.py` reader, registration and readiness diagnostics |
+| `harness/hooks/` | Three lifecycle hooks (the pre-tool one is the guard, with its `guard_hook.py`, `_cmdscan.py` and `_paths.py` modules), the `save_run.py` and `guard_state.py` writers, the shared `_saves.py` reader, `_state.py` and `_fsutil.py` helpers, registration and readiness diagnostics |
 | `harness/gatekeeper/check.py` | The boundary validator. Loads `gates.yaml` |
 | `harness/gatekeeper/_gatecheck.py` | The package-shape engine behind each `gatekeeper-*/scripts/check.py` |
 | `scripts/` | Data formats, output paths, runtime and stack detection, scan records, parity and content hashes, manifest validation, package check |

@@ -12,6 +12,8 @@ SupremeTeam/
 ├── CHANGELOG.md                          # What changed
 ├── CONTRIBUTING.md                       # Running the suites, fail-open and fail-loud, commits
 ├── LICENSE                               # MIT
+├── .gitattributes                        # LF text in the repository, binary file types
+├── .gitignore                            # Run state, local environments, interpreter and coverage residue
 ├── .github/workflows/ci.yml              # Runs the suites and validators on three OSes
 ├── scripts/                              # Checkout-only: not part of an installed copy
 │   ├── install.ps1                       # Windows installer
@@ -65,10 +67,36 @@ SupremeTeam/
     │   ├── save_taxonomy.py              # The save-path constants the writer, reader and resolver share
     │   ├── validate_manifests.py         # Manifest and cross-reference contracts
     │   └── package_check.py              # Packaging enumeration and residue check
-    ├── validation/                       # Contract test suites, run_eval.py and trigger_eval.py
+    ├── validation/                       # Contract test suites and the two paid evals
+    │   ├── __init__.py                   # Package marker
+    │   ├── _catalog.py                   # Reads the catalog with the production parser, for the suite
+    │   ├── run_eval.py                   # Run-level eval: which skills a real session registers
+    │   ├── trigger_eval.py               # Trigger eval: does the right skill win
+    │   └── test_*.py                     # The validation suite, listed under The test suites
     ├── harness/
-    │   ├── hooks/                        # lifecycle hooks, guard and maintenance audits, save_run.py
-    │   └── gatekeeper/                   # check.py (gate spec) + _gatecheck.py (shape)
+    │   ├── hooks/                        # Lifecycle hooks, the guard, the record writers, diagnostics
+    │   │   ├── pre_tool_use.py           # PreToolUse entry point; forwards to guard_hook.py
+    │   │   ├── guard_hook.py             # The guard engine: Rules A to F, one function per rule
+    │   │   ├── _cmdscan.py               # Shell command analyser: wrappers, redirects, write targets
+    │   │   ├── _paths.py                 # Path and glob canonicaliser
+    │   │   ├── guard_state.py            # The only writer of the guard record
+    │   │   ├── post_tool_use.py          # PostToolUse: trajectory, heartbeat, coverage sweep
+    │   │   ├── user_prompt_submit.py     # UserPromptSubmit: routing and session-pin reminder
+    │   │   ├── save_run.py               # The only writer of the run record
+    │   │   ├── _saves.py                 # Reader that classifies saved state
+    │   │   ├── _state.py                 # Project root, hook input, guard state, fault counting, heartbeat
+    │   │   ├── _fsutil.py                # The shared atomic write and OS advisory lock
+    │   │   ├── _bootstrap.py             # sys.path setup, done once
+    │   │   ├── size_audit.py             # Bounded report of oversized runtime files
+    │   │   ├── audit_improve.py          # Read-only audit of saved failures
+    │   │   ├── verify_registration.py    # Inspects host hook config without changing it
+    │   │   ├── repair_registration.py    # Previews or applies a registration repair
+    │   │   ├── check_readiness.py        # Python, hooks and saves as a capability map
+    │   │   ├── _testkit.py               # Test support for the guard suites
+    │   │   ├── README.md                 # Rules, limits, fault trace, and a manifest of every file here
+    │   │   ├── .gitignore                # Runtime observations and bytecode caches
+    │   │   └── test_*.py                 # The hooks suite, listed under The test suites
+    │   └── gatekeeper/                   # check.py (gate spec), _gatecheck.py (shape), README.md, test_*.py
     ├── admiral/                          # The front door
     │   ├── references/                   # workflow, routing, contracts, failure-modes, examples
     │   ├── intake-brief.yaml, stub-contract.md
@@ -84,15 +112,54 @@ SupremeTeam/
     │                                     # quality-review, security-review, cso, mr-robot,
     │                                     # frontier, design-qa, devex-review, gatekeeper-code
     ├── investigate/                      # Investigation pipeline owner
-    ├── skill-maker/                      # skill-creator, skill-reviewer
+    ├── skill-maker/                      # skill-creator (scripts/ with its test_*.py, eval-viewer/), skill-reviewer
     ├── audit-improve/                    # read-only harness audit and skill-maker handoff
     ├── session-memory/                   # Run record and durable learnings
-    ├── taste/                            # Preference lifecycle owner and atomic writer
+    ├── taste/                            # Preference lifecycle owner; taste_prefs.py is the atomic writer, taste-review/ the reviewer
     ├── browse/, open-browser/, setup-browser-cookies/, pair-agent/
     ├── ship/, land-and-deploy/, setup-deploy/, document-release/
     ├── guard/, careful/, freeze/, unfreeze/
     └── qa/, qa-only/, benchmark/
 ```
+
+## The test suites
+
+Seven suites, standard library only, each beside the code it tests.
+[CONTRIBUTING.md](../CONTRIBUTING.md#run-the-suites) has the commands that run them.
+No document records how many tests a suite holds: that figure goes stale with the next
+test, so run the suite and read its last line.
+
+- **Hooks**, `skills/harness/hooks/`:
+  - the guard: `test_guard_rules.py`, `test_guard_cmdscan.py`, `test_guard_paths.py`,
+    `test_guard_harness_files.py`, `test_guard_state.py`, `test_pre_tool_entry.py`,
+    `test_hooks_robustness.py`
+  - the hooks and their state: `test_hooks.py`, `test_hooks_hardening.py`,
+    `test_hooks_observed.py`, `test_state_hardening.py`, `test_fsutil.py`,
+    `test_hooks_maintenance.py`
+  - the run record and its reader: `test_hooks_lifecycle.py`, `test_run_state.py`,
+    `test_saves_reader.py`
+  - registration and readiness: `test_registration_contract.py`,
+    `test_registration_hardening.py`, `test_installer_hooks.py`, `test_documented_flags.py`
+  - maintenance audits: `test_size_audit.py`, `test_audit_improve.py`,
+    `test_audit_improve_parts.py`
+- **Gates**, `skills/harness/gatekeeper/`: `test_gatecheck.py`, `test_gate_engine.py`,
+  `test_gate_manifests.py`, `test_gate_run_layout.py`, `test_gate_revise.py`,
+  `test_gate_wrappers.py`
+- **Validation**, `skills/validation/`: `test_catalog_contracts.py`, `test_orchestration.py`,
+  `test_pipeline_contracts.py`, `test_pipeline_workflows.py`, `test_save_contracts.py`,
+  `test_save_prose.py`, `test_save_taxonomy.py`, `test_trigger_routing.py`,
+  `test_eval_tools.py`, `test_repository_hygiene.py`
+- **Scripts**, `skills/scripts/`: `test_check_runtime_contract.py`,
+  `test_check_runtime_detection.py`, `test_check_runtime_layout.py`,
+  `test_check_runtime_redaction.py`, `test_check_runtime_scaffold.py`,
+  `test_check_parity.py`, `test_data_formats.py`, `test_package_check.py`,
+  `test_runtime_utilities.py`, `test_scan_record.py`, `test_validate_manifests.py`
+- **Taste**, `skills/taste/`: `test_taste_prefs.py`, `test_taste_store.py`
+- **Installers**, `scripts/`: `test_install.py`
+- **Skill-creator**, `skills/skill-maker/skill-creator/scripts/`: `test_aggregate_benchmark.py`,
+  `test_encoding.py`, `test_generate_review.py`, `test_improve_description.py`,
+  `test_package_skill.py`, `test_quick_validate.py`, `test_regressions.py`,
+  `test_run_eval.py`, `test_run_loop.py`, `test_utils.py`
 
 ## The `.yaml` specs
 

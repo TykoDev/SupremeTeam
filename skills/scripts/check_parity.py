@@ -44,11 +44,14 @@ makes the record fail the gate as input hash drift.
 
 Exit 0 when coverage meets the threshold, 1 when scored ids are missing, 2 on an
 input or engine error. The JSON summary is printed to stdout.
+
+An inventory must list at least one route and one component, and a route's
+``states`` must be a list. Anything else exits 2: an empty expectation set would
+score coverage 1.0 and pass a surface that renders nothing.
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
 import html.parser
 import json
 import re
@@ -64,6 +67,15 @@ from data_formats import content_sha256  # noqa: E402
 
 ID_RE = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
 PARITY_LISTS = ("routes", "components", "interactions", "flows")
+#: Lists an inventory must not leave empty. They are the two scored at every level,
+#: so an empty one lets a surface that draws nothing score full coverage.
+REQUIRED_LISTS = ("routes", "components")
+#: Elements with no end tag. html.parser reports no end event for them, so they
+#: must never open a scope on the route stack.
+VOID_TAGS = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
+                       "source", "track", "wbr"})
+#: Elements whose contents are not rendered markup.
+SKIPPED_TAGS = frozenset({"script", "style", "template"})
 #: Every list the report carries, in report order.
 REPORT_LISTS = PARITY_LISTS + ("states",)
 #: Lists that count toward coverage at each level. What is not scored is still
@@ -98,24 +110,26 @@ class MarkerScanner(html.parser.HTMLParser):
         #: `data-route` view, or after the first one was opened, describes that
         #: screen and not the document.
         self.mock_root = False
-        self._route_stack: list[str | None] = []
-        self._skip_depth = 0
+        #: Open elements as (tag, route id or None), innermost last.
+        self._route_stack: list[tuple[str, str | None]] = []
+
+    def _open(self, tag: str, route: str | None) -> None:
+        if tag not in VOID_TAGS:
+            self._route_stack.append((tag, route))
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in {"script", "style", "template"}:
-            self._skip_depth += 1
-        if self._skip_depth:
-            self._route_stack.append(None)
+        if tag in SKIPPED_TAGS or any(open_tag in SKIPPED_TAGS for open_tag, _ in self._route_stack):
+            self._open(tag, None)
             return
         values = {name: (value or "").strip() for name, value in attrs}
         route = values.get("data-route")
         if (values.get("data-mock") == "true" and not route and not self.routes
-                and not any(r for r in self._route_stack if r)):
+                and not any(r for _, r in self._route_stack if r)):
             self.mock_root = True
         if route:
             self.routes.add(route)
-        self._route_stack.append(route or None)
-        current = next((r for r in reversed(self._route_stack) if r), None)
+        self._open(tag, route or None)
+        current = route or next((r for _, r in reversed(self._route_stack) if r), None)
         state = values.get("data-state")
         if state and current:
             self.route_states.add((current, state))
@@ -134,10 +148,13 @@ class MarkerScanner(html.parser.HTMLParser):
         self.handle_endtag(tag)
 
     def handle_endtag(self, tag: str) -> None:
-        if self._route_stack:
-            self._route_stack.pop()
-        if tag in {"script", "style", "template"} and self._skip_depth:
-            self._skip_depth -= 1
+        # Close back to the nearest open element of this name, so an element whose end
+        # tag is optional or omitted cannot leave its route open. A stray end tag with
+        # no open element (or a void element's) closes nothing.
+        for index in range(len(self._route_stack) - 1, -1, -1):
+            if self._route_stack[index][0] == tag:
+                del self._route_stack[index:]
+                return
 
 
 def load_inventory(path: Path) -> dict:
@@ -151,6 +168,8 @@ def load_inventory(path: Path) -> dict:
         items = data.get(name)
         if not isinstance(items, list):
             raise ParityError(f"inventory {name} must be a list")
+        if name in REQUIRED_LISTS and not items:
+            raise ParityError(f"inventory {name} must list at least one id: an empty list scores coverage 1.0")
         seen: set[str] = set()
         for item in items:
             ident = str((item or {}).get("id", "")) if isinstance(item, dict) else ""
@@ -159,6 +178,8 @@ def load_inventory(path: Path) -> dict:
             if ident in seen:
                 raise ParityError(f"inventory {name} has duplicate id {ident!r}")
             seen.add(ident)
+            if name == "routes" and item.get("states") is not None and not isinstance(item["states"], list):
+                raise ParityError(f"inventory route {ident!r} states must be a list")
     return data
 
 

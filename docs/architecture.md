@@ -115,7 +115,9 @@ the UI/UX handoff, responsive behavior across six tiers, accessibility.
 The stack lock names the registry slug, locked versions, and overlay digest from
 [`tech-stacks/registry.yaml`](../skills/tech-stacks/registry.yaml), or the
 sanctioned fallback when no runtime or framework changes. Detect the slug with
-`python skills/scripts/check_runtime.py --detect-project`.
+`python skills/scripts/check_runtime.py --project-root . --detect-project` from the
+project root; the report prints the root it inspected and warns when nothing under
+it looks like a project.
 
 Out: an approved design package with requirements, architecture, interface
 contracts, design system, plan, implementation spec, and traceability.

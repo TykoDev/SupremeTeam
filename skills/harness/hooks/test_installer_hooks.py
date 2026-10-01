@@ -109,6 +109,8 @@ class DefaultsTests(InstallerCase):
         self.assertIn("hook hashes recorded in:", result.stdout)
         record = json.loads((self.project / ".harness-state" / verify.HASH_RECORD).read_text(encoding="utf-8"))
         self.assertEqual(len(record["hooks"]), len(verify.REQUIRED))
+        self.assertEqual(record["directories"][verify.hash_key(HOOK_DIR)]["files"], verify.module_hashes(HOOK_DIR),
+                         "every module beside the scripts is recorded too")
 
     def test_a_dry_run_records_nothing(self):
         self.install("--target", "claude", "--claude-settings", str(self.settings), "--dry-run")
@@ -168,6 +170,55 @@ class EncodingTests(InstallerCase):
         result = self.install("--target", "cursor", "--cursor-plugin", str(root))
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertNotIn("Traceback", result.stderr)
+
+
+@unittest.skipUnless(POSIX, "symbolic links need privileges on Windows")
+class ConfigLinkTests(InstallerCase):
+    """RR-V3-2: the installer replaced a config that is a symbolic link with a regular file."""
+
+    def linked(self, at: Path) -> Path:
+        target = self.tmp / "dotfiles" / "settings.json"
+        target.parent.mkdir()
+        target.write_text('{"theme": "dark"}\n', encoding="utf-8")
+        at.parent.mkdir(parents=True, exist_ok=True)
+        at.symlink_to(target)
+        return target
+
+    def test_the_user_level_config_is_written_through_its_link(self):
+        link = self.home / ".claude" / "settings.json"
+        target = self.linked(link)
+        result = self.install("--target", "claude")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(link.is_symlink())
+        self.assertIn("hooks", json.loads(target.read_text(encoding="utf-8")))
+        self.assertIn("is a symbolic link: writing through it to", result.stdout)
+        self.assertIn("status: REGISTERED", result.stdout)
+
+    def test_a_path_named_on_the_command_line_is_written_through_at_any_scope(self):
+        link = self.tmp / "named.json"
+        target = self.linked(link)
+        result = self.install("--target", "claude", "--scope", "project", "--claude-settings", str(link))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(link.is_symlink())
+        self.assertIn("hooks", json.loads(target.read_text(encoding="utf-8")))
+
+    def test_a_project_level_link_is_refused_and_the_link_and_its_target_are_untouched(self):
+        link = self.project / ".claude" / "settings.json"
+        target = self.linked(link)
+        before = target.read_bytes()
+        result = self.install("--target", "claude", "--scope", "project")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("REFUSED: ", result.stdout)
+        self.assertIn("refusing to replace it", result.stdout)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(target.read_bytes(), before)
+
+    def test_a_refused_link_does_not_stop_the_other_hosts(self):
+        link = self.project / ".claude" / "settings.json"
+        self.linked(link)
+        result = self.install("--target", "claude", "--target", "codex", "--scope", "project")
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertTrue((self.project / ".codex" / "hooks.json").is_file())
 
 
 @unittest.skipUnless(POSIX, "permission bits are POSIX")

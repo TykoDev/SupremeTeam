@@ -27,7 +27,10 @@ the hook scripts under the user's skills directory), ``--dry-run`` prints a unif
 diff and writes nothing, an existing file that is not valid UTF-8 JSON is refused
 rather than overwritten, and every overwrite keeps a timestamped ``.bak-`` copy
 before replacing the file atomically. File and backup keep the permission bits the
-original had; a new user-level file is owner-only.
+original had; a new user-level file is owner-only. A config file that is a symbolic
+link is never replaced by a regular file: the user-level one (or one named with
+``--claude-settings`` and its siblings) is written through to the link's target, and a
+project-level one is refused.
 
 Run from a terminal, it first prints that same preview and asks before writing
 anything; ``--yes`` skips the question. With no terminal (CI, a pipe) it writes
@@ -148,7 +151,11 @@ def _native_target(args: argparse.Namespace, host: str, repair) -> tuple[Path, b
 
 def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict:
     """Register the required hooks for one JSON-configured host, then verify them."""
-    path, overridden = _native_target(args, host, repair)
+    link, overridden = _native_target(args, host, repair)
+    try:
+        path = repair.resolve_config(link, through_links=overridden or args.scope == "user")
+    except ValueError as exc:
+        raise Refused(str(exc)) from exc
     before = _read_text(path)
     config = _read_config(path)
     try:
@@ -170,7 +177,8 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
         "added": added,
         "backup": str(backup) if backup else None,
         "applied": bool(added) and not args.dry_run,
-        "notes": [] if overridden else repair.scope_warnings(host, args.scope, path),
+        "notes": ([] if overridden else repair.scope_warnings(host, args.scope, link))
+        + ([f"{link} is a symbolic link: writing through it to {path}"] if path != link else []),
     }
     if args.dry_run:
         result["hooks"] = {}

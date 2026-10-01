@@ -175,6 +175,27 @@ class ReadinessSemanticsTests(Scratch):
         self.assertEqual(data["hooks"]["status"], "unknown")
         self.assertTrue(any("could not be determined" in blocker for blocker in data["blockers"]), data["blockers"])
 
+    def test_hooks_coverage_counts_the_tool_hooks_not_the_prompt_hook(self):
+        """With both tool hooks registered for a tool they never see, only the prompt hook counted and coverage read `full`."""
+        unrelated = {"matcher": "Read", "hooks": [{"type": "command", "command": repair.command_for("pre_tool_use.py", sys.executable)}]}
+        post = {"matcher": "Read", "hooks": [{"type": "command", "command": repair.command_for("post_tool_use.py", sys.executable)}]}
+        prompt = {"hooks": [{"type": "command", "command": repair.command_for("user_prompt_submit.py", sys.executable)}]}
+        self.claude_settings({"hooks": {"PreToolUse": [unrelated], "PostToolUse": [post], "UserPromptSubmit": [prompt]}})
+        _, data = self.readiness("--host", "auto")
+        self.assertFalse(data["capabilities"]["hooks_executable"])
+        self.assertEqual(data["capabilities"]["hooks_coverage"], "unverified")
+        full = self.registered()
+        self.claude_settings(full)
+        self.assertEqual(self.readiness("--host", "auto")[1]["capabilities"]["hooks_coverage"], "full")
+        del full["hooks"]["PostToolUse"]
+        self.claude_settings(full)
+        self.assertEqual(self.readiness("--host", "auto")[1]["capabilities"]["hooks_coverage"], "partial",
+                         "a tool hook that is not registered at all leaves the surface partly uncovered")
+        narrow = self.registered()
+        narrow["hooks"]["PreToolUse"][0]["matcher"] = "Bash"
+        self.claude_settings(narrow)
+        self.assertEqual(self.readiness("--host", "auto")[1]["capabilities"]["hooks_coverage"], "partial")
+
     def test_the_active_run_requirement_still_applies(self):
         self.claude_settings(self.registered())
         result, data = self.readiness("--host", "auto", "--require-active-run")
@@ -592,6 +613,73 @@ class FileModeTests(Scratch):
         self.assertEqual(list((self.project / ".claude").glob("*.tmp")), [])
 
 
+@unittest.skipUnless(POSIX, "symbolic links need privileges on Windows")
+class ConfigLinkTests(Scratch):
+    """RR-V3-2: a host config that is a symbolic link was replaced by a regular file, so the dotfiles copy never learned of it."""
+
+    def link(self, at: Path, content: str = '{"theme": "dark"}\n') -> Path:
+        target = self.tmp / "dotfiles" / at.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        target.chmod(0o640)
+        at.parent.mkdir(parents=True, exist_ok=True)
+        at.symlink_to(target)
+        return target
+
+    def test_a_user_level_link_is_written_through_and_stays_a_link(self):
+        settings = self.home / ".claude" / "settings.json"
+        target = self.link(settings)
+        out = self.run_tool("repair_registration.py", "--host", "claude", "--scope", "user", "--apply")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertTrue(settings.is_symlink(), "the link is still a link")
+        written = json.loads(target.read_text(encoding="utf-8"))
+        self.assertEqual(written["theme"], "dark")
+        self.assertEqual(sorted(written["hooks"]), ["PostToolUse", "PreToolUse", "UserPromptSubmit"])
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o640, "the target keeps its own mode")
+        self.assertIn("symbolic link", out.stderr)
+        self.assertEqual(json.loads(out.stdout)["path"], str(target))
+        self.assertEqual(len(list(target.parent.glob("settings.json.bak-*"))), 1, "the backup sits beside the file it backs up")
+
+    def test_a_project_level_link_is_refused_and_nothing_changes(self):
+        settings = self.project / ".claude" / "settings.json"
+        target = self.link(settings)
+        before = target.read_bytes()
+        for args in (("--scope", "project"), ("--scope", "project", "--apply")):
+            with self.subTest(args=args):
+                out = self.run_tool("repair_registration.py", "--host", "claude", *args)
+                self.assertEqual(out.returncode, 2, out.stdout + out.stderr)
+                error = json.loads(out.stdout)["error"]
+                self.assertIn(str(target), error)
+                self.assertIn("refusing to replace it", error)
+                self.assertTrue(settings.is_symlink())
+                self.assertEqual(target.read_bytes(), before)
+
+    def test_a_link_that_leads_nowhere_is_refused_at_any_scope(self):
+        settings = self.home / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.symlink_to(self.tmp / "gone.json")
+        out = self.run_tool("repair_registration.py", "--host", "claude", "--scope", "user", "--apply")
+        self.assertEqual(out.returncode, 2, out.stdout)
+        self.assertIn("does not lead to a file", json.loads(out.stdout)["error"])
+        self.assertTrue(settings.is_symlink())
+        self.assertFalse((self.tmp / "gone.json").exists(), "nothing was created at the end of a dangling link")
+
+    def test_a_link_to_a_directory_is_refused(self):
+        settings = self.home / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.symlink_to(self.tmp)
+        out = self.run_tool("repair_registration.py", "--host", "claude", "--scope", "user", "--apply")
+        self.assertEqual(out.returncode, 2, out.stdout)
+        self.assertIn("not a file", json.loads(out.stdout)["error"])
+
+    def test_a_regular_file_is_written_as_before(self):
+        settings = self.claude_settings({"theme": "dark"})
+        out = self.run_tool("repair_registration.py", "--host", "claude", "--scope", "project", "--apply")
+        self.assertEqual(out.returncode, 0, out.stdout)
+        self.assertFalse(settings.is_symlink())
+        self.assertNotIn("symbolic link", out.stderr)
+
+
 class RepairEncodingTests(Scratch):
     """BUGH-17: a settings file that is not UTF-8 is refused, not a traceback."""
 
@@ -680,6 +768,83 @@ class IntegrityTests(Scratch):
         after = self.run_tool("verify_registration.py", "--host", "claude", **env)
         self.assertNotIn("changed since registration", after.stdout)
 
+    def hooks_with_modules(self) -> Path:
+        """A hook directory like the real one: the three entry scripts, the modules they import, and a test module."""
+        root = self.relocated_hooks()
+        for name in ("guard_hook.py", "_state.py", "_saves.py", "test_guard_rules.py"):
+            (root / name).write_text(f"# {name}\n", encoding="utf-8")
+        self.settings_pointing_at(root)
+        return root
+
+    def verify_json(self, **env: str) -> tuple[subprocess.CompletedProcess, dict]:
+        out = self.run_tool("verify_registration.py", "--host", "claude", "--json", **env)
+        return out, json.loads(out.stdout.split("JSON_REPORT: ", 1)[1])["claude"]["hooks"]
+
+    def test_every_module_beside_the_entry_scripts_is_recorded_but_not_the_tests(self):
+        """Only the three entry scripts were hashed, so an edit of the module that holds the rules left readiness at Ready: yes."""
+        root = self.hooks_with_modules()
+        env = {"SUPREMETEAM_HOOK_ROOT": str(root)}
+        self.assertEqual(self.run_tool("repair_registration.py", "--host", "claude", "--record-hashes", **env).returncode, 0)
+        directories = self.record()["directories"]
+        entry = directories[verify.hash_key(root)]
+        self.assertEqual(sorted(entry["files"]), ["_saves.py", "_state.py", "guard_hook.py", "post_tool_use.py", "pre_tool_use.py",
+                                                  "user_prompt_submit.py"])
+        self.assertEqual(entry["files"]["guard_hook.py"], verify.hook_hash(root / "guard_hook.py"))
+
+    def test_an_edit_of_a_module_that_is_not_an_entry_script_is_reported_and_does_not_fail(self):
+        root = self.hooks_with_modules()
+        env = {"SUPREMETEAM_HOOK_ROOT": str(root)}
+        self.run_tool("repair_registration.py", "--host", "claude", "--record-hashes", **env)
+        out, hooks = self.verify_json(**env)
+        self.assertEqual({h["integrity"] for h in hooks.values()}, {"unchanged"})
+        (root / "guard_hook.py").write_text("# return early\n", encoding="utf-8")
+        out, hooks = self.verify_json(**env)
+        self.assertEqual(out.returncode, 0, out.stdout)
+        self.assertEqual({h["integrity"] for h in hooks.values()}, {"changed"})
+        self.assertEqual({tuple(h["changed_files"]) for h in hooks.values()}, {("guard_hook.py",)})
+        self.assertIn("guard_hook.py changed since registration", out.stdout)
+        ready = json.loads(self.run_tool("check_readiness.py", "--host", "claude", "--json", **env).stdout)
+        self.assertTrue(ready["ready"], "a changed module is a warning, not a failure")
+        self.assertTrue(any("claude:guard_hook.py" in warning for warning in ready["warnings"]), ready["warnings"])
+        self.assertFalse(any("pre_tool_use.py" in warning for warning in ready["warnings"]), "an entry script that did not change is not named")
+        self.run_tool("repair_registration.py", "--host", "claude", "--record-hashes", **env)
+        self.assertEqual({h["integrity"] for h in self.verify_json(**env)[1].values()}, {"unchanged"})
+
+    def test_a_module_added_or_removed_after_registration_is_a_change_and_a_test_edit_is_not(self):
+        root = self.hooks_with_modules()
+        env = {"SUPREMETEAM_HOOK_ROOT": str(root)}
+        self.run_tool("repair_registration.py", "--host", "claude", "--record-hashes", **env)
+        (root / "test_guard_rules.py").write_text("# edited test\n", encoding="utf-8")
+        self.assertEqual({h["integrity"] for h in self.verify_json(**env)[1].values()}, {"unchanged"})
+        (root / "planted.py").write_text("# new\n", encoding="utf-8")
+        (root / "_saves.py").unlink()
+        hooks = self.verify_json(**env)[1]
+        self.assertEqual({tuple(h["changed_files"]) for h in hooks.values()}, {("_saves.py", "planted.py")})
+
+    def test_a_record_made_before_directories_were_recorded_still_reads_and_says_nothing_new(self):
+        root = self.hooks_with_modules()
+        env = {"SUPREMETEAM_HOOK_ROOT": str(root)}
+        self.run_tool("repair_registration.py", "--host", "claude", "--record-hashes", **env)
+        record = self.record()
+        del record["directories"]
+        self.write_json(self.project / ".harness-state" / verify.HASH_RECORD, record)
+        (root / "guard_hook.py").write_text("# edited\n", encoding="utf-8")
+        hooks = self.verify_json(**env)[1]
+        self.assertEqual({h["integrity"] for h in hooks.values()}, {"unchanged"}, "nothing was recorded about the module, so nothing can differ")
+        (root / "pre_tool_use.py").write_text("# edited\n", encoding="utf-8")
+        self.assertEqual(self.verify_json(**env)[1]["pre"]["changed_files"], ["pre_tool_use.py"])
+
+    def test_the_note_is_worded_for_an_upgrade_as_well_as_an_edit(self):
+        root = self.hooks_with_modules()
+        env = {"SUPREMETEAM_HOOK_ROOT": str(root)}
+        self.run_tool("repair_registration.py", "--host", "claude", "--record-hashes", **env)
+        (root / "_state.py").write_text("# a newer release\n", encoding="utf-8")
+        verified = self.run_tool("verify_registration.py", "--host", "claude", **env).stdout
+        self.assertIn("expected after a deliberate edit or an upgrade", verified)
+        self.assertIn("restore the files", verified)
+        ready = json.loads(self.run_tool("check_readiness.py", "--host", "claude", "--json", **env).stdout)
+        self.assertTrue(any("or an upgrade" in warning for warning in ready["warnings"]), ready["warnings"])
+
     def test_recording_needs_a_registration(self):
         result = self.run_tool("repair_registration.py", "--host", "claude", "--record-hashes")
         self.assertEqual(result.returncode, 2, result.stdout)
@@ -704,6 +869,52 @@ class IntegrityTests(Scratch):
         record.write_text("{nope", encoding="utf-8")
         out = self.run_tool("verify_registration.py", "--host", "claude")
         self.assertEqual(out.returncode, 0, out.stdout)
+
+
+class MirrorRootTests(Scratch):
+    """RR-V3-3: the installer registers the common root, and `Install.md` names the host mirrors as roots too."""
+
+    def install_root(self, relative: str, with_scripts: bool = True) -> Path:
+        hooks = self.home / relative / "harness" / "hooks"
+        hooks.mkdir(parents=True)
+        for _, script in verify.REQUIRED:
+            if with_scripts or script != "pre_tool_use.py":
+                (hooks / script).write_text(f"# {script}\n", encoding="utf-8")
+        return hooks
+
+    def register_at(self, hooks: Path) -> None:
+        handlers = {verify.EVENTS["claude"][key]: [{"matcher": verify.matcher_for(script, "claude"),
+                                                    "hooks": [{"type": "command", "command": f'"{sys.executable}" -X utf8 "{hooks / script}"'}]}]
+                    for key, script in verify.REQUIRED}
+        self.write_json(self.home / ".claude" / "settings.json", {"hooks": handlers})
+
+    def test_a_check_run_from_a_mirror_recognises_the_registration_of_the_common_root(self):
+        common = self.install_root(".agents/skills")
+        self.install_root(".claude/skills")
+        self.register_at(common)
+        out = self.run_tool("verify_registration.py", "--host", "claude")
+        self.assertEqual(out.returncode, 0, out.stdout)
+        self.assertIn("status: REGISTERED", out.stdout)
+
+    def test_the_repair_preview_adds_nothing_when_an_install_root_is_already_registered(self):
+        self.register_at(self.install_root(".agents/skills"))
+        out = self.run_tool("repair_registration.py", "--host", "claude", "--scope", "user")
+        self.assertEqual(out.returncode, 0, out.stdout)
+        self.assertEqual(json.loads(out.stdout)["changes"], [])
+
+    def test_a_mirror_registered_instead_is_recognised_from_the_checkout_as_well(self):
+        self.register_at(self.install_root(".claude/skills"))
+        self.assertEqual(self.run_tool("verify_registration.py", "--host", "claude").returncode, 0)
+
+    def test_an_install_root_without_the_hook_scripts_is_not_taken_for_a_registration(self):
+        hooks = self.install_root(".agents/skills", with_scripts=False)
+        self.register_at(hooks)
+        self.assertEqual(self.run_tool("verify_registration.py", "--host", "claude").returncode, 1)
+
+    def test_a_registration_pointing_anywhere_else_is_still_missing(self):
+        self.install_root(".agents/skills")
+        self.register_at(self.tmp / "elsewhere" / "harness" / "hooks")
+        self.assertEqual(self.run_tool("verify_registration.py", "--host", "claude").returncode, 1)
 
 
 class InstalledCopyTests(Scratch):

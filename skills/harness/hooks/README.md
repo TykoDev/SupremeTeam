@@ -355,11 +355,11 @@ python skills/harness/hooks/check_readiness.py --host auto --json
 - `python_runtime`: Python at or above the floor in `runtime-manifest.yaml` (3.13).
 - `hooks_configured`: Config entries present in the host configuration of every selected host.
 - `hooks_executable`: Target scripts exist and have valid Python invocation syntax.
-- `hooks_coverage`: `full`, `partial` (a registered matcher misses tools the hook needs), or `unverified`.
+- `hooks_coverage`: over the two hooks that need tools (`PreToolUse`, `PostToolUse`): `full`, `partial` (a registered matcher misses tools, or one of the two is not registered), or `unverified` (neither is registered; the prompt hook, which needs no tools, does not count).
 - `hooks_interpreter`: `ok`, `too_old`, `not_found` (not on this PATH; a host may supply its own), or `unverified`.
 - `hooks_observed`: Real host execution observed (`observed`, `partial`, `simulated`, or `unverified`).
 - `hooks_faults`: Internal faults the hooks failed open on, when they record them. A hook that fires with faults is reported as `firing with N faults`.
-- `saves_readable`: `skillset-saves/` is structurally readable.
+- `saves_readable`: `skillset-saves/` is structurally readable. The text report prints the next step for any saves classification but `active` under `Saves:` (`saves.next_step` in the JSON), the one `save_run.py status` gives.
 - `active_run`: Valid active run pointer and unexpired lock held.
 - `deterministic_validators`: Catalog validator scripts are accessible.
 
@@ -383,7 +383,8 @@ Verifies for each hook (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`):
 
 Reported next to REGISTERED without failing it:
 - Interpreter: whether the registered launcher is found on this PATH and its version against the floor in `runtime-manifest.yaml`. The version is read by running that interpreter once with `-I -S -c`; an interpreter inside the project directory is never run.
-- Integrity: `unchanged`, `changed` or `unrecorded`, against the sha256 written to `.harness-state/hook-hashes.json` when the hook was registered. A script edited on purpose reports `changed`; record the new hash with `repair_registration.py --host <host> --record-hashes`.
+- Integrity: `unchanged`, `changed` or `unrecorded`, against the sha256 written to `.harness-state/hook-hashes.json` when the hook was registered. The record covers the hook script and every Python module in its directory (test modules excepted), found by listing the directory, so an edit of the module that holds the rules, a module added later, and a module removed all read `changed`, with the file names. It is a note, never a failure: it is expected after a deliberate edit or an upgrade, and if you made neither, restore the files. Record the new hashes with `repair_registration.py --host <host> --record-hashes`. The record belongs to the project the registration ran from; another project reports `unrecorded` until it records its own. Modules the hooks import from `skills/scripts/` are outside the record.
+- Where a registration may point: this script's own directory, `SUPREMETEAM_HOOK_ROOT`, and the `harness/hooks` directory of each install root in your home (`~/.agents/skills`, `~/.codex/skills`, `~/.claude/skills`, `~/.cursor/skills`, `~/.config/opencode/skills`) that holds the hook scripts. A check run from a host mirror therefore recognises the registration the installer wrote for the common root.
 
 #### Exit Codes
 - `0`: Every selected host is fully registered (warnings may still be printed).
@@ -412,7 +413,8 @@ python skills/harness/hooks/repair_registration.py --host claude --record-hashes
 - **Minimal:** adds only what is missing, either a hook that does not launch its script or the group of tools a registered matcher leaves out. Every other key, matcher and hook is preserved.
 - **Scope:** the dry run is the default and `--scope user` is never implied. It warns when the file is global (`user`) or usually committed (`project`).
 - **Files:** a file that is not UTF-8 JSON is refused untouched (exit 2). The file and its `.bak-` backup keep the permission bits the original had; a new `user` file is owner-only.
-- **Hashes:** `--apply` records the sha256 of each registered hook script in `.harness-state/hook-hashes.json`.
+- **Hashes:** `--apply` records the sha256 of each registered hook script, and of every Python module in its directory, in `.harness-state/hook-hashes.json`.
+- **Links:** a config file that is a symbolic link is never replaced by a regular file. The `user` file (a dotfiles manager's link) is written through to its target, with the backup beside the target and a warning that says so; a `project` or `local` file that is a link is refused (exit 2), because a cloned repository can plant one that points anywhere, and so is a link that leads to no file.
 
 #### Exit Codes
 - `0`: Nothing to do, or the change was applied.
@@ -436,7 +438,7 @@ python scripts/install_hooks.py --target claude --target codex --target copilot 
 
 - **Default scope** is `user`, because the installer puts the hook scripts under your home directory. The wrappers forward `--hooks-scope user|project|local` (`-HooksScope`).
 - **Preview and ask:** run from a terminal, it prints the unified diff of every file it would change and asks `Write these changes? [y/N]` first. `--yes` (`--hooks-yes`, `-HooksYes`) skips the question. With no terminal (CI, a pipe) it writes straight away, so automation is unchanged.
-- **Safety:** a file that is not UTF-8 JSON is refused and the other hosts still proceed; every overwrite keeps a `.bak-` copy with the original's permission bits; a new user-level file is owner-only.
+- **Safety:** a file that is not UTF-8 JSON is refused and the other hosts still proceed; every overwrite keeps a `.bak-` copy with the original's permission bits; a new user-level file is owner-only. A config that is a symbolic link is written through at user scope (and for a path named with `--claude-settings` and its siblings) and refused at project or local scope, as `repair_registration.py` does.
 - **Cursor and OpenCode** get a plugin package it cannot verify. The OpenCode plugin starts the interpreter without a shell, so `--python-command "py -3"` is split into command and arguments, and it logs once when the interpreter cannot start.
 - **Exit codes:** `0` registered (or already was, or a dry run); `2` a write was refused or a written hook did not verify; `3` you answered no and nothing was written.
 

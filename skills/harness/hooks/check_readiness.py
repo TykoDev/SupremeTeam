@@ -39,7 +39,7 @@ from pathlib import Path
 
 from _saves import NEXT_STEPS, classify_saves
 import _state
-from verify_registration import HOSTS, declared_minimum, interpreter_warning, repair_command
+from verify_registration import HOSTS, MATCHERS, REQUIRED, declared_minimum, interpreter_warning, repair_command
 
 
 def run_hook_verifier(host: str, project_root: Path) -> tuple[str, int, str, dict]:
@@ -150,8 +150,9 @@ def python_status(min_major: int, min_minor: int) -> tuple[str, str]:
 def _hook_warnings(hook_states: dict) -> list[str]:
     """What is wrong with hooks that are registered, without making them unregistered."""
     warnings: list[str] = []
-    changed = sorted({name.split(":", 1)[0] + ":" + Path(state["script"]).name for name, state in hook_states.items()
-                      if state["registered"] and state["integrity"] == "changed" and state["script"]})
+    changed = sorted({f"{name.split(':', 1)[0]}:{file}" for name, state in hook_states.items()
+                      if state["registered"] and state["integrity"] == "changed" and state["script"]
+                      for file in state["changed_files"] or [Path(state["script"]).name]})
     for name, state in hook_states.items():
         if not state["registered"]:
             continue
@@ -161,8 +162,8 @@ def _hook_warnings(hook_states: dict) -> list[str]:
         if state["coverage"] == "partial":
             warnings.append(f"{name}: the registered matcher misses {', '.join(state['missing_tools'])}")
     if changed:
-        warnings.append(f"hook scripts changed since registration ({', '.join(changed)}); expected after a deliberate edit, "
-                        "re-record with repair_registration.py --host <host> --record-hashes")
+        warnings.append(f"hook files changed since registration ({', '.join(changed)}); expected after a deliberate edit or an "
+                        "upgrade, restore them if you made neither; re-record with repair_registration.py --host <host> --record-hashes")
     return warnings
 
 
@@ -208,13 +209,23 @@ def main() -> int:
                 "missing_tools": state.get("missing_tools") or [],
                 "script": state.get("script"),
                 "integrity": state.get("integrity"),
+                "changed_files": state.get("changed_files") or [],
                 "interpreter": state.get("interpreter"),
                 "observed": state.get("observed", "unverified"),
             }
     observations = _observations_for(project_root, hook_states)
     registered = [s for s in hook_states.values() if s["registered"]]
     interpreters = [s["interpreter"] for s in registered if s["interpreter"]]
-    coverage = "partial" if any(s["coverage"] == "partial" for s in registered) else "full" if registered else "unverified"
+    # Coverage is the tool surface the hooks that need tools reach. The prompt hook has no matcher, so counting it as
+    # "full" would hide tool hooks that are missing altogether.
+    tool_keys = {key for key, script in REQUIRED if MATCHERS.get(script)}
+    tool_hooks = [s for name, s in hook_states.items() if name.rsplit(":", 1)[1] in tool_keys]
+    if not any(s["registered"] for s in tool_hooks):
+        coverage = "unverified"
+    elif all(s["registered"] and s["coverage"] == "full" for s in tool_hooks):
+        coverage = "full"
+    else:
+        coverage = "partial"
     if any(i["meets_floor"] is False for i in interpreters):
         interpreter = "too_old"
     elif any(not i["on_path"] for i in interpreters):

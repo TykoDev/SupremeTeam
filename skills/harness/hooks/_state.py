@@ -53,6 +53,11 @@ except ModuleNotFoundError:  # loaded by path (a tool that reads ROOT_MARKERS), 
 _bootstrap.ensure_paths()
 import _fsutil  # noqa: E402
 
+# The hooks scope a run by the grammar `save_run.py create` and `output_paths.py` share, matched with
+# fullmatch (the pattern is unanchored): an id that reaches a directory name or a message the model
+# reads is plain and bounded.
+from save_taxonomy import RUN_ID  # noqa: E402
+
 # Maximum trajectory signatures retained per identity (bounded memory).
 _MAX_TRAJ = 40
 # Trajectory files older than this are pruned on the next append.
@@ -335,10 +340,6 @@ def load_guard_state(root: "str | Path | None" = None, event: "str | None" = Non
 
 # --- Per-session trajectory tracking (Layer 4) -------------------------------
 
-# A run id the reader accepts as a scope: the writer allows more, but an id that
-# reaches a directory name or a message the model reads is plain and bounded.
-RUN_ID = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$")
-
 
 def safe_text(value: object, limit: int = 120) -> str:
     """Neutralise text from a state file before it is put in front of the model.
@@ -365,11 +366,11 @@ def safe_text(value: object, limit: int = 120) -> str:
 def read_mapping(path: Path) -> "dict | None":
     """A run record (JSON or the repository's YAML subset) as a mapping; None when it is missing, unreadable or not a mapping."""
     _bootstrap.ensure_paths()
-    from data_formats import DataFormatError, parse_yaml
+    from data_formats import parse_yaml
 
     try:
         value = parse_yaml(Path(path).read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, DataFormatError, RecursionError):
+    except (OSError, ValueError, RecursionError):
         return None
     return value if isinstance(value, dict) else None
 
@@ -390,7 +391,7 @@ def active_run_id(root: "str | Path | None" = None) -> str:
                     key, value = line.split(":", 1)
                     data[key.strip()] = value.strip()
         run_id = str(data.get("run_id", "")).strip()
-        if RUN_ID.match(run_id):
+        if RUN_ID.fullmatch(run_id):
             return run_id
     except Exception:
         pass

@@ -209,6 +209,73 @@ class RunIdAndTextTests(StateCase):
         self.assertEqual(_state.safe_text(["a", "b"], 10), "['a', 'b']")
 
 
+class RunRecordReadingTests(StateCase):
+    """RR-run-state-3 and RR-run-state-7: the hooks read the run record with the grammar and the failure policy the writer and the saves reader use."""
+
+    # The writer's probes, plus spellings an unanchored match of the shared pattern would take for a plain id with a tail.
+    PROBES = ("run-1", "2026-09-29_full-review-audit_k7q2xd", "_x", "_", "a.b_c-d", "x" * 128, "x" * 129, "", ".", "..", ".hidden",
+              "-dash", "my run", "a/b", "a\\b", "r1/../x", "r1\\..\\x", "r1 x", "r1;x", "r1\nx", "é", "r1é")
+
+    def _pointer(self, text: str) -> None:
+        saves = self.root / "skillset-saves"
+        saves.mkdir(parents=True, exist_ok=True)
+        (saves / "_latest.md").write_text(text, encoding="utf-8")
+
+    def test_the_run_scope_grammar_is_the_one_object_the_writer_uses(self):
+        import save_taxonomy
+
+        self.assertIs(_state.RUN_ID, save_taxonomy.RUN_ID, "a second pattern in _state is a grammar that can drift")
+
+    def test_a_run_id_scopes_the_hooks_exactly_when_the_writer_would_create_it(self):
+        import save_run
+
+        for run_id in self.PROBES:
+            try:
+                save_run.new_run_id(run_id)
+                created = True
+            except save_run.Refused:
+                created = False
+            shapes = [("json", json.dumps({"run_id": run_id}))]
+            if "\n" not in run_id:
+                shapes.append(("lines", f"run_id: {run_id}\n"))  # a line record cannot hold a newline inside a value
+            for shape, text in shapes:
+                self._pointer(text)
+                with self.subTest(run_id=run_id, pointer=shape):
+                    self.assertEqual(_state.active_run_id(), run_id if created else "no-run")
+
+    def test_an_id_with_a_tail_after_a_plain_prefix_is_not_a_scope(self):
+        """The shared pattern is unanchored, so a `match` would take the plain prefix and ignore a traversal behind it."""
+        for run_id in ("r1/../../x", "r1\\..\\x", "r1 ; rm -rf /"):
+            self._pointer(json.dumps({"run_id": run_id}))
+            with self.subTest(run_id=run_id):
+                self.assertEqual(_state.active_run_id(), "no-run")
+
+    def test_a_record_that_cannot_be_decoded_or_parsed_reads_as_unreadable(self):
+        """A 5000-digit integer is a ValueError that is neither a decode error nor the loader's own, and it escaped the reader."""
+        records = {
+            "an integer past the interpreter's digit limit": ('{"status": ' + "9" * 5000 + "}").encode("utf-8"),
+            "bytes that are not UTF-8": b"status: \xff\xfe\n",
+            "a nesting depth past the recursion limit": b"[" * 100000,
+            "a syntax error": b"{",
+            "a scalar": b"5",
+            "a list": b"[1, 2]",
+        }
+        for label, raw in records.items():
+            path = self.root / "record.md"
+            path.write_bytes(raw)
+            with self.subTest(label):
+                self.assertIsNone(_state.read_mapping(path))
+        self.assertIsNone(_state.read_mapping(self.root / "missing.md"))
+
+    def test_a_readable_record_is_still_a_mapping(self):
+        path = self.root / "record.md"
+        held = {"status": "held", "pin": True}
+        for raw, expected in ((b'{"status": "held", "pin": true}', held), (b"status: held\npin: true\n", held), (b"", {})):
+            path.write_bytes(raw)
+            with self.subTest(raw=raw):
+                self.assertEqual(_state.read_mapping(path), expected)
+
+
 class ReleasedPredicateTests(StateCase):
     """BUGH-24: one predicate says when a boundary record is retired."""
 

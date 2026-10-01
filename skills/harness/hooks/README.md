@@ -185,6 +185,7 @@ The guard is a text guard. It analyses the command a tool is about to run and th
 - interpreter inline code (`python -c`, `node -e`, `perl -e`): it is searched for protected paths, not interpreted, so a read-only run is not enforced against what inline code does beyond naming a protected path;
 - a tool name it does not know, and a tool input in a shape it cannot read, which are allowed through;
 - a link created in the same command that then writes through it;
+- a git command that rewrites the tree and names no path (`git reset --hard`, `git stash`, `git clean -fd`, `git merge`, `git checkout <branch>`): under a freeze it can change a frozen file and nothing sees it, because there is no path to compare; only a read-only run denies it (Rule D);
 - a command it cannot parse (unbalanced quoting): the older textual rules still run on the raw text, which is never weaker than before, but it is not an analysis;
 - the working directory after a `cd` chain longer than 512 characters, which Rule G refuses rather than guesses.
 

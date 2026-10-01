@@ -110,6 +110,7 @@ class ClassificationTests(unittest.TestCase):
             "not a mapping": b"just words, no structure: [",
             "undecodable bytes": b"\xff\xfe\x00{",
             "nested past the parser": b"[" * 100_000 + b"]" * 100_000,
+            "integer past the interpreter's digit limit": b'{"schema_version": 1, "revision": ' + b"9" * 5000 + b"}",
         }
         for label, content in records.items():
             with self.subTest(label):

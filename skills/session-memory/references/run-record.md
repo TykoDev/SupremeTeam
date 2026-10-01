@@ -21,7 +21,7 @@ contract is `../../save-protocol.md`; nothing here overrides it.
 
 | Operation | What it does | When session-memory issues it |
 | --- | --- | --- |
-| `create` | Probes the save root, acquires an exclusive pinned lock, publishes revision 1, writes the pointer; needs at least one `--evidence` path | Once, at the start of a run, after intake normalizes the request and writes its report |
+| `create` | Probes the save root, acquires an exclusive pinned lock, publishes revision 1, writes the pointer; needs at least one `--evidence` path and a run id of 1 to 128 letters, digits, `.`, `_` or `-` that starts with a letter, digit or `_` (every other operation accepts any single path segment, so a run made under a looser id stays closable) | Once, at the start of a run, after intake normalizes the request and writes its report |
 | `checkpoint` | Publishes revision n+1 atomically after snapshotting revision n into `_history/`, and registers evidence hashes; `--drop-evidence` removes a registered path | Before every delegation and at every return or boundary |
 | `heartbeat` | Refreshes the lock heartbeat without changing the revision | Between checkpoints on a long stage; the harness hooks also call it on real host activity |
 | `complete` | Terminal transition to status `complete`, releasing the pin; refused on a run already complete or blocked | At run completion |
@@ -33,7 +33,9 @@ contract is `../../save-protocol.md`; nothing here overrides it.
 Useful flags: `--evidence <path>` is repeatable and binds a project-relative
 evidence file by sha256, and a path is registered under one normalised spelling
 (`./x` and `x` are the same file); `--drop-evidence <path>` is repeatable, stops
-registering a path (one that was moved or pruned), and needs `--reason`;
+registering a path (one that was moved or pruned), and needs `--reason`; a run
+keeps at least one evidence path, so the last one is dropped only together with
+its replacement in `--evidence`;
 `--set key=value` is repeatable and records a non-reserved state field, on
 `create` as well as `checkpoint`; `--next-action` records the resume instruction;
 `--reopen` deliberately reopens a `complete` or `blocked` run as a new revision;

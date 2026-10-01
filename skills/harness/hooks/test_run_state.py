@@ -16,6 +16,11 @@ run could be closed again in place, `recover --rollback` with no journal reclaim
 a lock with an empty reason, rollback restored an old heartbeat or published an
 empty record from a damaged snapshot, an interrupted create had no way out, and
 the audit trail recorded events that never happened and none that did.
+
+Round two found what those fixes introduced: a run created under the previous
+writer's looser id could no longer be closed or recovered, `--drop-evidence` could
+leave a run with no evidence, and a hook that skipped because a writer held the lock
+was counted as a hook fault.
 """
 from __future__ import annotations
 
@@ -105,7 +110,8 @@ class RunStateCase(unittest.TestCase):
         save_run.WRITE_NOTES.clear()
 
     def command(self, run_id: str, *args: str) -> list[str]:
-        return [sys.executable, str(SAVE_RUN), *args, "--project-root", str(self.project), "--run-id", run_id]
+        # The `=` form, so an id that starts with a dash is not read as an option.
+        return [sys.executable, str(SAVE_RUN), *args, "--project-root", str(self.project), f"--run-id={run_id}"]
 
     def save(self, *args: str, run_id: str = "run-1") -> tuple[int, dict]:
         proc = subprocess.run(self.command(run_id, *args), text=True, capture_output=True, check=False)
@@ -236,6 +242,9 @@ class WriterExclusionTests(RunStateCase):
         self.assertEqual(while_held["heartbeat"], before, "the hook skipped its refresh while a writer held the lock")
         self.assertNotIn("heartbeat_source", while_held)
         self.assertLess(elapsed, 5)
+        observed = _state.load_observations(self.project)
+        self.assertEqual(observed.get("PreToolUse", {}).get("faults", 0), 0,
+                         "a skip because the writer is busy is the design, not a hook fault")
 
 
 class LockMechanismTests(RunStateCase):
@@ -294,6 +303,14 @@ class LockMechanismTests(RunStateCase):
         self.assertEqual(result["skipped"], "heartbeat is already fresh")
         self.assertEqual((self.run_dir / "_lock.md").read_bytes(), before)
 
+    def test_a_busy_lock_skips_the_optional_hook_refresh_and_refuses_the_one_that_must_happen(self):
+        self.create()
+        with self.store().exclusive():
+            skipped = self.store().heartbeat("admiral", source="hook:test", wait=0.05, min_age=300)
+            self.assertEqual(skipped["skipped"], "another writer holds the save write lock")
+            with self.assertRaises(save_run.LockBusy):
+                self.store().heartbeat("admiral", wait=0.05)
+
     def test_a_heartbeat_refuses_a_run_whose_lock_and_state_disagree(self):
         self.create()
         lock = self.lock()
@@ -347,6 +364,13 @@ class HeartbeatHotPathTests(RunStateCase):
         self.assertEqual(self.scans, 1)
         self.assertIsNone(self.refresh())
         self.assertEqual(self.scans, 1)
+
+    def test_a_refresh_skipped_for_a_busy_writer_is_not_counted_as_a_fault(self):
+        self.create()
+        self.age_records(12)
+        with self.store().exclusive():
+            self.assertEqual(self.refresh()["skipped"], "another writer holds the save write lock")
+        self.assertEqual(_state.load_observations(self.project).get("PreToolUse", {}).get("faults", 0), 0)
 
     def test_a_damaged_throttle_marker_does_not_switch_refreshing_off(self):
         self.create()
@@ -402,6 +426,19 @@ class EvidenceTests(RunStateCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(self.state()["evidence_paths"], ["README.md", "b.md"])
 
+    def test_dropping_the_only_evidence_path_is_refused_not_published_as_an_empty_list(self):
+        """The drop published `evidence_paths: []` and returned ok, and the run then read corrupt."""
+        self.create()
+        (self.project / "README.md").unlink()
+        code, out = self.save("checkpoint", "--drop-evidence", "README.md", "--reason", "pruned")
+        self.assertEqual((code, out["result"]), (1, "refused"), out)
+        self.assertIn("at least one evidence path", out["reason"])
+        self.assertEqual((self.state()["revision"], self.state()["evidence_paths"]), (1, ["README.md"]))
+        code, out = self.save("checkpoint", "--drop-evidence", "README.md", "--evidence", "b.md", "--reason", "replaced")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.state()["evidence_paths"], ["b.md"])
+        self.assertEqual(self.save("status")[1]["status"], "active")
+
     def test_dropping_an_unregistered_path_or_dropping_and_registering_one_path_is_refused(self):
         self.create()
         code, out = self.save("checkpoint", "--drop-evidence", "b.md", "--reason", "why")
@@ -422,6 +459,71 @@ class EvidenceTests(RunStateCase):
         (self.project / "b.md").unlink()
         code, out = self.save("status")
         self.assertEqual((out["status"], out["evidence_missing"]), ("complete", ["b.md"]), out)
+
+
+class LegacyRunIdTests(RunStateCase):
+    """The previous writer accepted any single path segment as a run id. The new grammar governs creation only,
+    so a run made under a looser id can still be read, kept alive, recovered and closed."""
+
+    LOOSE_IDS = ("my run", "-leading-dash", ".leading-dot", "semi;colon$and'quote", "x" * 129)
+
+    def legacy(self, run_id: str) -> Path:
+        """What the previous writer left: create no longer takes the id, so build the run under a valid one and rename it."""
+        self.create()
+        renamed = self.run_dir.with_name(run_id)
+        self.run_dir.rename(renamed)
+        self.run_dir = renamed
+        records = [renamed / "_state.md", renamed / "_lock.md", self.project / "skillset-saves" / "_latest.md"]
+        for path in records:
+            record = json.loads(path.read_text(encoding="utf-8"))
+            record["run_id"] = run_id
+            path.write_text(json.dumps(record), encoding="utf-8")
+        return renamed
+
+    def test_create_still_refuses_an_id_outside_the_grammar_and_writes_nothing(self):
+        for run_id in self.LOOSE_IDS:
+            with self.subTest(run_id=run_id):
+                code, out = self.save("create", "--evidence", "README.md", run_id=run_id)
+                self.assertEqual((code, out["result"]), (1, "refused"), out)
+                self.assertIn("letters, digits", out["reason"])
+        self.assertFalse((self.project / "skillset-saves" / "runs").exists())
+
+    def test_every_operation_still_reaches_a_run_created_under_a_looser_id(self):
+        for run_id in self.LOOSE_IDS:
+            with self.subTest(run_id=run_id), tempfile.TemporaryDirectory() as tmp:
+                self.project = Path(tmp).resolve()
+                for name in ("README.md", "b.md"):
+                    (self.project / name).write_text("x\n", encoding="utf-8")
+                self.run_dir = self.project / "skillset-saves" / "runs" / "run-1"
+                self.legacy(run_id)
+                self.assertEqual(self.save("status", run_id=run_id)[1]["requested_run"]["state"], "active")
+                self.assertEqual(self.save("heartbeat", run_id=run_id)[0], 0)
+                self.assertEqual(self.save("checkpoint", "--evidence", "b.md", run_id=run_id)[0], 0)
+                self.assertEqual(self.save("release", run_id=run_id)[0], 0)
+                self.assertEqual(self.save("checkpoint", run_id=run_id)[0], 0, "a released run resumes")
+                self.age_records(45)
+                code, out = self.save("recover", "--reason", "stale after a crash", run_id=run_id)
+                self.assertEqual((code, out["operation"]), (0, "recover"), out)
+                self.assertEqual(self.save("complete", run_id=run_id)[0], 0)
+                self.assertEqual(self.save("status", run_id=run_id)[1]["status"], "complete")
+                self.assertEqual(self.save("checkpoint", "--reopen", run_id=run_id)[0], 0)
+                self.assertEqual(self.save("block", run_id=run_id)[0], 0)
+
+    def test_the_hook_refresh_keeps_a_run_under_a_looser_id_alive_and_counts_no_fault(self):
+        self.legacy("my run")
+        self.age_records(12)
+        with mock.patch.dict(os.environ, {"SUPREMETEAM_PROJECT_DIR": str(self.project)}):
+            result = _state.refresh_run_heartbeat({"session_id": "host-1"}, "PreToolUse")
+        self.assertEqual(result["source"], "hook:PreToolUse", result)
+        self.assertEqual(_state.load_observations(self.project).get("PreToolUse", {}).get("faults", 0), 0)
+
+    def test_an_id_that_is_not_one_path_segment_is_still_refused_by_every_operation(self):
+        for run_id in ("..", "a/b", "a\\b", "c:x", "q?"):
+            for operation in ("status", "checkpoint", "recover"):
+                with self.subTest(run_id=run_id, operation=operation):
+                    code, out = self.save(operation, "--reason", "x", run_id=run_id)
+                    self.assertEqual((code, out["result"]), (1, "refused"), out)
+                    self.assertIn("unsafe run id", out["reason"])
 
 
 class ClosedRunTests(RunStateCase):

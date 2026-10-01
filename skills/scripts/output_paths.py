@@ -100,6 +100,11 @@ def resolve(project_root: Path, kind: str, *, run_id: str = "", phase: str = "",
             raise ValueError(f"{label} must be a single safe path segment, got {value!r}")
         return value
 
+    def run_segment(value: str) -> str:
+        if not taxonomy.RUN_ID.fullmatch(value or ""):
+            raise ValueError(f"run_id must be {taxonomy.RUN_ID_RULE}, got {value!r}")
+        return value
+
     def rel_name(value: str) -> Path:
         candidate = Path(value or "")
         if not value or candidate.is_absolute() or candidate.drive or ".." in candidate.parts:
@@ -122,7 +127,7 @@ def resolve(project_root: Path, kind: str, *, run_id: str = "", phase: str = "",
     elif kind == "guards":
         target = root / ".harness-state" / "guard-state.json"
     elif kind == "trajectory":
-        target = root / ".harness-state" / "trajectories" / seg(run_id or "no-run", "run_id") / (seg(session, "session") + ".json")
+        target = root / ".harness-state" / "trajectories" / run_segment(run_id or "no-run") / (seg(session, "session") + ".json")
     elif kind == "product":
         target = root / rel_name(name)
     elif kind == "test_work":
@@ -134,7 +139,7 @@ def resolve(project_root: Path, kind: str, *, run_id: str = "", phase: str = "",
     elif kind == "standalone_packages":
         target = root / ".harness-state" / "packages" / rel_name(name)
     else:
-        run_dir = saves / "runs" / seg(run_id, "run_id")
+        run_dir = saves / "runs" / run_segment(run_id)
         if kind == "core":
             if name not in taxonomy.RUN_RECORD_FILES:
                 raise ValueError("core name must be " + ", ".join(taxonomy.RUN_RECORD_FILES[:-1]) + ", or " + taxonomy.RUN_RECORD_FILES[-1])

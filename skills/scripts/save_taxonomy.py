@@ -9,6 +9,8 @@ import it on every host event.
 """
 from __future__ import annotations
 
+import re
+
 # Everything Supreme Team writes lives under one of these project-relative roots.
 GENERATED_ROOTS = ("skillset-saves", ".harness-state")
 
@@ -20,6 +22,13 @@ HISTORY = "_history"
 # Mutex every run-record mutation holds; it sits at the save root because the
 # pointer and the one-held-run rule span every run.
 WRITE_LOCK = "_write.lock"
+
+# The one run-id grammar, matched with fullmatch: the writer creates only these ids and
+# the path resolver and the hooks' run scope accept only these (``_state.RUN_ID`` is
+# held to it by validation/test_save_taxonomy.py). A run an earlier writer created under
+# a looser id stays readable and closable; only a new run is held to this.
+RUN_ID = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,127}")
+RUN_ID_RULE = "1 to 128 letters, digits, '.', '_' or '-', starting with a letter, digit or '_'"
 
 PHASE_DIRECTORIES = ("intake", "design", "build", "review", "security", "investigation", "qa", "taste",
                      "redesign", "delivery", "release", "skill-creation")

@@ -81,7 +81,9 @@ import _bootstrap
 
 _bootstrap.ensure_paths()
 from data_formats import content_sha256  # noqa: E402
-from save_taxonomy import ACTIVE_STATUSES, HISTORY, JOURNAL, POINTER, SCHEMA_VERSION, TERMINAL_STATUSES, WRITE_LOCK  # noqa: E402
+from save_taxonomy import (  # noqa: E402
+    ACTIVE_STATUSES, HISTORY, JOURNAL, POINTER, RUN_ID, RUN_ID_RULE, SCHEMA_VERSION, TERMINAL_STATUSES, WRITE_LOCK,
+)
 from _saves import NEXT_STEPS, heartbeat_is_stale, inspect_run, inspect_saves, parse_timestamp  # noqa: E402
 import _fsutil  # noqa: E402
 import _state  # noqa: E402
@@ -121,9 +123,20 @@ def sha256_file(path: Path) -> str:
 
 
 def safe_run_id(run_id: str) -> str:
-    """The reader's pattern, so a run the writer accepts is one the hooks can see."""
-    if not _state.RUN_ID.fullmatch(run_id):
-        raise Refused(f"unsafe run id {run_id!r}: use 1 to 128 letters, digits, '.', '_' or '-', starting with a letter, digit or '_'")
+    """One path segment, as the first writer checked it.
+
+    Every operation on a run takes this, so a run created under a looser id than the
+    grammar allows now can still be read, recovered and closed; ``new_run_id`` holds
+    only a run that does not exist yet to the grammar."""
+    if not run_id or run_id in {".", ".."} or Path(run_id).name != run_id or any(c in run_id for c in "\\/:*?\"<>|"):
+        raise Refused(f"unsafe run id {run_id!r}")
+    return run_id
+
+
+def new_run_id(run_id: str) -> str:
+    """The grammar a new run is created under, which the path resolver and the hooks' run scope also use."""
+    if not RUN_ID.fullmatch(run_id):
+        raise Refused(f"unsafe run id {run_id!r}: use {RUN_ID_RULE}")
     return run_id
 
 
@@ -375,6 +388,7 @@ class RunStore:
 
     # ------------------------------------------------------------ operations
     def create(self, owner: str, evidence: list[str], execution_mode: str, next_action: str, extra: dict[str, Any]) -> dict[str, Any]:
+        new_run_id(self.run_id)
         if not evidence:
             raise Refused("create needs at least one --evidence path: a run stands on the evidence it is created from "
                           "(for admiral, the intake report)")
@@ -444,6 +458,9 @@ class RunStore:
             if unknown:
                 raise Refused(f"--drop-evidence names paths that are not registered: {', '.join(unknown)}")
             merged = sorted((set(registered) | set(new_paths)) - set(dropped))
+            if not merged:
+                raise Refused("a run stands on at least one evidence path: register the replacement with --evidence in the "
+                              "same call as --drop-evidence")
             prior_hashes = dict(state.get("artifact_hashes") or {})
             hashes = {path: digest for path, digest in prior_hashes.items() if path in merged}
             hashes.update(self.evidence_hashes(merged, registered))
@@ -476,28 +493,41 @@ class RunStore:
 
         Everything is decided inside the lock, from a fresh read: a checkpoint that
         published while this call waited is seen, never overwritten. ``min_age``
-        skips the write when another writer already refreshed the heartbeat."""
-        with self.exclusive(wait):
-            state, lock = self.current()
-            self.require_owner(owner, lock)
-            if state is None:
-                raise Refused("run state unreadable; recover before heartbeat")
-            self.require_not_interrupted()
-            if str(lock.get("status")) != "held":
-                raise Refused("cannot heartbeat a released lock")
-            if _as_int(lock.get("revision"), -1) != _as_int(state.get("revision"), -2):
-                raise Refused("lock and state revisions differ; run status, then recover")
-            if self.stale(lock):
-                raise Refused("lock heartbeat is stale; reclaim it with recover --reason instead of a silent heartbeat")
-            beat = parse_timestamp(lock.get("heartbeat"))
-            if min_age is not None and beat is not None and 0 <= (datetime.now(timezone.utc) - beat).total_seconds() < min_age:
-                return {"result": "ok", "operation": "heartbeat", "run_id": self.run_id, "heartbeat": lock.get("heartbeat"),
-                        "source": source, "skipped": "heartbeat is already fresh"}
-            stamp = now_iso()
-            atomic_write(self.lock_path, dump({**lock, "heartbeat": stamp, "heartbeat_source": source}))
-            atomic_write(self.pointer, dump({"schema_version": SCHEMA_VERSION, "run_id": self.run_id,
-                                             "revision": int(state["revision"]), "updated_at": stamp}))
-            return {"result": "ok", "operation": "heartbeat", "run_id": self.run_id, "heartbeat": stamp, "source": source}
+        marks the optional refresh a hook makes: it skips the write when another
+        writer already refreshed the heartbeat, and when the writer lock stays busy
+        for ``wait``, because whoever holds it is writing this run and nothing is
+        due. Without ``min_age`` a busy lock is refused, so a caller that needs the
+        refresh learns it did not happen."""
+        try:
+            with self.exclusive(wait):
+                return self._heartbeat(owner, source, min_age)
+        except LockBusy:
+            if min_age is None:
+                raise
+            return {"result": "ok", "operation": "heartbeat", "run_id": self.run_id, "source": source,
+                    "skipped": "another writer holds the save write lock"}
+
+    def _heartbeat(self, owner: str, source: str, min_age: float | None) -> dict[str, Any]:
+        state, lock = self.current()
+        self.require_owner(owner, lock)
+        if state is None:
+            raise Refused("run state unreadable; recover before heartbeat")
+        self.require_not_interrupted()
+        if str(lock.get("status")) != "held":
+            raise Refused("cannot heartbeat a released lock")
+        if _as_int(lock.get("revision"), -1) != _as_int(state.get("revision"), -2):
+            raise Refused("lock and state revisions differ; run status, then recover")
+        if self.stale(lock):
+            raise Refused("lock heartbeat is stale; reclaim it with recover --reason instead of a silent heartbeat")
+        beat = parse_timestamp(lock.get("heartbeat"))
+        if min_age is not None and beat is not None and 0 <= (datetime.now(timezone.utc) - beat).total_seconds() < min_age:
+            return {"result": "ok", "operation": "heartbeat", "run_id": self.run_id, "heartbeat": lock.get("heartbeat"),
+                    "source": source, "skipped": "heartbeat is already fresh"}
+        stamp = now_iso()
+        atomic_write(self.lock_path, dump({**lock, "heartbeat": stamp, "heartbeat_source": source}))
+        atomic_write(self.pointer, dump({"schema_version": SCHEMA_VERSION, "run_id": self.run_id,
+                                         "revision": int(state["revision"]), "updated_at": stamp}))
+        return {"result": "ok", "operation": "heartbeat", "run_id": self.run_id, "heartbeat": stamp, "source": source}
 
     def finish(self, owner: str, status: str, next_action: str | None, extra: dict[str, Any]) -> dict[str, Any]:
         with self.exclusive():

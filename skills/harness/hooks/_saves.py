@@ -17,7 +17,7 @@ from typing import Any
 import _bootstrap
 
 _bootstrap.ensure_paths()
-from data_formats import DataFormatError, parse_yaml  # noqa: E402
+from data_formats import parse_yaml  # noqa: E402
 from save_taxonomy import (  # noqa: E402
     ACTIVE_STATUSES, FUTURE_SKEW_SECONDS, JOURNAL, POINTER, SCHEMA_VERSION, STALE_AFTER_SECONDS, TERMINAL_STATUSES,
 )
@@ -64,7 +64,8 @@ class SaveRecord:
 def _mapping(path: Path) -> dict[str, Any] | None:
     try:
         value = parse_yaml(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, DataFormatError, RecursionError):
+    except (OSError, ValueError, RecursionError):
+        # A parse failure, undecodable bytes and an integer literal past the interpreter's digit limit are all ValueErrors.
         return None
     return value if isinstance(value, dict) else None
 

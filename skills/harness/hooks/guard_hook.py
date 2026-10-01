@@ -607,9 +607,10 @@ def rule_read_only(call: "Call") -> "str | None":
 
 # --- Rule C: single writers --------------------------------------------------------------------------
 
-# Core save-protocol files with a single sanctioned writer (save_run.py).
+# Core save-protocol files with a single sanctioned writer (save_run.py). `_write.lock` is the writer mutex: a hand edit
+# that replaces or removes it while a writer holds it gives the next writer another file to lock.
 _CORE_SAVE_FILE = re.compile(
-    r"(?:^|/)skillset-saves/(?:_latest\.md|runs/[^/]+/(?:_state\.md|_lock\.md|_audit-trail\.md|_journal\.json|_history/[^/]+))$", re.I
+    r"(?:^|/)skillset-saves/(?:_latest\.md|_write\.lock|runs/[^/]+/(?:_state\.md|_lock\.md|_audit-trail\.md|_journal\.json|_history/[^/]+))$", re.I
 )
 _CORE_SAVE_REASON = (
     "Blocked by harness Action Realization layer: core save files are written only by "
@@ -639,7 +640,7 @@ _GUARD_STATE_REASON = (
 )
 # The same files named anywhere inside a command that could not be tokenised.
 _CORE_SAVE_TOKEN = re.compile(
-    r"skillset-saves/(?:_latest\.md|runs/[^\s\"'/]+/(?:_state\.md|_lock\.md|_audit-trail\.md|_journal\.json|_history/))", re.I
+    r"skillset-saves/(?:_latest\.md|_write\.lock|runs/[^\s\"'/]+/(?:_state\.md|_lock\.md|_audit-trail\.md|_journal\.json|_history/))", re.I
 )
 # The directories above a protected file: removing or moving one removes the file.
 _PROTECTED_DIRS = re.compile(r"(?:^|/)\.harness-state/?$|(?:^|/)skillset-saves(?:/runs(?:/[^/]+(?:/_history)?)?|/preferences)?/?$", re.I)

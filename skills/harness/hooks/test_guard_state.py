@@ -410,6 +410,21 @@ class GuardStateHardeningTests(unittest.TestCase):
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 self.assertNotIn("warning:", proc.stderr)
 
+    def test_a_boundary_list_in_another_shape_is_refused_by_the_writer_and_read_as_empty_by_the_hook(self):
+        """RR3-guard-4: a record that parses but holds a list as a mapping or a string names no boundary to the hook, with no
+        fault and no note, so the writer is where the owner is told; the README says both."""
+        for shape in ({"glob": "src/payments/**"}, "src/payments/**", 5):
+            for key in ("frozen_globs", "blocked_globs", "read_only"):
+                with self.subTest(shape=shape, key=key):
+                    self.write_record({key: shape})
+                    command = {"freeze": ("--glob", "a/**", "--owner", "ops"), "status": (), "release": ("--glob", "a/**", "--requester", "ops"),
+                               "read-only": ("--run-id", "r", "--owner", "o", "--allow", "x/**")}
+                    for name, args in command.items():
+                        proc = self.run_guard(name, *args)
+                        self.assertEqual(proc.returncode, 1, (name, proc.stdout))
+                        self.assertIn(f"'{key}' must be a list", proc.stderr)
+                    self.assertEqual(self.pre_tool({"tool_name": "Bash", "tool_input": {"command": "touch src/payments/a.py"}}), "")
+
     def test_status_says_why_an_unmatchable_record_already_on_disk_enforces_nothing(self):
         self.write_record({"frozen_globs": [{"glob": f"/{self.MISSING}/payments/**", "owner": "ops"}, {"glob": "!x/**", "owner": "ops"},
                                             {"glob": "src/ok/**", "owner": "ops"}]})

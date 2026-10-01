@@ -775,9 +775,10 @@ def rule_harness_files(call: "Call") -> "str | None":
 
 # --- Rule G: a write the analyser cannot place -------------------------------------------------------------
 
-# A chain of relative ``cd`` is followed only so far (``_cmdscan.MAX_CWD``): past that the directory of every
-# later write is unknown, so the write could land on anything a rule protects. The cost of following it is
-# quadratic and nobody works that way, so the command is refused whole instead of being let through.
+# A directory chain (``cd`` after ``cd``, or one long absolute ``cd``) is followed only so far
+# (``_cmdscan.MAX_CWD``): past that the directory of every later write is unknown, so the write could land on
+# anything a rule protects. The cost of following a relative chain is quadratic and nobody works that way, so the
+# command is refused whole instead of being let through.
 _UNPLACED_REASON = (
     "Blocked by harness Action Realization layer: the command changes directory through more than {limit} "
     "characters of path and then writes, so the guard cannot tell where the write lands. "
@@ -786,7 +787,7 @@ _UNPLACED_REASON = (
 
 
 def rule_unplaced_write(call: "Call") -> "str | None":
-    """Rule G: a command that writes after its working directory outgrew the analysis is denied."""
+    """Rule G: a command that writes after its directory chain (relative or absolute) outgrew the analysis is denied."""
     if not call.shell or not (call.analysis.lost_directory and call.analysis.writes):
         return None
     return _UNPLACED_REASON.format(limit=_cmdscan.MAX_CWD)

@@ -142,7 +142,7 @@ class DefaultsTests(InstallerCase):
 class EncodingTests(InstallerCase):
     def test_a_utf16_settings_file_is_refused_and_the_other_hosts_still_register(self):
         # Windows PowerShell 5.1 `>` and Out-File write UTF-16.
-        original = '{"model": "opus"}'.encode("utf-16")
+        original = '{"theme": "dark"}'.encode("utf-16")
         self.settings.write_bytes(original)
         codex = self.tmp / "codex.json"
         result = self.install("--target", "claude", "--target", "codex", "--claude-settings", str(self.settings), "--codex-hooks", str(codex))

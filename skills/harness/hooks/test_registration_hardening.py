@@ -101,7 +101,7 @@ class AutoHostTests(Scratch):
         self.assertIn("--host codex", result.stdout, "the repair preview names the host that needs it")
 
     def test_a_config_without_the_hooks_is_missing_for_that_host_only(self):
-        self.claude_settings({"model": "opus"})
+        self.claude_settings({"theme": "dark"})
         result = self.run_tool("verify_registration.py", "--host", "auto")
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("auto -> claude (config found)", result.stdout)
@@ -141,7 +141,7 @@ class ReadinessSemanticsTests(Scratch):
         return result, json.loads(result.stdout)
 
     def test_missing_hooks_do_not_make_the_project_not_ready(self):
-        self.claude_settings({"model": "opus"})
+        self.claude_settings({"theme": "dark"})
         result, data = self.readiness("--host", "auto")
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(data["hooks"]["status"], "missing")
@@ -150,7 +150,7 @@ class ReadinessSemanticsTests(Scratch):
         self.assertIn("repair_registration.py", data["repair_hint"])
 
     def test_text_output_says_hooks_are_optional_and_reports_ready(self):
-        self.claude_settings({"model": "opus"})
+        self.claude_settings({"theme": "dark"})
         result = self.run_tool("check_readiness.py", "--host", "auto")
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("Hooks: missing", result.stdout)
@@ -158,7 +158,7 @@ class ReadinessSemanticsTests(Scratch):
         self.assertIn("Ready: yes", result.stdout)
 
     def test_require_hooks_makes_missing_hooks_a_blocker(self):
-        self.claude_settings({"model": "opus"})
+        self.claude_settings({"theme": "dark"})
         result, data = self.readiness("--host", "auto", "--require-hooks")
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertFalse(data["ready"])
@@ -571,7 +571,7 @@ class RepairEncodingTests(Scratch):
     def test_repair_refuses_a_utf16_file_and_leaves_it_alone(self):
         settings = self.project / ".claude" / "settings.json"
         settings.parent.mkdir()
-        original = '{"model": "opus"}'.encode("utf-16")
+        original = '{"theme": "dark"}'.encode("utf-16")
         settings.write_bytes(original)
         for args in (("--scope", "project"), ("--scope", "project", "--apply")):
             with self.subTest(args=args):

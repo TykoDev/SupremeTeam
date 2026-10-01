@@ -8,9 +8,16 @@ optionally writes the archive.
 
     python skills/scripts/package_check.py --root . [--out .harness-state/packages/supremeteam.zip]
 
+Matching is case-insensitive on every host, so ``.ENV`` is the same secret as
+``.env``. A symlink is a violation, never a file: the archive would carry the
+bytes of whatever it points at under an innocent name. The contents of a nested
+``.git/`` directory are a violation too (a vendored repository ships its whole
+history); the root ``.git`` is the checkout's own and is never selected.
+
 Exit 0 when the enumerated set is clean, 1 when residue or a missing required
-file is found, 2 on manifest/engine error. The JSON report lists every
-violation with the class it matched.
+file is found, 2 on manifest/engine error, including a manifest that is not a
+mapping of string lists. The JSON report lists every violation with the class
+it matched.
 """
 from __future__ import annotations
 
@@ -24,11 +31,11 @@ from pathlib import Path
 SKILLS = Path(__file__).resolve().parents[1]
 if str(SKILLS / "scripts") not in sys.path:
     sys.path.insert(0, str(SKILLS / "scripts"))
-from data_formats import DataFormatError, load_data  # noqa: E402
+from data_formats import load_data  # noqa: E402
 
 RESIDUE_CLASSES = {
     "interpreter-cache": ["**/__pycache__/**", "**/*.pyc"],
-    "runtime-state": [".harness-state/**", "**/.harness-state/**"],
+    "runtime-state": [".harness-state/**", "**/.harness-state/**", ".supremeteam/**", "**/.supremeteam/**"],
     "save-state": ["skillset-saves/**", "**/skillset-saves/**"],
     "test-scratch": ["harness-test-work/**", "**/harness-test-work/**", "gatekeeper-test-work/**", "**/gatekeeper-test-work/**", "**/.harness-state/test-work/**"],
     "render-scratch": [".playwright-mcp/**", "**/.playwright-mcp/**"],
@@ -38,7 +45,12 @@ RESIDUE_CLASSES = {
     "coverage-residue": ["**/.coverage", "**/.coverage.*", "**/.coverage/**", "**/htmlcov/**", "**/.nyc_output/**"],
     "eval-workspace": ["**/*-workspace/**", "**/evals/workspace/**"],
     "archives": ["**/*.skill", "**/*.zip"],
-    "secrets": ["**/.env", "**/.env.*", "**/*.pem", "**/*.key"],
+    "vcs-metadata": ["**/.git/**"],
+    "secrets": [
+        "**/.env", "**/.env.*", "**/*.pem", "**/*.key", "**/*.p12", "**/*.pfx",
+        "**/id_rsa", "**/id_dsa", "**/id_ecdsa", "**/id_ed25519",
+        "**/.npmrc", "**/.netrc", "**/.pypirc", "**/credentials*.json",
+    ],
 }
 REQUIRED_ASSET_GLOBS = [
     "skills/gates.yaml",
@@ -54,15 +66,31 @@ REQUIRED_ASSET_GLOBS = [
 
 
 def matches(relative: str, patterns: list[str]) -> bool:
+    """Glob match that folds case: fnmatch alone is case-sensitive on POSIX, so `.ENV` passed."""
+    folded = relative.lower()
     for pattern in patterns:
-        if fnmatch.fnmatch(relative, pattern):
+        pattern = pattern.lower()
+        if fnmatch.fnmatchcase(folded, pattern):
             return True
         # Unlike fnmatch, a recursive glob also matches zero directories.
         while pattern.startswith("**/"):
             pattern = pattern[3:]
-            if fnmatch.fnmatch(relative, pattern):
+            if fnmatch.fnmatchcase(folded, pattern):
                 return True
     return False
+
+
+def manifest_globs(manifest: object) -> tuple[list[str], list[str]]:
+    """The include and exclude globs, or a ValueError naming what is wrong with the manifest."""
+    if not isinstance(manifest, dict):
+        raise ValueError("package manifest root must be a mapping")
+    globs = []
+    for key, default in (("include", ["**/*"]), ("exclude", [])):
+        value = manifest.get(key, default)
+        if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+            raise ValueError(f"package manifest {key} must be a list of non-empty strings")
+        globs.append(value)
+    return globs[0], globs[1]
 
 
 def main() -> int:
@@ -73,30 +101,33 @@ def main() -> int:
     args = parser.parse_args()
     root = Path(args.root).resolve()
     try:
-        manifest = load_data(Path(args.manifest))
-    except DataFormatError as exc:
+        include, exclude = manifest_globs(load_data(Path(args.manifest)))
+    except ValueError as exc:  # DataFormatError is a ValueError
         print(json.dumps({"ok": False, "engine_error": str(exc)}))
         return 2
-    include = [str(p) for p in manifest.get("include", ["**/*"])]
-    exclude = [str(p) for p in manifest.get("exclude", [])]
     selected: list[str] = []
+    violations = []
     for path in root.rglob("*"):
-        if not path.is_file():
+        link = path.is_symlink()
+        if not (link or path.is_file()):
             continue
         relative = path.relative_to(root).as_posix()
-        if relative.startswith(".git/"):
+        if relative == ".git" or relative.startswith(".git/"):
             continue
         if not matches(relative, include):
             continue
         if matches(relative, exclude):
             continue
-        selected.append(relative)
-    violations = []
+        if link:
+            violations.append({"path": relative, "class": "symlink"})
+        else:
+            selected.append(relative)
     for relative in selected:
         for klass, patterns in RESIDUE_CLASSES.items():
             if matches(relative, patterns):
                 violations.append({"path": relative, "class": klass})
                 break
+    violations.sort(key=lambda violation: violation["path"])
     missing = [glob for glob in REQUIRED_ASSET_GLOBS if not any(fnmatch.fnmatch(rel, glob) for rel in selected)]
     ok = not violations and not missing
     report = {"ok": ok, "root": str(root), "selected_count": len(selected), "violations": violations, "missing_required": missing}

@@ -13,28 +13,41 @@ the scanner itself exited cleanly.
 
 Result status mapping:
 
-    pass         command found, exit code 0
-    fail         command found, exit code in --fail-exit-codes (default: 1)
+    pass         command found, exit code 0 and no --fail-on-output pattern matched
+    fail         command found, exit code in --fail-exit-codes (default: 1), or
+                 exit code 0 with output matching a --fail-on-output pattern
     error        command found, any other exit code, or it timed out
     unavailable  the executable could not be found
     not-run      --no-run was given (records the request without executing)
 
-The record captures: tool, tool version (when --version-command is given),
-command, exit code, observed_at, duration, inputs bound by sha256 to the
-inspected manifests/lockfiles, target revision (git HEAD when available),
-stdout/stderr paths (raw output retained beside the record), and limitations.
+``pass`` records that the scanner exited 0, which is not proof that it found
+nothing: a scanner that exits 0 with findings printed (semgrep without --error,
+trivy without --exit-code) needs its own exit-code flag or a --fail-on-output
+pattern that matches its findings line.
+
+The record captures: tool, tool version and the argv that printed it (when
+--version-command is given), command (shlex.join of argv) and argv itself, exit
+code, observed_at, duration, inputs bound by sha256 to the inspected
+manifests/lockfiles, target revision (git HEAD when available), the stdout and
+stderr artifacts (raw output retained beside the record), and limitations.
+Artifact names are relative to the manifest that will embed the record, so the
+record passes the gate unedited: the run phase directory when --out sits inside
+skillset-saves/runs/<run>/<phase>/, else the record's own directory, else
+--manifest-root.
 Exit code of this wrapper: 0 when the record was written (whatever the scan
-status), 2 on wrapper error. A destination that cannot hold the record or the
-raw output beside it is a wrapper error, not a scan result: the sidecars are the
-``artifacts`` the record names, so nothing is written rather than a record that
-points at output that does not exist. Consumers read ``result.status``.
+status), 2 on wrapper error, including an unusable argument. A destination that
+cannot hold the record or the raw output beside it is a wrapper error, not a scan
+result: the sidecars are the ``artifacts`` the record names, so nothing is
+written rather than a record that points at output that does not exist.
+Consumers read ``result.status``.
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -70,14 +83,36 @@ def git_head(project_root: Path) -> str | None:
     return out.stdout.strip() if out.returncode == 0 else None
 
 
+def resolve_executable(name: str) -> str | None:
+    """Where a command name resolves (PATH lookup, PATHEXT on Windows), or None."""
+    return shutil.which(name) or (name if Path(name).is_file() else None)
+
+
+def manifest_root(out: Path, override: str | None) -> Path:
+    """The directory artifact names are written relative to: the embedding manifest's own.
+
+    check.py resolves every artifact name against the manifest's directory, and
+    the manifest of a run phase sits at skillset-saves/runs/<run>/<phase>/, so a
+    record written under that phase names its output as ``evidence/<file>``.
+    """
+    if override:
+        return Path(override).resolve()
+    for ancestor in out.parents:
+        if ancestor.parent.parent.name == "runs" and ancestor.parent.parent.parent.name == "skillset-saves":
+            return ancestor
+    return out.parent
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Record a vulnerability scan as typed evidence.")
     parser.add_argument("--project-root", default=".")
     parser.add_argument("--out", required=True, help="path of the JSON record; raw output is stored beside it")
     parser.add_argument("--input", action="append", default=[], help="project-relative manifest/lockfile the scan inspects (repeatable)")
     parser.add_argument("--tool", help="tool name (default: first command token)")
-    parser.add_argument("--version-command", help="command that prints the tool version, e.g. 'pip-audit --version'")
-    parser.add_argument("--fail-exit-codes", default="1", help="comma-separated exit codes that mean findings were reported")
+    parser.add_argument("--version-command", help="command that prints the tool version, e.g. 'pip-audit --version'; split with POSIX shell quoting rules and run as an argument list, never through a shell")
+    parser.add_argument("--fail-exit-codes", default="1", help="comma-separated integer exit codes that mean findings were reported")
+    parser.add_argument("--fail-on-output", action="append", default=[], metavar="REGEX", help="record fail instead of pass when the scanner exits 0 but its stdout or stderr matches REGEX (repeatable), for scanners that print findings and exit 0")
+    parser.add_argument("--manifest-root", help="directory of the manifest that will embed this record; artifact names are written relative to it (default: the run phase directory when --out is inside skillset-saves/runs/<run>/<phase>/, else the record's own directory)")
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--no-run", action="store_true", help="record a not-run request without executing the scanner")
     parser.add_argument("--limitation", action="append", default=[], help="known coverage limitation (repeatable)")
@@ -98,7 +133,29 @@ def main() -> int:
         print(json.dumps({"engine_error": f"record destination unusable: {exc}"}), file=sys.stderr)
         return 2
     tool = args.tool or Path(command[0]).name
-    fail_codes = {int(c) for c in args.fail_exit_codes.split(",") if c.strip()}
+    try:
+        fail_codes = {int(c) for c in args.fail_exit_codes.split(",") if c.strip()}
+    except ValueError:
+        print(json.dumps({"engine_error": f"--fail-exit-codes must be comma-separated integers: {args.fail_exit_codes!r}"}), file=sys.stderr)
+        return 2
+    try:
+        output_patterns = [re.compile(pattern) for pattern in args.fail_on_output]
+    except re.error as exc:
+        print(json.dumps({"engine_error": f"--fail-on-output is not a valid regular expression: {exc}"}), file=sys.stderr)
+        return 2
+    try:
+        version_argv = shlex.split(args.version_command) if args.version_command else []
+    except ValueError as exc:
+        print(json.dumps({"engine_error": f"--version-command is not a valid command line: {exc}"}), file=sys.stderr)
+        return 2
+    stdout_path = out.with_name(out.stem + ".stdout.txt")
+    stderr_path = out.with_name(out.stem + ".stderr.txt")
+    root = manifest_root(out, args.manifest_root)
+    try:
+        artifact_names = [path.relative_to(root).as_posix() for path in (stdout_path, stderr_path)]
+    except ValueError:
+        print(json.dumps({"engine_error": f"the record and its raw output must sit under the manifest root: {root}"}), file=sys.stderr)
+        return 2
 
     inputs = []
     for value in args.input:
@@ -114,20 +171,20 @@ def main() -> int:
         inputs.append({"path": Path(value).as_posix(), "sha256": sha256_file(target)})
 
     version = None
-    if args.version_command and not args.no_run:
+    probe_executable = resolve_executable(version_argv[0]) if version_argv and not args.no_run else None
+    if probe_executable is not None:
         try:
-            probe = subprocess.run(args.version_command, shell=True, text=True, capture_output=True, check=False, timeout=60)
-            version = (probe.stdout or probe.stderr).strip().splitlines()[0] if (probe.stdout or probe.stderr).strip() else None
+            probe = subprocess.run([probe_executable, *version_argv[1:]], text=True, capture_output=True, check=False, timeout=60)
+            output = (probe.stdout or probe.stderr).strip()
+            version = output.splitlines()[0] if output else None
         except (OSError, subprocess.TimeoutExpired):
             version = None
 
     observed_at = datetime.now(timezone.utc).isoformat()
-    stdout_path = out.with_name(out.stem + ".stdout.txt")
-    stderr_path = out.with_name(out.stem + ".stderr.txt")
     status, exit_code, duration, limitations = "not-run", None, 0.0, list(args.limitation)
     raw_stdout, raw_stderr = "", "not run\n"
     if not args.no_run:
-        executable = shutil.which(command[0]) or (command[0] if Path(command[0]).is_file() else None)
+        executable = resolve_executable(command[0])
         if executable is None:
             status = "unavailable"
             limitations.append(f"executable not found on PATH: {command[0]}")
@@ -140,7 +197,12 @@ def main() -> int:
                 exit_code = proc.returncode
                 raw_stdout, raw_stderr = proc.stdout or "", proc.stderr or ""
                 if exit_code == 0:
-                    status = "pass"
+                    matched = next((rx.pattern for rx in output_patterns if rx.search(raw_stdout) or rx.search(raw_stderr)), None)
+                    if matched is None:
+                        status = "pass"
+                    else:
+                        status = "fail"
+                        limitations.append(f"scanner exited 0 but its output matched --fail-on-output {matched!r}")
                 elif exit_code in fail_codes:
                     status = "fail"
                 else:
@@ -168,16 +230,18 @@ def main() -> int:
         "type": "scan",
         "tool": tool,
         "tool_version": version,
-        "command": " ".join(command),
+        "version_command": shlex.join(version_argv) if version_argv else None,
+        "command": shlex.join(command),
+        "argv": command,
         "exit_code": exit_code,
         "observed_at": observed_at,
         "duration_seconds": duration,
         "target_revision": git_head(project_root),
         "inputs": inputs,
-        "artifacts": [stdout_path.name, stderr_path.name],
+        "artifacts": artifact_names,
         "result": {"status": status},
         "limitations": limitations,
-        "note": "status pass means the scanner exited 0; unavailable, error, and not-run are data gaps and never a clean scan",
+        "note": "status pass means the scanner exited 0 and matched no --fail-on-output pattern, which is not proof it found nothing; unavailable, error, and not-run are data gaps and never a clean scan",
     }
     tmp = out.with_suffix(out.suffix + ".tmp")
     try:

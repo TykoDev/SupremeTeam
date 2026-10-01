@@ -34,8 +34,11 @@ advice.
 Every phase boundary hits a gatekeeper. The package and its hashed evidence go
 through two deterministic validators, then a gatekeeper issues one verdict:
 **APPROVED** advances, **REVISE** returns with the exact missing fact (twice, then
-escalate), **ESCALATE** comes to you. Change a source file after evidence was
-recorded and the gate fails with `input hash drift` instead of trusting a stale log.
+escalate), **ESCALATE** comes to you. Evidence that names its source files by
+sha256 fails with `input hash drift` when one of them changes, instead of the gate
+trusting a stale log. Scan and render records must name their sources; a test or
+probe record that names none is accepted as the submitter's own statement, and the
+gate says so in `warnings` rather than implying it was verified.
 
 ![The review loop: package, twin validators, adjudicator verdict](docs/assets/6_review_loop.jpg)
 

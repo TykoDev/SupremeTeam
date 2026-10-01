@@ -32,6 +32,18 @@ def registry_entry() -> dict:
     return load_data(SKILLS / "tech-stacks" / "registry.yaml")["overlays"][0]
 
 
+SPEC = load_data(GATE_SPEC)
+
+
+def waiver(key: str, scope: str = "whole run", decided_by: str = "commander") -> dict:
+    """An applicability record whose reason is the wording the gate spec sanctions for `key`.
+
+    Read from the spec rather than spelled out, so a fixture can never drift back
+    to a paraphrase the gate would now refuse.
+    """
+    return {"applicable": False, "reason": SPEC["fallback_values"][key][0], "scope": scope, "decided_by": decided_by}
+
+
 class RunLayoutFixture:
     """A canonical skillset-saves run with an intake grilling log."""
 
@@ -92,9 +104,9 @@ class EvidenceRootTests(unittest.TestCase):
                 "decisions": decisions, "architecture": "reports/architecture.md", "interfaces": "REST",
                 "plan": "reports/plan.md", "acceptance": "smoke + contract tests",
                 "security_seed": "no external trust boundary",
-                "stack_lock": {"applicable": False, "reason": "no new runtime", "scope": "whole run", "decided_by": "commander"},
+                "stack_lock": waiver("stack_lock"),
                 "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
-                "ui_evidence": {"applicable": False, "reason": "no user-facing surface", "scope": "whole run", "decided_by": "architect"},
+                "ui_evidence": waiver("ui_evidence", decided_by="architect"),
             },
             "artifact_hashes": {"../intake/report_grilling.md": sha256(self.fx.grilling),
                                 "reports/architecture.md": sha256(architecture), "reports/plan.md": sha256(plan)},
@@ -109,16 +121,25 @@ class EvidenceRootTests(unittest.TestCase):
         self.assertEqual(out["evidence_root_kind"], "run")
         self.assertTrue(out["pass"])
 
-    def test_legacy_v1_manifest_in_run_layout_also_accepts_sibling_evidence(self):
+    def test_legacy_v1_manifest_in_run_layout_is_refused_but_still_resolves_sibling_evidence(self):
+        """Inside a run schema 2 is required; the refusal must not hide the rest of the packet."""
         data = self.design_manifest()
         for key in ("schema_version", "boundary", "owner"):
             data.pop(key)
-        data["evidence"]["stack_lock"] = "no new runtime or framework - existing stack unchanged"
-        data["evidence"]["taste_snapshot"] = "no saved Taste profile available"
-        data["evidence"]["ui_evidence"] = "no user-facing surface - design system not engaged"
+        data["evidence"]["stack_lock"] = SPEC["fallback_values"]["stack_lock"][0]
+        data["evidence"]["taste_snapshot"] = SPEC["fallback_values"]["taste_snapshot"][0]
+        data["evidence"]["ui_evidence"] = SPEC["fallback_values"]["ui_evidence"][0]
         proc = run_cli("design-to-build", self.fx.write_manifest("design", data))
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertEqual(result(proc)["manifest_schema_version"], 1)
+        out = result(proc)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(out["evidence_root_kind"], "run")
+        self.assertEqual((out["declared_schema_version"], out["manifest_schema_version"]), (None, 2))
+        self.assertIn("manifest inside a run must declare schema_version 2 (declared: absent); checked as schema 2",
+                      out["failures"])
+        self.assertIn("missing boundary (required at schema 2)", out["failures"])
+        self.assertIn("bare fallback string not accepted at schema 2: stack_lock (use an applicability record)",
+                      out["failures"])
+        self.assertFalse(any("escapes" in f or "unhashed" in f for f in out["failures"]), out["failures"])
 
     def test_other_run_evidence_is_rejected(self):
         other = RunLayoutFixture(self.root, run_id="run-b")
@@ -198,8 +219,7 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
             "evidence": {
                 "review_verdict": "APPROVED", "findings": {"items": []},
                 "executed_probes": {"artifacts": ["proof.md"], "result": {"status": "pass"}},
-                "rendered_verification": {"applicable": False, "reason": "no visible surface changed",
-                                          "scope": "api only", "decided_by": "design-qa"},
+                "rendered_verification": waiver("rendered_verification", "api only", "design-qa"),
                 "residual_risk": "none", "revision_lineage": "r1 <- design r1",
             },
             "artifact_hashes": {"proof.md": sha256(proof)},
@@ -219,6 +239,77 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
         proc, out = self.check(self.review_manifest(revision="r2"))
         self.assertEqual(proc.returncode, 1)
         self.assertIn("revision not in revisions lineage", out["failures"])
+
+    def test_a_run_manifest_without_schema_version_is_refused_and_still_fully_checked(self):
+        """Omitting schema_version used to select schema 1 and skip every typed check: an open Critical passed."""
+        data = self.review_manifest()
+        del data["schema_version"]
+        data["evidence"]["findings"] = {"items": [{"id": "F1", "severity": "Critical", "status": "open"}]}
+        data["evidence"]["review_verdict"] = "REVISE"
+        proc, out = self.check(data)
+        self.assertEqual(proc.returncode, 1, out)
+        self.assertFalse(out["pass"])
+        self.assertIn("manifest inside a run must declare schema_version 2 (declared: absent); checked as schema 2",
+                      out["failures"])
+        self.assertTrue(any("open Critical finding blocks the gate" in f for f in out["failures"]), out["failures"])
+        self.assertTrue(any("without a challenge record" in f for f in out["failures"]), out["failures"])
+        self.assertEqual((out["declared_schema_version"], out["manifest_schema_version"]), (None, 2))
+
+    def test_an_explicit_schema_1_manifest_in_a_run_is_refused_too(self):
+        proc, out = self.check(self.review_manifest(schema_version=1))
+        self.assertEqual(proc.returncode, 1, out)
+        self.assertEqual(out["failures"],
+                         ["manifest inside a run must declare schema_version 2 (declared: 1); checked as schema 2"])
+        self.assertEqual((out["declared_schema_version"], out["manifest_schema_version"]), (1, 2))
+
+    def test_a_schema_2_manifest_in_a_run_raises_no_schema_failure(self):
+        proc, out = self.check(self.review_manifest())
+        self.assertEqual(proc.returncode, 0, out)
+        self.assertEqual((out["declared_schema_version"], out["manifest_schema_version"]), (2, 2))
+        self.assertFalse(any(w.startswith("schema 1 manifest") for w in out["warnings"]), out["warnings"])
+
+    def test_the_result_names_every_input_that_is_not_the_shipped_one(self):
+        manifest = self.fx.write_manifest("review", self.review_manifest())
+        out = result(run_cli("review-to-delivery", manifest))
+        self.assertTrue(out["gate_spec_is_shipped"])
+        self.assertTrue(out["registry_is_shipped"])
+        self.assertIsNone(out["prior_record"])
+        self.assertFalse(any("shipped" in w for w in out["warnings"]), out["warnings"])
+        # A copy with the same content is the shipped spec; an altered copy is not.
+        same = self.root / "same-gates.yaml"
+        same.write_bytes(GATE_SPEC.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+        self.assertTrue(result(run_cli("review-to-delivery", manifest, "--gates", str(same)))["gate_spec_is_shipped"])
+        altered = self.root / "altered-gates.yaml"
+        altered.write_text("# altered\n" + GATE_SPEC.read_text(encoding="utf-8"), encoding="utf-8")
+        out = result(run_cli("review-to-delivery", manifest, "--gates", str(altered)))
+        self.assertFalse(out["gate_spec_is_shipped"])
+        self.assertIn(f"gate spec is not the shipped skills/gates.yaml: {altered}", out["warnings"])
+        registry = self.root / "registry.yaml"
+        registry.write_text("# altered\n" + (SKILLS / "tech-stacks" / "registry.yaml").read_text(encoding="utf-8"),
+                            encoding="utf-8")
+        out = result(run_cli("review-to-delivery", manifest, "--registry", str(registry)))
+        self.assertFalse(out["registry_is_shipped"])
+        self.assertIn(f"tech-stack registry is not the shipped one: {registry}", out["warnings"])
+
+    def test_a_prior_record_is_named_and_held_against_the_shipped_spec(self):
+        manifest = self.fx.write_manifest("review", self.review_manifest())
+        verdict = self.fx.phase("review") / "verdict_review-to-delivery.json"
+        produced = result(run_cli("review-to-delivery", manifest, "--verdict-out", str(verdict)))
+        out = result(run_cli("review-to-delivery", manifest, "--prior", str(verdict)))
+        self.assertEqual(out["prior_record"], {"path": str(verdict.resolve()),
+                                               "gate_spec_digest": produced["gate_spec_digest"],
+                                               "gate_spec_is_shipped": True})
+        self.assertTrue(out["prior_reusable"])
+        self.assertFalse(any("prior record" in w for w in out["warnings"]), out["warnings"])
+        # A hand-written record with the right identity and no spec digest is trusted for nothing.
+        forged = self.root / "forged.json"
+        forged.write_text(json.dumps({"submission_id": "review-1", "revision": "r1", "pass": True,
+                                      "package_fingerprint": produced["package_fingerprint"]}), encoding="utf-8")
+        out = result(run_cli("review-to-delivery", manifest, "--prior", str(forged)))
+        self.assertEqual((out["prior_record"]["gate_spec_digest"], out["prior_record"]["gate_spec_is_shipped"]),
+                         (None, False))
+        self.assertFalse(out["prior_reusable"])
+        self.assertIn("prior record was not produced against the shipped gate spec", out["warnings"])
 
     def test_wrong_owner_and_boundary_are_rejected(self):
         _, out = self.check(self.review_manifest(owner="bob-the-builder"))
@@ -269,7 +360,12 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
         self.assertTrue(any("unhashed path: executed_probes -> missing.md" in f for f in out["failures"]))
 
     def test_v1_list_with_unhashed_second_path_fails_but_annotation_is_fine(self):
-        proof = self.fx.proof("review")
+        # Schema 1 is the flat-package shape; inside a run it is refused, so this lives outside one.
+        flat = self.root / "flat"
+        flat.mkdir()
+        proof = flat / "proof.md"
+        proof.write_text("# Proof\n\nObserved: probe executed, denied as expected.\n", encoding="utf-8")
+        manifest = flat / "manifest.json"
         data = {
             "submission_id": "rv", "revision": "r1", "revisions": ["r1"],
             "evidence": {"review_verdict": "APPROVED", "findings": True, "executed_probes": "proof.md",
@@ -277,12 +373,15 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
                          "residual_risk": "none", "revision_lineage": "r1"},
             "artifact_hashes": {"proof.md": sha256(proof)},
         }
-        proc, out = self.check(data)
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        proc = run_cli("review-to-delivery", manifest)
+        out = result(proc)
         self.assertEqual(proc.returncode, 1)
         self.assertTrue(any("unhashed path: rendered_verification -> missing-capture.png" in f for f in out["failures"]))
         data["evidence"]["rendered_verification"] = ["proof.md", "desktop, mobile, both themes"]
-        proc, out = self.check(data)
-        self.assertEqual(proc.returncode, 0, out)
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        proc = run_cli("review-to-delivery", manifest)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
 
     def test_v2_render_record_requires_captures_inputs_and_status(self):
         surface = self.root / "app" / "index.html"
@@ -341,6 +440,9 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
         _, out = self.check(base, "build-to-review", "build")
         self.assertTrue(any("bare fallback string not accepted at schema 2" in f for f in out["failures"]))
         base["evidence"]["security_evidence"] = {"applicable": False, "reason": "no trust boundary touched", "scope": "src/ui only", "decided_by": "security-builder"}
+        _, out = self.check(base, "build-to-review", "build")
+        self.assertTrue(any(f.startswith("applicability reason not sanctioned: security_evidence") for f in out["failures"]), out["failures"])
+        base["evidence"]["security_evidence"] = waiver("security_evidence", "src/ui only", "security-builder")
         proc, out = self.check(base, "build-to-review", "build")
         self.assertEqual(proc.returncode, 0, out)
         base["evidence"]["implementation"] = {"applicable": False, "reason": "x", "scope": "y", "decided_by": "z"}
@@ -360,7 +462,7 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
                 "security_seed": "no external trust boundary",
                 "stack_lock": {"slug": entry["slug"], "versions": entry["versions"], "overlay_sha256": entry["sha256"]},
                 "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
-                "ui_evidence": {"applicable": False, "reason": "no user-facing surface", "scope": "whole run", "decided_by": "architect"},
+                "ui_evidence": waiver("ui_evidence", decided_by="architect"),
             },
             "artifact_hashes": {"../intake/report_grilling.md": sha256(self.fx.grilling),
                                 "reports/architecture.md": sha256(architecture), "reports/plan.md": sha256(plan)},
@@ -482,7 +584,7 @@ class OverlayDigestPortabilityTests(unittest.TestCase):
                     "security_seed": "no external trust boundary",
                     "stack_lock": {"slug": entry["slug"], "versions": entry["versions"], "overlay_sha256": lf_digest},
                     "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
-                    "ui_evidence": {"applicable": False, "reason": "no user-facing surface", "scope": "whole run", "decided_by": "architect"},
+                    "ui_evidence": waiver("ui_evidence", decided_by="architect"),
                 },
                 "artifact_hashes": {"../intake/report_grilling.md": sha256(fx.grilling),
                                     "reports/architecture.md": sha256(architecture), "reports/plan.md": sha256(plan)},
@@ -516,7 +618,7 @@ class ArtifactHashPortabilityTests(unittest.TestCase):
                 "security_seed": "no external trust boundary",
                 "stack_lock": {"slug": entry["slug"], "versions": entry["versions"], "overlay_sha256": entry["sha256"]},
                 "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
-                "ui_evidence": {"applicable": False, "reason": "no user-facing surface", "scope": "whole run", "decided_by": "architect"},
+                "ui_evidence": waiver("ui_evidence", decided_by="architect"),
             },
             "artifact_hashes": hashes,
         }

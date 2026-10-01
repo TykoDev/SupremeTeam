@@ -6,7 +6,7 @@ evidence root is the manifest's own directory. Run-layout behaviour (sibling
 evidence, typed records, verdict reuse) lives in test_gate_run_layout.py.
 """
 from __future__ import annotations
-import hashlib, json, re, subprocess, sys, tempfile, unittest
+import json, re, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 SKILLS = Path(__file__).resolve().parents[2]
@@ -100,6 +100,21 @@ class BoundaryManifestTests(unittest.TestCase):
                     with self.subTest(boundary=boundary, key=key):
                         self.assert_passes(boundary, self.package(boundary, {key: value}))
 
+    def test_a_flat_schema_1_package_passes_but_says_no_typed_check_ran(self):
+        """Schema 1 stays valid outside a run, but a bare pass must not read as the whole contract."""
+        r = self.run_check("build-to-review", self.package("build-to-review"))
+        self.assertEqual(r.returncode, 0, r.stdout)
+        out = json.loads(r.stdout)
+        self.assertEqual((out["manifest_schema_version"], out["declared_schema_version"]), (1, None))
+        self.assertTrue(any(w.startswith("schema 1 manifest: typed records") for w in out["warnings"]), out["warnings"])
+
+    def test_a_flat_schema_2_package_carries_no_downgrade_warning(self):
+        p = self.package("build-to-review")
+        p.update({"schema_version": 2, "boundary": "build-to-review", "owner": "build-management"})
+        out = json.loads(self.run_check("build-to-review", p).stdout)
+        self.assertEqual((out["manifest_schema_version"], out["declared_schema_version"]), (2, 2))
+        self.assertFalse(any(w.startswith("schema 1 manifest") for w in out["warnings"]), out["warnings"])
+
     # --- missing-evidence coverage, one required key per boundary
     def test_missing_required_evidence_fails(self):
         for boundary, key in (
@@ -157,6 +172,11 @@ class BoundaryManifestTests(unittest.TestCase):
         p["evidence"]["runtime"] = {"artifacts": [ARTIFACT], "result": {"status": "pass"}}
         p["evidence"]["approved_design_revision"] = "r0"
         r = self.run_check("build-to-review", p)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertTrue(any(f.startswith("applicability reason not sanctioned: security_evidence")
+                            for f in json.loads(r.stdout)["failures"]), r.stdout)
+        p["evidence"]["security_evidence"]["reason"] = sanctioned
+        r = self.run_check("build-to-review", p)
         self.assertEqual(r.returncode, 0, r.stdout)
 
     def test_non_waivable_key_rejects_an_applicability_record(self):
@@ -182,6 +202,21 @@ class BoundaryManifestTests(unittest.TestCase):
         self.assertTrue(any("broken link" in f for f in out["failures"]))
         mismatch = self.run_check("design-to-build", self.package("design-to-build"), corrupt_hash=True)
         self.assertIn("artifact hash mismatch", " ".join(json.loads(mismatch.stdout)["failures"]))
+
+    def test_every_default_hollow_phrase_blocks_an_artifact_at_the_boundary_validator(self):
+        """check.py used a shorter private list, so five of the shared eight phrases passed it."""
+        for phrase in ("works on my machine", "no issues whatsoever", "placeholder content",
+                       "as an AI language model", "I cannot actually verify this"):
+            with self.subTest(phrase=phrase):
+                r = self.run_check("design-to-build", self.package("design-to-build"), f"# Evidence\n{phrase}.\n")
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn("blocked phrase: evidence.md", json.loads(r.stdout)["failures"])
+
+    def test_ordinary_lowercase_words_are_not_blocked_phrases(self):
+        """The code-rot markers are case-sensitive words; check.py matched them case-insensitively."""
+        r = self.run_check("design-to-build", self.package("design-to-build"),
+                           "# Evidence\nA quick hack of the todo list; xxx and fixme are ordinary words in prose.\n")
+        self.assertEqual(r.returncode, 0, r.stdout)
 
     def test_hash_mismatched_artifact_is_still_scanned(self):
         r = self.run_check("design-to-build", self.package("design-to-build"),

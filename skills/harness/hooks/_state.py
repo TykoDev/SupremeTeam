@@ -54,8 +54,12 @@ import _fsutil  # noqa: E402
 
 # The hooks scope a run by the grammar `save_run.py create` and `output_paths.py` share, matched with
 # fullmatch (the pattern is unanchored): an id that reaches a directory name or a message the model
-# reads is plain and bounded.
-from save_taxonomy import RUN_ID  # noqa: E402
+# reads is plain and bounded. A copy of the hooks without skills/scripts must still guard, so a missing
+# taxonomy leaves the scope at "no-run" instead of stopping every hook at import.
+try:
+    from save_taxonomy import RUN_ID  # noqa: E402
+except ImportError:
+    RUN_ID = None
 
 # Maximum trajectory signatures retained per identity (bounded memory).
 _MAX_TRAJ = 40
@@ -392,7 +396,7 @@ def active_run_id(root: "str | Path | None" = None) -> str:
                     key, value = line.split(":", 1)
                     data[key.strip()] = value.strip()
         run_id = str(data.get("run_id", "")).strip()
-        if RUN_ID.fullmatch(run_id):
+        if RUN_ID is not None and RUN_ID.fullmatch(run_id):
             return run_id
     except Exception:
         pass

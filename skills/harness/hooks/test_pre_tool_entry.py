@@ -15,8 +15,10 @@ import ast
 import contextlib
 import io
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -123,6 +125,48 @@ class EntryPointTests(unittest.TestCase):
         self.assertIn(b'"permissionDecision": "deny"', proc.stdout)
         proc = kit.run_hook("pre_tool_use.py", {"tool_name": "Bash", "tool_input": {"command": "ls"}}, self.root)
         self.assertEqual((proc.returncode, proc.stdout), (0, b""))
+
+
+class PartialCopyTests(unittest.TestCase):
+    """A copy of the harness whose `skills/scripts` lacks `save_taxonomy.py` still guards and still lets the other two hooks run.
+
+    `_state` reads the run-id grammar from that module. Importing it unconditionally switched the guard off (the entry fails
+    open on an import fault) and made the other two entries exit 1 with a traceback, where before they only lost the run scope."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        skills = Path(tmp.name).resolve() / "skills"
+        ignore = shutil.ignore_patterns("test_*.py", "__pycache__")
+        shutil.copytree(HOOK_DIR, skills / "harness" / "hooks", ignore=ignore)
+        shutil.copytree(_bootstrap.SCRIPTS, skills / "scripts", ignore=ignore)
+        (skills / "scripts" / "save_taxonomy.py").unlink()
+        self.hooks = skills / "harness" / "hooks"
+        self.project = Path(tmp.name).resolve() / "project"
+        (self.project / ".git").mkdir(parents=True)
+
+    def run_entry(self, script: str, payload: dict) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, str(self.hooks / script)], input=json.dumps(payload).encode("utf-8"), capture_output=True,
+                              env=kit.clean_env(self.project), check=False)
+
+    def test_the_guard_still_denies_and_allows(self):
+        denied = self.run_entry("pre_tool_use.py", kit.bash("rm -rf /"))
+        self.assertEqual(denied.returncode, 0, denied.stderr)
+        self.assertTrue(kit.denied(denied.stdout.decode("utf-8")), denied.stdout)
+        allowed = self.run_entry("pre_tool_use.py", kit.bash("ls -la"))
+        self.assertEqual((allowed.returncode, allowed.stdout), (0, b""))
+
+    def test_the_other_two_entries_exit_zero_without_a_traceback(self):
+        prompt = self.run_entry("user_prompt_submit.py", {"prompt": "add a feature"})
+        self.assertEqual((prompt.returncode, prompt.stderr), (0, b""))
+        self.assertIn("admiral", prompt.stdout.decode("utf-8"))
+        post = self.run_entry("post_tool_use.py", {"tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_response": {}})
+        self.assertEqual((post.returncode, post.stderr), (0, b""))
+
+    def test_the_run_scope_is_no_run_where_the_grammar_is_missing(self):
+        code = "import sys; sys.path.insert(0, %r); import _state; print(_state.RUN_ID, _state.active_run_id(%r))" % (str(self.hooks), str(self.project))
+        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+        self.assertEqual((proc.returncode, proc.stdout.strip()), (0, "None no-run"), proc.stderr)
 
 
 class ImportabilityTests(unittest.TestCase):

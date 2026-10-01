@@ -129,7 +129,9 @@ Two things still produce separate records, because they are different boundaries
 
 `status` prints the effective boundary in its stored form, and warns about an active
 record that can never match (`unmatchable_entries`, each with its reason under `unmatchable_reasons`: a legacy entry that is empty, climbs out of
-the project, starts with `!`, or is a leading-slash path under a directory this machine does not have) beside the ownerless ones. Read it after every release
+the project, starts with `!`, or is a leading-slash path under a directory this machine does not have) beside the ownerless ones, and about a record that is an
+absolute path outside the project (`absolute_entries`, with the project-relative spelling it may have been meant as under `absolute_reasons`: `/lib/payments/**`
+is the file system's directory, not `lib/payments/**`, on every machine, and the writer printed the same warning when it was recorded). Read it after every release
 rather than trusting the release call's own output: a narrower glob that is still
 active is what it shows.
 

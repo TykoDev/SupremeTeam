@@ -394,14 +394,16 @@ class Call:
         derived = [word if _paths.is_absolute(word) else posixpath.join(start, word) for word in words for start in starts]
         return derived if strict and words else [*starts, *derived]
 
-    def shell_targets(self, strict: bool = False) -> list:
-        """``(write, [Target])`` for every write the analyser found.
+    def shell_targets(self, strict: bool = False, analysis=None) -> list:
+        """``(write, [Target])`` for every write the analyser found (in ``analysis``, the call's own by default).
 
         Deny rules consider every directory a ``cd`` may have left the shell in; the allow-list rule
         only the one it last set. A wildcard word is also expanded against the disk."""
-        if strict not in self._shell_targets:
+        analysis = analysis or self.analysis
+        key = (id(analysis), strict)
+        if key not in self._shell_targets:
             found = []
-            for write in self.analysis.writes:
+            for write in analysis.writes:
                 bases = self._bases(write, strict)
                 texts = [write.path]
                 if write.glob and not write.unresolved:
@@ -412,8 +414,8 @@ class Call:
                         except (OSError, ValueError):
                             continue
                 found.append((write, [self.locate(text, bases) for text in dict.fromkeys(texts)]))
-            self._shell_targets[strict] = found
-        return self._shell_targets[strict]
+            self._shell_targets[key] = found
+        return self._shell_targets[key]
 
 
 def _mentioned(texts, call: "Call", boundaries) -> "_paths.Boundary | None":
@@ -508,8 +510,9 @@ def rule_frozen(call: "Call") -> "str | None":
 # read-only, for an investigation or audit that must not change the product surface), the only
 # writable locations are the record's allow globs (the run's own save path) and the harness state
 # directory. EVERY write target of a command must lie inside them: naming one allowed path
-# somewhere in a mutating command proves nothing about the others. save_run.py keeps writing the run
-# records because a script's arguments are never write targets, and Rule C still protects
+# somewhere in a mutating command proves nothing about the others, and neither does a write whose target the
+# command does not name (operands on standard input, a file opened inside an inline program). save_run.py keeps
+# writing the run records because a script's arguments are never write targets, and Rule C still protects
 # guard-state.json itself.
 _GIT_REPO_WRITERS = frozenset({"add", "commit", "checkout", "restore", "reset", "rm", "mv", "apply", "stash", "clean", "push",
                                "merge", "pull", "rebase", "cherry-pick", "revert", "switch", "am"})
@@ -526,18 +529,53 @@ def _read_only_reason(records) -> str:
     )
 
 
-def _unscoped_git(call: "Call") -> bool:
+# A write the command names no target for is not inside the run's paths whatever it writes: the contract is that every
+# target lies inside, and one the analyser cannot place cannot satisfy it.
+_UNNAMED_REASON = (
+    " A write whose target is not in the command (operands that arrive on standard input, as with `xargs rm`, a program "
+    "read from a pipe, the files named inside a diff, or a redirect or file open inside an awk, sed, perl, python, ruby "
+    "or node program) cannot be shown to be inside them: name each target in the shell command itself, as an operand "
+    "or a redirect."
+)
+
+
+def _unscoped_git(analysis) -> bool:
     """A git command that changes the repository or tree and names no path to judge (``git add -A``, ``git push``).
 
     An index-only command (``git restore --staged .``) names pathspecs but writes no file, so it is the repository
-    it changes and counts here."""
-    for command in call.analysis.commands:
+    it changes and counts here. ``git apply --check`` and its kin only report, and change nothing."""
+    for command in analysis.commands:
         if command.verb != "git":
             continue
         sub, operands, _, flags = _cmdscan.git_parts(command.argv)
+        if _cmdscan.git_dry_run(sub, flags):
+            continue
         if sub in _GIT_REPO_WRITERS and not (sub in _GIT_PATHSPEC and operands and not _cmdscan.git_index_only(sub, flags)):
             return True
     return False
+
+
+def _dry_vias(analysis) -> frozenset:
+    """The write labels of ``git apply`` and ``patch`` when every one of them only checks: the file such a command names
+    is read, not written."""
+    checks: dict = {}
+    for command in analysis.commands:
+        if command.verb == "patch":
+            checks["patch"] = checks.get("patch", True) and _cmdscan.patch_dry_run(command.argv)
+        elif command.verb == "git":
+            sub, _, _, flags = _cmdscan.git_parts(command.argv)
+            if sub == "apply":
+                checks["git apply"] = checks.get("git apply", True) and _cmdscan.git_dry_run(sub, flags)
+    return frozenset(via for via, dry in checks.items() if dry)
+
+
+def _analyses(analysis):
+    """The analysis of the command line and, below it, those of the commands a launcher runs that only a read-only run reads."""
+    pending = [analysis]
+    while pending:
+        current = pending.pop()
+        yield current
+        pending.extend(current.hidden)
 
 
 # Package managers change the dependency directory, a lockfile or the machine without naming a path, so a read-only
@@ -577,9 +615,9 @@ def _changes_packages(command) -> bool:
     return any(word in _PACKAGE_MANAGERS[verb] for word in operands[:3])
 
 
-def _installs_packages(call: "Call") -> bool:
+def _installs_packages(analysis) -> bool:
     """A package manager command that installs, removes or updates packages (``npm install``, ``sudo apt-get install -y jq``)."""
-    return any(_changes_packages(command) for command in call.analysis.commands)
+    return any(_changes_packages(command) for command in analysis.commands)
 
 
 def rule_read_only(call: "Call") -> "str | None":
@@ -599,10 +637,17 @@ def rule_read_only(call: "Call") -> "str | None":
         if _textual_mutates(call.command) and _mentioned([call.command], call, [_paths.Boundary(g, call.root) for g in allow]) is None:
             return _read_only_reason(records)
         return None
-    for write, targets in call.shell_targets(strict=True):
-        if write.unresolved or any(not _paths.inside_allowed(target, allow, call.root, fold=fold) for target in targets):
+    analyses = list(_analyses(call.analysis))
+    for analysis in analyses:
+        dry = _dry_vias(analysis)
+        for write, targets in call.shell_targets(strict=True, analysis=analysis):
+            if write.via in dry:
+                continue
+            if write.unresolved or any(not _paths.inside_allowed(target, allow, call.root, fold=fold) for target in targets):
+                return _read_only_reason(records)
+        if _unscoped_git(analysis) or _installs_packages(analysis):
             return _read_only_reason(records)
-    return _read_only_reason(records) if _unscoped_git(call) or _installs_packages(call) else None
+    return _read_only_reason(records) + _UNNAMED_REASON if any(analysis.unnamed for analysis in analyses) else None
 
 
 # --- Rule C: single writers --------------------------------------------------------------------------
@@ -763,9 +808,10 @@ def rule_harness_files(call: "Call") -> "str | None":
 
 # --- Rule G: a write the analyser cannot place -------------------------------------------------------------
 
-# A chain of relative ``cd`` is followed only so far (``_cmdscan.MAX_CWD``): past that the directory of every
-# later write is unknown, so the write could land on anything a rule protects. The cost of following it is
-# quadratic and nobody works that way, so the command is refused whole instead of being let through.
+# A directory chain (``cd`` after ``cd``, or one long absolute ``cd``) is followed only so far
+# (``_cmdscan.MAX_CWD``): past that the directory of every later write is unknown, so the write could land on
+# anything a rule protects. The cost of following a relative chain is quadratic and nobody works that way, so the
+# command is refused whole instead of being let through.
 _UNPLACED_REASON = (
     "Blocked by harness Action Realization layer: the command changes directory through more than {limit} "
     "characters of path and then writes, so the guard cannot tell where the write lands. "
@@ -774,7 +820,7 @@ _UNPLACED_REASON = (
 
 
 def rule_unplaced_write(call: "Call") -> "str | None":
-    """Rule G: a command that writes after its working directory outgrew the analysis is denied."""
+    """Rule G: a command that writes after its directory chain (relative or absolute) outgrew the analysis is denied."""
     if not call.shell or not (call.analysis.lost_directory and call.analysis.writes):
         return None
     return _UNPLACED_REASON.format(limit=_cmdscan.MAX_CWD)

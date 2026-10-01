@@ -283,6 +283,66 @@ class WriteTargetTests(unittest.TestCase):
         write = analyse("cd a; cd ..; cd a; cd ..; cd a; touch f").writes[0]
         self.assertEqual(write.cwds, (".", "a"))
 
+    def test_cd_dash_and_popd_return_to_the_directory_the_shell_is_really_in(self):
+        """RR3-guard-5: `cd -` and `popd` moved the shell without moving the record, so a write after them was judged in the
+        directory the shell had left (under the allow list of a read-only run, that is a way out of it)."""
+        for text, expected in (
+            ("cd a; cd -; touch f", "."),
+            ("cd a; cd b; cd -; touch f", "a"),
+            ("cd a; cd b; cd -; cd -; touch f", "a/b"),
+            ("cd a && cd -  && touch f", "."),
+            ("cd a; cd ..; cd -; touch f", "a"),
+            ("pushd a; popd; touch f", "."),
+            ("pushd a; ls; popd >/dev/null; touch f", "."),
+            ("cd x; pushd a; pushd b; popd; touch f", "x/a"),
+            ("cd x; pushd a; pushd b; popd; popd; touch f", "x"),
+            ("cd x; pushd y; pushd; touch f", "x"),
+            ("cd x; pushd y; pushd; pushd; touch f", "x/y"),
+            ("cd a; popd; touch f", "a"),
+            ("cd a; pushd; touch f", "a"),
+            ("pushd /abs/dir; popd; touch f", "."),
+            ("cd a; pushd b; cd c; popd; touch f", "a"),
+        ):
+            with self.subTest(command=text):
+                self.assertEqual(analyse(text).writes[-1].cwds[-1], expected, text)
+        self.assertEqual(analyse("cd -; touch f").writes[0].cwds, ())
+        self.assertEqual(analyse("popd; touch f").writes[0].cwds, ())
+
+    def test_a_bare_cd_goes_home_for_bash_and_nowhere_for_powershell(self):
+        with mock.patch.dict(os.environ, {"HOME": "/home/u"}):
+            self.assertEqual(analyse("cd a; cd; touch f").writes[-1].cwds[-1], "/home/u")
+            self.assertEqual(analyse("cd a; cd; cd -; touch f").writes[-1].cwds[-1], "a")
+            self.assertEqual(analyse("cd a; Set-Location; Set-Content f x", ps=True).writes[-1].cwds[-1], "a")
+
+    def test_powershell_push_and_pop_location_follow_the_same_way(self):
+        self.assertEqual(analyse("Push-Location a; Pop-Location; Set-Content f x", ps=True).writes[-1].cwds[-1], ".")
+        self.assertEqual(analyse("Set-Location a; pushd b; popd; Set-Content f x", ps=True).writes[-1].cwds[-1], "a")
+        self.assertEqual(analyse("Set-Location a; Set-Location b; Set-Location -; Set-Content f x", ps=True).writes[-1].cwds[-1], "a")
+
+    def test_the_directory_stack_is_scoped_like_the_directory_itself(self):
+        for text, expected in (
+            ("cd x; pushd y; (popd); touch f", "x/y"),
+            ("cd x; (pushd y; popd; cd z); touch f", "x"),
+            ("cd x; pushd y; echo $(popd); touch f", "x/y"),
+            ("cd x; pushd y; sh -c 'popd'; touch f", "x/y"),
+            ("cd x; (pushd y); popd; touch f", "x"),
+            ("cd x; (cd y; cd -; touch g); touch f", "x"),
+        ):
+            with self.subTest(command=text):
+                self.assertEqual(analyse(text).writes[-1].cwds[-1], expected, text)
+
+    def test_a_path_built_at_run_time_leaves_the_shell_where_it_was(self):
+        self.assertEqual(analyse("cd a; cd $UNKNOWN; touch f").writes[-1].cwds[-1], "a")
+        self.assertEqual(analyse("cd a; pushd $UNKNOWN; popd; touch f").writes[-1].cwds[-1], "a")
+
+    def test_the_directory_stack_is_bounded(self):
+        text = "pushd a; " * 5000 + "popd; " * 5000 + "touch f"
+        result = analyse(text)
+        self.assertTrue(result.writes)
+        start = time.perf_counter()
+        analyse("pushd a; " * 11000 + "( popd ); " * 100 + "touch f")
+        self.assertLess(time.perf_counter() - start, 3.0)
+
     def test_a_git_command_that_only_moves_the_index_writes_no_file(self):
         """RR-guard-5: `git restore --staged .` is not a write into the tree, and `git reset` is not unless it is hard."""
         for text in ("git restore --staged .", "git restore -S src", "git restore --staged src/payments/a.py", "git reset HEAD src/a.py",
@@ -414,6 +474,454 @@ class OpaqueCodeTests(unittest.TestCase):
         result = analyse("[System.IO.File]::Delete('f')", ps=True)
         self.assertTrue(result.code)
         self.assertEqual(analyse("[Math]::Max(1,2)", ps=True).code, [])
+
+
+def unnamed(text: str, ps: bool = False) -> list:
+    return [(entry.verb, entry.how) for entry in analyse(text, ps).unnamed]
+
+
+# RR3-guard-1: a write whose target is not in the command. Each entry is a command and the (verb, how) it reports.
+STDIN_FED = (
+    ("cat list | xargs rm -rf", [("rm", "stdin")]),
+    ("find . -name '*.pyc' | xargs rm", [("rm", "stdin")]),
+    ("find . -name '*.pyc' -print0 | xargs -0 rm", [("rm", "stdin")]),
+    ("git ls-files | xargs sed -i s/a/b/", [("sed", "stdin")]),
+    ("git ls-files | xargs sed -i -e s/a/b/", [("sed", "stdin")]),
+    ("xargs rm < list", [("rm", "stdin")]),
+    ("xargs -a list rm", [("rm", "stdin")]),
+    ("ls | xargs -n1 -P4 touch", [("touch", "stdin")]),
+    ("ls | xargs chmod +x", [("chmod", "stdin")]),
+    ("ls | xargs mv -t dest", [("mv", "stdin")]),
+    ("ls | xargs gzip", [("gzip", "stdin")]),
+    ("ls | xargs -r tee", [("tee", "stdin")]),
+    ("ls | xargs perl -pi -e s/a/b/", [("perl", "stdin")]),
+    ("ls | xargs truncate -s 0", [("truncate", "stdin")]),
+    ("ls | xargs ln -s", [("ln", "stdin")]),
+    ("ls | xargs mkdir -p", [("mkdir", "stdin")]),
+    ("ls | xargs cp dest", [("cp", "stdin")]),
+    ("ls | xargs git add", [("git", "stdin")]),
+    ("ls | xargs touch named", [("touch", "stdin")]),
+    ("sudo xargs rm < list", [("rm", "stdin")]),
+    ("env xargs rm < list", [("rm", "stdin")]),
+    ("nohup xargs rm < list", [("rm", "stdin")]),
+    ("echo a | xargs rm; ls | xargs rm", [("rm", "stdin")]),
+)
+STDIN_NAMED = (
+    "xargs grep x", "xargs -n1 echo", "git ls-files | xargs wc -l", "find . -type f -print0 | xargs -0 sha256sum",
+    "git ls-files | xargs sed -n 1p", "git ls-files | xargs sed s/a/b/", "ls | xargs file", "ls | xargs cat",
+    "ls | xargs cp -t dest", "ls | xargs -I{} cp {} dest/", "ls | xargs -I{} echo {}", "echo a b | xargs rm",
+    "printf 'a\\nb\\n' | xargs rm", "echo a b | xargs touch c", "ls | xargs gzip -c", "ls | xargs tar tf",
+    "ls | xargs git diff", "ls | xargs perl -ne 'print'", "ls | rm", "ls | touch f", "cat f | tee g", "ls | grep x | wc -l",
+)
+INLINE_WRITES = (
+    ("awk '{print > \"out\"}' f", "awk"),
+    ("awk '{print >> \"out\"}' f", "awk"),
+    ("awk 'BEGIN{print 1 > \"src/payments/a\"}'", "awk"),
+    ("gawk '{printf \"%s\\n\", $1 > \"out\"}' f", "gawk"),
+    ("mawk '{printf(\"%s\\n\", $1) > \"out\"}' f", "mawk"),
+    ("awk '/\"/ {print > \"x\"}' f", "awk"),
+    ("awk '{print $1 | \"tee out\"}' f", "awk"),
+    ("awk '{system(\"rm \" $1)}' f", "awk"),
+    ("awk 'BEGIN{system(\"touch x\")}'", "awk"),
+    ("perl -e 'open(F, \">src/payments/a\")'", "perl"),
+    ("perl -e 'open(F, \">>x\"); print F 1'", "perl"),
+    ("perl -e 'open F, \">\", \"x\"'", "perl"),
+    ("perl -E 'open my $fh, \">>\", \"x\"'", "perl"),
+    ("perl -e 'open(F, \"+<f\")'", "perl"),
+    ("perl -e 'open(F, \"| tee x\")'", "perl"),
+    ("perl -e 'unlink \"x\"'", "perl"),
+    ("perl -e 'rename \"a\", \"b\"'", "perl"),
+    ("perl -e 'system(\"rm -rf x\")'", "perl"),
+    ("perl -e 'system(\"echo x > out\")'", "perl"),
+    ("python3 -c \"open('x','w').write('1')\"", "python3"),
+    ("python3 -c \"open('x', mode='a')\"", "python3"),
+    ("python3 -c \"open('x','rb+')\"", "python3"),
+    ("python3 -c \"import pathlib; pathlib.Path('x').write_text('1')\"", "python3"),
+    ("python3 -c \"import os; os.remove('x')\"", "python3"),
+    ("python3 -c \"import shutil; shutil.rmtree('x')\"", "python3"),
+    ("python3 -c \"import os; os.system('rm -rf x')\"", "python3"),
+    ("python3 -c \"import subprocess; subprocess.run(['rm','x'])\"", "python3"),
+    ("python3 -c \"import subprocess; subprocess.run('echo x > f', shell=True)\"", "python3"),
+    ("python - <<'EOF'\nopen('f','w')\nEOF", "python"),
+    ("node -e \"require('fs').writeFileSync('x','1')\"", "node"),
+    ("node -e \"require('fs').appendFileSync('x','1')\"", "node"),
+    ("node -e \"require('fs').unlinkSync('x')\"", "node"),
+    ("node -e \"require('fs').mkdirSync('x')\"", "node"),
+    ("node -e \"require('fs').openSync('x','w')\"", "node"),
+    ("node -e \"require('child_process').execSync('rm -rf x')\"", "node"),
+    ("ruby -e \"File.write('x','1')\"", "ruby"),
+    ("ruby -e \"File.open('x','w') {|f| f.puts 1}\"", "ruby"),
+    ("ruby -e \"File.delete('x')\"", "ruby"),
+    ("ruby -e \"system('rm x')\"", "ruby"),
+    ("php -r 'file_put_contents(\"x\",\"1\");'", "php"),
+    ("lua -e \"io.open('x','w')\"", "lua"),
+    ("Rscript -e 'writeLines(\"a\",\"x\")'", "rscript"),
+    ("sed -n 'w out' f", "sed"),
+    ("sed -n '/x/w out' f", "sed"),
+    ("sed 's/a/b/w out' f", "sed"),
+    ("sed 's/a/b/gw out' f", "sed"),
+    ("sed -e 's/a/b/' -e 'w out' f", "sed"),
+    ("sed --expression='1w out' f", "sed"),
+    ("sed -n '1,5W out' f", "sed"),
+    ("sed 'e rm x' f", "sed"),
+    ("sudo awk '{print > \"out\"}' f", "awk"),
+    ("sh -c \"awk '{print > \\\"out\\\"}' f\"", "awk"),
+)
+INLINE_READS = (
+    "awk '{print $1}' f", "awk '$1 > 5' f", "awk -F, '$3 >= 10 && $2 > 0 {print $1}' f", "awk '{if ($1 > 5) print $1}' f",
+    "awk '{print ($1 > 5)}' f", "awk '{print ($1 > 5) ? \"a\" : \"b\"}' f", "awk '/a|b/ {print}' f", "awk '/a>b/ {print}' f",
+    "awk 'NR>1 {print}' f", "awk 'NR > 1' f", "awk '{print $1 > \"/dev/stderr\"}' f", "awk '{print $1, $2 > \"/dev/stdout\"}' f",
+    "awk 'BEGIN { while ((getline line < \"f\") > 0) n++; print n }'", "awk '{print $1 | \"sort\"}' f",
+    "awk '{\"date\" | getline d; print d}' f", "awk '{system(\"ls\")}' f", "awk 'a || b {print}' f",
+    "awk '{ a[$1]++ } END { for (k in a) print k, a[k] }' f", "awk -f prog.awk f", "awk '{print \"a > b\"}' f",
+    "perl -e 'print 1'", "perl -ne 'print if /x/' f", "perl -ne 'print if /x/ && $. > 3' f", "perl -lane 'print $F[0]' f",
+    "perl -e 'open(F, \"<f\"); print <F>'", "perl -e 'open(F, \"f\"); print <F>'", "perl -e 'open(my $fh, \"<\", \"f\")'",
+    "perl -e 'print \"a\" if 3 > 2'", "perl script.pl", "perl -e 'system(\"ls\")'", "perl -e 'print `date`'",
+    "python -c \"print(1)\"", "python3 -c \"print(1 > 0)\"", "python3 -c \"print(open('f').read())\"",
+    "python3 -c \"open('f','r').read()\"", "python3 -c \"open('f','rb').read()\"", "python3 -c \"open('f').read().split('bar')\"",
+    "python3 -c \"import sys; sys.stdout.write('x')\"", "python3 -c \"import shutil; print(shutil.which('git'))\"",
+    "python3 -c \"import subprocess; print(subprocess.check_output(['git','log']))\"", "python3 -c \"print({}.copy())\"",
+    "python3 -c \"import json,sys; print(len(json.load(open('f'))) > 3)\"", "python -m json.tool f", "python script.py",
+    "python - <<'EOF'\nprint(1)\nEOF",
+    "node -e \"console.log(1)\"", "node -e \"[1,2].map(x => x*2)\"", "node -p \"1+1\"", "node app.js",
+    "node -e \"console.log(require('fs').readFileSync('f','utf8'))\"", "node -e \"require('child_process').execSync('git log')\"",
+    "ruby -e \"puts 1\"", "ruby -e \"puts File.read('f')\"", "ruby -ne 'print if /x/' f", "ruby -e \"puts [1,2].map { |x| x > 1 }\"",
+    "php -r 'echo 1;'", "lua -e \"print(1)\"", "Rscript -e 'print(1)'",
+    "sed -n 's/a/b/p' f", "sed -n 1,5p f", "sed s/a/b/ f", "sed -n '/a/,/b/p' f", "sed -f script.sed f", "sed '1!G;h;$!d' f",
+    "sed -n '$=' f", "sed 's/world/x/' f", "sed -n '/start/,/end/p' f", "sed -e 's/a/b/' -e 's/c/d/' f", "sed 's/^\\s*//' f",
+    "sed -n 's/.*version: \\(.*\\)/\\1/p' f",
+)
+
+
+class UnnamedWriteTests(unittest.TestCase):
+    """RR3-guard-1: a write whose target the command does not name. Rule D needs every target named, so the analyser says
+    where it could not: operands that arrive on standard input, and programs that redirect or open a file."""
+
+    def test_a_mutating_verb_fed_from_standard_input_is_unnamed(self):
+        for text, expected in STDIN_FED:
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text), expected, text)
+
+    def test_a_verb_with_every_operand_named_or_that_only_reads_is_not(self):
+        for text in STDIN_NAMED:
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text), [], text)
+
+    def test_the_literal_words_of_an_upstream_stage_are_named_operands(self):
+        result = analyse("echo a b | xargs rm")
+        self.assertEqual(({w.path for w in result.writes}, result.unnamed), ({"a", "b"}, []))
+
+    def test_xargs_keeps_the_arguments_it_was_given_as_the_command(self):
+        """The marker is not an argument: the commands and writes are what they were."""
+        self.assertIn(("rm", ("-rf",)), commands("cat list | xargs rm -rf"))
+        self.assertEqual(paths("ls | xargs touch named"), {"named"})
+        self.assertNotIn("<stdin>", " ".join(" ".join(argv) for _, argv in commands("ls | xargs rm")))
+
+    def test_a_program_that_redirects_or_opens_a_file_for_writing_is_unnamed(self):
+        for text, verb in INLINE_WRITES:
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text), [(verb, "program")], text)
+
+    def test_a_program_that_only_reads_is_not(self):
+        for text in INLINE_READS:
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text), [], text)
+
+    def test_a_script_file_or_module_has_no_inline_program_to_read(self):
+        for text in ("python script.py", "python -m pytest tests", "node app.js", "perl script.pl", "bash script.sh", "make build"):
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text), [], text)
+
+    def test_the_program_is_still_returned_as_code_and_names_no_write(self):
+        self.assertIn('{print > "out"}', analyse("awk '{print > \"out\"}' f").code)
+        self.assertEqual(paths("awk '{print > \"out\"}' f"), set())
+
+    def test_powershell_cmdlets_that_take_their_path_from_the_pipeline_are_unnamed(self):
+        for text in ("Get-ChildItem *.pyc | Remove-Item", "Get-ChildItem | Remove-Item -Recurse", "ls | rm", "gci | ri",
+                     "Get-ChildItem | Move-Item -Destination d", "Get-ChildItem | Rename-Item -NewName x", "Get-Content a | Clear-Content",
+                     "powershell -Command \"Get-ChildItem | Remove-Item\""):
+            with self.subTest(command=text):
+                self.assertEqual([entry.how for entry in analyse(text, ps=True).unnamed], ["stdin"], text)
+
+    def test_powershell_that_names_its_path_or_only_reads_is_not(self):
+        for text in ("Remove-Item x", "Get-ChildItem | Remove-Item -Path x", "'x' | Out-File out.txt", "'x' | Set-Content out.txt",
+                     "Get-ChildItem | Select-Object Name", "Get-ChildItem | Where-Object Length -gt 5", "Get-ChildItem | Copy-Item -Destination d",
+                     "Get-ChildItem | Export-Csv out.csv", "Get-Content a | Add-Content b", "cmd /c dir", "[System.IO.File]::ReadAllText('x')",
+                     "[System.IO.File]::Exists('x')"):
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text, ps=True), [], text)
+
+    def test_powershell_dotnet_file_calls_are_unnamed(self):
+        for text in ("[System.IO.File]::WriteAllText('x','y')", "[IO.File]::Delete('x')", "[System.IO.Directory]::CreateDirectory('d')"):
+            with self.subTest(command=text):
+                self.assertEqual([entry.how for entry in analyse(text, ps=True).unnamed], ["program"], text)
+
+    def test_a_bash_pipe_stage_does_not_make_a_verb_stdin_fed(self):
+        self.assertEqual(unnamed("ls | rm"), [])
+        self.assertEqual(unnamed("Get-ChildItem | Remove-Item"), [])
+
+    def test_text_below_the_nesting_cap_is_unnamed_as_it_is_code(self):
+        text = "touch x"
+        for _ in range(12):
+            text = "sh -c " + "'" + text.replace("'", "'\\''") + "'"
+        self.assertEqual([entry.how for entry in analyse(text).unnamed], ["nested"])
+        self.assertEqual(unnamed("sh -c 'sh -c \"touch x\"'"), [])
+
+    def test_the_same_unnamed_write_is_reported_once(self):
+        self.assertEqual(unnamed("ls | xargs rm; ls | xargs rm; ls | xargs rm"), [("rm", "stdin")])
+        self.assertEqual(len(unnamed("awk '{print > \"a\"}' f; awk '{print > \"b\"}' f")), 1)
+
+    def test_the_awk_scanner_tells_a_comparison_from_a_redirect(self):
+        for program, writes in (
+            ('{print > "out"}', True), ('{print >> "out"}', True), ("{print $1, $2 > f}", True), ('{printf("%s", $1) > f}', True),
+            ("$1 > 5", False), ("{print ($1 > 5)}", False), ("{if ($1 > 5) print $1; else print 0}", False), ("{print a > b ? 1 : 2}", True),
+            ('{print "a > b"}', False), ("/>/ {print}", False), ("$0 ~ /a>b/ {print}", False), ("# print > f\n{print}", False),
+            ("{print; x = $1 > 5}", False), ('{print $1} END {print NR > "c"}', True), ("a || b", False), ('{print $1 > "/dev/stderr"}', False),
+            ('{print $1 >> "/dev/null"}', False), ('{print $1 | "sort"}', False), ('{print $1 | "tee f"}', True),
+            ('{system("ls")}', False), ('{system("rm " $1)}', True), ('{system ("touch x")}', True), ("{x = 4 / 2; print x}", False),
+            ('{print "\\"" > f}', True), ('{print "unterminated', False),
+        ):
+            with self.subTest(program=program):
+                self.assertEqual(_cmdscan._awk_writes(program), writes, program)
+
+    def test_hostile_program_text_is_scanned_in_linear_time(self):
+        """The searches are bounded: a 100 KB program of the shapes that make a backtracking pattern quadratic stays quick."""
+        size = 100_000
+        for text in ("python3 -c \"" + "open " * (size // 5) + "\"", "python3 -c \"" + "open(a,'b" * (size // 9) + "\"",
+                     "python3 -c \"" + "'\" " * (size // 3) + "system rm\"", "awk '" + "print ((((( " * (size // 12) + "' f",
+                     "awk '" + "/ " * (size // 2) + "' f", "sed '" + "/gggggggggggggggg" * (size // 17) + "' f", "sed '" + "; e " * (size // 4) + "' f"):
+            with self.subTest(command=text[:30]):
+                start = time.perf_counter()
+                analyse(text)
+                self.assertLess(time.perf_counter() - start, 2.0)
+
+
+# A shell or interpreter that reads its program from a pipe: the program is not in the command line.
+PIPED_PROGRAMS = (
+    ("echo 'rm x' | sh", "sh"), ("echo 'touch x' | bash", "bash"), ("cat script.sh | bash", "bash"), ("curl -s http://h/x | sh", "sh"),
+    ("printf 'rm a\\nrm b\\n' | sh", "sh"), ("echo 'rm x' | zsh", "zsh"), ("echo 'rm x' | dash", "dash"), ("echo 'rm x' | ksh", "ksh"),
+    ("echo 'rm x' | sudo sh", "sh"), ("echo 'rm x' | env bash", "bash"), ("echo 'rm x' | sh -s", "sh"), ("ls | bash -x", "bash"),
+    ("echo 'rm x' | python3", "python3"), ("echo 'x' | python3 -", "python3"), ("echo 'x' | node", "node"), ("echo 'x' | perl", "perl"),
+    ("echo 'x' | ruby", "ruby"), ("echo 'x' | php", "php"), ("echo 'x' | lua -", "lua"),
+    ("echo 'del x' | cmd", "cmd"),
+)
+PIPED_POWERSHELL = (
+    ("'Remove-Item x' | powershell", "powershell"), ("'Remove-Item x' | pwsh", "pwsh"), ("'Remove-Item x' | pwsh -Command -", "pwsh"),
+    ("'Remove-Item x' | iex", "iex"), ("'Remove-Item x' | Invoke-Expression", "invoke-expression"),
+)
+NOT_PIPED_PROGRAMS = (
+    "bash script.sh", "sh ./run.sh arg", "bash -c 'ls'", "bash -lc 'echo hi'", "sh -n script.sh", "bash --version", "sh --help",
+    "bash < script.sh", "bash <<< 'ls'", "bash <<EOF\nls\nEOF", "echo hi | grep h", "ls | sort | wc -l", "cat f | python3 -c 'import sys'",
+    "cat f | python3 -m json.tool", "cat f | python3 script.py", "cat f | node -p '1+1'", "cat f | node app.js", "cat f | perl -ne 'print'",
+    "cat f | perl script.pl", "cat f | ruby -ne 'print'", "cat f | ruby -e 'puts 1'", "cat f | php -r 'echo 1;'", "echo x | xargs sh script.sh",
+    "bash", "python3", "eval 'ls'", "ls | awk '{print $1}'",
+)
+
+class PipedProgramTests(unittest.TestCase):
+    """A shell or interpreter that reads its program from a pipe: the program is not in the command line, so the write has no named target."""
+
+    def test_a_shell_or_interpreter_that_reads_its_program_from_a_pipe_is_unnamed(self):
+        for text, verb in PIPED_PROGRAMS:
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text), [(verb, "stdin")], text)
+        for text, verb in PIPED_POWERSHELL:
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text, ps=True), [(verb, "stdin")], text)
+
+    def test_a_program_in_the_command_or_a_script_file_is_not(self):
+        for text in NOT_PIPED_PROGRAMS:
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text), [], text)
+
+    def test_a_here_document_or_here_string_is_read_and_its_writes_are_named(self):
+        for text, expected in (("bash <<< 'rm x'", {"x"}), ("sh <<< 'echo y > out'", {"out"}), ("bash <<EOF\ntouch a\nrm b\nEOF", {"a", "b"})):
+            with self.subTest(command=text):
+                result = analyse(text)
+                self.assertEqual(({w.path for w in result.writes}, result.unnamed), (expected, []))
+
+
+
+# patch and git apply write the files their diff names, unless they only check.
+DIFF_APPLIERS = (
+    "patch -p1 < fix.diff", "patch -p1 -i fix.diff", "cat fix.diff | patch -p1", "patch < fix.diff", "patch -d src -p1 < fix.diff",
+    "git apply fix.patch", "git apply < fix.patch", "git apply -p1 fix.patch", "git apply --apply --stat fix.patch", "cat fix.patch | git apply",
+    "git diff | git apply -R", "git -C repo apply fix.patch", "sudo patch -p1 < fix.diff",
+)
+DIFF_CHECKS = (
+    "git apply --check fix.patch", "git apply --stat fix.patch", "git apply --numstat fix.patch", "git apply --summary fix.patch",
+    "git apply --check < fix.patch", "cat fix.patch | git apply --stat", "git apply --check --index fix.patch",
+    "patch --dry-run -p1 < fix.diff", "patch --dry-run -p1 -i fix.diff", "patch -C -p1 < fix.diff", "cat fix.diff | patch --dry-run -p1",
+    "patch --check -p1 < fix.diff", "patch file.txt fix.diff",
+)
+
+
+
+class DiffApplierTests(unittest.TestCase):
+    """``patch`` and ``git apply`` write the files their diff names, which the command line does not: unnamed unless they only check."""
+
+    def test_patch_and_git_apply_write_the_files_their_diff_names(self):
+        for text in DIFF_APPLIERS:
+            with self.subTest(command=text):
+                self.assertEqual([u.how for u in analyse(text).unnamed], ["diff"], text)
+
+    def test_a_check_or_a_named_file_is_not_a_diff_applied(self):
+        for text in DIFF_CHECKS:
+            with self.subTest(command=text):
+                self.assertEqual(analyse(text).unnamed, [], text)
+
+    def test_the_helpers_agree_with_the_analyser_about_what_only_checks(self):
+        self.assertTrue(_cmdscan.git_dry_run("apply", ["--check"]))
+        self.assertTrue(_cmdscan.git_dry_run("apply", ["--stat", "--numstat"]))
+        self.assertFalse(_cmdscan.git_dry_run("apply", ["--check", "--apply"]))
+        self.assertFalse(_cmdscan.git_dry_run("apply", []))
+        self.assertFalse(_cmdscan.git_dry_run("commit", ["--check"]))
+        self.assertTrue(_cmdscan.patch_dry_run(("--dry-run", "-p1")))
+        self.assertTrue(_cmdscan.patch_dry_run(("-C", "-p1")))
+        self.assertFalse(_cmdscan.patch_dry_run(("-p1",)))
+
+
+
+def hidden(text: str, ps: bool = False) -> list:
+    """What the commands a launcher runs would write, as ``(sorted paths, unnamed)`` for each analysis below the line's own."""
+    out, pending = [], list(analyse(text, ps).hidden)
+    while pending:
+        item = pending.pop(0)
+        out.append((sorted(write.path for write in item.writes), [(u.verb, u.how) for u in item.unnamed]))
+        pending.extend(item.hidden)
+    return out
+
+
+# Commands a launcher runs, which only a read-only run reads: the main analysis stays what it was.
+LAUNCHED = (
+    ("ls | parallel rm", [([], [("rm", "stdin")])]),
+    ("ls | parallel rm {}", [(["{}"], [])]),
+    ("ls | parallel -j4 rm {}", [(["{}"], [])]),
+    ("ls | parallel -j 4 rm", [([], [("rm", "stdin")])]),
+    ("ls | parallel --will-cite -N1 touch", [([], [("touch", "stdin")])]),
+    ("parallel rm ::: a b c", [(["a", "b", "c"], [])]),
+    ("parallel -a list rm", [([], [("rm", "stdin")])]),
+    ("parallel rm :::: list", [([], [("rm", "stdin")])]),
+    ("parallel -I@@ rm @@ ::: a", [(["a"], [])]),
+    ("ls | parallel -I@@ rm @@", [(["@@"], [])]),
+    ("ls | parallel mv {} out/", [(["out/", "{}"], [])]),
+    ("ls | parallel cp {} out/", [(["out/"], [])]),
+    ("ls | parallel gzip", [([], [("gzip", "stdin")])]),
+    ("ls | parallel rm {.}", [(["{.}"], [])]),
+    ("echo a b | parallel rm", [(["a", "b"], [])]),
+    ("ls | entr rm /_", [(["/_"], [])]),
+    ("ls | entr -r rm /_", [(["/_"], [])]),
+    ("ls | entr -s 'rm x; touch y'", [(["x", "y"], [])]),
+    ("ls | entr sh -c 'rm x'", [(["x"], [])]),
+    ("watch 'rm x'", [(["x"], [])]),
+    ("watch -n 1 'touch x'", [(["x"], [])]),
+    ("ls | parallel parallel rm", [([], []), ([], [("rm", "stdin")])]),
+)
+LAUNCHED_READS = (
+    "ls | parallel echo {}", "ls | parallel -j4 wc -l {}", "ls | parallel grep x", "parallel echo ::: a b c", "ls | parallel sed -n 1p",
+    "ls | entr echo changed", "ls | entr -s 'make test'", "watch -n 5 ls", "watch 'ls -l'", "watch -n1 df",
+)
+
+class LauncherTests(unittest.TestCase):
+    """The commands a launcher (``parallel``, ``entr``, ``watch``) runs: read for the read-only rule only, in analyses of their own, so the main analysis stays what it was."""
+
+    def test_what_a_launcher_runs_is_read_only_for_the_read_only_rule(self):
+        for text, expected in LAUNCHED:
+            with self.subTest(command=text):
+                self.assertEqual(sorted(hidden(text)), sorted(expected), text)
+                main = analyse(text)
+                self.assertEqual((main.writes, main.unnamed), ([], []), text)
+                self.assertFalse({c.verb for c in main.commands} & {"rm", "touch", "mv", "gzip", "cp"}, text)
+
+    def test_a_launcher_that_runs_a_read_finds_nothing(self):
+        for text in LAUNCHED_READS:
+            with self.subTest(command=text):
+                self.assertTrue(all(not paths and not named for paths, named in hidden(text)), text)
+
+
+
+# PowerShell script blocks and the cmdlets that take their path from the pipeline.
+POWERSHELL_BLOCKS = (
+    ("Get-Content list | ForEach-Object { Remove-Item $_ }", ["$_"]),
+    ("Get-Content list | % { Remove-Item $_ }", ["$_"]),
+    ("Get-ChildItem | ForEach-Object { Set-Content $_.FullName 'x' }", ["$_.FullName"]),
+    ("Get-ChildItem | ForEach-Object { Out-File $_.Name }", ["$_.Name"]),
+    ("Get-ChildItem | ForEach-Object { Add-Content $_ 'x' }", ["$_"]),
+    ("Get-ChildItem | ForEach-Object { Move-Item $_ x }", ["$_", "x"]),
+    ("Get-ChildItem | ForEach-Object { Copy-Item $_ x }", ["x"]),
+    ("Get-ChildItem | ForEach-Object { New-Item $_.Name }", ["$_.Name"]),
+    ("Get-ChildItem | ForEach-Object { Rename-Item $_ y }", ["$_"]),
+    ("Get-ChildItem | ForEach-Object { Clear-Content $_ }", ["$_"]),
+    ("foreach ($f in Get-ChildItem) { Remove-Item $f }", ["$f"]),
+    ("Invoke-Command -ScriptBlock { Remove-Item x }", ["x"]),
+    ("Start-Job { Remove-Item x }", ["x"]),
+    ("& { Remove-Item x }", ["x"]),
+    ("if ($ok) { Remove-Item x } else { Remove-Item y }", ["x", "y"]),
+    ("Get-ChildItem | ForEach-Object { Get-Item $_ | ForEach-Object { Remove-Item $_.Name } }", ["$_.Name"]),
+)
+POWERSHELL_PIPELINE = (
+    "Get-ChildItem | Remove-Item", "Get-ChildItem | Set-Content -Value x", "Get-ChildItem | Add-Content -Value x", "Get-ChildItem | Clear-Content",
+    "Get-ChildItem | New-Item -ItemType File", "Get-ChildItem | Move-Item -Destination d", "Get-ChildItem | Rename-Item -NewName y",
+    "Get-ChildItem | Where-Object { $_.Length -gt 5 } | Remove-Item", "ls | rm", "gci | ri",
+)
+POWERSHELL_READS = (
+    "Get-ChildItem | ForEach-Object { $_.Name }", "Get-ChildItem | ForEach-Object { Write-Output $_.FullName }",
+    "Get-ChildItem | Where-Object { $_.Length -gt 5 }", "Get-ChildItem | Sort-Object Length | Select-Object -First 5",
+    "Get-ChildItem | ForEach-Object { \"{0}\" -f $_.Name }", "$a = @{ x = 1 }; $a.x", "Get-Content list | Select-String x",
+    "Get-ChildItem | ForEach-Object { Copy-Item $_ out/ }", "'x' | Out-File out.txt", "Get-ChildItem | Set-Content -Path out.txt -Value x",
+    "Get-ChildItem | Tee-Object -FilePath out.txt", "echo '{' | Out-String", "Get-ChildItem | ForEach-Object { Write-Output '}' }",
+)
+
+class PowerShellBlockTests(unittest.TestCase):
+    """PowerShell script blocks and the cmdlets that take their path from the pipeline, and the cost of reading all of the above."""
+
+    def test_a_powershell_script_block_is_read_for_the_read_only_rule_only(self):
+        for text, expected in POWERSHELL_BLOCKS:
+            with self.subTest(command=text):
+                found = sorted({path for paths, _ in hidden(text, ps=True) for path in paths})
+                self.assertEqual(found, sorted(expected), text)
+
+    def test_a_powershell_block_does_not_change_what_the_line_itself_writes(self):
+        """The commands inside the braces are the main pass's to read or not as it always did; the block adds nothing there."""
+        before = analyse("Get-Content list | ForEach-Object { Remove-Item $_ }", ps=True)
+        self.assertEqual([w.path for w in before.writes], [])
+        self.assertEqual({c.verb for c in before.commands}, {"get-content", "foreach-object"})
+
+    def test_a_powershell_cmdlet_that_takes_its_path_from_the_pipeline_is_unnamed(self):
+        for text in POWERSHELL_PIPELINE:
+            with self.subTest(command=text):
+                self.assertEqual([u.how for u in analyse(text, ps=True).unnamed], ["stdin"], text)
+
+    def test_powershell_that_names_its_path_or_only_reads_finds_nothing(self):
+        for text in POWERSHELL_READS:
+            with self.subTest(command=text):
+                found = [path for paths, named in hidden(text, ps=True) for path in paths]
+                self.assertEqual((analyse(text, ps=True).unnamed, [p for p in found if p.startswith("$")]), ([], []), text)
+
+    def test_the_script_blocks_of_a_line_are_its_outermost_braces(self):
+        for text, expected in (
+            ("ForEach-Object { a } | Where-Object { b }", [" a ", " b "]),
+            ("x { a { b } c } y", [" a { b } c "]),
+            ("echo '{ not }' \"{ nor }\" `{ nor `}", []),
+            ("echo 'it''s {' { real }", [" real "]),
+            ("{ never closed", []),
+            ("a } b", []),
+            ("@{ a = 1 }", [" a = 1 "]),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(_cmdscan._ps_blocks(text), expected)
+
+    def test_hostile_launcher_text_is_analysed_in_a_few_seconds(self):
+        size = 100_000
+        for text, ps in (("ls | parallel rm {}; " * (size // 20), False), ("parallel " * (size // 9) + "rm", False),
+                         ("ls | entr rm /_; " * (size // 17), False), ("watch 'rm x'; " * (size // 14), False),
+                         ("ls | ForEach-Object { Remove-Item $_ }; " * (size // 40), True), ("{ " * (size // 4) + "Remove-Item x" + " }" * (size // 4), True),
+                         ("ForEach-Object { " * 60 + "Remove-Item x" + " }" * 60, True), ("echo x | sh; " * (size // 13), False)):
+            with self.subTest(command=text[:30]):
+                start = time.perf_counter()
+                analyse(text, ps)
+                self.assertLess(time.perf_counter() - start, 4.0)
+
+
 
 
 class WorkingDirectoryCostTests(unittest.TestCase):

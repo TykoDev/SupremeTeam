@@ -263,6 +263,25 @@ def glob_problem(glob: str, root: "str | Path | None" = None) -> "str | None":
     return None
 
 
+def glob_warning(glob: str, root: "str | Path | None" = None) -> "str | None":
+    """A caution for a glob that is recorded but may not mean what its author wrote, or None.
+
+    A leading ``/`` starts at the root of the file system, so ``/lib/payments/**`` guards that directory and not
+    the project's ``lib/payments``, whether or not this machine has a ``/lib`` (``glob_problem`` refuses the ones
+    whose first directory is missing; the same spelling must not pass in silence where it exists). It is a real
+    boundary when that is what was meant (``/etc/**``), so it is recorded, and the project-relative spelling is
+    named. A path under the project root is relative by now, ``~`` and drive paths say where they start, and on
+    Windows no leading-slash path is judged."""
+    text = clean(str(glob).strip())
+    if WINDOWS or not text.startswith("/") or glob_problem(glob, root):
+        return None
+    normal = normalize_glob(glob, root)
+    if normal is None or not normal.startswith("/"):
+        return None
+    return (f"the leading '/' makes {normal} an absolute path outside the project, so it matches {normal} on this machine "
+            f"and not the project's {normal.lstrip('/')}; if the project path was meant, record {normal.lstrip('/')}")
+
+
 def _variants(glob: str, fold: bool) -> list:
     """The patterns one glob stands for: itself, everything under it, and (for ``dir/**``) the directory."""
     base = glob[:-3] if glob.endswith("/**") else glob

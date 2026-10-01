@@ -207,7 +207,10 @@ class PromptTests(InstallerCase):
     """On a terminal the installer shows the preview and asks before it writes."""
 
     def in_terminal(self, *args: str, answers: tuple[bytes, ...] = (), timeout: float = 60) -> tuple[int, str]:
-        master, slave = pty.openpty()
+        try:
+            master, slave = pty.openpty()
+        except OSError:
+            self.skipTest("this environment has no pseudo-terminals")
         proc = subprocess.Popen(self.argv(*args), stdin=slave, stdout=slave, stderr=slave, cwd=str(self.project),
                                 env=self.env(), close_fds=True)
         os.close(slave)

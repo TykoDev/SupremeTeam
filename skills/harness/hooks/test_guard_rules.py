@@ -715,6 +715,63 @@ class ToolShapeTests(GuardCase):
                 self.assertEqual(kit.decide(payload, self.root), "")
 
 
+GUARD_SKILL = HOOK_DIR.parent.parent / "guard" / "SKILL.md"
+_CHAIN = "; ".join(f"cd directory{i}" for i in range(200)) + "; touch f"
+
+# One entry per denial the guard can give, so that none is left without a place in the guard skill (RR3-guard-3: the changelog
+# said the skill described Rule G and it did not). (rule, record, tool, input, a phrase the reason carries, a phrase the skill
+# documents it with.) The tool is `Bash` for a command and `Write` for a path.
+DENIAL_REASONS = (
+    ("A", {}, "Bash", "rm -rf /", "allow-dangerous", "allow_dangerous"),
+    ("B", FROZEN, "Bash", "touch src/payments/a.py", "frozen boundary", "frozen_globs"),
+    ("B", FROZEN, "Write", "src/payments/a.py", "frozen boundary", "frozen_globs"),
+    ("C", {}, "Bash", "echo x > skillset-saves/runs/r1/_state.md", "save_run.py", "save_run.py"),
+    ("C", {}, "Bash", "echo x > skillset-saves/preferences/taste.json", "taste_prefs.py", "taste_prefs.py"),
+    ("C", {}, "Bash", "echo x > .harness-state/guard-state.json", "guard_state.py", "single writer"),
+    ("D", READ_ONLY, "Bash", "touch notes.md", "is recorded read-only", "read_only"),
+    ("D", READ_ONLY, "Bash", "cat list | xargs rm", "name each target in the shell command itself", "target is not in the command"),
+    ("F", FROZEN, "Bash", "touch .claude/settings.json", "SUPREMETEAM_HARNESS_DEV", "SUPREMETEAM_HARNESS_DEV"),
+    ("G", {}, "Bash", _CHAIN, "characters of path", f"{guard_hook._cmdscan.MAX_CWD} characters of path"),
+)
+
+
+class DenialReasonProseTests(GuardCase):
+    """RR3-guard-3: every denial a rule can give has a place in the guard skill's text, and Rule G has its row."""
+
+    def reason_for(self, state: dict, tool: str, text: str) -> str:
+        self.guard(state)
+        with mock.patch.dict(os.environ):
+            os.environ.pop("SUPREMETEAM_HARNESS_DEV", None)
+            out = self.edit(text) if tool == "Write" else self.call(text)
+        self.assertTrue(kit.denied(out), f"{text[:60]!r} was not denied: {out!r}")
+        return kit.reason(out)
+
+    def test_every_rule_has_an_entry_and_every_denial_is_documented_in_the_guard_skill(self):
+        skill = GUARD_SKILL.read_text(encoding="utf-8")
+        self.assertEqual({entry[0] for entry in DENIAL_REASONS}, {label for label, _ in guard_hook.RULES})
+        for rule, state, tool, text, in_reason, in_skill in DENIAL_REASONS:
+            with self.subTest(rule=rule, text=text[:50]):
+                self.assertIn(in_reason, self.reason_for(state, tool, text))
+                self.assertIn(in_skill, skill)
+
+    def test_the_skill_quotes_the_text_a_command_gets_when_its_directory_chain_outgrows_the_analysis(self):
+        reason = self.reason_for({}, "Bash", _CHAIN)
+        clause = reason.removeprefix("Blocked by harness Action Realization layer: ").split(", so the guard")[0]
+        self.assertIn(f"more than {guard_hook._cmdscan.MAX_CWD} characters of path and then writes", clause)
+        row = next(line for line in GUARD_SKILL.read_text(encoding="utf-8").splitlines() if "(Rule G)" in line)
+        self.assertTrue(row.startswith("| "), row)
+        self.assertIn(clause, row)
+        for advice in ("short paths from one directory", "split the command", "script file", "cd"):
+            self.assertIn(advice, row)
+
+    def test_every_denial_text_the_guard_defines_is_in_the_table(self):
+        """A denial added to `guard_hook` without an entry here would have no documented place."""
+        defined = {name for name in dir(guard_hook) if name.endswith("_REASON") and isinstance(getattr(guard_hook, name), str)}
+        covered = {"_DANGEROUS_REASON", "_CORE_SAVE_REASON", "_TASTE_SAVE_REASON", "_GUARD_STATE_REASON", "_HARNESS_REASON", "_UNPLACED_REASON",
+                   "_UNNAMED_REASON"}
+        self.assertEqual(defined, covered)
+
+
 class RuleIsolationTests(GuardCase):
     """QR-PY-15: a fault in one rule is counted and does not skip the rules after it."""
 

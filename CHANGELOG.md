@@ -81,6 +81,22 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   hook registration in the summary and exit with its status, and say whether an item
   was removed because it was not selected or is no longer shipped; `install.ps1`
   follows links on a destination before judging it.
+- The hook-hash record also covers the two `skills/scripts` modules the hooks import
+  (`data_formats.py`, `save_taxonomy.py`), named `scripts/<file>`, so an edit of any file
+  a registered hook runs to decide reads `changed` in `verify_registration.py` and
+  `check_readiness.py` with the file named; a record made by an earlier release reads
+  `changed` once, naming both, until `--record-hashes` records it again.
+- The guard denies a hand edit of the writer mutex `skillset-saves/_write.lock` as it
+  does the other core run files.
+- The heartbeat refresh moved from `_state.py` to `run_heartbeat.py`, so the lowest hook
+  module no longer imports the run-record writer.
+- A run record that holds an integer literal past the interpreter's digit limit reads as
+  unreadable in the hooks, as it does in the saves reader, and the hooks scope a run by
+  the one grammar `save_run.py create` uses; a copy of the hooks without
+  `skills/scripts/save_taxonomy.py` still guards and leaves the run scope at `no-run`.
+- `repair_registration.py` writes host configs and their backups through the shared
+  atomic write, which now also removes its staging file on an interrupt and takes
+  `in_place=False` to refuse an overwrite in place.
 - `check_runtime.py` finds a root-level stack beside a nested package, combines the
   signals of a project into one classification (a Vite frontend with a FastAPI backend
   is `full-stack`; a tooling-only `package.json` does not make a project a frontend),

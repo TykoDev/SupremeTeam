@@ -57,6 +57,7 @@ see".
 | `guard_state.py` | CLI | 3 | The only writer of the guard record that `guard`, `freeze` and `unfreeze` request; the pre-tool hook denies direct writes to it |
 | `guard_hook.py`, `_cmdscan.py`, `_paths.py` | modules | 3 | The engine behind `pre_tool_use.py` (Rules A to G, one function per rule), the shell command analyser, and the path and glob canonicaliser |
 | `_state.py`, `_fsutil.py` | modules | 3, 4 | The fail-open helpers every hook shares (project root, input decoding, fault counting) and the one atomic write and advisory lock the writers use |
+| `run_heartbeat.py` | module | persistence | The heartbeat refresh every registered hook runs on a host event; throttled, fail-open, written through `save_run.py` |
 | `verify_registration.py` | diagnostic | | Inspects host hook config without touching it. Exit 0 registered, 1 missing, 2 unknown. `--host auto` judges only the hosts that show evidence: a config file or a host environment variable |
 | `repair_registration.py` | diagnostic | | Previews a scoped registration repair; writes only with `--apply` |
 | `check_readiness.py` | diagnostic | | Reports Python, hooks, and saves as a capability map |

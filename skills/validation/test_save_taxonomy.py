@@ -188,22 +188,19 @@ class RestatedTaxonomyStillAgreesTests(unittest.TestCase):
     """Sites that keep their own copy of the taxonomy, held to it by what they do."""
 
     CORE_PATHS = ("skillset-saves/_latest.md",
+                  f"skillset-saves/{taxonomy.WRITE_LOCK}",
                   *(f"skillset-saves/runs/r1/{name}" for name in (*taxonomy.RUN_RECORD_FILES, taxonomy.JOURNAL)),
                   f"skillset-saves/runs/r1/{taxonomy.HISTORY}/rev-1.state.json")
-    # The writer mutex is in the core-run-record class too, and the guard denies a hand edit of it. It is kept out of
-    # CORE_PATHS because the size audit's own list of protected files does not name it, so only the guard test walks it.
-    WRITER_MUTEX = f"skillset-saves/{taxonomy.WRITE_LOCK}"
 
     def test_the_pre_tool_hook_guards_every_core_run_file_and_not_a_report(self):
-        guarded = (*self.CORE_PATHS, self.WRITER_MUTEX)
         with tempfile.TemporaryDirectory() as tmp:
             env = {**os.environ, "CLAUDE_PROJECT_DIR": tmp}
-            for path in (*guarded, "skillset-saves/runs/r1/design/reports/report_plan.md"):
+            for path in (*self.CORE_PATHS, "skillset-saves/runs/r1/design/reports/report_plan.md"):
                 with self.subTest(path=path):
                     payload = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(Path(tmp) / path)}})
                     proc = subprocess.run([sys.executable, str(HOOKS / "pre_tool_use.py")], input=payload, text=True,
                                           capture_output=True, env=env, check=False)
-                    self.assertEqual("save_run.py" in proc.stdout, path in guarded, proc.stdout)
+                    self.assertEqual("save_run.py" in proc.stdout, path in self.CORE_PATHS, proc.stdout)
 
     def test_the_size_audit_never_offers_a_core_run_file_for_removal(self):
         import size_audit

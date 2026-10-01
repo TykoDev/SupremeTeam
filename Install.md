@@ -227,7 +227,7 @@ with no terminal it writes straight away. It writes atomically, keeps a timestam
 `.bak-` copy with the original's permissions, refuses a file that is not UTF-8 JSON,
 is idempotent, and leaves unrelated keys alone. It registers the Python that runs
 it (`--python-command` names another), started with `-X utf8`, and records the
-sha256 of the hook scripts, and of every Python module beside them, in
+sha256 of the hook scripts, of every Python module beside them and of the two `skills/scripts` modules they import, in
 `.harness-state/hook-hashes.json` of the project it ran from, so a later edit to any
 of them shows up in `verify_registration.py` (a note, expected after an edit or an
 upgrade, never a failure). A host config that is a symbolic link, as a dotfiles

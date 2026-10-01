@@ -234,7 +234,8 @@ Not skills. These are the files the skills are checked against.
 | **user_prompt_submit.py** | `skills/harness/hooks/user_prompt_submit.py` | `UserPromptSubmit`: advisory entry-routing and session-pin reminder |
 | **save_run.py** | `skills/harness/hooks/save_run.py` | The only writer of the run record |
 | **_saves.py** | `skills/harness/hooks/_saves.py` | Shared reader that classifies saved state |
-| **_state.py** | `skills/harness/hooks/_state.py` | Fail-open state helper: project root, hook input decoding, guard state, fault counting, trajectories, heartbeat |
+| **_state.py** | `skills/harness/hooks/_state.py` | Fail-open state helper: project root, hook input decoding, guard state, fault counting, trajectories |
+| **run_heartbeat.py** | `skills/harness/hooks/run_heartbeat.py` | The heartbeat refresh every registered hook runs on a host event: throttled, fail-open, written only through `save_run.py` |
 | **_fsutil.py** | `skills/harness/hooks/_fsutil.py` | The one atomic write and the one OS advisory lock the hook-directory writers share |
 | **_bootstrap.py** | `skills/harness/hooks/_bootstrap.py` | Puts the hooks directory and `skills/scripts` on `sys.path` once, so modules import each other by name, and lists the files a registered hook runs to decide |
 | **_testkit.py** | `skills/harness/hooks/_testkit.py` | Test support for the guard suites: an in-process `decide()` and a subprocess `run_hook()` |

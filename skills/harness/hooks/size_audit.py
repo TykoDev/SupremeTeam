@@ -36,6 +36,7 @@ STAMP = Path(".harness-state/observations/size-audit.json")
 
 _CORE_FILES = {
     "skillset-saves/_latest.md",
+    "skillset-saves/_write.lock",
     ".harness-state/guard-state.json",
     ".harness-state/observations/size-audit.json",
     "skillset-saves/preferences/taste.json",

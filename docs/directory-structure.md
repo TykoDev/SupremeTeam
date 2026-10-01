@@ -87,7 +87,8 @@ SupremeTeam/
     │   │   ├── user_prompt_submit.py     # UserPromptSubmit: routing and session-pin reminder
     │   │   ├── save_run.py               # The only writer of the run record
     │   │   ├── _saves.py                 # Reader that classifies saved state
-    │   │   ├── _state.py                 # Project root, hook input, guard state, fault counting, heartbeat
+    │   │   ├── _state.py                 # Project root, hook input, guard state, fault counting
+    │   │   ├── run_heartbeat.py          # The heartbeat refresh every hook runs on a host event
     │   │   ├── _fsutil.py                # The shared atomic write and OS advisory lock
     │   │   ├── _bootstrap.py             # sys.path setup, done once; lists the files a hook runs to decide
     │   │   ├── size_audit.py             # Bounded report of oversized runtime files

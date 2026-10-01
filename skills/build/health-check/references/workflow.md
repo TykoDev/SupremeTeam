@@ -131,7 +131,7 @@ is authored here and handed over unchanged.
 
 Procedure: resolve the destination with `output_paths.py`, run the probe with
 its output redirected there, scrub as written, register the hash through
-`python skills/harness/hooks/save_run.py checkpoint --run-id <run-id> --owner health-check --evidence <path>`,
+`python skills/harness/hooks/save_run.py checkpoint --run-id <run-id> --owner admiral --evidence <path>` (`--owner` names the run's lock holder, admiral, not the caller; any other owner is refused with `lock is owned by 'admiral'`),
 then build the record with `artifacts`, `result.status: pass`, `tool`,
 `command`, `observed_at`, and the environment and revision probed. Artifacts are
 hashed byte-for-byte, so no log is reformatted after its hash is taken.

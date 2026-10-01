@@ -106,7 +106,7 @@ second.
 Resolve the destination with
 `python skills/scripts/output_paths.py --run-id <run-id> --phase build --kind reports --name report_completeness.md`
 and register its hash through a `session-memory` checkpoint —
-`python skills/harness/hooks/save_run.py checkpoint --run-id <run-id> --owner cross-check-build-confirm --evidence <path>`.
+`python skills/harness/hooks/save_run.py checkpoint --run-id <run-id> --owner admiral --evidence <path>` (`--owner` names the run's lock holder, admiral, not the caller; any other owner is refused with `lock is owned by 'admiral'`).
 
 `build/build-management` authors its own `traceability` key from this matrix
 (`../../../gates.yaml`, `evidence_owners.build-to-review`), which is why the status

@@ -9,7 +9,7 @@ description: >-
   failure, not to explain an unreproduced one. Defers feature code to
   `build/bob-the-builder`, test authoring to `build/test-builder`, and unknown
   cross-system mechanisms to `investigate`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 

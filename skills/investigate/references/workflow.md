@@ -162,7 +162,7 @@ effect, investigate keeps the same stage sequencing but returns artifacts inline
 
 | Trigger | What Investigate Writes |
 |---------|-------------------------|
-| Phase start | Nothing on disk: the phase state is published through `session-memory` (`save_run.py checkpoint --run-id {run-id} --expect-revision <n> --owner investigate --set phase_state=INVESTIGATION_ACTIVE`; the active owner follows `--owner`, which `--set` refuses as a reserved field) before the first stage artifact |
+| Phase start | Nothing on disk: the phase state is published through `session-memory` (`save_run.py checkpoint --run-id {run-id} --expect-revision <n> --owner admiral --set phase_state=INVESTIGATION_ACTIVE --set delegated_to=investigate`; `--owner` is the lock holder) before the first stage artifact |
 | Reproduction | The executed log at the destination `output_paths.py --kind evidence` resolves, registered by sha256 through a `session-memory` checkpoint (`--evidence <path>`) |
 | Evidence chain | The symptom-to-mechanism trace at the destination `output_paths.py --kind evidence` resolves, registered the same way |
 | Package assembly | The report at the destination `output_paths.py --kind reports --name investigation-package.md` resolves |

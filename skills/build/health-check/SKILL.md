@@ -8,7 +8,7 @@ description: >-
   `build/build-management`, not directly, even when the request is only "does it
   actually run?". Defers test authoring to `build/test-builder` and package
   completeness to `build/cross-check-build-confirm`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 

@@ -67,7 +67,7 @@ exit         0
 tail         Ran 41 tests in 6.812s / OK
 
 register     python skills/harness/hooks/save_run.py checkpoint \
-               --run-id 2026-04-19-notify --owner test-builder \
+               --run-id 2026-04-19-notify --owner admiral \
                --evidence skillset-saves/runs/2026-04-19-notify/build/evidence/tests-unittest.log
 ```
 

@@ -29,8 +29,8 @@ rather than overwritten, and every overwrite keeps a timestamped ``.bak-`` copy
 before replacing the file atomically. File and backup keep the permission bits the
 original had; a new user-level file is owner-only. A config file that is a symbolic
 link is never replaced by a regular file: the user-level one (or one named with
-``--claude-settings`` and its siblings) is written through to the link's target, and a
-project-level one is refused.
+``--claude-settings`` and its siblings) is written through to the link's target, and one at
+project or local scope is refused.
 
 Run from a terminal, it first prints that same preview and asks before writing
 anything; ``--yes`` skips the question. With no terminal (CI, a pipe) it writes

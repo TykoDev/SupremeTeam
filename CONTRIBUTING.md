@@ -97,6 +97,8 @@ say so in the message.
   what it does hides the second inside the first.
 - When `skills/mcp-tools.md` changes, keep the text it replaces in `scripts/superseded/` and name it in
   `scripts/install-items.txt`, so an installed copy that never edited the old registry is replaced on upgrade.
+- A seed file the installers once shipped stays listed in `scripts/install-items.txt` when it is
+  retired, so an upgrade does not delete a user's copy as a stale owned file.
 - Land changes through a pull request into `dev`, not by pushing to it.
 - Never commit runtime state (`skillset-saves/`, `.harness-state/`) or anything
   shaped like a credential, not even a fake one in a test fixture.

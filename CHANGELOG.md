@@ -74,7 +74,9 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   `hooks_coverage`. The hook-hash record covers every Python module in the hook
   directory, and a changed file is named; `verify_registration.py` accepts a
   registration that names the harness in any install root; a host config that is a
-  symbolic link is written through at user scope and refused at project scope.
+  symbolic link is written through at user scope and for a path named on the command line
+  (`install_hooks.py --claude-settings`, `--codex-hooks`, `--copilot-hooks`), and refused at project and
+  local scope.
   `output_paths.py --kind product` refuses the version-control directory, the generated
   roots, `skills/harness/` and the host registration files. The installers replace an
   unedited registry from an earlier release (`scripts/superseded/`), report a failed
@@ -97,6 +99,29 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 - `repair_registration.py` writes host configs and their backups through the shared
   atomic write, which now also removes its staging file on an interrupt and takes
   `in_place=False` to refuse an overwrite in place.
+- A run record this account cannot read (records are owner-only, so a second operating-system
+  account sharing the project directory cannot read the first one's) is no longer read as an
+  absent one. `save_run.py status` and `check_readiness.py` classify it `corrupt` with
+  `access_denied` naming the file and a next step that says permission; `create`, resuming a
+  released run and `recover` refuse beside it, naming the path and the reason; every other
+  operation on that run says the same instead of "no lock"; `has_active_run` counts it as held,
+  so the hook-file gate and the session-pin reminder stay on; a directory that cannot be listed
+  is classified the same way instead of raising. In a shared directory the second account cannot
+  `create` while the first account's records exist.
+- The installers recognise an unedited registry from an earlier release whatever line endings its
+  checkout gave it: a CRLF copy compares equal once the CR of each CRLF is dropped, in
+  `install.sh` and in `install.ps1`; a carriage return that ends no line, or a byte-order mark,
+  is still an edit.
+- The hook-hash record lives in the project the registration ran from, so another project reads
+  `unrecorded` for the same hook files and an edit of them is not noticed there.
+  `verify_registration.py` now prints an `integrity:` line naming the record it compared with, its
+  changed note and the readiness warning name that record, readiness warns for a host whose hook
+  files have no record in the project, and both JSON reports carry the path (`hash_record`,
+  `hooks.hash_record`). Recording is still per project: `repair_registration.py --host <host>
+  --record-hashes`.
+- `_state.TRAJECTORY_LOCK_WAIT` names the quarter second a hook waits for the trajectory lock. The
+  concurrent-append test raises it in its own processes, so it no longer fails under CPU load, and
+  a test pins the production wait.
 - `check_runtime.py` finds a root-level stack beside a nested package, combines the
   signals of a project into one classification (a Vite frontend with a FastAPI backend
   is `full-stack`; a tooling-only `package.json` does not make a project a frontend),

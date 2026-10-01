@@ -429,7 +429,9 @@ def stage(record: dict[str, Any], destination: dict[str, Path]) -> tuple[Path, P
             fd, name = tempfile.mkstemp(prefix=".taste-", suffix=suffix, dir=destination["json"].parent)
             staged.append(Path(name))
             with os.fdopen(fd, "wb") as stream:
-                stream.write(content); stream.flush(); os.fsync(stream.fileno())
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
     except BaseException:
         for path in staged:
             path.unlink(missing_ok=True)
@@ -470,12 +472,15 @@ def commit_pair(records: list[tuple[str, dict[str, Any], dict[str, Path], bool]]
         if not locks_held:
             held = lock({scope: dest for scope, _, dest, _ in records})
         for _, record, dest, _ in records:
-            pair = stage(record, dest); staged.append(pair)
+            pair = stage(record, dest)
+            staged.append(pair)
             backup = {}
             for key in ("json", "md"):
                 if dest[key].exists():
-                    fd, name = tempfile.mkstemp(prefix=".taste-rollback-", dir=dest[key].parent); os.close(fd)
-                    shutil.copy2(dest[key], name); backup[key] = Path(name)
+                    fd, name = tempfile.mkstemp(prefix=".taste-rollback-", dir=dest[key].parent)
+                    os.close(fd)
+                    shutil.copy2(dest[key], name)
+                    backup[key] = Path(name)
             backups.append(backup)
         for index, (_, record, dest, existed) in enumerate(records):
             if existed:
@@ -484,8 +489,10 @@ def commit_pair(records: list[tuple[str, dict[str, Any], dict[str, Path], bool]]
                 history = dest["history"] / f"revision-{old['revision']:08d}-{old['canonical_record_digest'].split(':')[1][:12]}.json"
                 if not history.exists():
                     shutil.copy2(dest["json"], history)
-            replace_with_retry(staged[index][0], dest["json"]); replaced.append((index, "json"))
-            replace_with_retry(staged[index][1], dest["md"]); replaced.append((index, "md"))
+            replace_with_retry(staged[index][0], dest["json"])
+            replaced.append((index, "json"))
+            replace_with_retry(staged[index][1], dest["md"])
+            replaced.append((index, "md"))
             journals[index] = dest["journal"].stat().st_size if dest["journal"].exists() else None
             with dest["journal"].open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps({"revision": record["revision"], "digest": record["canonical_record_digest"], "generated_at": record["generated_at"]}, sort_keys=True) + "\n")
@@ -500,10 +507,12 @@ def commit_pair(records: list[tuple[str, dict[str, Any], dict[str, Path], bool]]
         raise TasteError("write_failed", "atomic preference write failed and replacements were rolled back", reason=str(exc)) from exc
     finally:
         for pair in staged:
-            for path in pair: path.unlink(missing_ok=True)
+            for path in pair:
+                path.unlink(missing_ok=True)
         for backup in backups:
             for path in backup.values():
-                if path not in keep: path.unlink(missing_ok=True)
+                if path not in keep:
+                    path.unlink(missing_ok=True)
         if held:
             held.release()
 
@@ -544,7 +553,8 @@ def mutate(record: dict[str, Any], command: str, args: argparse.Namespace, sourc
         if not source or entry_id not in source["entries"]:
             raise TasteError("not_found", "source preference entry does not exist", id=entry_id)
         check_id_safe(entry_id)
-        result["entries"][entry_id] = copy.deepcopy(source["entries"][entry_id]); result["entries"][entry_id]["updated_at"] = now()
+        result["entries"][entry_id] = copy.deepcopy(source["entries"][entry_id])
+        result["entries"][entry_id]["updated_at"] = now()
         result["tombstones"].pop(entry_id, None)
     elif command == "import":
         try:
@@ -570,7 +580,8 @@ def mutate(record: dict[str, Any], command: str, args: argparse.Namespace, sourc
         result["entries"] = {}
     prior = record["canonical_record_digest"] if record["revision"] else None
     result["revision"] = record["revision"] + 1
-    result["generated_at"] = now(); result["previous_revision_digest"] = prior
+    result["generated_at"] = now()
+    result["previous_revision_digest"] = prior
     result["canonical_record_digest"] = digest(result)
     return result
 
@@ -581,8 +592,10 @@ def substance(entry: dict[str, Any] | None) -> tuple[Any, Any] | None:
 
 
 def selected_scopes(scope: str | None) -> list[str]:
-    if scope == "both": return ["project", "global"]
-    if scope in {"project", "global"}: return [scope]
+    if scope == "both":
+        return ["project", "global"]
+    if scope in {"project", "global"}:
+        return [scope]
     return ["project", "global"]
 
 
@@ -596,7 +609,8 @@ def expected_revisions(values: list[str] | None, scopes: list[str]) -> dict[str,
                 raise TasteError("invalid_revision", "use --expect-revision N or --expect-revision project=N/global=N")
             result[scope] = int(raw)
         elif value.isdigit():
-            for scope in scopes: result[scope] = int(value)
+            for scope in scopes:
+                result[scope] = int(value)
         else:
             raise TasteError("invalid_revision", "expected revision must be a non-negative integer")
     return result
@@ -607,17 +621,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project-root", default=".")
     sub = parser.add_subparsers(dest="command", required=True)
     for command in READS:
-        p = sub.add_parser(command); p.add_argument("--scope", choices=("global", "project", "both"), default="both")
+        p = sub.add_parser(command)
+        p.add_argument("--scope", choices=("global", "project", "both"), default="both")
         if command == "export":
             p.add_argument("--output", required=True)
             # Redaction is a safety property, so an export cannot be made unredacted. The flag stays
             # so callers that already pass it keep working.
             p.add_argument("--redact", action="store_true", help="accepted and ignored: an export is always redacted")
     for command in sorted(MUTATIONS):
-        p = sub.add_parser(command); p.add_argument("--scope", choices=("global", "project", "both"), required=True)
-        p.add_argument("--expect-revision", action="append"); p.add_argument("--id", dest="entry_id"); p.add_argument("--value")
-        p.add_argument("--input"); p.add_argument("--redact", action="store_true")
-    args = parser.parse_args(argv); root = Path(args.project_root).resolve()
+        p = sub.add_parser(command)
+        p.add_argument("--scope", choices=("global", "project", "both"), required=True)
+        p.add_argument("--expect-revision", action="append")
+        p.add_argument("--id", dest="entry_id")
+        p.add_argument("--value")
+        p.add_argument("--input")
+        p.add_argument("--redact", action="store_true")
+    args = parser.parse_args(argv)
+    root = Path(args.project_root).resolve()
     held = None
     try:
         if args.command not in MUTATIONS:
@@ -626,12 +646,15 @@ def main(argv: list[str] | None = None) -> int:
             loaded = {scope: load(root, scope)[0] for scope in selected_scopes(args.scope)}
             if args.command == "status":
                 return emit(True, stores={s: {"path": str(paths(root, s)["json"]), "exists": paths(root, s)["json"].exists(), "revision": r["revision"], "digest": r["canonical_record_digest"]} for s, r in loaded.items()})
-            if args.command == "list": return emit(True, entries={s: r["entries"] for s, r in loaded.items()})
+            if args.command == "list":
+                return emit(True, entries={s: r["entries"] for s, r in loaded.items()})
             effective = {}
             for scope in ("global", "project"):
                 for key, item in loaded.get(scope, {}).get("entries", {}).items():
-                    if item["state"] == "active": effective[key] = {**item, "source_scope": scope}
-            if args.command == "effective": return emit(True, entries=effective)
+                    if item["state"] == "active":
+                        effective[key] = {**item, "source_scope": scope}
+            if args.command == "effective":
+                return emit(True, entries=effective)
             if args.command == "diff":
                 project, global_ = loaded["project"]["entries"], loaded["global"]["entries"]
                 return emit(True, differences=[{"id": i, "project": project.get(i), "global": global_.get(i)} for i in sorted(set(project) | set(global_)) if substance(project.get(i)) != substance(global_.get(i))])
@@ -653,8 +676,10 @@ def main(argv: list[str] | None = None) -> int:
                     raise TasteError("revision_required", "--expect-revision is required for an existing store", scope=scope, actual_revision=record["revision"])
                 if expected is not None and expected != record["revision"]:
                     raise TasteError("stale_revision", "expected revision does not match canonical store", scope=scope, expected=expected, actual_revision=record["revision"])
-            if args.command == "promote" and args.scope not in {"global", "both"}: raise TasteError("invalid_scope", "promote writes global scope (or both)")
-            if args.command == "specialize" and args.scope not in {"project", "both"}: raise TasteError("invalid_scope", "specialize writes project scope (or both)")
+            if args.command == "promote" and args.scope not in {"global", "both"}:
+                raise TasteError("invalid_scope", "promote writes global scope (or both)")
+            if args.command == "specialize" and args.scope not in {"project", "both"}:
+                raise TasteError("invalid_scope", "specialize writes project scope (or both)")
             source_scope = "project" if args.command == "promote" else "global"
             source = load(root, source_scope)[0] if args.command in {"promote", "specialize"} else None
             records = []

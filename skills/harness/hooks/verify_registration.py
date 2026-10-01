@@ -523,8 +523,8 @@ def main() -> int:
     if args.json:
         report = {h: {"status": "registered" if s is True else "missing" if s is False else "unknown",
                       "hooks": {k: v for k, v in r.items()},
-                      "config_files": [{"path": str(p), "state": "read" if v is not None else "absent" if not p.exists() else "unreadable"} for p, v in l]}
-                  for (h, l, r, _), s in zip(checks, statuses, strict=True)}
+                      "config_files": [{"path": str(p), "state": "read" if v is not None else "absent" if not p.exists() else "unreadable"} for p, v in files]}
+                  for (h, files, r, _), s in zip(checks, statuses, strict=True)}
         print("JSON_REPORT: " + json.dumps(report, sort_keys=True))
     if chosen and all(status is True for status in statuses):
         return 0

@@ -61,8 +61,11 @@ class RollForwardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             (project / "README.md").write_text("x", encoding="utf-8")
-            save = lambda *a: subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), *a, "--project-root", str(project), "--run-id", "r1"],
-                                             text=True, capture_output=True, check=False)
+
+            def save(*a):
+                return subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), *a, "--project-root", str(project), "--run-id", "r1"],
+                                      text=True, capture_output=True, check=False)
+
             save("create", "--evidence", "README.md")
             save("checkpoint")
             run_dir = project / "skillset-saves" / "runs" / "r1"

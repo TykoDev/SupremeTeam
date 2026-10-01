@@ -83,6 +83,8 @@ def refresh(data: dict, event: str) -> dict | None:
         store = save_run.RunStore(root, run_id)
         return store.heartbeat(str(lock.get("owner") or "admiral"), source=f"hook:{event}",
                                wait=save_run.HOOK_LOCK_WAIT, min_age=REFRESH_AFTER)
+    except PermissionError:
+        return None  # an account that may not search the saves cannot refresh a heartbeat in them: not a fault
     except Exception as exc:
         _state.record_fault(event, exc)  # a heartbeat that cannot be kept lets a live run go stale, so it is counted
         return None

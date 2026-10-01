@@ -455,6 +455,18 @@ class HeartbeatHotPathTests(RunStateCase):
             self.assertEqual(self.refresh()["skipped"], "another writer holds the save write lock")
         self.assertEqual(_state.load_observations(self.project).get("PreToolUse", {}).get("faults", 0), 0)
 
+    def test_a_refresh_by_an_account_that_cannot_search_the_saves_is_not_a_fault(self):
+        """R3e hand-off: the blanket handler counted a hook fault on every call for a second account."""
+        self.create()
+        self.age_records(12)
+
+        def refused(path, *args, **kwargs):
+            raise PermissionError(13, "Permission denied", str(path))
+
+        with mock.patch.object(Path, "is_dir", refused):
+            self.assertIsNone(self.refresh())
+        self.assertEqual(_state.load_observations(self.project).get("PreToolUse", {}).get("faults", 0), 0)
+
     def test_a_damaged_throttle_marker_does_not_switch_refreshing_off(self):
         self.create()
         self.age_records(12)

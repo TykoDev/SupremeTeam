@@ -105,9 +105,17 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   `access_denied` naming the file and a next step that says permission; `create`, resuming a
   released run and `recover` refuse beside it, naming the path and the reason; every other
   operation on that run says the same instead of "no lock"; `has_active_run` counts it as held,
-  so the hook-file gate and the session-pin reminder stay on; a directory that cannot be listed
-  is classified the same way instead of raising. In a shared directory the second account cannot
-  `create` while the first account's records exist.
+  so the hook-file gate and the session-pin reminder stay on; a directory on the way that cannot
+  be searched or listed is classified the same way, and every `save_run.py` operation refuses
+  beside it in the same words instead of raising (`status` and `create` raised an engine error,
+  the rest a traceback). `access_denied` marks the records that may hold the pin (the pointer, a
+  lock, a state beside a lock that says held); a refused state beside a readable released lock is
+  a closed run, `corrupt` without it, and does not refuse `create`. In a shared directory the
+  second account cannot `create` while the first account's records exist, closed runs included:
+  completing or releasing a run only ends its claim and leaves its records unreadable, so they
+  have to be made readable to it (a mode or an ACL) or, once the run is closed, removed by an
+  account that may delete them; never overwrite them. A hook refresh by an account that may not
+  search the saves is no longer counted as a fault.
 - The installers recognise an unedited registry from an earlier release whatever line endings its
   checkout gave it: a CRLF copy compares equal once the CR of each CRLF is dropped, in
   `install.sh` and in `install.ps1`; a carriage return that ends no line, or a byte-order mark,
@@ -380,6 +388,15 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ### Fixed
 
+- Registered evidence under a directory the account may not search is reported as
+  `evidence_unverifiable` beside the classification the run's own records give, where it turned
+  the owner's run `corrupt` with the other-account step; the writer refuses such a path naming it
+  (`evidence path cannot be read by this account (permission denied)`) where it raised an engine
+  error.
+- The save readers and the writer probe the run paths with `stat` (`_saves.path_exists`,
+  `path_is_dir`) and not `Path.exists` or `Path.is_dir`, which raise on some interpreters and
+  answer no on others where pathlib is built on `os.path`; where a directory may not be searched
+  the answer is a refusal on all of them.
 - `test_pipeline_workflows.py` ran no tests on a host without PyYAML while the
   suite still reported OK. It now reads its inputs the way the gate does.
 - Running `test_catalog_contracts.py` directly silently dropped 8 of its tests.
@@ -448,7 +465,7 @@ recorded here, or a record the skill does not carry, fails it.
 - `review/gatekeeper-code` 1.1.0: as `gatekeeper-admiral`, with its package guard and
   optional slots.
 - `session-memory` 1.1.0: the writer lock, `checkpoint --drop-evidence`, the
-  `uninitialized` class and the refusal reasons.
+  `uninitialized` class, the refusal reasons and the `access_denied` mark.
 - `taste` 1.1.0: `propose` validation, redaction by shape, lock reclaim and the error codes.
 - `skill-maker` 1.0.1: the Stage 5 hand-off names the output directory as an absolute path, the
   parent of the `path` that `output_paths.py` prints, and leaves it out outside a run.

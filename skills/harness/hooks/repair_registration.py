@@ -35,10 +35,8 @@ Exit 0 = nothing to do or applied, 1 = changes needed but --apply not given,
 from __future__ import annotations
 
 import argparse
-import contextlib
 import difflib
 import json
-import os
 import stat
 import sys
 from datetime import datetime, timezone
@@ -160,35 +158,6 @@ def plan(config: dict, host: str, python: str) -> tuple[dict, list[str]]:
     return desired, added
 
 
-def _atomic_write(path: Path, data: bytes, mode: int | None) -> None:
-    """Replace ``path`` through a per-process temp file that is created with ``mode``.
-
-    ``mode`` None leaves the permission bits to the process umask; an explicit mode
-    is applied again after creation because the umask can only have narrowed it. The
-    bytes are flushed to disk first and the replace is retried the way every other
-    writer in this directory retries it, because a host holding its own config open
-    makes a Windows replace fail transiently. A write that needs no particular mode
-    goes through ``_fsutil.atomic_write`` itself.
-    """
-    if mode is None:
-        _fsutil.atomic_write(path, data)
-        return
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    tmp.unlink(missing_ok=True)
-    try:
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
-            handle.flush()
-            with contextlib.suppress(OSError):
-                os.fsync(handle.fileno())
-        os.chmod(tmp, mode)
-        _fsutil.replace_with_retry(tmp, path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-
-
 def resolve_config(path: Path, through_links: bool) -> Path:
     """The file a registration is read from and written to.
 
@@ -233,8 +202,8 @@ def write_with_backup(path: Path, text: str, *, private: bool = False) -> Path |
     if path.exists():
         mode = stat.S_IMODE(path.stat().st_mode)
         backup = path.with_name(path.name + ".bak-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
-        _atomic_write(backup, path.read_bytes(), mode)
-    _atomic_write(path, text.encode("utf-8"), mode)
+        _fsutil.atomic_write(backup, path.read_bytes(), mode=mode, in_place=False)
+    _fsutil.atomic_write(path, text.encode("utf-8"), mode=mode, in_place=False)
     return backup
 
 
@@ -254,7 +223,7 @@ def record_hashes(states: dict, host: str) -> Path:
             sections["directories"][verify.hash_key(directory)] = {"path": str(directory), "files": verify.module_hashes(directory),
                                                                    "host": host, "recorded_at": recorded_at}
     record = {"schema_version": 1, **sections}
-    _atomic_write(path, (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"), None)
+    _fsutil.atomic_write(path, (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"))
     return path
 
 

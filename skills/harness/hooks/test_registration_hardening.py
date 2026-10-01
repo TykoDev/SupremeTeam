@@ -1114,6 +1114,38 @@ class RepairWriteTests(Scratch):
             repair.write_with_backup(settings, "{}\n")
         self.assertGreaterEqual(fsync.call_count, 2, "the backup and the new file are both synced")
 
+    def test_the_config_and_its_backup_go_through_the_shared_write_with_their_original_mode(self):
+        """QR-PY-05: the private copy of the write is gone; the shared one is handed the mode and told to replace whole."""
+        import _fsutil
+
+        self.assertFalse(hasattr(repair, "_atomic_write"), "a private copy of the shared write is dead code")
+        settings = self.claude_settings({"theme": "dark"})
+        settings.chmod(0o640)
+        with mock.patch("_fsutil.atomic_write", wraps=_fsutil.atomic_write) as writer:
+            repair.write_with_backup(settings, '{"theme": "light"}\n')
+        self.assertEqual(len(writer.call_args_list), 2)
+        for call in writer.call_args_list:
+            self.assertEqual((call.kwargs.get("mode"), call.kwargs.get("in_place")), (0o640, False), call)
+        self.assertEqual(settings.read_text(encoding="utf-8"), '{"theme": "light"}\n')
+
+    def test_a_rename_the_system_denies_is_refused_and_the_config_is_left_as_it_was(self):
+        """Not overwritten in place: a host config is replaced whole or not at all."""
+        settings = self.claude_settings({"theme": "dark"})
+        before = settings.read_bytes()
+        real = os.replace
+
+        def denied(source, target):
+            if Path(target) == settings:
+                raise PermissionError(13, "access denied")
+            return real(source, target)  # the backup is a new file and is written
+
+        with mock.patch.object(os, "replace", denied), mock.patch("_fsutil.time.sleep"):
+            with self.assertRaises(PermissionError):
+                repair.write_with_backup(settings, '{"theme": "light"}\n')
+        self.assertEqual(settings.read_bytes(), before)
+        self.assertEqual(len(list(settings.parent.glob("settings.json.bak-*"))), 1)
+        self.assertEqual(list(settings.parent.glob("*.tmp")), [])
+
     def test_the_hash_record_is_written_with_the_shared_atomic_write(self):
         import _fsutil
 

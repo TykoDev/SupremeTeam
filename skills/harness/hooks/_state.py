@@ -233,7 +233,7 @@ def _effective_globs(entries) -> list:
     expires a protection.
     """
     result = []
-    for entry in entries or []:
+    for entry in entries if isinstance(entries, list) else []:
         if isinstance(entry, str) and entry:
             result.append(entry)
         elif isinstance(entry, dict):
@@ -285,17 +285,17 @@ def load_guard_state(root: "str | Path | None" = None) -> dict:
     normalized = dict(state)
     if not state_dir_trusted(root):
         normalized.pop("allow_dangerous", None)
-    normalized["freeze_records"] = [e for e in (state.get("frozen_globs") or []) if isinstance(e, dict)] + \
-        [e for e in (state.get("blocked_globs") or []) if isinstance(e, dict)]
-    normalized["frozen_globs"] = _effective_globs(state.get("frozen_globs"))
-    normalized["blocked_globs"] = _effective_globs(state.get("blocked_globs"))
+    # A list the record holds in some other shape (a number, a string, a mapping) names nothing to enforce, and
+    # must not stop the rest of the record, or the rules that need none of it, from being read.
+    listed = {key: state.get(key) if isinstance(state.get(key), list) else [] for key in ("frozen_globs", "blocked_globs", "read_only")}
+    normalized["freeze_records"] = [e for e in listed["frozen_globs"] if isinstance(e, dict)] + \
+        [e for e in listed["blocked_globs"] if isinstance(e, dict)]
+    normalized["frozen_globs"] = _effective_globs(listed["frozen_globs"])
+    normalized["blocked_globs"] = _effective_globs(listed["blocked_globs"])
     # A read-only run (recorded by `guard` via guard_state.py): records with run_id, owner, scope,
     # created_at, released_at, and the allow globs of the run's own save path.
     # Effective until released; never expired by age.
-    normalized["read_only"] = [
-        e for e in (state.get("read_only") or [])
-        if isinstance(e, dict) and not is_released(e)
-    ]
+    normalized["read_only"] = [e for e in listed["read_only"] if isinstance(e, dict) and not is_released(e)]
     return normalized
 
 

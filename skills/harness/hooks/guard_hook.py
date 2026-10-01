@@ -805,6 +805,25 @@ def _advise(hint: str) -> None:
     sys.exit(0)
 
 
+def _guard_state() -> dict:
+    """The guard record, or an empty one when it cannot be read: Rule A needs none of it, and a record that
+    cannot be read must not switch every rule off. The fault is counted."""
+    try:
+        return _state.load_guard_state()
+    except Exception as exc:
+        _state.record_fault("PreToolUse", exc)
+        return {}
+
+
+def _project_root() -> Path:
+    """The project root, or the working directory when it cannot be found (a rule that needs the root then faults alone)."""
+    try:
+        return _state.project_root()
+    except Exception as exc:
+        _state.record_fault("PreToolUse", exc)
+        return Path(".")
+
+
 def main() -> None:
     data = _state.read_hook_input("PreToolUse")
     _state.record_observation("PreToolUse", data)
@@ -815,7 +834,7 @@ def main() -> None:
         tool_input = {"patch": tool_input}
     if not isinstance(tool_input, dict):
         return
-    call = Call(tool_name, tool_input, _state.load_guard_state(), _state.project_root(), data.get("cwd"))
+    call = Call(tool_name, tool_input, _guard_state(), _project_root(), data.get("cwd"))
     for _label, rule in RULES:
         try:
             reason = rule(call)

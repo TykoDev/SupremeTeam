@@ -78,7 +78,7 @@ _COVERAGE_RULE = (
 
 
 def _signature(tool_name: str, tool_input: dict) -> str:
-    key = tool_name
+    key = str(tool_name)
     if isinstance(tool_input, dict):
         # Fold in command + file_path, plus the edit payload so two *different*
         # edits to the same file do not collapse to one signature (which would

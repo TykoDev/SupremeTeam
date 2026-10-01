@@ -42,8 +42,8 @@ by name, or when one already exists.
 The installer only replaces or removes what it installed. Anything of yours that
 shares a name with an installed item (`review`, `qa`, `scripts`, ...) is moved,
 never deleted, to `<target>.supremeteam-backup/<timestamp>/` and listed in the
-summary. Run it with `--dry-run` first to see what it would do without writing
-anything. [Install.md](Install.md) has the details.
+summary. Run it with `--dry-run` (`-DryRun` on Windows) first to see what it would
+do without writing anything. [Install.md](Install.md) has the details.
 
 Teams, hosts, the hook-scope and no-prompt flags, a custom destination and
 `--dry-run` are in [Install.md](Install.md#installer-options).

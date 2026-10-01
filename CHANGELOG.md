@@ -196,8 +196,7 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 - `design/engineer` and `design/architect` no longer require a stack lock, which
   `pipelines.yaml` orders after both; the engineer works from the detected stack
   and `design/commander` locks it afterwards. `unfreeze` is a declared owner of the
-  guard record. Skill versions: `design/engineer` 1.0.1, `design/architect` 1.0.1,
-  `admiral` 2.1.1.
+  guard record.
 
 ### Security
 
@@ -274,3 +273,44 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   missing CLI, a timeout, a non-zero exit or a reply flagged as an error is an error
   with exit 1, never "0 skills registered". `run_eval.py` lost the `--queries` and
   `--turns` flags it parsed and never read.
+
+### Skill versions
+
+Each skill whose behaviour or contract changed since the first review carries a new
+`version`, by the rule in [CONTRIBUTING.md](CONTRIBUTING.md#skill-versions): a minor
+bump for new behaviour, a patch for a fix. Skills not listed are unchanged at 1.0.0. A
+test compares this list with the `version:` of every `SKILL.md`, so a bump that is not
+recorded here, or a record the skill does not carry, fails it.
+
+- `admiral` 2.1.1: how its commands read in an installed copy, the eleven save-directory
+  classes, and what `create` carries.
+- `design/architect` 1.0.1: works from the stack the project already fixes, not a lock
+  that comes later in the pipeline.
+- `design/engineer` 1.0.1: works from the detected stack, not a lock that comes later.
+- `design/commander` 1.0.1: states the stack-lock rule the engine enforces (every
+  declared version is one the registry offers).
+- `design/design-mapper` 1.0.1: states what `check_parity.py` now refuses in an inventory.
+- `careful` 1.0.1: describes the guard as it is (it reads the command, and counts faults).
+- `freeze` 1.1.0: one record per boundary whatever the spelling, a refused glob that can
+  never match, relative globs anchored at the project root, a writer lock.
+- `guard` 1.1.0: a grant is capped at 8 hours, the hook scripts are protected (Rule F),
+  and writers serialise on a lock.
+- `unfreeze` 1.1.0: releases by the normalised glob and records the cap on a grant.
+- `gatekeeper-admiral` 1.1.0: a REVISE row for a schema-1 result, the typed-record
+  roster and what a typed record leaves unchecked.
+- `design/gatekeeper-design` 1.1.0: as `gatekeeper-admiral`, and the stack-lock and
+  selection rules the engine now enforces.
+- `build/gatekeeper-build` 1.1.0: as `gatekeeper-admiral`, with its package guard and
+  optional slots.
+- `review/gatekeeper-code` 1.1.0: as `gatekeeper-admiral`, with its package guard and
+  optional slots.
+- `session-memory` 1.1.0: the writer lock, `checkpoint --drop-evidence`, the
+  `uninitialized` class and the refusal reasons.
+- `taste` 1.1.0: `propose` validation, redaction by shape, lock reclaim and the error codes.
+- `skill-maker/skill-creator` 1.1.0: the packager takes an absolute output directory and
+  refuses symlinks, secrets and run state; failed eval runs are not scored.
+- `review/security-review` 1.1.0: `scan_record.py` names its output relative to the
+  manifest and gains `--fail-on-output` and `--manifest-root`.
+- `review/cso` 1.0.1: the waiver reason must be the sanctioned wording, and scan output
+  paths follow the manifest.
+- `qa-only` 1.0.1: the read-only boundary reference states what the hook now denies.

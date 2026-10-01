@@ -98,6 +98,40 @@ class ProjectFileTests(unittest.TestCase):
 
 
 @CHECKOUT_ONLY
+class SkillVersionRecordTests(unittest.TestCase):
+    """RR-ci-docs-5: CONTRIBUTING said to bump a version with the behaviour, and 13 of 16 changed skills kept 1.0.0.
+
+    A test cannot tell whether a change alters behaviour, but it can hold the record: every skill that left
+    1.0.0 is listed in the changelog with the number it carries, and nothing is listed that it does not carry.
+    """
+
+    SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+    LINE = re.compile(r"^- `([^`]+)` (\S+?): ", re.M)
+
+    def setUp(self):
+        text = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+        section = re.search(r"^### Skill versions\s*$(.*?)(?=^#{1,3} |\Z)", text, re.M | re.S)
+        self.assertIsNotNone(section, "CHANGELOG.md has no 'Skill versions' list")
+        self.recorded = dict(self.LINE.findall(section.group(1)))
+        self.carried = {skill.parent.relative_to(SKILLS).as_posix(): _catalog.skill_front(skill).get("version")
+                        for skill in sorted(SKILLS.rglob("SKILL.md"))}
+
+    def test_every_version_is_three_numbers(self):
+        self.assertEqual({}, {path: version for path, version in self.carried.items()
+                              if not self.SEMVER.match(str(version))})
+
+    def test_a_skill_that_left_1_0_0_is_recorded_with_the_number_it_carries(self):
+        unrecorded = {path: version for path, version in self.carried.items()
+                      if version != "1.0.0" and self.recorded.get(path) != version}
+        self.assertEqual({}, unrecorded)
+
+    def test_nothing_is_recorded_that_the_skill_does_not_carry(self):
+        stale = {path: (version, self.carried.get(path)) for path, version in self.recorded.items()
+                 if self.carried.get(path) != version}
+        self.assertEqual({}, stale)
+
+
+@CHECKOUT_ONLY
 class GitignoreTests(unittest.TestCase):
     def setUp(self):
         self.patterns = {

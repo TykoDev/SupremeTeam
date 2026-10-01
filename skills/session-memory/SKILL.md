@@ -8,7 +8,7 @@ description: >-
   checkpoint this run, resume from saved state, record a learning, or recall what
   was learned earlier — even when they only say "save where we are". Not general
   note-taking or documentation.
-version: 1.0.0
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 

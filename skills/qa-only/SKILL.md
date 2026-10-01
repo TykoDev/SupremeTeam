@@ -7,7 +7,7 @@ description: >-
   audit — even when the request is only "just tell me what's broken". Reports,
   never edits; defers fix-and-reverify QA to `qa` and performance
   measurement to `benchmark`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 

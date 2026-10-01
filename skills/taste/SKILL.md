@@ -9,7 +9,7 @@ description: >-
   export, or show effective preferences — “remember that I prefer,” “save this
   globally,” “only in this project” — even phrased casually. Ordinary design
   feedback is not a preference change.
-version: 1.0.0
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 

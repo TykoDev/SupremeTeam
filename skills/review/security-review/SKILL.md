@@ -8,7 +8,7 @@ description: >-
   vulnerabilities, audit dependency risk, or trace data leakage — even when they
   only mention untrusted input or secrets. Defers exploit chaining to
   `review/mr-robot`, accepted risk to `review/cso`.
-version: 1.0.0
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 

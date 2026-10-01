@@ -332,9 +332,19 @@ _SEPARATORS = re.compile(r"[\\/]+")
 _WORD_END_ESCAPE = re.compile(r"\\[nrt](?=[\s'\"`]|$)")
 _GLOB_LIMIT = 100
 # Commands that remove, move or rewrite a whole tree: aimed at a directory above a boundary they reach into it.
-_TREE_VIA = frozenset({"rm", "rmdir", "mv", "shred", "unlink", "remove-item", "move-item", "rename-item", "rename", "find",
-                       "git checkout", "git restore", "git clean", "git rm", "git mv", "git apply", "git stash"})
 _REMOVE_VIA = frozenset({"rm", "rmdir", "mv", "shred", "unlink", "remove-item", "move-item", "rename-item", "rename", "find"})
+# Commands that put files into a directory whose names the command line does not fix, so aimed at a directory they
+# reach everything under it: a sync (`rsync`, and `--delete` removes what the source lacks), an archive extract
+# (`tar -x -C`, `unzip -d`, `7z x -o`), a recursive or contents copy (`cp -r`, `cp x/. dir`, labelled `<verb> -r` by
+# the analyser), `Copy-Item`, and the in-place editors `find -exec` aims at a directory (`find src -exec sed -i`).
+# A plain `cp file dir/` is not here: the analyser names the file it lands as (`dir/file`), and that is judged.
+_DEPOSIT_VIA = frozenset({"rsync", "tar", "unzip", "7z", "copy-item", "cp -r", "ln -r", "scp -r", "install -r",
+                          "sed", "perl", "awk", "gawk", "truncate"})
+_TREE_VIA = _REMOVE_VIA | _DEPOSIT_VIA | frozenset({"git checkout", "git restore", "git clean", "git rm", "git mv",
+                                                    "git apply", "git stash"})
+# Rule C reads the same trees, less the git commands that leave ignored files alone; `git clean` (`-x` reaches them)
+# stays.
+_RECORD_TREE_VIA = _REMOVE_VIA | _DEPOSIT_VIA | frozenset({"git clean"})
 
 
 def _written_paths(tool_input: dict, *, include_patch: bool = False) -> list:
@@ -378,7 +388,9 @@ class Call:
 
     @functools.cached_property
     def analysis(self):
-        return _cmdscan.analyse(self.command, powershell=self.powershell)
+        # The project-directory variables the host exports are the values a command's `$CLAUDE_PROJECT_DIR/...` takes.
+        env = {name: os.environ.get(name) for name in _state.PROJECT_ENV}
+        return _cmdscan.analyse(self.command, powershell=self.powershell, env=env)
 
     def locate(self, text: str, bases) -> "_paths.Target":
         key = (text, tuple(bases))
@@ -421,12 +433,28 @@ class Call:
         return self._shell_targets[key]
 
 
+# A variable the analysis cannot resolve, leading a path word: `$OUT/`, `${OUT}/`, `$env:OUT\`.
+_VARIABLE_LEAD = re.compile(r"^\$(?:env:)?[A-Za-z_]\w*[\\/]+", re.I)
+
+
+def _path_words(text: str) -> list:
+    """The path words of ``text``, and for one led by a variable (`$OUT/src/payments/a`) the path after it too: the
+    variable could stand for the project, so the rest is judged as a path in it."""
+    words = []
+    for word in _WORD.findall(re.sub(r"\$\{(\w+)\}", r"$\1", text)):
+        words.append(word)
+        rest = _VARIABLE_LEAD.sub("", word)
+        if rest and rest != word:
+            words.append(rest)
+    return words
+
+
 def _mentioned(texts, call: "Call", boundaries) -> "_paths.Boundary | None":
     """The first boundary a path word in ``texts`` lies on: how interpreter code and unparseable commands are searched."""
     pieces = [(boundary, boundary.fragments()) for boundary in boundaries]
     seen: set = set()
     for text in texts:
-        for word in _WORD.findall(text):
+        for word in _path_words(text):
             low = _SEPARATORS.sub("/", word.lower())  # a Windows spelling (`src\payments\a`) holds the same fragments
             if low in seen:
                 continue
@@ -800,7 +828,7 @@ def rule_single_writer(call: "Call") -> "str | None":
         for analysis in analyses:
             for write, targets in call.shell_targets(analysis=analysis):
                 for target in targets:
-                    reason = _protected_reason(target, above=write.via in _REMOVE_VIA)
+                    reason = _protected_reason(target, above=write.via in _RECORD_TREE_VIA)
                     if reason:
                         return reason
             reason = _code_protected(analysis.code, call)
@@ -841,7 +869,14 @@ _HARNESS_REASON = (
 
 
 def _harness_boundaries(root) -> list:
-    globs = [str(HOOK_DIR).replace("\\", "/") + "/**", *_REGISTRATION, *(os.path.expanduser(p) for p in _USER_REGISTRATION)]
+    """The hooks directory, the ``skills/scripts`` modules the hooks import (``_bootstrap.SCRIPT_FILES``: an edit to
+    one runs inside the guard as surely as an edit to the guard, and a ``raise SystemExit(0)`` there switched it off
+    with no fault counted) and the registration files."""
+    import _bootstrap
+
+    scripts = [str(HOOK_DIR.parents[1] / "scripts" / name).replace("\\", "/") for name in _bootstrap.SCRIPT_FILES]
+    globs = [str(HOOK_DIR).replace("\\", "/") + "/**", *scripts, *_REGISTRATION,
+             *(os.path.expanduser(p) for p in _USER_REGISTRATION)]
     return [_paths.Boundary(glob, root) for glob in globs]
 
 
@@ -864,7 +899,14 @@ def rule_harness_files(call: "Call") -> "str | None":
     if call.writer:
         hit = any(boundary.matches(target) for target in call.edit_targets for boundary in boundaries)
     elif call.analysis.ok:
-        hit = bool(_shell_hit(call, boundaries) or _mentioned(call.analysis.code, call, boundaries))
+        # Read as Rule B reads a write: the commands a launcher runs, and a write the analyser cannot place
+        # (`> "$OUT/.claude/settings.json"`) when the command spells a protected path.
+        analyses = list(_analyses(call.analysis))
+        hit = any(_shell_hit(call, boundaries, analysis=analysis) or _mentioned(analysis.code, call, boundaries)
+                  for analysis in analyses)
+        text = None if hit else _unplaced_command(call, analyses)
+        if text is not None:
+            hit = _mentioned([text], call, boundaries) is not None
     else:
         hit = _textual_mutates(call.command) and _mentioned([call.command], call, boundaries) is not None
     return _HARNESS_REASON if hit and _protection_engaged(call) else None
@@ -966,7 +1008,19 @@ def _deny(reason: str) -> None:
         }
     }
     print(json.dumps(out))
+    _exit()
+
+
+def _exit() -> None:
+    """The guard's own exit after it has spoken. ``DECIDED`` lets the entry script tell it from a ``SystemExit`` some
+    module on the import path raised, which is a fault and not a decision."""
+    global DECIDED
+    DECIDED = True
     sys.exit(0)
+
+
+# Set by ``_exit`` only: the guard printed its decision or advice and ended the process itself.
+DECIDED = False
 
 
 def _advise(notes: list) -> None:
@@ -985,7 +1039,7 @@ def _advise(notes: list) -> None:
         }
     }
     print(json.dumps(out))
-    sys.exit(0)
+    _exit()
 
 
 _UNREADABLE_NOTE = (
@@ -1019,6 +1073,8 @@ def _project_root() -> Path:
 def main() -> None:
     data = _state.read_hook_input("PreToolUse")
     _state.record_observation("PreToolUse", data)
+    if _state.TAXONOMY_FAULT is not None:
+        _state.record_fault("PreToolUse", _state.TAXONOMY_FAULT)
     run_heartbeat.refresh(data, "PreToolUse")
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {}) or {}
@@ -1030,7 +1086,9 @@ def main() -> None:
     for _label, rule in RULES:
         try:
             reason = rule(call)
-        except Exception as exc:
+        except BaseException as exc:
+            # No rule exits: a `SystemExit` here came from a module a rule imported, so it is a fault like any other
+            # and the remaining rules still run.
             _state.record_fault("PreToolUse", exc)
             continue
         if reason:
@@ -1038,7 +1096,7 @@ def main() -> None:
     notes = [_UNREADABLE_NOTE] if call.guard.get("unreadable") and (call.shell or call.writer) else []
     try:
         advice = rule_coverage(call)
-    except Exception as exc:
+    except BaseException as exc:
         _state.record_fault("PreToolUse", exc)
         advice = None
     if advice:

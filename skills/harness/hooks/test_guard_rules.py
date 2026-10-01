@@ -1345,5 +1345,88 @@ class ShapeCostTests(GuardCase):
                 self.assertTrue(kit.denied(self.call(chain + "; " + tail)))
 
 
+# --- a write into a directory, and a path spelled through a variable (audit round 2: H-1, H-2, H-3) ----------------
+
+# Rule C read a directory target as reaching its records only for the remove and move verbs, so a copy, link, install,
+# sync or extract into `.harness-state/` replaced the guard record and lifted every freeze in one allowed command.
+RECORD_DEPOSITS = (
+    "cp /tmp/x/guard-state.json .harness-state/", "cp -t .harness-state /tmp/x/guard-state.json",
+    "install /tmp/x/guard-state.json .harness-state/", "ln -sf /tmp/x/guard-state.json .harness-state/",
+    "cd .harness-state && cp /tmp/x/guard-state.json .", "cp -r /tmp/x/. .harness-state", "cp /tmp/x/* .harness-state/",
+    "tar -xf a.tar -C .harness-state", "unzip a.zip -d .harness-state", "7z x a.7z -o.harness-state",
+    "rsync -a /tmp/x/ .harness-state/", "rsync -a --delete /tmp/empty/ .harness-state/",
+    "find .harness-state -exec sed -i s/frozen_globs/x/ {} +", "cp /tmp/_state.md skillset-saves/runs/r1/",
+    "git clean -fdx skillset-saves", "cp /tmp/x/_latest.md skillset-saves/",
+)
+# What a copy into those directories lands as is named, so a file that is no record is not refused.
+RECORD_NEIGHBOURS = (
+    "cp /tmp/notes.md .harness-state/", "cp /tmp/r.md skillset-saves/runs/r1/design/reports/", "mkdir -p .harness-state/packages",
+    "cp -r /tmp/pkg .harness-state/packages/", "tar -xf a.tar -C skillset-saves/runs/r1/design/evidence",
+)
+# Rule B read `rsync`, an extract and the in-place editors `find -exec` runs as writes to the directory they name only,
+# so aimed above a boundary they rewrote everything in it.
+FROZEN_TREE_WRITES = (
+    "find src -type f -exec sed -i s/a/b/ {} +", "find src -exec truncate -s0 {} +", "find src -exec perl -pi -e s/a/b/ {} +",
+    "rsync -a --delete /tmp/empty/ src/", "rsync -a /tmp/x/ src/", "tar -xf a.tar -C src", "unzip a.zip -d src",
+    "cp -r /tmp/payments src/", "cp -r /tmp/x/. src", "cp /tmp/x/* src/",
+)
+FROZEN_TREE_NEIGHBOURS = (
+    "cp /tmp/notes.md src/", "cp -r /tmp/lib src/", "cp README.md docs/", "ln -s /tmp/tool bin/", "tar -czf out.tar src",
+    "sed -i s/a/b/ README.md", "rsync -a /tmp/x/ docs/", "tar -xf a.tar -C docs",
+)
+# The shell's directory and the project directory the host exports were left unresolved, and the literal word was
+# placed under the project root, where it matched nothing.
+FROZEN_VARIABLE_SPELLINGS = (
+    'echo x > "$PWD/src/payments/a.py"', 'echo x > "${PWD}/src/payments/a.py"', 'rm -rf "$PWD"', "rm -rf $PWD/src",
+    'cd src && echo x > "$PWD/payments/a.py"', 'rm -rf "$CLAUDE_PROJECT_DIR/src"', 'echo x > "$CLAUDE_PROJECT_DIR/src/payments/a.py"',
+    "echo x > $OUT/src/payments/a.py", "echo x > ${OUT}/src/payments/a.py",
+)
+FROZEN_VARIABLE_NEIGHBOURS = (
+    'echo x > "$PWD/notes.md"', 'echo x > "$CLAUDE_PROJECT_DIR/docs/a.md"', 'cat "$PWD/src/payments/a.py"',
+    "echo x > $TMPDIR/out.log", 'cp "$PWD/src/payments/a.py" /tmp/b.py',
+)
+
+
+class DirectoryDepositTests(GuardCase):
+    """A write into a directory reaches what it lands as there, and a tree write reaches everything below."""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / "src" / "payments").mkdir(parents=True)
+        (self.root / "src" / "payments" / "a.py").write_text("x", encoding="utf-8")
+        mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": str(self.root)}).start()
+        self.addCleanup(mock.patch.stopall)
+
+    def test_a_copy_link_sync_or_extract_into_a_record_directory_is_refused(self):
+        self.check(RECORD_DEPOSITS, deny=True)
+        self.guard(FROZEN)
+        self.check(RECORD_DEPOSITS, deny=True)
+
+    def test_a_named_file_copied_beside_the_records_is_not(self):
+        self.check(RECORD_NEIGHBOURS, deny=False)
+
+    def test_a_tree_write_aimed_above_a_boundary_is_refused(self):
+        self.guard(FROZEN)
+        self.check(FROZEN_TREE_WRITES, deny=True, fragment="frozen boundary")
+
+    def test_a_copy_beside_a_boundary_is_not(self):
+        self.guard(FROZEN)
+        self.check(FROZEN_TREE_NEIGHBOURS, deny=False)
+
+    def test_a_boundary_path_spelled_through_a_variable_is_refused(self):
+        self.guard(FROZEN)
+        self.check(FROZEN_VARIABLE_SPELLINGS, deny=True, fragment="frozen boundary")
+
+    def test_a_variable_that_leads_elsewhere_is_not(self):
+        self.guard(FROZEN)
+        self.check(FROZEN_VARIABLE_NEIGHBOURS, deny=False)
+
+    def test_the_lifted_freeze_the_audit_reproduced_stays_in_place(self):
+        """The whole H-1 chain: the copy is refused, so the frozen write after it is still refused."""
+        self.guard(FROZEN)
+        self.assertTrue(kit.denied(self.call("cp /tmp/x/guard-state.json .harness-state/")))
+        self.assertTrue(kit.denied(self.call("echo x > src/payments/a.py")))
+
+
 if __name__ == "__main__":
     unittest.main()

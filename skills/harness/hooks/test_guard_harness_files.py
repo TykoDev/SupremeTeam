@@ -216,6 +216,22 @@ class EnforcementFilesTests(unittest.TestCase):
                     with self.subTest(file=path.name):
                         self.assertTrue(kit.denied(kit.decide(kit.edit(str(path)), root)))
 
+    def test_the_scripts_modules_the_hooks_import_are_protected_while_engaged(self):
+        """Rule F covered the hooks directory only, so `echo "raise SystemExit(0)" >> skills/scripts/save_taxonomy.py`
+        was allowed and switched the guard off: the half of `enforcement_files()` outside it is now covered too."""
+        import _bootstrap
+
+        with kit.project() as root:
+            kit.write_guard(root, UNRELATED_FREEZE)
+            for path in _bootstrap.enforcement_files():
+                if path.parent == _bootstrap.SCRIPTS:
+                    with self.subTest(file=path.name):
+                        self.assertTrue(kit.denied(kit.decide(kit.edit(str(path)), root)))
+                        self.assertTrue(kit.denied(kit.decide(kit.bash(f'echo "raise SystemExit(0)" >> {path}'), root)))
+                        self.assertTrue(kit.denied(kit.decide(kit.bash(f"cp /tmp/{path.name} {path.parent}/"), root)))
+            other = _bootstrap.SCRIPTS / "output_paths.py"
+            self.assertEqual(kit.decide(kit.edit(str(other)), root), "")
+
 
 if __name__ == "__main__":
     unittest.main()

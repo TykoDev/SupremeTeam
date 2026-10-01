@@ -256,6 +256,7 @@ as the sole protection for secrets or production paths. For real isolation, use
 OS/filesystem permissions or a sandbox in addition to the guard.
 
 While a run is pinned or any boundary is recorded, Rule F also denies edits to the
-hook scripts and to the host files that register them, so the guard cannot be
+hook scripts, to the `skills/scripts/` modules they import (`data_formats.py`,
+`save_taxonomy.py`) and to the host files that register them, so the guard cannot be
 switched off from inside a session; a maintainer who must edit them starts the host
 with `SUPREMETEAM_HARNESS_DEV=1`, which only the person launching the host can set.

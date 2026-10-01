@@ -69,11 +69,16 @@ BASH_WRITES = (
     ("rm -rf -- -weird", {"-weird"}),
     ("rm -r a b", {"a", "b"}),
     ("mv a b", {"a", "b"}),
-    ("cp a b", {"b"}),
-    ("cp -r a b dir/", {"dir/"}),
-    ("cp -t dir a b", {"dir"}),
-    ("ln -s a b", {"b"}),
-    ("install -m 755 a b", {"b"}),
+    # a copy names its destination and, since that may be a directory, the file each source lands as there
+    ("cp a b", {"b", "b/a"}),
+    ("cp -r a b dir/", {"dir/", "dir/a", "dir/b"}),
+    ("cp -t dir a b", {"dir", "dir/a", "dir/b"}),
+    ("cp --backup a b", {"b", "b/a"}),
+    ("cp /tmp/x/. dir", {"dir"}),
+    ("ln -s a b", {"b", "b/a"}),
+    ("ln -sf /tmp/guard-state.json .harness-state/", {".harness-state/", ".harness-state/guard-state.json"}),
+    ("install -m 755 a b", {"b", "b/a"}),
+    ("scp -r h:/srv/data out/", {"out/", "out/data"}),
     ("install -d d1 d2", {"d1", "d2"}),
     ("chmod 644 f", {"f"}),
     ("chmod -R u+w d1 d2", {"d1", "d2"}),
@@ -83,6 +88,7 @@ BASH_WRITES = (
     ("truncate -s 0 f", {"f"}),
     ("dd if=a of=b bs=1", {"b"}),
     ("rsync -a src/ dest/", {"dest/"}),
+    ("rsync -avt src/ dest/", {"dest/"}),
     ("gzip f", {"f"}),
     ("sort -o out in", {"out"}),
     ("patch -o out in", {"out", "in"}),
@@ -218,6 +224,34 @@ class WriteTargetTests(unittest.TestCase):
                 result = analyse(text)
                 self.assertTrue(result.ok, text)
                 self.assertEqual({write.path for write in result.writes}, expected)
+
+    def test_a_copy_whose_contents_the_command_does_not_name_writes_a_tree(self):
+        """A recursive copy writes the tree under the name each source lands as, and a source that names no file (`x/.`,
+        a glob, a variable) lands names the guard cannot list, so the destination itself carries `<verb> -r`: the guard
+        reads that label as a write into everything under it."""
+        cases = (("cp -r /tmp/x .harness-state/", {(".harness-state/", "cp"), (".harness-state/x", "cp -r")}),
+                 ("cp -a /tmp/x/. src", {("src", "cp"), ("src", "cp -r")}),
+                 ("cp /tmp/x/* src/", {("src/", "cp"), ("src/", "cp -r")}),
+                 ("cp \"$F\" src/", {("src/", "cp"), ("src/", "cp -r")}),
+                 ("cp /tmp/notes.md src/", {("src/", "cp"), ("src/notes.md", "cp")}),
+                 ("scp -r h:/srv/data out/", {("out/", "scp"), ("out/data", "scp -r")}))
+        for text, expected in cases:
+            with self.subTest(command=text):
+                self.assertEqual({(write.path, write.via) for write in analyse(text).writes}, expected)
+
+    def test_the_shell_directory_and_host_variables_are_placed(self):
+        """`$PWD/x` is `x` where the shell is, and a variable the host exports (``env``) is the path it holds: both
+        were unresolved, and a write spelled through either was judged as the literal word under the project root."""
+        self.assertEqual({(w.path, w.cwds, w.unresolved) for w in analyse('cd src && echo x > "$PWD/a"').writes},
+                         {("./a", ("src",), False)})
+        self.assertEqual({(w.path, w.unresolved) for w in analyse('rm -rf "${PWD}"').writes}, {(".", False)})
+        env = {"CLAUDE_PROJECT_DIR": "/work/proj"}
+        self.assertEqual({w.path for w in _cmdscan.analyse('echo x > "$CLAUDE_PROJECT_DIR/src/a"', env=env).writes},
+                         {"/work/proj/src/a"})
+        self.assertEqual({w.path for w in _cmdscan.analyse('Set-Content "$env:CLAUDE_PROJECT_DIR/src/a" x', powershell=True,
+                                                  env=env).writes}, {"/work/proj/src/a"})
+        self.assertEqual({w.unresolved for w in analyse('echo x > "$CLAUDE_PROJECT_DIR/src/a"').writes}, {True})
+        self.assertEqual({w.path for w in analyse('PWD=/x; echo y > "$PWD/a"').writes}, {"/x/a"})
 
     def test_powershell_writes(self):
         for text, expected in PS_WRITES:
@@ -356,7 +390,7 @@ class WriteTargetTests(unittest.TestCase):
 
     def test_a_trap_handler_is_read_as_the_command_line_it_is(self):
         self.assertEqual(paths("trap 'rm src/payments/a.py' EXIT"), {"src/payments/a.py"})
-        self.assertEqual(paths("trap \"rm -f $tmp; cp x src/b\" EXIT INT"), {"src/b"} | paths("rm -f $tmp"))
+        self.assertEqual(paths("trap \"rm -f $tmp; cp x src/b\" EXIT INT"), {"src/b", "src/b/x"} | paths("rm -f $tmp"))
         for text in ("trap 'echo bye' EXIT", "trap - EXIT", "trap -p", "trap -l", "trap"):
             with self.subTest(command=text):
                 self.assertEqual(paths(text), set())
@@ -831,7 +865,7 @@ LAUNCHED = (
     ("parallel -I@@ rm @@ ::: a", [(["a"], [])]),
     ("ls | parallel -I@@ rm @@", [(["@@"], [])]),
     ("ls | parallel mv {} out/", [(["out/", "{}"], [])]),
-    ("ls | parallel cp {} out/", [(["out/"], [])]),
+    ("ls | parallel cp {} out/", [(["out/", "out/{}"], [])]),
     ("ls | parallel gzip", [([], [("gzip", "stdin")])]),
     ("ls | parallel rm {.}", [(["{.}"], [])]),
     ("echo a b | parallel rm", [(["a", "b"], [])]),

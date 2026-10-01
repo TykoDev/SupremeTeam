@@ -588,9 +588,11 @@ class _Lexer:
 # --- words to arguments ------------------------------------------------------
 
 class _Ctx:
-    def __init__(self, out: Analysis, ps: bool) -> None:
+    def __init__(self, out: Analysis, ps: bool, env: "dict | None" = None) -> None:
         self.out = out
         self.ps = ps
+        # Variables the host exports to the commands it runs (the project directory), keyed as ``vars`` is.
+        self.env: dict = {(name.lower() if ps else name): value for name, value in (env or {}).items() if value}
         self.vars: dict = {}
         self.cwds: list = []
         self.stack: tuple = ()
@@ -611,6 +613,11 @@ def _lookup(name: str, ctx: _Ctx) -> "str | None":
         return ctx.vars[key]
     if key == "HOME" or (ctx.ps and key in ("home", "userprofile")):
         return _home()
+    if key in ctx.env:
+        return ctx.env[key]
+    # The shell's own directory: `.` in the analysis, whose paths are relative to the directory the `cd` chain left.
+    if key == "PWD" or (ctx.ps and key == "pwd"):
+        return "."
     return None
 
 
@@ -784,13 +791,37 @@ def _t_skip_first(rest, ctx):
     return operands if any(f.startswith("--reference") for f in flags) else operands[1:]
 
 
-def _t_last(with_arg=frozenset(), short=frozenset()):
+def _deposits(verb: str, sources: list, dest: "_Arg", recursive: bool) -> list:
+    """What a copy, link or install into ``dest`` writes: ``dest`` itself, and ``dest/<name>`` for each source whose
+    name is known, since ``dest`` may be a directory. A recursive copy writes the tree under each ``dest/<name>``, and
+    a source whose name the command does not fix (``x/.``, a glob, a variable) lands names the guard cannot list: those
+    carry the label ``<verb> -r`` (``dest`` itself, for an unknown name), which the guard reads as a write into
+    everything under it, as it reads ``mv`` or ``rm``."""
+    items: list = [dest]
+    unknown = False
+    for source in sources:
+        name = posixpath.basename(source.text.replace("\\", "/").rstrip("/").rpartition(":")[2] or source.text)
+        if source.glob or source.unresolved or name in ("", ".", ".."):
+            unknown = True
+            continue
+        derived = _Arg(posixpath.join(dest.text, name), dest.glob, dest.unresolved)
+        items.append((derived, (), f"{verb} -r") if recursive else derived)
+    if unknown:
+        items.append((dest, (), f"{verb} -r"))
+    return items
+
+
+def _t_copy(verb: str, with_arg=frozenset(), short=frozenset(), recursive=frozenset(), recursive_short=""):
+    """``cp``, ``ln`` and ``scp``: the destination, read from ``-t`` or the last operand, and what lands inside it."""
     def handler(rest, ctx):
         flags, operands, values = _split(rest, with_arg | {"-t", "--target-directory"}, short | {"t"})
+        tree = any(f in recursive for f in flags) or any(_has_short(flags, letter) for letter in recursive_short)
         for name in ("-t", "--target-directory"):
             if name in values:
-                return [values[name]]
-        return operands[-1:]
+                return _deposits(verb, operands, values[name], tree)
+        if not operands:
+            return []
+        return _deposits(verb, operands[:-1], operands[-1], tree)
     return handler
 
 
@@ -801,7 +832,16 @@ def _t_install(rest, ctx):
         return operands
     for name in ("-t", "--target-directory"):
         if name in values:
-            return [values[name]]
+            return _deposits("install", operands, values[name], False)
+    return _deposits("install", operands[:-1], operands[-1], False) if operands else []
+
+
+def _t_rsync(rest, ctx):
+    """The destination of ``rsync``. What lands inside depends on the source's trailing slash and on ``--delete``, which
+    removes what the source lacks, so the destination is always a tree write (label ``rsync``)."""
+    flags, operands, values = _split(rest, frozenset({"-e", "--rsh", "--exclude", "--include", "--exclude-from",
+                                                      "--include-from", "-f", "--filter", "--port", "--bwlimit",
+                                                      "--rsync-path", "--log-file", "-B", "-T"}), frozenset("efBT"))
     return operands[-1:]
 
 
@@ -1083,11 +1123,12 @@ _TARGETS = {
     "mkfifo": _t_all(frozenset({"-m", "--mode"}), frozenset("m")),
     "truncate": _t_all(frozenset({"-s", "-r", "--size", "--reference"}), frozenset("sr")),
     "mv": _t_mv, "chmod": _t_skip_first, "chown": _t_skip_first, "chgrp": _t_skip_first,
-    "cp": _t_last(), "ln": _t_last(), "install": _t_install,
-    "rsync": _t_last(frozenset({"-e", "--rsh", "--exclude", "--include", "--exclude-from", "--include-from", "-f",
-                                "--filter", "--port", "--bwlimit", "--rsync-path", "--log-file", "-B", "-T"}),
-                     frozenset("efBT")),
-    "scp": _t_last(frozenset({"-i", "-P", "-F", "-o", "-l", "-S", "-c", "-J"}), frozenset("iPFolScJ")),
+    "cp": _t_copy("cp", frozenset({"-S", "--suffix"}), frozenset("S"), frozenset({"--recursive", "--archive"}), "rRa"),
+    "ln": _t_copy("ln", frozenset({"-S", "--suffix"}), frozenset("S")),
+    "install": _t_install,
+    "rsync": _t_rsync,
+    "scp": _t_copy("scp", frozenset({"-i", "-P", "-F", "-o", "-l", "-S", "-c", "-J"}), frozenset("iPFolScJ"),
+                   frozenset(), "r"),
     "dd": _t_dd, "gzip": _t_compress, "gunzip": _t_compress, "bzip2": _t_compress, "bunzip2": _t_compress,
     "xz": _t_compress, "unxz": _t_compress, "zstd": _t_compress, "lzma": _t_compress,
     "sort": _t_sort, "patch": _t_patch, "sed": _t_sed, "perl": _t_perl, "awk": _t_awk, "gawk": _t_awk,
@@ -1434,6 +1475,7 @@ def _scratch(ctx: _Ctx) -> _Ctx:
     """A context for the commands a launcher runs: it starts where ``ctx`` is, shares nothing it changes, and what it
     finds goes to ``Analysis.hidden``."""
     sub = _Ctx(Analysis(), ctx.ps)
+    sub.env = ctx.env
     sub.vars, sub.cwds, sub.stack = collections.ChainMap({}, ctx.vars), ctx.cwds[-3:], ctx.stack
     sub.depth, sub.text = ctx.depth, ctx.text
     return sub
@@ -2034,8 +2076,11 @@ def _process(text: str, ctx: _Ctx, ps: bool, scoped: bool = True) -> None:
             ctx.stack = stack
 
 
-def analyse(text: str, *, powershell: bool = False) -> Analysis:
-    """Analyse one command line (Bash by default, PowerShell when ``powershell``); never raises on odd input."""
+def analyse(text: str, *, powershell: bool = False, env: "dict | None" = None) -> Analysis:
+    """Analyse one command line (Bash by default, PowerShell when ``powershell``); never raises on odd input.
+
+    ``env`` names variables the host sets for every command it runs (the project directory), so a path spelled
+    through one (``"$CLAUDE_PROJECT_DIR/src"``) is placed like the path it stands for."""
     out = Analysis()
-    _process(text, _Ctx(out, powershell), powershell)
+    _process(text, _Ctx(out, powershell, env), powershell)
     return out

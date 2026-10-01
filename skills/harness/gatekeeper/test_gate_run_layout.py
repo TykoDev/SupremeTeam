@@ -251,6 +251,24 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
         self.assertTrue(any("without a challenge record" in f for f in out["failures"]), out["failures"])
         self.assertEqual((out["declared_schema_version"], out["manifest_schema_version"]), (None, 2))
 
+    def test_a_manifest_any_depth_below_a_run_is_a_run_manifest(self):
+        """The layout walk stopped after four directories: three below a phase directory, a schema-1 manifest read as a
+        detached package, the run's rules did not apply and an open Critical finding passed review-to-delivery."""
+        for depth in range(1, 7):
+            phase = "/".join(["review", *(f"d{i}" for i in range(depth))])
+            with self.subTest(depth=depth):
+                proof = self.fx.proof(phase)
+                data = self.review_manifest(schema_version=1, artifact_hashes={"proof.md": content_sha256(proof)})
+                del data["run_id"]
+                data["evidence"]["findings"] = {"items": [{"id": "F1", "severity": "Critical", "status": "open"}]}
+                proc, out = self.check(data, phase=phase)
+                self.assertEqual(proc.returncode, 1, out)
+                self.assertEqual(out["evidence_root_kind"], "package")
+                self.assertIn("manifest inside a run must declare schema_version 2 (declared: 1); checked as schema 2",
+                              out["failures"])
+                self.assertIn("manifest inside a run must declare run_id", out["failures"])
+                self.assertTrue(any("open Critical finding blocks the gate" in f for f in out["failures"]), out["failures"])
+
     def test_an_explicit_schema_1_manifest_in_a_run_is_refused_too(self):
         proc, out = self.check(self.review_manifest(schema_version=1))
         self.assertEqual(proc.returncode, 1, out)

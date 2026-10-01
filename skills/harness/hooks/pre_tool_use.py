@@ -35,16 +35,34 @@ def _fail_open(exc: BaseException) -> None:
         import _state
 
         _state.record_fault("PreToolUse", exc)
-    except Exception:
-        pass
+    except BaseException:
+        # The fault cannot be counted (the module that counts it does not load either): say so where the host shows it.
+        try:
+            sys.stderr.write("supremeteam guard hook: the guard could not run (%s) and the fault could not be recorded; "
+                             "the guard is NOT enforcing this call. Run skills/harness/hooks/check_readiness.py.\n"
+                             % type(exc).__name__)
+        except Exception:
+            pass
 
 
 def run() -> None:
-    """Run the guard. A fault fails open, counted; a deny is the guard's own exit and is never caught here."""
-    try:
-        from guard_hook import main
+    """Run the guard. A fault fails open, counted; a deny is the guard's own exit and is never caught here.
 
-        main()
+    Loading the guard has no exit of its own, so anything that ends it is a fault, ``SystemExit`` included: a module on
+    its import path that raises one would otherwise switch the guard off with nothing counted."""
+    try:
+        import guard_hook
+    except BaseException as exc:
+        _fail_open(exc)
+        return
+    guard_hook.DECIDED = False
+    try:
+        guard_hook.main()
+    except SystemExit as exc:
+        # The guard ends the process itself once it has printed a decision; any other exit is a module's, so a fault.
+        if guard_hook.DECIDED:
+            raise
+        _fail_open(exc)
     except Exception as exc:
         # A harness fault must not block the host loop, but it is counted so readiness can say so.
         _fail_open(exc)

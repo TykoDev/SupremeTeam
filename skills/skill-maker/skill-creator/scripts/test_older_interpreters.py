@@ -31,7 +31,27 @@ _spec.loader.exec_module(generate_review)
 SKILL_MD = "---\nname: sample\ndescription: Does a thing\n---\nbody\n"
 MOUNT_POINT_TAG = 0xA0000003  # winnt.h IO_REPARSE_TAG_MOUNT_POINT: what makes a reparse point a junction
 CLOUD_FILE_TAG = 0x9000001A  # a reparse point that is not a junction (OneDrive placeholders)
-OLDER_INTERPRETERS = [exe for exe in map(shutil.which, ("python3.10", "python3.11")) if exe]
+
+
+def runnable_interpreters(names=("python3.10", "python3.11")) -> list[str]:
+    """Return candidates that can actually start, not dormant version-manager shims."""
+    runnable = []
+    for executable in filter(None, map(shutil.which, names)):
+        try:
+            probe = subprocess.run(
+                [executable, "-c", "import sys; print(sys.version_info[:2])"],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if probe.returncode == 0:
+            runnable.append(executable)
+    return runnable
+
+
+OLDER_INTERPRETERS = runnable_interpreters()
 
 
 class _Missing:
@@ -195,6 +215,20 @@ class Python39FloorTests(unittest.TestCase):
         self.assertEqual(self.evaluated_unions(eager), [1])
         self.assertEqual(self.evaluated_unions(lazy), [])
         self.assertEqual(self.evaluated_unions(plain), [])
+
+
+class InterpreterDiscoveryTests(unittest.TestCase):
+    def test_a_dormant_version_manager_shim_is_not_selected(self):
+        with patch.object(shutil, "which", return_value="/shim/python3.10"), patch.object(
+            subprocess, "run", return_value=subprocess.CompletedProcess([], 127)
+        ):
+            self.assertEqual(runnable_interpreters(("python3.10",)), [])
+
+    def test_an_interpreter_that_starts_is_selected(self):
+        with patch.object(shutil, "which", return_value="/bin/python3.10"), patch.object(
+            subprocess, "run", return_value=subprocess.CompletedProcess([], 0)
+        ):
+            self.assertEqual(runnable_interpreters(("python3.10",)), ["/bin/python3.10"])
 
 
 @unittest.skipUnless(OLDER_INTERPRETERS, "no Python older than 3.12 on PATH")

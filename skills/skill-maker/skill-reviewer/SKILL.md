@@ -34,6 +34,14 @@ on any rule the rubric enforces.
 **Worked examples:** `references/examples.md` — a sample finding in the F-[NN]
 format and an abridged scorecard, for output-shape calibration.
 
+## Operator index
+
+Read `Entry Routing`, then run Phase 1 for the scorecard, Phase 2 for findings,
+and Phase 3 for the final review packet. The scoring rubric is mandatory input;
+the examples are output-shape calibration only. Consult `Failure Modes` when
+the package, prior iteration, or eval evidence is absent, and use `What this
+skill does NOT do` to reject adjacent work.
+
 ---
 
 ## Use This Skill When

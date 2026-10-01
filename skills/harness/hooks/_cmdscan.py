@@ -1460,10 +1460,17 @@ def _hide_text(ctx: _Ctx, text: str, ps: bool) -> None:
 
 def _ps_blocks(text: str) -> list:
     """The text inside each outermost ``{...}`` of PowerShell text. A script block holds commands (``ForEach-Object {
-    Remove-Item $_ }``) the pass over the line does not read as commands; quotes and backtick escapes are skipped."""
+    Remove-Item $_ }``) the pass over the line does not read as commands; quotes and backtick escapes are skipped.
+
+    Do not recursively replay a pathologically deep block. The main lexer has
+    already read every token in that line, including mutating verbs inside the
+    braces. Replaying a block deeper than ``_MAX_BRACE`` adds no visibility but
+    makes each recursive pass scan almost the entire input again.
+    """
     blocks: list = []
     depth = start = i = 0
     quote = ""
+    too_deep = False
     n = len(text)
     while i < n:
         char = text[i]
@@ -1483,12 +1490,13 @@ def _ps_blocks(text: str) -> list:
             if depth == 0:
                 start = i + 1
             depth += 1
+            too_deep = too_deep or depth > _MAX_BRACE
         elif char == "}" and depth:
             depth -= 1
             if depth == 0:
                 blocks.append(text[start:i])
         i += 1
-    return blocks
+    return [] if too_deep else blocks
 
 
 def _reads_program_from_stdin(verb: str, rest: list) -> bool:

@@ -749,6 +749,8 @@ class FrontmatterBudgetTests(unittest.TestCase):
 
     #: Anthropic's published ceiling for the frontmatter description field.
     MAX_DESCRIPTION = 600
+    MAX_SKILL_LINES = 500
+    NAVIGATION_THRESHOLD = 400
 
     @staticmethod
     def _frontmatter(text):
@@ -788,6 +790,22 @@ class FrontmatterBudgetTests(unittest.TestCase):
             if not meta.get("allowed-tools"):
                 missing.append(skill.relative_to(SKILLS).as_posix())
         self.assertEqual([], missing, "\n".join(missing))
+
+    def test_large_skills_stay_bounded_and_expose_a_navigation_index(self):
+        violations = []
+        for skill in sorted(SKILLS.rglob("SKILL.md")):
+            text = skill.read_text(encoding="utf-8", errors="replace")
+            lines = len(text.splitlines())
+            relative = skill.relative_to(SKILLS).as_posix()
+            if lines > self.MAX_SKILL_LINES:
+                violations.append(f"{relative} is {lines} lines (budget {self.MAX_SKILL_LINES})")
+            if lines > self.NAVIGATION_THRESHOLD and not any(
+                heading in text for heading in ("## Contents", "## Operator index")
+            ):
+                violations.append(
+                    f"{relative} is {lines} lines but has no Contents or Operator index section"
+                )
+        self.assertEqual([], violations, "\n".join(violations))
 
 
 class LineEndingTests(unittest.TestCase):

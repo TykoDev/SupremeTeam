@@ -62,6 +62,10 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ### Changed
 
+- Deeply nested PowerShell blocks no longer trigger repeated near-identical
+  command-scanner passes after the brace-depth safety bound; dormant pyenv shims
+  are excluded from older-interpreter compatibility checks; and skills over 400
+  lines now carry a task-oriented navigation index enforced by the catalog suite.
 - `save_run.py block` refuses `--reason` instead of accepting and discarding it, and run
   ids are checked against the pattern the reader uses, so a writer can no longer create a
   run id the reader would not find; only `create` is held to it, every other operation

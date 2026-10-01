@@ -73,9 +73,11 @@ forward slashes, `./` and doubled or inner `.` segments disappear, `..` segments
 the absolute form of a path inside the project becomes the project-relative one. So `src\payments\**`,
 `./src/payments/**`, `src//payments/**` and `<project>/src/payments/**` are one boundary, one record,
 one release, and `status` prints the stored form. A relative glob is anchored at the project root
-(`src/**` does not reach `docs/src/`), and a glob that cannot name a path inside the project (empty,
-`.`, or climbing out with `..`) is refused with exit 1 and recorded as nothing, because a boundary
-that can never match would otherwise read as protection. The hook matches the same way: it resolves
+(`src/**` does not reach `docs/src/`), and a glob that can never match is refused with exit 1 and recorded as nothing, because a boundary
+that can never match would otherwise read as protection: empty, `.`, climbing out with `..`, a leading `!`,
+the root of a drive or of the file system, or an absolute path under a top-level directory this machine does not
+have. The last is the trap: `/src/payments/**` starts at the file system root, not the project root, so the
+writer refuses it and names the project-relative spelling, `src/payments/**`. The hook matches the same way: it resolves
 `..`, links and case before it compares, so a spelling of a path inside a frozen glob does not
 get around it. Prefer the forward-slash form in what you write down, because that is what you will
 read back.
@@ -84,7 +86,7 @@ Each run appends one owned record to `frozen_globs`. Two fields decide who can e
 
 The writer exits 1 and changes nothing when the glob is already recorded and unreleased or the record on disk is corrupt, so a duplicate or damaged freeze surfaces instead of being silently overwritten. Any other non-zero exit means the freeze was **not recorded** at all — check the command actually ran before reporting a boundary that does not exist.
 
-**This hook is advisory-grade, not a hard lock.** Per harness-doctrine §3 it *fails open*: an unreadable path, an internal fault, or a host that does not run hooks exits silently and lets the edit proceed, so a hook fault means a write into a frozen path is *allowed* (each fault is counted in `.harness-state/observations/`, and a damaged `guard-state.json` no longer switches the rules off: it is read list by list and the destructive-command rule needs none of it). The guard is also a text guard: it reads the command a tool is about to run, so a program that builds a path at run time, a script file that writes where the command line does not name, an unknown tool, or a link made in the same command is not seen. Back a boundary that must not change under any circumstances with version-control protections or filesystem permissions as well.
+**This hook is advisory-grade, not a hard lock.** Per harness-doctrine §3 it *fails open*: an unreadable path, an internal fault, or a host that does not run hooks exits silently and lets the edit proceed, so a hook fault means a write into a frozen path is *allowed* (each fault is counted in `.harness-state/observations/`, and a `guard-state.json` with lists in an odd shape is read list by list; one that cannot be read at all names no frozen path, so none is enforced from it until it is repaired, which the hook counts as a `GuardStateUnreadable` fault and says in the call's context, and the destructive-command rule needs none of it). The guard is also a text guard: it reads the command a tool is about to run, so a program that builds a path at run time, a script file that writes where the command line does not name, an unknown tool, or a link made in the same command is not seen. Back a boundary that must not change under any circumstances with version-control protections or filesystem permissions as well.
 
 For the `frozen_globs` record shape, the state-directory resolution order, the authority fields and the two legacy shapes that defeat them, and the writer's full exit contract, see `references/enforcement.md`.
 

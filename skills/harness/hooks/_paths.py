@@ -26,6 +26,7 @@ import functools
 import os
 import posixpath
 import re
+import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -118,6 +119,42 @@ def _real(text: str) -> "str | None":
         return None
 
 
+class Resolver:
+    """Link resolution for many paths that share a prefix: each directory is looked at once.
+
+    ``os.path.realpath`` stats every component of every path it is given, so a long working
+    directory and a thousand writes in it cost a thousand walks of the whole directory. Here a
+    path is its parent's resolution plus one component, and the parents are remembered. One
+    resolver serves one tool call, never longer, so a link made afterwards is never missed.
+    Windows keeps ``realpath`` for every path: it also corrects case and expands short names."""
+
+    def __init__(self) -> None:
+        self._known: dict = {"/": "/"}
+
+    def real(self, text: str) -> "str | None":
+        """What ``_real`` returns for ``text``: a normalised absolute path with no ``.``, ``..`` or doubled separators."""
+        if WINDOWS or not text.startswith("/"):
+            return _real(text)
+        known = self._known
+        chain = []
+        node = text
+        while node not in known:
+            chain.append(node)
+            node = node.rpartition("/")[0] or "/"
+        resolved = known[node]
+        for node in reversed(chain):
+            candidate = resolved.rstrip("/") + "/" + node.rpartition("/")[2]
+            try:
+                link = stat.S_ISLNK(os.lstat(candidate).st_mode)
+            except OSError:
+                link = False
+            except ValueError:
+                return None
+            resolved = (_real(candidate) or candidate) if link else candidate
+            known[node] = resolved
+        return known[text]
+
+
 def _fold(text: str, fold: bool) -> str:
     return text.lower() if fold else text
 
@@ -146,9 +183,12 @@ def _relative_to(form: str, roots: list) -> "str | None":
     return None
 
 
-def locate(text: str, root: "str | Path", bases=None) -> Target:
-    """Every canonical form of ``text``: relative paths are tried against each of ``bases`` (default: the root)."""
+def locate(text: str, root: "str | Path", bases=None, resolver: "Resolver | None" = None) -> Target:
+    """Every canonical form of ``text``: relative paths are tried against each of ``bases`` (default: the root).
+
+    A ``resolver`` shared by many calls makes following links cost one look per directory, not one walk per path."""
     roots = _root_forms(root)
+    real_of = resolver.real if resolver is not None else _real
     cleaned = clean(text)
     candidates = [cleaned]
     if cleaned.startswith("~"):
@@ -161,7 +201,7 @@ def locate(text: str, root: "str | Path", bases=None) -> Target:
             for base in (bases or [roots[0]]):
                 absolute.append(_normalise(clean(posix(base)).rstrip("/") + "/" + candidate))
     for form in list(absolute):
-        real = _real(form)
+        real = real_of(form)
         if real is not None:
             absolute.append(_normalise(real))
     seen: dict = {}
@@ -193,6 +233,34 @@ def normalize_glob(glob: str, root: "str | Path | None" = None) -> "str | None":
     if text in (".", "") or text == ".." or text.startswith("../"):
         return None
     return text.rstrip("/") if len(text) > 1 else text
+
+
+def glob_problem(glob: str, root: "str | Path | None" = None) -> "str | None":
+    """Why ``glob`` can never match a path anything is about to write, or None when it can.
+
+    ``normalize_glob`` already refuses a glob that names no project path. These are the spellings
+    it keeps that match nothing either: a leading ``!`` (gitignore negation, which a boundary does
+    not have), the root of a drive or of the file system, and an absolute POSIX path outside the
+    project under a top-level directory that does not exist here, which is what ``/src/payments/**``
+    is when it was meant relative to the project root. An absolute path under a directory that
+    exists is a real boundary outside the project (``/etc/**``) and stays one; so does a drive
+    path, which a host on another system reports, and on Windows no leading-slash path is judged."""
+    text = clean(str(glob).strip())
+    if text.startswith("!"):
+        return "a leading '!' is gitignore negation, which a boundary does not have, so nothing can match it; record the paths to protect"
+    normal = normalize_glob(glob, root)
+    if normal is None:
+        return "a boundary glob must name a path inside the project (not '.', not empty, and not climbing out with '..')"
+    if not _is_abs(normal):
+        return None
+    if re.fullmatch(r"(?:[A-Za-z]:/?|/)", normal):
+        return "it names the root of a drive or of the file system, which no path is compared against; to freeze the whole project record '**'"
+    if not WINDOWS and normal.startswith("/"):
+        first = normal.split("/")[1]
+        if not _WILDCARD.search(first) and not os.path.isdir("/" + first):
+            return (f"it names the absolute path /{first}/..., and no directory /{first} exists on this machine, so it can never match; "
+                    f"relative to the project root it is {normal.lstrip('/')}")
+    return None
 
 
 def _variants(glob: str, fold: bool) -> list:

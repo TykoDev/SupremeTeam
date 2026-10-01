@@ -419,7 +419,9 @@ class FailOpenTests(Project):
         self.assertEqual(proc.returncode, 0)
         self.assertTrue(kit.denied(proc.stdout.decode("utf-8")))
         proc = self.script("PreToolUse", kit.bash("ls"))
-        self.assertEqual((proc.returncode, proc.stdout), (0, b""))
+        self.assertEqual(proc.returncode, 0)
+        self.assertFalse(kit.denied(proc.stdout.decode("utf-8")))
+        self.assertIn("[harness:guard-state]", proc.stdout.decode("utf-8"))
 
     def test_a_rule_that_faults_does_not_switch_off_the_rules_after_it(self):
         import guard_hook
@@ -453,6 +455,81 @@ class FailOpenTests(Project):
                                           env=kit.clean_env(self.root, **self.env), check=False)
                     self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", "replace")[-300:])
                     self.assertNotIn(b"Traceback", proc.stderr)
+
+
+class DamagedGuardRecordTests(Project):
+    """RR-guard-3: a record that cannot be used names no boundary, and that is no longer the same as no record."""
+
+    DAMAGE = {"truncated": b'{"frozen_globs": [{"glob": "src/payments/**", "owner": "ops"}', "binary": b"\xff\xfe\x00\x01{", "empty": b"",
+              "a list": b"[]", "a number": b"7", "a string": b'"text"', "null": b"null"}
+    WRITE = {"tool_name": "Write", "tool_input": {"file_path": "src/payments/a.py", "content": "x"}, "session_id": "host-1"}
+
+    def record(self, content: bytes) -> None:
+        directory = self.root / ".harness-state"
+        directory.mkdir(exist_ok=True)
+        (directory / "guard-state.json").write_bytes(content)
+
+    def test_the_call_is_allowed_but_counted_and_announced(self):
+        for name, content in self.DAMAGE.items():
+            with self.subTest(damage=name):
+                (self.root / ".harness-state" / "observations" / "PreToolUse.json").unlink(missing_ok=True)
+                self.record(content)
+                proc = self.script("PreToolUse", self.WRITE)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                answer = json.loads(proc.stdout.decode("utf-8"))["hookSpecificOutput"]
+                self.assertNotIn("permissionDecision", answer)
+                self.assertIn("[harness:guard-state]", answer["additionalContext"])
+                self.assertIn("not enforced", answer["additionalContext"])
+                record = self.faults("PreToolUse")
+                self.assertEqual((record["faults"], record["last_fault"]["type"]), (1, "GuardStateUnreadable"))
+
+    def test_every_further_call_is_counted_too(self):
+        self.record(self.DAMAGE["truncated"])
+        for _ in range(3):
+            self.script("PreToolUse", self.WRITE)
+        self.assertEqual(self.faults("PreToolUse")["faults"], 3)
+
+    def test_a_missing_record_is_not_a_fault_and_says_nothing(self):
+        proc = self.script("PreToolUse", self.WRITE)
+        self.assertEqual((proc.returncode, proc.stdout), (0, b""))
+        self.assertNotIn("faults", self.faults("PreToolUse"))
+
+    def test_a_valid_record_in_an_odd_shape_is_not_unreadable(self):
+        self.record(b'{"frozen_globs": 5, "blocked_globs": {"a": 1}, "read_only": "x", "allow_dangerous": [1]}')
+        proc = self.script("PreToolUse", self.WRITE)
+        self.assertEqual((proc.returncode, proc.stdout), (0, b""))
+        self.assertNotIn("faults", self.faults("PreToolUse"))
+
+    def test_the_rules_that_need_no_record_keep_running(self):
+        self.record(self.DAMAGE["truncated"])
+        for payload in (kit.bash("rm -rf /"), kit.edit("skillset-saves/_latest.md"), kit.bash("echo x > .harness-state/guard-state.json")):
+            with self.subTest(payload=payload["tool_input"]):
+                self.assertTrue(kit.denied(self.script("PreToolUse", payload).stdout.decode("utf-8")))
+
+    def test_a_tool_that_writes_nothing_is_not_told(self):
+        self.record(self.DAMAGE["truncated"])
+        proc = self.script("PreToolUse", {"tool_name": "Read", "tool_input": {"file_path": "src/a.py"}})
+        self.assertEqual((proc.returncode, proc.stdout), (0, b""))
+
+    def test_the_notice_and_the_coverage_advice_arrive_together(self):
+        self.record(self.DAMAGE["truncated"])
+        context = json.loads(self.script("PreToolUse", kit.bash("coverage run -p -m pytest")).stdout.decode("utf-8"))["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("[harness:guard-state]", context)
+        self.assertIn("[harness:coverage-residue]", context)
+
+    def test_the_post_tool_sweep_counts_it_under_its_own_event(self):
+        self.record(self.DAMAGE["truncated"])
+        (self.root / ".coverage").write_text("x", encoding="utf-8")
+        proc = self.script("PostToolUse", {"tool_name": "Bash", "tool_input": {"command": "pytest"}, "tool_response": {}, "session_id": "host-1"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.faults("PostToolUse")["last_fault"]["type"], "GuardStateUnreadable")
+
+    def test_readiness_shows_the_fault(self):
+        self.record(self.DAMAGE["truncated"])
+        self.script("PreToolUse", self.WRITE)
+        proc = subprocess.run([sys.executable, str(HOOK_DIR / "check_readiness.py"), "--project-root", str(self.root)], capture_output=True,
+                              text=True, env=kit.clean_env(self.root, **self.env), check=False)
+        self.assertIn("GuardStateUnreadable", proc.stdout + proc.stderr)
 
 
 class RunIdTests(Project):

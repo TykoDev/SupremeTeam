@@ -36,6 +36,11 @@ from dataclasses import dataclass, field
 MAX_DEPTH = 8
 _MAX_NEST = 100
 _MAX_BRACE = 64
+# The longest working directory a chain of ``cd`` is followed to. Each directory is the one before it plus a
+# segment, so a chain of N relative ``cd`` holds N strings of growing length and every write below them carries
+# one: quadratic memory and, in the guard that resolves each, quadratic time. Past this length the directory is
+# no longer followed and ``Analysis.lost_directory`` says so (the guard then refuses a write it cannot place).
+MAX_CWD = 512
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,8 @@ class Analysis:
     commands: list = field(default_factory=list)
     writes: list = field(default_factory=list)
     code: list = field(default_factory=list)
+    # A ``cd`` led past ``MAX_CWD`` characters: the directory of the writes after it is not known.
+    lost_directory: bool = False
 
 
 class _Unbalanced(Exception):
@@ -966,9 +973,22 @@ def git_parts(argv) -> tuple:
     return sub, operands, directories, flags
 
 
+def git_index_only(sub: str, flags) -> bool:
+    """True for a git command that moves what is in the index and writes no file of the tree.
+
+    ``git restore --staged`` without ``--worktree`` and a ``git reset`` that is not ``--hard``, ``--merge`` or
+    ``--keep`` unstage: the pathspecs they take name no file they change."""
+    letters = "".join(flag[1:] for flag in flags if not flag.startswith("--"))
+    if sub == "restore":
+        return ("--staged" in flags or "S" in letters) and "--worktree" not in flags and "W" not in letters
+    if sub == "reset":
+        return not any(flag in ("--hard", "--merge", "--keep") for flag in flags)
+    return False
+
+
 def _t_git(rest, ctx):
-    sub, operands, directories, _ = git_parts(rest)
-    if sub not in _GIT_PATHSPEC:
+    sub, operands, directories, flags = git_parts(rest)
+    if sub not in _GIT_PATHSPEC or git_index_only(sub, flags):
         return []
     return [(operand, tuple(directories), "git " + sub) for operand in operands]
 
@@ -1327,8 +1347,14 @@ def _note_write(ctx: _Ctx, path: str, via: str, cwds: tuple, glob: bool, unresol
 
 
 def _recent(ctx: _Ctx) -> tuple:
-    """The directories a ``cd`` may have left the shell in; the latest ones, which are the ones that can be current."""
-    return tuple(ctx.cwds[-3:])
+    """The directories a ``cd`` may have left the shell in; the latest ones, which are the ones that can be current.
+
+    Each appears once, in the order of its last visit, so the last one is always where the shell is."""
+    recent: list = []
+    for cwd in reversed(ctx.cwds[-3:]):
+        if cwd not in recent:
+            recent.append(cwd)
+    return tuple(reversed(recent))
 
 
 def _record_redirects(redirects: list, ctx: _Ctx) -> "str | None":
@@ -1449,6 +1475,12 @@ def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None") ->
         if verb in ("eval", "invoke-expression", "iex"):
             _process(" ".join(a.text for a in rest), ctx, ctx.ps or verb != "eval", scoped=False)
             return
+        if verb == "trap":
+            # The handler is a command line the shell runs later; it is read as one, so what it writes is seen.
+            actions = [a for a in rest if not a.text.startswith("-") or a.text == "-"]
+            if len(actions) > 1 and actions[0].text != "-":
+                _process(actions[0].text, ctx, ctx.ps, scoped=True)
+            return
         if verb in _SHELLS or verb in _POWERSHELLS:
             plain = _shell(rest, ctx, body) if verb in _SHELLS else _powershell(rest, ctx, body)
             if plain is not None:
@@ -1478,7 +1510,9 @@ def _change_directory(rest: list, ctx: _Ctx) -> None:
     current = ctx.cwds[-1] if ctx.cwds else ""
     absolute = target.startswith("/") or re.match(r"[A-Za-z]:", target) is not None
     moved = posixpath.normpath(target if absolute else posixpath.join(current, target))
-    if moved not in ctx.cwds:
+    if len(moved) > MAX_CWD:
+        ctx.out.lost_directory = True
+    elif not ctx.cwds or ctx.cwds[-1] != moved:
         ctx.cwds.append(moved)
 
 

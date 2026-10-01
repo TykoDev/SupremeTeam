@@ -23,8 +23,9 @@ What this writer guarantees that a hand edit did not:
   silently replaced;
 * a glob is recorded in one spelling (``./src/**``, ``src//**`` and the
   absolute form of a project path are all ``src/**``, as is the backslash spelling) and a glob that can never match
-  (empty, ``.``, or climbing out of the project) is refused, so a boundary that
-  enforces nothing is never recorded as one;
+  (empty, ``.``, climbing out of the project, a leading ``!``, a drive or file-system root, or an absolute path under
+  a top-level directory this machine does not have, which ``/src/**`` is) is refused with its reason, so a boundary
+  that enforces nothing is never recorded as one, and ``status`` warns about one already on disk;
 * a grant is capped at ``_state.MAX_GRANT_MINUTES`` and every command holds one lock
   from reading the record to replacing it, so two writers cannot lose each other's
   change.
@@ -139,11 +140,10 @@ def _canonical(glob: str) -> str:
 
 
 def _normalised(glob: str) -> str:
-    normal = _paths.normalize_glob(glob, _state.project_root())
-    if normal is None:
-        _refuse(f"{glob!r} cannot be matched: a boundary glob must name a path inside the project "
-                "(not '.', not empty, and not climbing out with '..').")
-    return normal
+    problem = _paths.glob_problem(glob, _state.project_root())
+    if problem:
+        _refuse(f"{glob!r} cannot be matched: {problem}.")
+    return _paths.normalize_glob(glob, _state.project_root())
 
 
 def _authorized(entry: dict, requester: str) -> bool:
@@ -301,6 +301,8 @@ def cmd_release_read_only(args) -> int:
 
 def cmd_status(args) -> int:
     state = _load()
+    unmatchable = [(e, problem) for key in ("frozen_globs", "blocked_globs") for e in _records(state, key)
+                   if _active(e) and (problem := _paths.glob_problem(_entry_glob(e), _state.project_root()))]
     report = {
         "path": str(_path()),
         "exists": _path().exists(),
@@ -315,12 +317,8 @@ def cmd_status(args) -> int:
             for e in _records(state, key)
             if _active(e) and (isinstance(e, str) or not e.get("owner"))
         ],
-        "unmatchable_entries": [
-            _entry_glob(e)
-            for key in ("frozen_globs", "blocked_globs")
-            for e in _records(state, key)
-            if _active(e) and _paths.normalize_glob(_entry_glob(e), _state.project_root()) is None
-        ],
+        "unmatchable_entries": [_entry_glob(e) for e, _ in unmatchable],
+        "unmatchable_reasons": {_entry_glob(e): reason for e, reason in unmatchable},
     }
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
@@ -334,6 +332,8 @@ def cmd_status(args) -> int:
             print(f"WARNING unowned (not releasable by authority check): {report['unowned_entries']}")
         if report["unmatchable_entries"]:
             print(f"WARNING unmatchable (enforce nothing; re-record with a usable glob): {report['unmatchable_entries']}")
+            for glob, reason in report["unmatchable_reasons"].items():
+                print(f"  {glob!r}: {reason}")
     return 0
 
 

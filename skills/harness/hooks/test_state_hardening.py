@@ -140,6 +140,43 @@ class FaultTraceTests(StateCase):
             _state.record_fault("PreToolUse", RuntimeError("x"))
 
 
+class GuardRecordReadTests(StateCase):
+    """RR-guard-3: ``load_guard_state`` tells a record that is absent from one that is there and unusable."""
+
+    def write(self, content: bytes) -> None:
+        directory = self.root / ".harness-state"
+        directory.mkdir(exist_ok=True)
+        (directory / "guard-state.json").write_bytes(content)
+
+    def test_an_unusable_record_is_flagged_and_names_no_boundary(self):
+        for content in (b"{", b"", b"[]", b"3", b"null", b"\xff\xfe"):
+            with self.subTest(content=content):
+                self.write(content)
+                state = _state.load_guard_state()
+                self.assertTrue(state["unreadable"])
+                self.assertEqual((state["frozen_globs"], state["blocked_globs"], state["read_only"]), ([], [], []))
+
+    def test_an_absent_or_usable_record_is_not_flagged(self):
+        self.assertNotIn("unreadable", _state.load_guard_state())
+        self.write(b'{"frozen_globs": ["a/**"]}')
+        self.assertNotIn("unreadable", _state.load_guard_state())
+        self.write(b'{"frozen_globs": 5}')
+        self.assertNotIn("unreadable", _state.load_guard_state())
+
+    def test_the_fault_is_counted_only_when_the_caller_names_its_event(self):
+        self.write(b"{")
+        _state.load_guard_state()
+        self.assertEqual(_state.load_observations(), {})
+        _state.load_guard_state(event="PreToolUse")
+        _state.load_guard_state(self.root, "PostToolUse")
+        self.assertEqual({event: entry["faults"] for event, entry in _state.load_observations().items()}, {"PreToolUse": 1, "PostToolUse": 1})
+        self.assertEqual(self.observation("PreToolUse")["last_fault"]["type"], "GuardStateUnreadable")
+
+    def test_a_directory_where_the_record_should_be_is_unreadable(self):
+        (self.root / ".harness-state" / "guard-state.json").mkdir(parents=True)
+        self.assertTrue(_state.load_guard_state()["unreadable"])
+
+
 class RunIdAndTextTests(StateCase):
     """SEC-18: state-derived text that reaches model context is plain and bounded."""
 

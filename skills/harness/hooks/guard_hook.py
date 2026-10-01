@@ -32,6 +32,7 @@ Block contract: prints the PreToolUse deny envelope to stdout and
 exits 0. On any internal error it exits 0 silently (fail open), letting the
 action proceed, after counting the fault by type in the hook's observation record.
 """
+from __future__ import annotations
 
 import functools
 import glob as _glob
@@ -362,6 +363,7 @@ class Call:
         self.starts = [host_cwd, root_text] if host_cwd and _paths.is_absolute(host_cwd) and host_cwd != root_text else [root_text]
         self._located: dict = {}
         self._shell_targets: dict = {}
+        self._resolver = _paths.Resolver()
 
     @functools.cached_property
     def command(self) -> str:
@@ -377,7 +379,7 @@ class Call:
     def locate(self, text: str, bases) -> "_paths.Target":
         key = (text, tuple(bases))
         if key not in self._located:
-            self._located[key] = _paths.locate(text, self.root, list(bases))
+            self._located[key] = _paths.locate(text, self.root, list(bases), self._resolver)
         return self._located[key]
 
     @functools.cached_property
@@ -524,14 +526,59 @@ def _read_only_reason(records) -> str:
 
 
 def _unscoped_git(call: "Call") -> bool:
-    """A git command that changes the repository or tree and names no path to judge (``git add -A``, ``git push``)."""
+    """A git command that changes the repository or tree and names no path to judge (``git add -A``, ``git push``).
+
+    An index-only command (``git restore --staged .``) names pathspecs but writes no file, so it is the repository
+    it changes and counts here."""
     for command in call.analysis.commands:
         if command.verb != "git":
             continue
-        sub, operands, _, _ = _cmdscan.git_parts(command.argv)
-        if sub in _GIT_REPO_WRITERS and not (sub in _GIT_PATHSPEC and operands):
+        sub, operands, _, flags = _cmdscan.git_parts(command.argv)
+        if sub in _GIT_REPO_WRITERS and not (sub in _GIT_PATHSPEC and operands and not _cmdscan.git_index_only(sub, flags)):
             return True
     return False
+
+
+# Package managers change the dependency directory, a lockfile or the machine without naming a path, so a read-only
+# run may not run them. Each maps to the subcommands that install, remove or update; scripts they run are not seen.
+_JS_PACKAGE = frozenset({"install", "i", "ci", "add", "remove", "rm", "uninstall", "un", "update", "up", "upgrade", "link", "prune",
+                         "dedupe", "rebuild"})
+_SYSTEM_PACKAGE = frozenset({"install", "remove", "purge", "uninstall", "upgrade", "dist-upgrade", "autoremove"})
+_PACKAGE_MANAGERS = {
+    **dict.fromkeys(("npm", "pnpm", "yarn", "bun"), _JS_PACKAGE),
+    **dict.fromkeys(("pip", "pip3"), frozenset({"install", "uninstall"})),
+    "pipx": frozenset({"install", "uninstall", "upgrade", "inject", "reinstall"}),
+    "uv": frozenset({"add", "remove", "sync", "lock"}),
+    **dict.fromkeys(("apt", "apt-get", "aptitude", "dnf", "yum", "zypper", "apk", "brew", "choco", "scoop", "winget", "port"), _SYSTEM_PACKAGE),
+    "gem": frozenset({"install", "uninstall", "update"}),
+    "cargo": frozenset({"install", "add", "remove", "update"}),
+    "go": frozenset({"get", "install"}),
+    "composer": frozenset({"install", "require", "remove", "update"}),
+    "bundle": frozenset({"install", "add", "update", "remove"}),
+    "poetry": frozenset({"install", "add", "remove", "update", "lock"}),
+    **dict.fromkeys(("conda", "mamba"), frozenset({"install", "remove", "update", "create", "uninstall"})),
+}
+# Runners that fetch and execute a package: only the ones told to install something (`npx playwright install`).
+_PACKAGE_RUNNERS = frozenset({"npx", "pnpx", "bunx", "uvx"})
+_INSTALL_WORDS = frozenset({"install", "i", "add", "uninstall", "update"})
+
+
+def _changes_packages(command) -> bool:
+    verb, operands = command.verb, _operands(command.argv)
+    if (verb == "uv" or (re.fullmatch(r"python[0-9.]*|py", verb) and "-m" in command.argv)) and operands[:1] in (["pip"], ["pip3"]):
+        verb, operands = "pip", operands[1:]
+    if verb in _PACKAGE_RUNNERS:
+        return any(word in _INSTALL_WORDS for word in operands)
+    if verb not in _PACKAGE_MANAGERS:
+        return False
+    if verb == "yarn" and not operands:  # a bare `yarn` installs; only its version and help flags do not
+        return not {"--version", "-v", "--help", "-h"} & set(command.argv)
+    return any(word in _PACKAGE_MANAGERS[verb] for word in operands[:3])
+
+
+def _installs_packages(call: "Call") -> bool:
+    """A package manager command that installs, removes or updates packages (``npm install``, ``sudo apt-get install -y jq``)."""
+    return any(_changes_packages(command) for command in call.analysis.commands)
 
 
 def rule_read_only(call: "Call") -> "str | None":
@@ -554,7 +601,7 @@ def rule_read_only(call: "Call") -> "str | None":
     for write, targets in call.shell_targets(strict=True):
         if write.unresolved or any(not _paths.inside_allowed(target, allow, call.root, fold=fold) for target in targets):
             return _read_only_reason(records)
-    return _read_only_reason(records) if _unscoped_git(call) else None
+    return _read_only_reason(records) if _unscoped_git(call) or _installs_packages(call) else None
 
 
 # --- Rule C: single writers --------------------------------------------------------------------------
@@ -677,7 +724,8 @@ _HARNESS_REASON = (
     "Blocked by harness Action Realization layer: the hook scripts and the host files that register them are not "
     "edited while a run is pinned or a boundary is recorded, because an edit there would switch the guard off. "
     "Register through skills/harness/hooks/repair_registration.py, or edit them in a maintenance session "
-    "(start the host with SUPREMETEAM_HARNESS_DEV=1)."
+    "(start the host with SUPREMETEAM_HARNESS_DEV=1). A setting in one of those files that is not a hook "
+    "(a permission, an environment entry) is the owner's to change: say what and why."
 )
 
 
@@ -709,6 +757,25 @@ def rule_harness_files(call: "Call") -> "str | None":
     else:
         hit = _textual_mutates(call.command) and _mentioned([call.command], call, boundaries) is not None
     return _HARNESS_REASON if hit and _protection_engaged(call) else None
+
+
+# --- Rule G: a write the analyser cannot place -------------------------------------------------------------
+
+# A chain of relative ``cd`` is followed only so far (``_cmdscan.MAX_CWD``): past that the directory of every
+# later write is unknown, so the write could land on anything a rule protects. The cost of following it is
+# quadratic and nobody works that way, so the command is refused whole instead of being let through.
+_UNPLACED_REASON = (
+    "Blocked by harness Action Realization layer: the command changes directory through more than {limit} "
+    "characters of path and then writes, so the guard cannot tell where the write lands. "
+    "Use short paths from one directory, or split the command."
+)
+
+
+def rule_unplaced_write(call: "Call") -> "str | None":
+    """Rule G: a command that writes after its working directory outgrew the analysis is denied."""
+    if not call.shell or not (call.analysis.lost_directory and call.analysis.writes):
+        return None
+    return _UNPLACED_REASON.format(limit=_cmdscan.MAX_CWD)
 
 
 # --- Rule E: coverage destination advisory --------------------------------------------------------------
@@ -772,8 +839,10 @@ def rule_coverage(call: "Call") -> "str | None":
 # --- driver ---------------------------------------------------------------------------------------------
 
 # Rules run in this order; the first reason wins. A rule that faults is counted and skipped, so one
-# defect never turns off the rest.
-RULES = [("A", rule_dangerous), ("B", rule_frozen), ("D", rule_read_only), ("C", rule_single_writer), ("F", rule_harness_files)]
+# defect never turns off the rest. Rule G is a flag the analyser set, so it goes before the rules that
+# would spend their time locating every write of a command it denies anyway.
+RULES = [("A", rule_dangerous), ("G", rule_unplaced_write), ("B", rule_frozen), ("D", rule_read_only), ("C", rule_single_writer),
+         ("F", rule_harness_files)]
 
 
 def _deny(reason: str) -> None:
@@ -788,28 +857,39 @@ def _deny(reason: str) -> None:
     sys.exit(0)
 
 
-def _advise(hint: str) -> None:
-    """Emit advisory context and allow the action.
+def _advise(notes: list) -> None:
+    """Emit advisory context, one tagged note per line, and allow the action.
 
-    Deliberately not a deny: running coverage is legitimate work. What is not
-    legitimate is leaving its output at the project root, and that is a
-    destination mistake the caller can still correct before the command runs.
+    Deliberately not a deny. Running coverage is legitimate work; what is not
+    legitimate is leaving its output at the project root, a destination mistake
+    the caller can still correct before the command runs. A guard record that
+    cannot be read is the owner's to repair, and the call is not the place to
+    stop work the rules that still run have no objection to.
     """
     out = {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "additionalContext": "[harness:coverage-residue] " + hint,
+            "additionalContext": "\n".join(notes),
         }
     }
     print(json.dumps(out))
     sys.exit(0)
 
 
+_UNREADABLE_NOTE = (
+    "[harness:guard-state] .harness-state/guard-state.json exists but cannot be read, so no frozen, blocked or "
+    "read-only boundary is enforced for this call. The destructive-command, single-writer and hook-file rules "
+    "still are. Tell the owner: the record has to be repaired or recreated through guard_state.py "
+    "(an agent write to it is denied) and each boundary recorded again. Until then treat every boundary as "
+    "not enforced."
+)
+
+
 def _guard_state() -> dict:
     """The guard record, or an empty one when it cannot be read: Rule A needs none of it, and a record that
     cannot be read must not switch every rule off. The fault is counted."""
     try:
-        return _state.load_guard_state()
+        return _state.load_guard_state(event="PreToolUse")
     except Exception as exc:
         _state.record_fault("PreToolUse", exc)
         return {}
@@ -843,14 +923,17 @@ def main() -> None:
             continue
         if reason:
             _deny(reason)
+    notes = [_UNREADABLE_NOTE] if call.guard.get("unreadable") and (call.shell or call.writer) else []
     try:
         advice = rule_coverage(call)
     except Exception as exc:
         _state.record_fault("PreToolUse", exc)
-        return
+        advice = None
     if advice:
-        _advise(advice)
-    # No rule fired: stay silent and let the action proceed.
+        notes.append("[harness:coverage-residue] " + advice)
+    if notes:
+        _advise(notes)
+    # No rule fired and nothing to say: stay silent and let the action proceed.
 
 
 if __name__ == "__main__":

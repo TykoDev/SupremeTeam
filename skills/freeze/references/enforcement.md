@@ -107,7 +107,7 @@ beside it. When a freeze appears not to take effect, compare the `record:` path 
 | Exit | Meaning | Response |
 | --- | --- | --- |
 | 0 | recorded; the JSON acknowledgement names the glob and owner | quote it as the freeze evidence |
-| 1 | refused — the glob is already recorded and unreleased (in any spelling), the glob can never match (empty, `.`, or climbing out of the project), the record on disk is corrupt, an authority check failed, or another writer held the lock past `--lock-timeout`; nothing changed | resolve the stated reason; never hand-edit the record around a refusal |
+| 1 | refused — the glob is already recorded and unreleased (in any spelling), the glob can never match (empty, `.`, climbing out of the project, a leading `!`, a drive or file-system root, or a leading-slash path under a directory this machine does not have, with the reason and the project-relative spelling on stderr), the record on disk is corrupt, an authority check failed, or another writer held the lock past `--lock-timeout`; nothing changed | resolve the stated reason; never hand-edit the record around a refusal |
 | 2 | usage error — a missing or malformed flag | fix the command; nothing was written |
 | other non-zero | the command never completed — no interpreter on `PATH`, the harness not installed, or the state directory cannot be created or written | treat the freeze as **not recorded**, say so explicitly, and hold the boundary socially until the writer can run |
 
@@ -128,8 +128,8 @@ Two things still produce separate records, because they are different boundaries
 - The same glob in both keys. The duplicate check looks inside one key, so a `freeze` and a `block` of `src/payments/**` are two records; one `release --glob src/payments/**` sets `released_at` on both.
 
 `status` prints the effective boundary in its stored form, and warns about an active
-record that can never match (`unmatchable_entries`: a legacy entry that is empty or
-climbs out of the project) beside the ownerless ones. Read it after every release
+record that can never match (`unmatchable_entries`, each with its reason under `unmatchable_reasons`: a legacy entry that is empty, climbs out of
+the project, starts with `!`, or is a leading-slash path under a directory this machine does not have) beside the ownerless ones. Read it after every release
 rather than trusting the release call's own output: a narrower glob that is still
 active is what it shows.
 

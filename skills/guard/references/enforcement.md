@@ -56,7 +56,8 @@ around by editing the record.
 
 The writer records a glob in one spelling (`./src/**`, `src//**`, `src\**` and the
 absolute form of a project path are all `src/**`), refuses one that can never match
-(empty, `.`, or climbing out of the project with `..`), and keeps one record per
+(empty, `.`, climbing out of the project with `..`, a leading `!`, a drive or file-system root, or a
+leading-slash path under a directory this machine does not have, which `/src/**` is), and keeps one record per
 glob in each key. Every command except `status` holds one lock
 (`.harness-state/guard-state.json.lock`) from reading the record to replacing it, so
 two sessions cannot lose each other's change; one that cannot take it within
@@ -125,7 +126,9 @@ boundary file instead of starting a second one beside it.
   `allow` globs or the harness state directory (`.harness-state/**`). Naming one
   allowed path in a command that also writes somewhere else does not satisfy it,
   and a git command that changes the repository without naming a path
-  (`git add -A`, `git push`, `git merge`) is denied. Reads pass untouched.
+  (`git add -A`, `git push`, `git merge`, `git restore --staged .`) is denied, as is a
+  package manager installing, removing or updating (`npm install`, `pip install`,
+  `apt-get install`: a table of the usual ones, not every tool). Reads pass untouched.
 - `allow_dangerous` — `false`, or an owned grant that lifts the built-in
   destructive-command block (see the next section).
 

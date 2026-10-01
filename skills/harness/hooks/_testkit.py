@@ -56,10 +56,31 @@ def encode(payload) -> bytes:
     return (payload if isinstance(payload, str) else json.dumps(payload)).encode("utf-8")
 
 
-def run_hook(script: str, payload, root: Path, **env_extra: str) -> subprocess.CompletedProcess:
-    """Run a registered hook script as a subprocess; ``payload`` may be bytes to send undecodable input."""
-    return subprocess.run([sys.executable, str(HOOK_DIR / script)], input=encode(payload), capture_output=True,
+def run_hook(script: str, payload, root: Path, *, python: "str | None" = None, **env_extra: str) -> subprocess.CompletedProcess:
+    """Run a registered hook script as a subprocess; ``payload`` may be bytes to send undecodable input.
+
+    ``python`` names another interpreter than the one running the tests (see ``older_interpreters``)."""
+    return subprocess.run([python or sys.executable, str(HOOK_DIR / script)], input=encode(payload), capture_output=True,
                           env=clean_env(root, **env_extra), check=False)
+
+
+def older_interpreters() -> list:
+    """Interpreters below the running one that are installed here, as ``(label, path)``; empty where there are none.
+
+    A host that registered a bare ``python`` may launch the hooks with any of them, so the entry-point tests run the
+    real scripts under each. Anything that is not the interpreter it says it is, or is not older, is left out."""
+    import shutil
+
+    found = []
+    for minor in (10, 11, 12):
+        path = shutil.which(f"python3.{minor}")
+        if not path or (3, minor) >= sys.version_info[:2]:
+            continue
+        probe = subprocess.run([path, "-c", "import sys; print(sys.version_info[0], sys.version_info[1])"],
+                               capture_output=True, text=True, check=False)
+        if probe.stdout.split() == ["3", str(minor)]:
+            found.append((f"3.{minor}", path))
+    return found
 
 
 def decide(payload, root: Path, module: str = "guard_hook", entry: str = "main") -> str:

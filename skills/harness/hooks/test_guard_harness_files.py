@@ -55,6 +55,8 @@ class HarnessFileCase(unittest.TestCase):
     def assertProtected(self, output: str, message: str = "") -> None:
         self.assertTrue(kit.denied(output), message or output)
         self.assertIn("SUPREMETEAM_HARNESS_DEV", kit.reason(output))
+        self.assertIn("not a hook", kit.reason(output))  # RR-guard-4: the cost of covering the whole file is said, with who decides
+        self.assertIn("owner", kit.reason(output))
 
 
 class NotEngagedTests(HarnessFileCase):
@@ -155,6 +157,64 @@ class EngagedByAPinnedRunTests(HarnessFileCase):
         subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), "release", "--run-id", "r1", "--project-root", str(self.root)],
                        capture_output=True, text=True, check=True)
         self.assertEqual(self.edit(f"{HOOK}/guard_hook.py"), "")
+
+
+class EnforcementFilesTests(unittest.TestCase):
+    """SEC-06: the hash record has to cover the files that hold the rules, not only the three entry scripts."""
+
+    ENTRY = ("pre_tool_use", "post_tool_use", "user_prompt_submit")
+
+    @staticmethod
+    def imports(path: Path) -> set:
+        import ast
+
+        names = set()
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                names.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                names.add(node.module.split(".")[0])
+        return names
+
+    def closure(self) -> set:
+        import _bootstrap
+
+        found, pending = {}, list(self.ENTRY)
+        while pending:
+            name = pending.pop()
+            if name in found:
+                continue
+            for base in (_bootstrap.HOOKS, _bootstrap.SCRIPTS):
+                if (base / f"{name}.py").is_file():
+                    found[name] = base / f"{name}.py"
+                    pending.extend(self.imports(found[name]))
+                    break
+        return set(found.values())
+
+    def test_the_list_is_the_import_closure_of_the_three_registered_scripts(self):
+        import _bootstrap
+
+        listed = _bootstrap.enforcement_files()
+        self.assertEqual(set(listed), self.closure())
+        self.assertEqual(len(listed), len(set(listed)))
+
+    def test_every_listed_file_exists_and_the_entry_scripts_and_the_guard_modules_are_on_it(self):
+        import _bootstrap
+
+        listed = {path.name for path in _bootstrap.enforcement_files()}
+        self.assertTrue(all(path.is_file() for path in _bootstrap.enforcement_files()))
+        self.assertTrue({"pre_tool_use.py", "post_tool_use.py", "user_prompt_submit.py", "guard_hook.py", "_cmdscan.py", "_paths.py",
+                         "_state.py"} <= listed)
+
+    def test_the_hooks_directory_is_one_rule_f_boundary_so_every_listed_hook_file_is_protected_while_engaged(self):
+        import _bootstrap
+
+        with kit.project() as root:
+            kit.write_guard(root, UNRELATED_FREEZE)
+            for path in _bootstrap.enforcement_files():
+                if path.parent == _bootstrap.HOOKS:
+                    with self.subTest(file=path.name):
+                        self.assertTrue(kit.denied(kit.decide(kit.edit(str(path)), root)))
 
 
 if __name__ == "__main__":

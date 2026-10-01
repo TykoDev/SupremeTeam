@@ -28,6 +28,7 @@ Fail-open leaves a trace: a fault a hook swallows is counted by exception type,
 never by message, in the observation record of its event (``faults`` and
 ``last_fault``), so readiness can tell a hook that fires from one that works.
 """
+from __future__ import annotations
 
 import hashlib
 import json
@@ -266,7 +267,22 @@ def read_only_allow(records) -> list:
     return allow
 
 
-def load_guard_state(root: "str | Path | None" = None) -> dict:
+def _read_guard_record(root: "str | Path | None") -> tuple:
+    """``(record, unreadable)``: the guard record as a mapping, and whether it exists but cannot be used.
+
+    An absent record is not a fault (nothing is guarded). One that is there and is not a JSON object,
+    or cannot be read, names no boundary, and ``_read_json`` would have called that the same as absent."""
+    path = state_dir(root, create=False) / "guard-state.json"
+    try:
+        if not path.exists():
+            return {}, False
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}, True
+    return (record, False) if isinstance(record, dict) else ({}, True)
+
+
+def load_guard_state(root: "str | Path | None" = None, event: "str | None" = None) -> dict:
     """Load the active guard/freeze boundary.
 
     Schema (``.harness-state/guard-state.json``), all keys optional::
@@ -289,11 +305,18 @@ def load_guard_state(root: "str | Path | None" = None) -> dict:
     another project's record, and nothing here creates a directory. A grant
     (``allow_dangerous``) read from an untrusted state directory is dropped; every
     restriction is kept (``state_dir_trusted``).
+
+    A record that exists and cannot be used (not JSON, not an object, unreadable) names no boundary, so
+    none is enforced from it; the returned mapping then carries ``unreadable: True`` and, when the caller
+    names its ``event``, the fault is counted there (``GuardStateUnreadable``), so a guard that stopped
+    enforcing is visible to readiness and to the model instead of looking the same as an empty record.
     """
-    state = _read_json(state_dir(root, create=False) / "guard-state.json", {})
-    if not isinstance(state, dict):
-        return {}
+    state, unreadable = _read_guard_record(root)
+    if unreadable and event:
+        record_fault(event, "GuardStateUnreadable")
     normalized = dict(state)
+    if unreadable:
+        normalized["unreadable"] = True
     if not state_dir_trusted(root):
         normalized.pop("allow_dangerous", None)
     # A list the record holds in some other shape (a number, a string, a mapping) names nothing to enforce, and

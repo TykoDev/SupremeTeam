@@ -123,6 +123,53 @@ class NormalizeGlobTests(PathCase):
                 self.assertTrue(self.deny(f"{self.root}/src/payments/a.py", raw))
 
 
+class GlobProblemTests(PathCase):
+    """SEC-04: a glob that normalises to something that can never match is refused with its reason, not recorded."""
+
+    MISSING = "supremeteam-no-such-top-level-directory"
+
+    def problem(self, raw: str):
+        return _paths.glob_problem(raw, self.root)
+
+    def test_a_leading_slash_that_was_meant_relative_to_the_project_is_refused_with_the_fix(self):
+        for raw in (f"/{self.MISSING}/payments/**", f"\\{self.MISSING}\\payments\\**", f"//{self.MISSING}/payments/**"):
+            with self.subTest(raw=raw):
+                reason = self.problem(raw)
+                self.assertIn(f"no directory /{self.MISSING} exists", reason)
+                self.assertIn(f"{self.MISSING}/payments/**", reason.split("relative to the project root it is ")[1])
+
+    def test_the_spelling_the_review_names_is_refused_where_the_top_level_directory_is_missing(self):
+        real = os.path.isdir
+        with mock.patch("os.path.isdir", side_effect=lambda path: False if path == "/src" else real(path)), \
+                mock.patch.object(_paths, "WINDOWS", False):
+            for raw in ("/src/payments/**", "/src/**", "/src"):
+                with self.subTest(raw=raw):
+                    self.assertIn("no directory /src exists", _paths.glob_problem(raw, self.root))
+
+    def test_the_other_spellings_that_match_nothing_are_refused(self):
+        for raw, fragment in (("!src/payments/**", "negation"), ("  !x", "negation"), ("/", "root"), ("C:/", "root"), ("c:\\", "root"),
+                              ("", "inside the project"), ("..", "inside the project"), ("../x/**", "inside the project")):
+            with self.subTest(raw=raw):
+                self.assertIn(fragment, self.problem(raw))
+
+    def test_a_glob_that_can_match_is_not_refused(self):
+        outside = Path(tempfile.gettempdir()).resolve().parent.as_posix().rstrip("/") + "/**"
+        for raw in ("src/payments/**", "./src/**", "**", "*", "**/secrets/**", "*.tf", "src/payments/", f"{self.root}/src/**",
+                    "C:/other/proj/src/**", "D:\\proj\\**", "/*/x/**", "~/x/**", outside):
+            with self.subTest(raw=raw):
+                self.assertIsNone(self.problem(raw))
+
+    @unittest.skipIf(os.name == "nt", "a top-level directory is a POSIX notion here")
+    def test_an_existing_absolute_directory_outside_the_project_is_a_real_boundary(self):
+        first = next(entry for entry in sorted(os.listdir("/")) if os.path.isdir("/" + entry))
+        self.assertIsNone(self.problem(f"/{first}/anything/**"))
+        self.assertEqual(_paths.normalize_glob(f"/{first}/anything/**", self.root), f"/{first}/anything/**")
+
+    def test_windows_judges_no_leading_slash_path(self):
+        with mock.patch.object(_paths, "WINDOWS", True):
+            self.assertIsNone(self.problem(f"/{self.MISSING}/payments/**"))
+
+
 class DenyMatchTests(PathCase):
     def test_a_leading_double_star_matches_a_top_level_directory(self):
         """BUGH-20: fnmatch('secrets/token.txt', '**/secrets/**') is False."""
@@ -242,6 +289,60 @@ class AllowMatchTests(PathCase):
         (allowed / "out").symlink_to(self.root / "src", target_is_directory=True)
         self.assertFalse(self.allow("skillset-saves/runs/r1/investigation/out/app.py", self.ALLOW))
         self.assertTrue(self.allow("skillset-saves/runs/r1/investigation/real.md", self.ALLOW))
+
+
+@unittest.skipUnless(hasattr(os, "symlink") and os.name != "nt", "needs POSIX symlinks")
+class ResolverTests(PathCase):
+    """RR-guard-2: a shared resolver follows links exactly as ``realpath`` does, in one look per directory."""
+
+    def build(self) -> list:
+        (self.root / "real" / "deep" / "er").mkdir(parents=True)
+        (self.root / "real" / "file.txt").write_text("x", encoding="utf-8")
+        (self.root / "alias").symlink_to(self.root / "real", target_is_directory=True)
+        (self.root / "rel").symlink_to("real/deep", target_is_directory=True)
+        (self.root / "up").symlink_to("../" + self.root.name + "/real", target_is_directory=True)
+        (self.root / "real" / "back").symlink_to("..", target_is_directory=True)
+        (self.root / "chain").symlink_to("alias", target_is_directory=True)
+        (self.root / "dangling").symlink_to(self.root / "nowhere")
+        (self.root / "loop-a").symlink_to("loop-b")
+        (self.root / "loop-b").symlink_to("loop-a")
+        (self.root / "file-link").symlink_to("real/file.txt")
+        return [f"{self.root}/{tail}" for tail in (
+            "real", "real/deep/er", "alias", "alias/deep/er/new.txt", "rel", "rel/er/x/y", "up/deep", "real/back/real/file.txt",
+            "chain/deep", "chain/deep/er/a/b/c", "dangling", "dangling/x", "loop-a", "loop-a/x", "file-link", "file-link/x",
+            "real/file.txt/x", "missing/a/b/c", "alias/back/alias/deep")]
+
+    def test_it_returns_what_realpath_returns(self):
+        resolver = _paths.Resolver()
+        for text in self.build():
+            with self.subTest(path=text):
+                self.assertEqual(resolver.real(text), _paths._real(text))
+
+    def test_the_order_in_which_paths_are_asked_does_not_change_an_answer(self):
+        paths = self.build()
+        forward = [_paths.Resolver().real(text) for text in paths]
+        shared = _paths.Resolver()
+        self.assertEqual([shared.real(text) for text in reversed(paths)][::-1], forward)
+
+    def test_a_relative_or_drive_path_is_not_resolved_and_the_root_is_itself(self):
+        resolver = _paths.Resolver()
+        self.assertEqual((resolver.real("a/b"), resolver.real("/")), (None, "/"))
+
+    def test_a_directory_is_looked_at_once_however_many_paths_lie_below_it(self):
+        deep = self.root / "/".join(f"d{i}" for i in range(40))
+        deep.mkdir(parents=True)
+        resolver = _paths.Resolver()
+        with mock.patch("os.lstat", wraps=os.lstat) as lstat:
+            for index in range(500):
+                resolver.real(f"{deep}/f{index}")
+        self.assertLess(lstat.call_count, 40 + len(deep.parts) + 500 + 5)
+
+    def test_locate_with_a_resolver_gives_the_same_forms(self):
+        self.build()
+        resolver = _paths.Resolver()
+        for text in ("alias/deep/new.txt", "rel/x", "chain/file.txt", "plain/none", "up/deep/er"):
+            with self.subTest(text=text):
+                self.assertEqual(_paths.locate(text, self.root, None, resolver), _paths.locate(text, self.root))
 
 
 class CaseFoldTests(unittest.TestCase):

@@ -23,6 +23,7 @@ Output contract: prints the UserPromptSubmit additionalContext envelope to stdou
 and exits 0. On any error it exits 0 silently (fail open) and counts the fault by type
 in the hook's observation record (`_state.record_fault`).
 """
+from __future__ import annotations
 
 import json
 import sys

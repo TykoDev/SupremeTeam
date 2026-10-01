@@ -170,7 +170,7 @@ Invoked by the host before any write-capable or shell tool executes. `pre_tool_u
 The guard is a text guard. It analyses the command a tool is about to run and the path an edit tool names; it does not run anything and it is not a sandbox. These are known limits, stated here so no one relies on more than it gives:
 
 - a program that builds a path at run time, or reads it from a file, an environment variable it sets itself, or the network;
-- a script file that writes somewhere its command line does not name (`python build.py`, `make`, `npm run`);
+- a script file that writes somewhere its command line does not name (a build script, `make`, `npm run`);
 - interpreter inline code (`python -c`, `node -e`, `perl -e`): it is searched for protected paths, not interpreted, so a read-only run is not enforced against what inline code does beyond naming a protected path;
 - a tool name it does not know, and a tool input in a shape it cannot read, which are allowed through;
 - a link created in the same command that then writes through it;

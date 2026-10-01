@@ -16,6 +16,7 @@ register_hooks=0
 hooks_scope=user
 hooks_yes=0
 hooks_declined=0
+hooks_failed=0
 dry_run=0
 codex_target_explicit=0
 cursor_target_explicit=0
@@ -40,6 +41,7 @@ carriage_return=$'\r'
 # install-items.txt is the one item list; install.ps1 reads the same file.
 core_items=()
 seed_items=()
+superseded_pairs=()
 all_teams=()
 team_pairs=()
 legacy_dirs=()
@@ -160,6 +162,15 @@ load_items() {
                     seed_items+=("$name")
                 fi
                 ;;
+            supersedes)
+                members=()
+                read -r -a members <<< "$rest"
+                [[ ${#members[@]} -gt 0 ]] || die "'$kind $name' lists no files in $items_file."
+                for member in ${members[@]+"${members[@]}"}; do
+                    valid_name "$member" || die "Invalid name '$member' in $items_file."
+                    superseded_pairs+=("$name:$member")
+                done
+                ;;
             team|legacy)
                 members=()
                 read -r -a members <<< "$rest"
@@ -187,6 +198,11 @@ load_items() {
     done < "$items_file"
 
     [[ ${#core_items[@]} -gt 0 && ${#team_pairs[@]} -gt 0 ]] || die "$items_file lists no core or team items."
+
+    for pair in ${superseded_pairs[@]+"${superseded_pairs[@]}"}; do
+        contains_value "${pair%%:*}" ${seed_items[@]+"${seed_items[@]}"} || die "'supersedes ${pair%%:*}' names a file that is not a seed in $items_file."
+        [[ -f "$script_dir/superseded/${pair#*:}" ]] || die "Missing superseded copy '${pair#*:}' at '$script_dir/superseded/${pair#*:}'."
+    done
 
     managed_items=()
     for item in ${core_items[@]+"${core_items[@]}"}; do
@@ -403,6 +419,23 @@ item_state() {
     fi
 }
 
+# True when $1/$2 is a regular file that is byte for byte a copy an earlier release
+# shipped (install-items.txt, supersedes): it was never edited, so it is the
+# installer's own. cmp rather than a digest, so the proof needs no hashing tool.
+superseded_seed() {
+    local path="$1/$2" pair
+
+    [[ -f "$path" && ! -L "$path" ]] || return 1
+
+    for pair in ${superseded_pairs[@]+"${superseded_pairs[@]}"}; do
+        if [[ "${pair%%:*}" == "$2" ]] && cmp -s -- "$path" "$script_dir/superseded/${pair#*:}"; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
 # A directory from an older layout is recognised only while it holds nothing
 # but the entries that layout put there.
 legacy_dir_matches() {
@@ -590,6 +623,7 @@ report_list() {
 install_supreme_team() {
     local root item state
     local add_items=() replace_items=() kept_items=() foreign_items=() stale_items=() aside_items=()
+    local refreshed_items=() unselected_items=() retired_items=()
 
     root="$(resolve_path "$1")"
     read_manifest "$root"
@@ -601,7 +635,12 @@ install_supreme_team() {
     for item in ${install_items[@]+"${install_items[@]}"}; do
         state="$(item_state "$root" "$item")"
         if [[ "$state" != absent ]] && contains_value "$item" ${seed_items[@]+"${seed_items[@]}"}; then
-            kept_items+=("$item")
+            if superseded_seed "$root" "$item"; then
+                replace_items+=("$item")
+                refreshed_items+=("$item")
+            else
+                kept_items+=("$item")
+            fi
             continue
         fi
         case "$state" in
@@ -621,6 +660,11 @@ install_supreme_team() {
         if ! contains_value "$item" ${install_items[@]+"${install_items[@]}"} \
             && [[ "$(item_state "$root" "$item")" == owned ]]; then
             stale_items+=("$item")
+            if contains_value "$item" ${managed_items[@]+"${managed_items[@]}"}; then
+                unselected_items+=("$item")
+            else
+                retired_items+=("$item")
+            fi
         fi
     done
 
@@ -638,9 +682,11 @@ install_supreme_team() {
     if [[ $dry_run -eq 1 ]]; then
         report_list "would add" ${add_items[@]+"${add_items[@]}"}
         report_list "would replace" ${replace_items[@]+"${replace_items[@]}"}
+        report_list "would replace, an unedited copy from an earlier release" ${refreshed_items[@]+"${refreshed_items[@]}"}
         report_list "would keep, yours" ${kept_items[@]+"${kept_items[@]}"}
-        report_list "would remove, no longer shipped" ${stale_items[@]+"${stale_items[@]}"}
-        report_list "would move aside to $root.supremeteam-backup, not installed by Supreme Team" \
+        report_list "would remove, not selected this run" ${unselected_items[@]+"${unselected_items[@]}"}
+        report_list "would remove, no longer shipped" ${retired_items[@]+"${retired_items[@]}"}
+        report_list "would move aside to $root.supremeteam-backup, not recorded as installed by Supreme Team" \
             ${foreign_items[@]+"${foreign_items[@]}"} ${aside_items[@]+"${aside_items[@]}"}
         return
     fi
@@ -691,9 +737,11 @@ install_supreme_team() {
         "${#replace_items[@]}"
     printf '  recorded in %s\n' "$root/$manifest_name"
     report_list "kept, yours" ${kept_items[@]+"${kept_items[@]}"}
-    report_list "removed, no longer shipped" ${stale_items[@]+"${stale_items[@]}"}
+    report_list "replaced, an unedited copy from an earlier release" ${refreshed_items[@]+"${refreshed_items[@]}"}
+    report_list "removed, not selected this run" ${unselected_items[@]+"${unselected_items[@]}"}
+    report_list "removed, no longer shipped" ${retired_items[@]+"${retired_items[@]}"}
     if [[ -n "$backup_dir" ]]; then
-        printf '  moved aside, not installed by Supreme Team and unchanged, to %s:\n' "$backup_dir"
+        printf '  moved aside, not recorded as installed by Supreme Team and unchanged, to %s:\n' "$backup_dir"
         printf '    %s\n' ${foreign_items[@]+"${foreign_items[@]}"} ${aside_items[@]+"${aside_items[@]}"}
         backup_dirs+=("$backup_dir")
     fi
@@ -815,16 +863,6 @@ warn_python_readiness() {
     fi
 }
 
-find_python() {
-    local python
-    if python="$(find_compatible_python)"; then
-        printf '%s' "$python"
-        return 0
-    fi
-
-    die "Python $(minimum_python_version) or newer is required to register runtime harness hooks."
-}
-
 register_harness_hooks() {
     if [[ ${#selected_targets[@]} -eq 0 ]]; then
         printf 'Hook registration skipped: no host targets were detected. Pass --target codex, --target claude, --target cursor, --target opencode, or --target copilot to choose explicitly.\n'
@@ -832,7 +870,14 @@ register_harness_hooks() {
     fi
 
     local python hook_args target
-    python="$(find_python)"
+    # A registration that cannot run is reported in the summary and ends in a failing
+    # exit status, after the skills it follows were installed; it never stops the script
+    # before the operator is told what was and was not done.
+    if ! python="$(find_compatible_python)"; then
+        printf 'Error: Python %s or newer is required to register runtime harness hooks.\n' "$(minimum_python_version)" >&2
+        hooks_failed=1
+        return
+    fi
     hook_args=("$repo_root/scripts/install_hooks.py" --hook-root "$destination/harness/hooks")
 
     for target in "${selected_targets[@]}"; do
@@ -849,7 +894,7 @@ register_harness_hooks() {
     if [[ $status -eq 3 ]]; then
         hooks_declined=1
     elif [[ $status -ne 0 ]]; then
-        exit "$status"
+        hooks_failed=$status
     fi
 }
 
@@ -991,7 +1036,11 @@ if [[ $register_hooks -eq 1 ]]; then
     register_harness_hooks
 fi
 
-printf '\nSupreme Team installation complete.\n'
+if [[ $hooks_failed -eq 0 ]]; then
+    printf '\nSupreme Team installation complete.\n'
+else
+    printf '\nSupreme Team skills are installed, but hook registration failed.\n'
+fi
 printf 'Target: %s\n' "$destination"
 if [[ ${#selected_targets[@]} -gt 0 ]]; then
     printf 'Host targets: %s\n' "$(join_words ' ' ${selected_targets[@]+"${selected_targets[@]}"})"
@@ -1016,10 +1065,16 @@ elif [[ ${#selected_targets[@]} -eq 0 ]]; then
     printf 'Hook registration: skipped (no host detected)\n'
 elif [[ $hooks_declined -eq 1 ]]; then
     printf 'Hook registration: declined (nothing was written)\n'
+elif [[ $hooks_failed -ne 0 ]]; then
+    printf 'Hook registration: failed (exit status %d; see the messages above)\n' "$hooks_failed"
 else
     printf 'Hook registration: completed\n'
 fi
 printf 'Restart your assistant session if it was already running.\n'
 if [[ $register_hooks -ne 1 ]]; then
     printf 'To register runtime harness hooks for the selected hosts, run this installer again from a checkout with --register-hooks, or preview the registration with: python "%s/harness/hooks/repair_registration.py" --host <host> --scope project\n' "$destination"
+fi
+if [[ $hooks_failed -ne 0 ]]; then
+    printf 'Fix what the registration reported, then run this installer again with --register-hooks, or preview the registration with: python "%s/harness/hooks/repair_registration.py" --host <host> --scope %s\n' "$destination" "$hooks_scope"
+    exit "$hooks_failed"
 fi

@@ -49,6 +49,7 @@ $stageMarkerName = ".supremeteam-stage"
 # install-items.txt is the one item list; install.sh reads the same file.
 $script:coreItems = @()
 $script:seedItems = @()
+$script:supersededItems = [ordered]@{}
 $script:teamItems = [ordered]@{}
 $script:legacyItems = [ordered]@{}
 $script:allTeamNames = @()
@@ -61,6 +62,7 @@ $script:stageRoot = ""
 $script:stageCommitted = $false
 $script:backupDir = ""
 $script:hooksDeclined = $false
+$script:hooksFailed = 0
 
 # Names become path components, so they are checked before any path is built
 # from them: no separators, no leading dot or dash, nothing a wildcard would match.
@@ -102,6 +104,24 @@ function Import-ItemList {
             $script:coreItems += $name
             if ($kind -eq "seed") {
                 $script:seedItems += $name
+            }
+        }
+        elseif ($kind -eq "supersedes") {
+            if ($rest.Count -eq 0) {
+                throw "'$kind $name' lists no files in $itemsFile."
+            }
+
+            foreach ($member in $rest) {
+                if (-not (Test-ValidName -Name $member)) {
+                    throw "Invalid name '$member' in $itemsFile."
+                }
+            }
+
+            if ($script:supersededItems.Contains($name)) {
+                $script:supersededItems[$name] = @($script:supersededItems[$name]) + $rest
+            }
+            else {
+                $script:supersededItems[$name] = $rest
             }
         }
         elseif ($kind -eq "team" -or $kind -eq "legacy") {
@@ -151,6 +171,19 @@ function Import-ItemList {
     foreach ($dir in $script:legacyItems.Keys) {
         if ($script:managedItems -contains $dir) {
             throw "Legacy directory '$dir' is also an installed item in $itemsFile."
+        }
+    }
+
+    foreach ($seedName in $script:supersededItems.Keys) {
+        if ($script:seedItems -notcontains $seedName) {
+            throw "'supersedes $seedName' names a file that is not a seed in $itemsFile."
+        }
+
+        foreach ($copyName in $script:supersededItems[$seedName]) {
+            $copyPath = Join-Path (Join-Path $PSScriptRoot "superseded") $copyName
+            if (-not (Test-Path -LiteralPath $copyPath -PathType Leaf)) {
+                throw "Missing superseded copy '$copyName' at '$copyPath'."
+            }
         }
     }
 }
@@ -221,6 +254,46 @@ function Resolve-FullPath {
     return $full
 }
 
+# The path with every link on it followed, so a junction or symbolic link that leads to
+# the profile directory is refused as the profile directory, as install.sh refuses it.
+# A path that cannot be followed is returned as written, which is what it compared as before.
+function Resolve-PhysicalPath {
+    param([string]$Path)
+
+    try {
+        $full = Resolve-FullPath -Path $Path
+        $resolved = [System.IO.Path]::GetPathRoot($full)
+        $pending = @($full.Substring($resolved.Length) -split '[\\/]' | Where-Object { $_ -ne "" })
+        $hops = 0
+
+        while ($pending.Count -gt 0) {
+            $candidate = Join-Path $resolved $pending[0]
+            $pending = @($pending | Select-Object -Skip 1)
+            $item = Get-Item -LiteralPath $candidate -Force -ErrorAction SilentlyContinue
+
+            if ($null -ne $item -and (Test-ReparsePoint -Item $item) -and $null -ne $item.Target -and $hops -lt 32) {
+                $target = @($item.Target)[0]
+                if (-not [System.IO.Path]::IsPathRooted($target)) {
+                    $target = Join-Path (Split-Path $candidate -Parent) $target
+                }
+
+                $hops++
+                $followed = Resolve-FullPath -Path $target
+                $resolved = [System.IO.Path]::GetPathRoot($followed)
+                $pending = @(@($followed.Substring($resolved.Length) -split '[\\/]' | Where-Object { $_ -ne "" }) + $pending)
+            }
+            else {
+                $resolved = $candidate
+            }
+        }
+
+        return $resolved
+    }
+    catch {
+        return Resolve-FullPath -Path $Path
+    }
+}
+
 function Test-PathWithin {
     param(
         [string]$Child,
@@ -247,8 +320,8 @@ function Assert-SafeRoot {
         throw "The $Label destination is empty."
     }
 
-    $resolved = Resolve-FullPath -Path $Path
-    $homePath = Resolve-FullPath -Path $env:USERPROFILE
+    $resolved = Resolve-PhysicalPath -Path $Path
+    $homePath = Resolve-PhysicalPath -Path $env:USERPROFILE
 
     if (Test-Path -LiteralPath $resolved -PathType Leaf) {
         throw "'$resolved' exists and is not a directory."
@@ -262,15 +335,15 @@ function Assert-SafeRoot {
         throw "Refusing to install into '$resolved' ($Label destination): it is your home directory or one of its parents."
     }
 
-    if (Test-PathWithin -Child (Resolve-FullPath -Path $repoRoot) -Parent $resolved) {
+    if (Test-PathWithin -Child (Resolve-PhysicalPath -Path $repoRoot) -Parent $resolved) {
         throw "Refusing to install into '$resolved' ($Label destination): it contains the Supreme Team checkout."
     }
 
-    if (Test-PathWithin -Child $resolved -Parent (Resolve-FullPath -Path $sourceRoot)) {
+    if (Test-PathWithin -Child $resolved -Parent (Resolve-PhysicalPath -Path $sourceRoot)) {
         throw "Refusing to install into '$resolved' ($Label destination): it is inside the skills source directory."
     }
 
-    if (-not [System.IO.Path]::IsPathRooted($Path) -and ($resolved -eq (Resolve-FullPath -Path (Get-Location).ProviderPath)) -and -not (Test-SupremeTeamInstallPresent -TargetRoot $resolved)) {
+    if (-not [System.IO.Path]::IsPathRooted($Path) -and ($resolved -eq (Resolve-PhysicalPath -Path (Get-Location).ProviderPath)) -and -not (Test-SupremeTeamInstallPresent -TargetRoot $resolved)) {
         throw "Refusing to install into '$resolved' ($Label destination): it is the current directory and holds no Supreme Team install. Pass the skills folder's full path instead."
     }
 }
@@ -367,6 +440,35 @@ function Get-ItemState {
     }
 
     return "foreign"
+}
+
+# True when $Root\$Name is a regular file that is byte for byte a copy an earlier
+# release shipped (install-items.txt, supersedes): it was never edited, so it is the
+# installer's own. Hashes are compared, the same proof install.sh gets from cmp.
+function Test-SupersededSeed {
+    param(
+        [string]$Root,
+        [string]$Name
+    )
+
+    $item = Get-EntryInfo -Root $Root -Name $Name
+    if ($null -eq $item -or $item.PSIsContainer -or (Test-ReparsePoint -Item $item)) {
+        return $false
+    }
+
+    if (-not $script:supersededItems.Contains($Name)) {
+        return $false
+    }
+
+    $installed = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash
+    foreach ($copyName in $script:supersededItems[$Name]) {
+        $copy = Join-Path (Join-Path $PSScriptRoot "superseded") $copyName
+        if ((Get-FileHash -LiteralPath $copy -Algorithm SHA256).Hash -eq $installed) {
+            return $true
+        }
+    }
+
+    return $false
 }
 
 # A directory from an older layout is recognised only while it holds nothing but
@@ -637,14 +739,24 @@ function Install-SupremeTeam {
     $addItems = @()
     $replaceItems = @()
     $keptItems = @()
+    $refreshedItems = @()
     $foreignItems = @()
     $staleItems = @()
+    $unselectedItems = @()
+    $retiredItems = @()
     $asideItems = @()
 
     foreach ($item in $Items) {
         $state = Get-ItemState -Root $root -Name $item
         if ($state -ne "absent" -and $script:seedItems -contains $item) {
-            $keptItems += $item
+            if (Test-SupersededSeed -Root $root -Name $item) {
+                $replaceItems += $item
+                $refreshedItems += $item
+            }
+            else {
+                $keptItems += $item
+            }
+
             continue
         }
 
@@ -662,6 +774,12 @@ function Install-SupremeTeam {
     foreach ($item in $script:oldItems) {
         if (($Items -notcontains $item) -and ((Get-ItemState -Root $root -Name $item) -eq "owned")) {
             $staleItems += $item
+            if ($script:managedItems -contains $item) {
+                $unselectedItems += $item
+            }
+            else {
+                $retiredItems += $item
+            }
         }
     }
 
@@ -680,9 +798,11 @@ function Install-SupremeTeam {
     if ($DryRun) {
         Write-ItemList -Label "would add" -Items $addItems
         Write-ItemList -Label "would replace" -Items $replaceItems
+        Write-ItemList -Label "would replace, an unedited copy from an earlier release" -Items $refreshedItems
         Write-ItemList -Label "would keep, yours" -Items $keptItems
-        Write-ItemList -Label "would remove, no longer shipped" -Items $staleItems
-        Write-ItemList -Label "would move aside to ${root}.supremeteam-backup, not installed by Supreme Team" -Items @($foreignItems + $asideItems)
+        Write-ItemList -Label "would remove, not selected this run" -Items $unselectedItems
+        Write-ItemList -Label "would remove, no longer shipped" -Items $retiredItems
+        Write-ItemList -Label "would move aside to ${root}.supremeteam-backup, not recorded as installed by Supreme Team" -Items @($foreignItems + $asideItems)
         return
     }
 
@@ -732,9 +852,11 @@ function Install-SupremeTeam {
     Write-Host "  installed $($newCount + $replaceItems.Count) items ($newCount new, $($replaceItems.Count) replaced)"
     Write-Host "  recorded in $(Join-Path $root $manifestName)"
     Write-ItemList -Label "kept, yours" -Items $keptItems
-    Write-ItemList -Label "removed, no longer shipped" -Items $staleItems
+    Write-ItemList -Label "replaced, an unedited copy from an earlier release" -Items $refreshedItems
+    Write-ItemList -Label "removed, not selected this run" -Items $unselectedItems
+    Write-ItemList -Label "removed, no longer shipped" -Items $retiredItems
     if ($script:backupDir -ne "") {
-        Write-Host "  moved aside, not installed by Supreme Team and unchanged, to $($script:backupDir):"
+        Write-Host "  moved aside, not recorded as installed by Supreme Team and unchanged, to $($script:backupDir):"
         foreach ($item in @($foreignItems + $asideItems)) {
             Write-Host "    $item"
         }
@@ -900,15 +1022,6 @@ function Resolve-HostTargets {
     return $resolved
 }
 
-function Find-PythonCommand {
-    $candidate = Find-CompatiblePythonCommand
-    if ($null -eq $candidate) {
-        throw "Python $(Get-MinimumPythonVersion) or newer is required to register runtime harness hooks."
-    }
-
-    return $candidate
-}
-
 function Register-HarnessHooks {
     param(
         [string[]]$HostTargets,
@@ -923,7 +1036,16 @@ function Register-HarnessHooks {
     $helper = Join-Path $repoRoot "scripts\install_hooks.py"
     Assert-PathPresent -Path $helper -Description "hook registration helper"
 
-    $python = Find-PythonCommand
+    # A registration that cannot run is reported in the summary and ends in a failing
+    # exit status, after the skills it follows were installed; it never stops the script
+    # before the operator is told what was and was not done.
+    $python = Find-CompatiblePythonCommand
+    if ($null -eq $python) {
+        Write-Warning "Python $(Get-MinimumPythonVersion) or newer is required to register runtime harness hooks."
+        $script:hooksFailed = 1
+        return
+    }
+
     $hookArgs = @($helper, "--hook-root", $HookRoot)
     foreach ($hostName in $HostTargets) {
         $hookArgs += @("--target", $hostName)
@@ -940,7 +1062,7 @@ function Register-HarnessHooks {
         $script:hooksDeclined = $true
     }
     elseif ($LASTEXITCODE -ne 0) {
-        throw "Hook registration failed."
+        $script:hooksFailed = $LASTEXITCODE
     }
 }
 
@@ -1021,12 +1143,21 @@ try {
     elseif ($script:hooksDeclined) {
         $hookStatus = "declined (nothing was written)"
     }
+    elseif ($script:hooksFailed -ne 0) {
+        $hookStatus = "failed (exit status $($script:hooksFailed); see the messages above)"
+    }
     else {
         $hookStatus = "completed"
     }
 
     Write-Host ""
-    Write-Host "Supreme Team installation complete."
+    if ($script:hooksFailed -eq 0) {
+        Write-Host "Supreme Team installation complete."
+    }
+    else {
+        Write-Host "Supreme Team skills are installed, but hook registration failed."
+    }
+
     Write-Host "Target: $Destination"
     Write-Host "Host targets: $hostStatus"
     Write-Host "Host mirrors: $mirrorStatus"
@@ -1037,6 +1168,11 @@ try {
     Write-Host "Restart your assistant session if it was already running."
     if (-not $RegisterHooks) {
         Write-Host "To register runtime harness hooks for the selected hosts, run this installer again from a checkout with -RegisterHooks, or preview the registration with: python `"$Destination\harness\hooks\repair_registration.py`" --host <host> --scope project"
+    }
+
+    if ($script:hooksFailed -ne 0) {
+        Write-Host "Fix what the registration reported, then run this installer again with -RegisterHooks, or preview the registration with: python `"$Destination\harness\hooks\repair_registration.py`" --host <host> --scope $($HooksScope.ToLowerInvariant())"
+        exit $script:hooksFailed
     }
 }
 catch {

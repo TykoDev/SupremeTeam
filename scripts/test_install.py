@@ -17,6 +17,7 @@ under whatever bash `BASH` names, so they execute under bash 3.2 only on a Mac
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -35,6 +36,7 @@ SKILLS = REPO / "skills"
 INSTALL_SH = SCRIPTS / "install.sh"
 INSTALL_PS1 = SCRIPTS / "install.ps1"
 ITEMS_FILE = SCRIPTS / "install-items.txt"
+SUPERSEDED = SCRIPTS / "superseded"
 
 MANIFEST = ".supremeteam-manifest"
 MARKER = ".supremeteam-managed"
@@ -67,6 +69,7 @@ class ItemList:
         self.seeds: list[str] = []
         self.teams: dict[str, list[str]] = {}
         self.legacy: dict[str, list[str]] = {}
+        self.superseded: dict[str, list[str]] = {}
         for raw in text.splitlines():
             line = raw.strip()
             if not line or line.startswith("#"):
@@ -80,6 +83,8 @@ class ItemList:
                 self.teams.setdefault(name, []).extend(members)
             elif kind == "legacy":
                 self.legacy.setdefault(name, []).extend(members)
+            elif kind == "supersedes":
+                self.superseded.setdefault(name, []).extend(members)
             else:
                 raise AssertionError(f"unknown record {kind!r} in install-items.txt")
 
@@ -144,7 +149,7 @@ def write_source(repo: Path, items: ItemList, version: str) -> None:
             target.write_text(body, encoding="utf-8")
 
 
-NEEDED_TOOLS = ("basename", "cat", "cp", "date", "dirname", "head", "ls", "mkdir", "mktemp", "mv", "rm", "sed", "tr")
+NEEDED_TOOLS = ("basename", "cat", "cmp", "cp", "date", "dirname", "head", "ls", "mkdir", "mktemp", "mv", "rm", "sed", "tr")
 
 
 def build_path_directory(directory: Path) -> None:
@@ -175,6 +180,7 @@ class Sandbox:
         (self.repo / "scripts").mkdir(parents=True)
         shutil.copy2(INSTALL_SH, self.repo / "scripts" / "install.sh")
         shutil.copy2(ITEMS_FILE, self.repo / "scripts" / "install-items.txt")
+        shutil.copytree(SUPERSEDED, self.repo / "scripts" / "superseded")
         write_source(self.repo, ITEMS, version)
         self.bin = self.root / "bin"
         build_path_directory(self.bin)
@@ -513,6 +519,94 @@ class InstallerBehaviourTests(unittest.TestCase):
         registry.unlink()
         box.install()
         self.assertEqual(registry.read_text(encoding="utf-8"), "mcp-tools.md v2\n")
+
+    def superseded_copy(self, index: int = 0) -> bytes:
+        return (SUPERSEDED / ITEMS.superseded["mcp-tools.md"][index]).read_bytes()
+
+    def test_an_untouched_registry_from_an_earlier_release_is_replaced_by_the_template(self):
+        """An upgrade kept the Codex snapshot an earlier installer wrote, as "kept, yours", for ever."""
+        for index, name in enumerate(ITEMS.superseded["mcp-tools.md"]):
+            with self.subTest(copy=name):
+                box = Sandbox(self)
+                box.install()
+                registry = box.dest / "mcp-tools.md"
+                registry.write_bytes(self.superseded_copy(index))
+                result = box.install()
+                self.assertEqual(result.returncode, 0, listing(result))
+                self.assertEqual(registry.read_text(encoding="utf-8"), "mcp-tools.md v1\n")
+                self.assertIn("replaced, an unedited copy from an earlier release: mcp-tools.md", result.stdout)
+                self.assertNotIn("kept, yours: mcp-tools.md", result.stdout)
+                self.assertEqual(box.backups(), [], "an unedited copy of a shipped file is not the user's to keep")
+                self.assertEqual(box.stages(), [])
+
+    def test_a_registry_that_differs_by_a_single_byte_from_a_shipped_copy_stays_the_users(self):
+        box = Sandbox(self)
+        box.install()
+        registry = box.dest / "mcp-tools.md"
+        for label, content in (("an annotation", self.superseded_copy() + b"my note\n"), ("one byte changed", b"X" + self.superseded_copy()[1:]),
+                               ("empty", b"")):
+            with self.subTest(label):
+                registry.write_bytes(content)
+                result = box.install()
+                self.assertEqual(registry.read_bytes(), content)
+                self.assertIn("kept, yours: mcp-tools.md", result.stdout)
+                self.assertNotIn("an unedited copy", result.stdout)
+
+    def test_a_link_where_the_registry_belongs_is_never_taken_for_an_unedited_copy(self):
+        box = Sandbox(self)
+        box.install()
+        kept = box.root / "my-registry.md"
+        kept.write_bytes(self.superseded_copy())
+        (box.dest / "mcp-tools.md").unlink()
+        (box.dest / "mcp-tools.md").symlink_to(kept)
+        result = box.install()
+        self.assertTrue((box.dest / "mcp-tools.md").is_symlink())
+        self.assertEqual(kept.read_bytes(), self.superseded_copy())
+        self.assertIn("kept, yours: mcp-tools.md", result.stdout)
+
+    def test_an_install_from_before_the_ownership_records_refreshes_the_registry_and_moves_the_rest_aside(self):
+        box = Sandbox(self)
+        box.dest.mkdir(parents=True)
+        (box.dest / "mcp-tools.md").write_bytes(self.superseded_copy(2))
+        (box.dest / "admiral").mkdir()
+        (box.dest / "admiral" / "SKILL.md").write_text("old admiral\n", encoding="utf-8")
+        result = box.install()
+        self.assertEqual(result.returncode, 0, listing(result))
+        self.assertEqual((box.dest / "mcp-tools.md").read_text(encoding="utf-8"), "mcp-tools.md v1\n")
+        self.assertEqual((self.only_backup(box) / "admiral" / "SKILL.md").read_text(encoding="utf-8"), "old admiral\n")
+        self.assertFalse((self.only_backup(box) / "mcp-tools.md").exists())
+
+    def test_a_dry_run_names_the_registry_it_would_replace(self):
+        box = Sandbox(self)
+        box.install()
+        (box.dest / "mcp-tools.md").write_bytes(self.superseded_copy())
+        before = snapshot(box.root)
+        result = box.install("--dry-run")
+        self.assertEqual(snapshot(box.root), before)
+        self.assertIn("would replace, an unedited copy from an earlier release: mcp-tools.md", result.stdout)
+        self.assertNotIn("would keep, yours", result.stdout)
+
+    def test_the_summary_says_whether_an_item_left_because_it_was_not_selected_or_is_no_longer_shipped(self):
+        box = Sandbox(self)
+        box.install()
+        narrower = box.install("--team", "design")
+        unselected = [name for name in ITEMS.selected() if name not in ITEMS.selected("design")]
+        self.assertIn("removed, not selected this run: " + " ".join(unselected), narrower.stdout)
+        self.assertNotIn("no longer shipped", narrower.stdout, "every one of them is still shipped")
+        box.install()
+        box.publish("v2", drop=("investigate",))
+        dropped = box.install()
+        self.assertIn("removed, no longer shipped: investigate", dropped.stdout)
+        self.assertNotIn("not selected", dropped.stdout)
+
+    def test_a_first_upgrade_does_not_say_the_old_install_was_never_ours(self):
+        box = Sandbox(self)
+        box.dest.mkdir(parents=True)
+        (box.dest / "review").mkdir()
+        (box.dest / "review" / "SKILL.md").write_text("old\n", encoding="utf-8")
+        result = box.install()
+        self.assertIn("moved aside, not recorded as installed by Supreme Team and unchanged, to", result.stdout)
+        self.assertNotIn("not installed by Supreme Team", result.stdout)
 
     def test_a_narrower_team_selection_removes_only_what_this_installer_installed(self):
         box = Sandbox(self)
@@ -884,6 +978,11 @@ class InstallerBehaviourTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, listing(result))
         self.assertIn("no Python 3.13+ interpreter was found", result.stderr)
         self.assertIn("Python 3.13 or newer is required to register runtime harness hooks", result.stderr)
+        # DX-14: the skills were copied before registration was attempted, so the summary says what was and was not done.
+        self.assertIn("Hook registration: failed (exit status 1; see the messages above)", result.stdout)
+        self.assertIn("Supreme Team skills are installed, but hook registration failed.", result.stdout)
+        self.assertNotIn("Supreme Team installation complete.", result.stdout)
+        self.assert_installed(box)
 
 
 @unittest.skipUnless(RUNS_BASH, "the installer tests run install.sh under bash on a POSIX host")
@@ -940,6 +1039,24 @@ class ItemListTests(unittest.TestCase):
         self.assertFalse(set(ITEMS.legacy) & set(ITEMS.selected()), "a legacy directory must not be a current item")
         for team, members in ITEMS.teams.items():
             self.assertEqual(len(members), len(set(members)), team)
+
+    def test_every_superseded_copy_is_a_file_of_a_seed_and_none_is_the_shipped_template(self):
+        """The record names copies kept in scripts/superseded/; the one the finding described is among them."""
+        self.assertEqual(sorted(ITEMS.superseded), ["mcp-tools.md"])
+        self.assertTrue(set(ITEMS.superseded) <= set(ITEMS.seeds))
+        shipped = (SKILLS / "mcp-tools.md").read_bytes()
+        digests = set()
+        for name in ITEMS.superseded["mcp-tools.md"]:
+            path = SUPERSEDED / name
+            self.assertRegex(name, r"^[A-Za-z0-9_][A-Za-z0-9._-]*$")
+            self.assertTrue(path.is_file(), name)
+            self.assertNotEqual(path.read_bytes(), shipped, f"{name} is the template this release ships, not one it supersedes")
+            digests.add(hashlib.sha256(path.read_bytes()).hexdigest())
+        self.assertEqual(len(digests), len(ITEMS.superseded["mcp-tools.md"]), "two records name the same text")
+        self.assertIn("7cf94e3d9ea0bcda01ad1a7b51148f42880f8c1410e517fadb0e681dd244671d", digests,
+                      "the Codex snapshot the previous installer shipped (2026-06-30, workspace SupremeTeam)")
+        for path in SUPERSEDED.iterdir():
+            self.assertIn(path.name, ITEMS.superseded["mcp-tools.md"], f"{path.name} is kept but no record names it")
 
     def test_the_installed_licence_is_the_repository_licence(self):
         """An install carries only skills/, so the licence notice travels as the core item skills/LICENSE."""
@@ -1049,7 +1166,7 @@ POWERSHELL_BUILTINS = {
     "Set-StrictMode", "Split-Path", "Join-Path", "New-Object", "Get-Content", "Test-Path", "Select-Object",
     "Get-ChildItem", "Where-Object", "Write-Warning", "Write-Host", "Write-Error", "Remove-Item", "Copy-Item",
     "Move-Item", "New-Item", "Out-Null", "Get-Command", "Get-Date", "ConvertFrom-Json", "ForEach-Object", "Get-Item",
-    "Get-Location",
+    "Get-Location", "Get-FileHash",
 }
 
 
@@ -1210,10 +1327,37 @@ class PowerShellParityTests(unittest.TestCase):
                      "Hook registration: ", "not requested", "skipped (no host detected)", "completed",
                      "Dry run: nothing will be written.", "Dry run complete: nothing was written.",
                      "would add", "would replace", "would keep, yours", "would remove, no longer shipped", "would move aside to",
-                     "kept, yours", "removed, no longer shipped", "recorded in",
-                     "moved aside, not installed by Supreme Team and unchanged, to"):
+                     "would remove, not selected this run", "would replace, an unedited copy from an earlier release",
+                     "kept, yours", "removed, no longer shipped", "removed, not selected this run", "recorded in",
+                     "replaced, an unedited copy from an earlier release",
+                     "failed (exit status", "Supreme Team skills are installed, but hook registration failed.",
+                     "or newer is required to register runtime harness hooks",
+                     "moved aside, not recorded as installed by Supreme Team and unchanged, to"):
             self.assertIn(line, self.sh)
             self.assertIn(line, self.ps)
+
+    def test_both_read_the_superseded_record_and_compare_content_not_names(self):
+        self.assertIn("supersedes", self.sh)
+        self.assertIn("supersedes", self.ps)
+        self.assertIn("$script_dir/superseded/", self.sh)
+        self.assertIn('(Join-Path $PSScriptRoot "superseded")', self.ps)
+        self.assertIn("cmp -s", self.sh)
+        self.assertIn("Get-FileHash", self.ps)
+        for text, fail_loud in ((self.sh, "is not a seed"), (self.ps, "is not a seed")):
+            self.assertIn(fail_loud, text, "a record naming a file that is not a seed stops the install")
+        body = re.search(r"function Test-SupersededSeed \{\n(.*?)\n\}\n", self.ps, re.S).group(1)
+        self.assertIn("Test-ReparsePoint", body, "a link is never an unedited copy")
+        self.assertIn("PSIsContainer", body)
+
+    def test_powershell_follows_links_before_it_judges_a_destination(self):
+        """RR-V3-8: install.sh judges the physical path (cd -P); a junction to the profile directory passed Assert-SafeRoot here.
+        Not executed: no PowerShell in this suite."""
+        body = re.search(r"function Resolve-PhysicalPath \{\n(.*?)\n\}\n", self.ps, re.S).group(1)
+        for needle in (".Target", "Test-ReparsePoint", "$hops -lt 32", "catch {", "return Resolve-FullPath -Path $Path"):
+            self.assertIn(needle, body)
+        safe = re.search(r"function Assert-SafeRoot \{\n(.*?)\n\}\n", self.ps, re.S).group(1)
+        self.assertEqual(safe.count("Resolve-PhysicalPath"), 5, "destination, home, checkout, source and the working directory")
+        self.assertNotIn("Resolve-FullPath", safe.replace("Resolve-PhysicalPath", ""))
 
     def test_the_only_recursive_delete_is_the_staging_directory_in_both(self):
         code = "\n".join(line for line in self.ps.splitlines() if not line.lstrip().startswith("#"))
@@ -1275,6 +1419,17 @@ class DocumentationTests(unittest.TestCase):
     def test_the_install_guide_describes_the_ownership_rules_the_installer_enforces(self):
         for term in (MANIFEST, MARKER, BACKUP_SUFFIX, "--dry-run", "-DryRun", "mcp-tools.md", "never deleted"):
             self.assertTrue(term in self.install, f"Install.md does not mention {term}")
+
+    def test_uninstall_leaves_every_seed_file_even_though_the_manifest_lists_it(self):
+        """Step 2 told the reader to delete every manifest item and, in the next sentence, to keep the registry."""
+        step = re.search(r"2\. \*\*Remove the skills\.\*\*(.*?)\n3\. ", self.install, re.S).group(1)
+        for seed in ITEMS.seeds:
+            self.assertRegex(" ".join(step.split()), rf"`item <name>` line of its `\.supremeteam-manifest` except `{re.escape(seed)}`")
+
+    def test_the_install_guide_says_what_happens_to_an_untouched_and_an_edited_registry(self):
+        text = " ".join(self.install.split()).lower()
+        self.assertIn("an unedited copy of a registry an earlier release shipped is replaced", text)
+        self.assertIn("a registry you changed is never replaced", text)
 
     def test_the_remote_recipe_pins_a_ref_and_fails_on_http_errors(self):
         self.assertFalse("refs/heads" in self.install, "a branch archive moves; the recipe must download a tag or commit")

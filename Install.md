@@ -28,18 +28,23 @@ creates carries a `.supremeteam-managed` marker. On an upgrade:
 
 - Items it installed are replaced. Each new copy is staged first and swapped in,
   so an interrupted run never leaves a half-copied item and puts back anything it
-  had moved aside, and items that are no longer shipped are removed. Edits inside
-  an installed directory are replaced too, so keep your own skills in directories
-  of their own.
+  had moved aside, and items that are no longer shipped, or that a narrower
+  `--team` choice leaves out this time, are removed (the summary says which). Edits
+  inside an installed directory are replaced too, so keep your own skills in
+  directories of their own.
 - Anything else in the folder is left alone, including your own skills.
 - If something of yours has the same name as an installed item (`review`, `qa`,
   `scripts`, ...), it is moved, never deleted, to
   `<target>.supremeteam-backup/<timestamp>/` beside the target, and the summary
-  lists it. The first upgrade over an install made before these records existed
-  moves that whole old install there once; delete the folder when you have checked
-  that nothing in it is yours.
-- `mcp-tools.md` is the tool registry your assistant fills in, so an existing copy
-  is never replaced. Delete it and re-run to get the blank template back.
+  lists it as not recorded as installed by Supreme Team. The first upgrade over an
+  install made before these records existed moves that whole old install there once,
+  so that list is long and includes copies an earlier Supreme Team installer wrote;
+  delete the folder when you have checked that nothing in it is yours.
+- `mcp-tools.md` is the tool registry your assistant fills in, so a registry you
+  changed is never replaced; delete it and re-run to get the blank template back. An
+  unedited copy of a registry an earlier release shipped is replaced by the blank
+  template, because it is the installer's own file: the older releases shipped one
+  machine's tool list, and the summary names the file when it swaps one out.
 - `--destination` refuses the filesystem root, your home directory or one of its
   parents, any folder that overlaps the checkout, and `.` unless the current
   directory already holds an install (a full path to it is always accepted).

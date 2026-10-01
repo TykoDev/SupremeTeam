@@ -68,9 +68,13 @@ Hook registration: ...
 ```
 
 `Moved aside` names any of your items that shared a name with an installed one and
-where they are now. `Hook registration` reads `not requested`, `skipped (no host
-detected)`, `declined (nothing was written)` or `completed`; only `completed` means
-registration ran.
+where they are now (the first upgrade over an older install lists that whole install,
+because nothing recorded it as the installer's). `Hook registration` reads `not
+requested`, `skipped (no host detected)`, `declined (nothing was written)`, `failed
+(exit status N; see the messages above)` or `completed`; only `completed` means
+registration ran. When it failed the first line reads `Supreme Team skills are
+installed, but hook registration failed.`, the skills are in place, and the installer
+exits with the registration's status after telling you how to try again.
 
 ## 2. Register the hooks (optional, recommended)
 

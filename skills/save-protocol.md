@@ -155,7 +155,10 @@ prompt-submit hook, and the gate checker's run-root verification.
    second operating-system account sharing the project directory cannot read the
    first one's) is `corrupt` with `access_denied` naming it, never absent or
    malformed: it may be a held run, so `create` and every operation that would pin
-   a run refuse beside it, and the guard counts it as held.
+   a run refuse beside it, and the guard counts it as held. `access_denied` marks
+   the records that may hold the pin (the pointer, a lock, a state beside a lock
+   that says held); a state this account cannot read beside a readable released
+   lock is a closed run, `corrupt` without `access_denied`, and `create` is allowed.
 2. Verify lock owner, heartbeat, status, revision lineage, and referenced
    artifacts. Heartbeat contract: the heartbeat is an ISO-8601 `heartbeat:`
    timestamp field inside the run's `_lock.md`, refreshed on every checkpoint or
@@ -371,7 +374,7 @@ so deleting any of those three pointers fails the suite.
 | §1 A script run from a subdirectory still writes at the project root | Machine-checked by `GeneratedRootPolicyTests.test_hook_state_root_walks_up_to_the_project_marker` | `_state.find_project_root` returning a subdirectory instead of the nearest marker |
 | §1 Every pipeline has a phase directory under a run | Machine-checked by `validate_manifests.py` and `OwnershipAgreementTests.test_every_pipeline_phase_has_a_save_directory` | `save-ownership.yaml: missing phase directory 'qa' for qa` — the pipeline name appears twice in the real message. The test asserts membership directly rather than matching that string. |
 | §1 The four governed subdirectories (`reports/`, `artifacts/`, `evidence/`, `packages/`) | Partly machine-checked | `scripts/test_runtime_utilities.py` pins the exact `reports/` destination for every declared pipeline phase, and `output_paths.resolve` composes the other three the same way. That a file was filed under the right one of the four is judgement. |
-| §1 Evidence paths are project-relative and must exist | Machine-checked by `save_run.py` and `harness/hooks/_saves.py` | `evidence path must be project-relative without traversal`, `evidence path escapes project root`, `evidence path missing`, `registered evidence path missing` (with its `--drop-evidence` remedy), and, for a held run, `missing evidence path <p>` from the reader. A closed run whose evidence was pruned stays readable and lists it as `evidence_missing`. |
+| §1 Evidence paths are project-relative and must exist | Machine-checked by `save_run.py` and `harness/hooks/_saves.py` | `evidence path must be project-relative without traversal`, `evidence path escapes project root`, `evidence path missing`, `registered evidence path missing` (with its `--drop-evidence` remedy), and, for a held run, `missing evidence path <p>` from the reader. A closed run whose evidence was pruned stays readable and lists it as `evidence_missing`. Evidence under a directory this account may not search is neither missing nor a refused run record: the reader lists it as `evidence_unverifiable` and the run keeps the classification its own records give, and a writer refuses a path it cannot read, naming it. |
 | §1 The run directory is the authorised evidence root, so a phase manifest may reference `../intake/report_grilling.md` | Machine-checked by [`harness/gatekeeper/check.py`](harness/gatekeeper/check.py) against [gates.yaml](gates.yaml) `evidence_rules.evidence_root`, pinned by `harness/gatekeeper/test_gate_run_layout.py` `EvidenceRootTests` | The root widens to the run directory only when the manifest `run_id` matches the directory and `_state.md`; otherwise it is the manifest directory. `test_other_run_evidence_is_rejected`, `test_traversal_absolute_and_unc_paths_are_rejected`, `test_symlink_escape_is_rejected`, and `test_run_id_mismatch_shrinks_root_to_package` each fail a package that reaches outside it. |
 | §1 The preference store under `skillset-saves/preferences/` is written only by `taste_prefs.py` | Machine-checked where hooks are registered | `pre_tool_use.py` denies an edit-tool write to `taste.json`, `taste.md`, `taste.journal.jsonl`, `taste.lock`, and `_history/*` under that directory, naming `skills/taste/taste_prefs.py` as the sanctioned writer; `SaveLifecycleTests.test_direct_edit_of_project_taste_state_is_denied_but_reads_pass` executes the hook on all five and confirms a `Read` of the same file is not denied |
 | §1 Pointer and run records carry schema version 1 | Machine-checked by `_saves.py` | a record whose `schema_version` is not 1 is classified `corrupt` and never reinforces the pin |
@@ -423,8 +426,11 @@ so deleting any of those three pointers fails the suite.
   the reason `permission denied`): the first account's owner-only records, seen
   from a second account. `create`, a resume of a released run and `recover` are
   refused with the path and the reason, and every other operation on that run says
-  the same. It is not damage and not a run to recover: the account that owns the
-  run completes or releases it, or its records are made readable to this one.
+  the same. It is not damage and not a run to recover. Completing or releasing the
+  run only ends its claim and leaves its records unreadable here, so the way
+  forward is to make them readable to this account (a mode or an ACL) or, once the
+  run is closed, to have an account that may delete them remove them; never
+  overwrite them.
 - The write lock is busy: `refused`, with a message to retry, after waiting
   `--lock-timeout` seconds. Another `save_run.py` process holds
   `skillset-saves/_write.lock`; the operating system releases it when that

@@ -28,7 +28,7 @@ HOOK_DIR = Path(__file__).resolve().parent
 SAVE_RUN = HOOK_DIR / "save_run.py"
 sys.path.insert(0, str(HOOK_DIR))
 import _saves  # noqa: E402
-from test_run_state import refusing  # noqa: E402
+from test_run_state import refusing, unsearchable  # noqa: E402
 
 NOW = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
 
@@ -334,6 +334,30 @@ class RefusedRecordTests(unittest.TestCase):
         self.assertEqual(result["status"], "corrupt")
         self.assertNotIn("access_denied", result)
         self.assertIn("cannot read it (permission denied)", result["detail"])
+        self.assertEqual(_saves.next_step(result), _saves.NEXT_STEPS["corrupt"])
+
+    def test_access_denied_marks_exactly_the_records_that_may_hold_the_pin(self):
+        """RR3-state-9: the key is not carried for every refused record, and the documents say which ones: the pointer, a
+        lock, and a state beside a lock that says held. `has_active_run` counts exactly those."""
+        arrangements = {
+            "the pointer": (lambda p: (p.run("a"), p.pointer("a")), "/_latest.md", True),
+            "the lock of a held run": (lambda p: (p.run("a"), p.pointer("a")), "runs/a/_lock.md", True),
+            "the lock of a closed run": (lambda p: (p.run("a", status="complete"), p.pointer("a")), "runs/a/_lock.md", True),
+            "the state beside a held lock": (lambda p: (p.run("a"), p.pointer("a")), "runs/a/_state.md", True),
+            "the state beside a released lock": (lambda p: (p.run("a", status="released"), p.pointer("a")), "runs/a/_state.md", False),
+            "the state beside a complete run's released lock": (lambda p: (p.run("a", status="complete"), p.pointer("a")),
+                                                                "runs/a/_state.md", False),
+        }
+        for label, (build, tail, pinning) in arrangements.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                project = SavedProject(Path(tmp).resolve(), now=datetime.now(timezone.utc))
+                build(project)
+                with refusing(tail):
+                    result = project.classify()
+                    self.assertEqual(_saves.has_active_run(project.root), pinning, result)
+                self.assertEqual(result["status"], "corrupt", result)
+                self.assertEqual("access_denied" in result, pinning, result)
+                self.assertIn("cannot read it (permission denied)", result["detail"])
 
     def test_a_refused_record_never_hides_a_readable_held_run_and_outranks_every_answer_that_says_none(self):
         arrangements = {
@@ -362,6 +386,60 @@ class RefusedRecordTests(unittest.TestCase):
             self.assertTrue(_saves.has_active_run(self.project.root))
         self.assertEqual((result["status"], result["access_denied"]), ("corrupt", ["skillset-saves/runs"]), result)
         self.assertNotIn(str(self.project.root), result["detail"])
+
+    def test_a_directory_this_account_may_not_search_is_not_read_as_absent_whatever_pathlib_makes_of_it(self):
+        """RR3-state-6: `Path.exists` and `Path.is_dir` answer no for it where pathlib is built on `os.path`, which read a run
+        under such a directory as no run. The refused stat is simulated in `os.stat`, which both of them call."""
+        self.project.run("a")
+        self.project.pointer("a")
+        with unsearchable("skillset-saves/runs"):
+            result = self.project.classify()
+            self.assertTrue(_saves.has_active_run(self.project.root))
+            single = _saves.inspect_run(self.project.root, "a", now=self.project.now)
+        self.assertEqual((result["status"], result["access_denied"]), ("corrupt", ["skillset-saves/runs/a"]), result)
+        self.assertEqual((single["state"], single["access_denied"]), ("corrupt", ["skillset-saves/runs/a"]), single)
+
+    def test_evidence_under_a_directory_this_account_may_not_search_is_unverifiable_and_the_run_keeps_its_classification(self):
+        """RR3-state-10: the project's own file is not a run record. The refusal read as one, to the owner of the run, and the run
+        as `corrupt`; it is now reported beside the answer the run's own records give."""
+        evidence = ("docs/private/spec.md",)
+        arrangements = {
+            "a live run": (lambda p: (p.run("a", evidence=evidence), p.pointer("a")), "active", True),
+            "an orphan": (lambda p: p.run("a", evidence=evidence), "orphaned", True),
+            "a stale run": (lambda p: (p.run("a", evidence=evidence, heartbeat=-45), p.pointer("a", updated=-45)), "stale", False),
+            "a complete run": (lambda p: (p.run("a", status="complete", evidence=evidence), p.pointer("a")), "complete", False),
+        }
+        for label, (build, status, held) in arrangements.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                project = SavedProject(Path(tmp).resolve(), now=datetime.now(timezone.utc))
+                build(project)
+                with unsearchable("docs/private"):
+                    result = project.classify()
+                    single = _saves.inspect_run(project.root, "a", now=project.now)
+                    self.assertEqual(_saves.has_active_run(project.root), held, result)
+                self.assertEqual(result["status"], status, result)
+                self.assertEqual(result["evidence_unverifiable"], list(evidence), result)
+                self.assertIn("1 registered evidence path(s) cannot be checked by this account (permission denied)", result["detail"])
+                self.assertEqual(single["evidence_unverifiable"], list(evidence), single)
+                self.assertNotIn("access_denied", result)
+                self.assertNotIn("access_denied", single)
+                self.assertNotEqual(single["state"], "corrupt", single)
+
+    def test_the_probes_tell_a_path_that_is_not_there_from_one_that_cannot_be_reached(self):
+        self.project.run("a")
+        runs, there, gone = self.project.runs, self.project.runs / "a", self.project.runs / "nothing"
+        self.assertEqual((_saves.path_exists(there), _saves.path_is_dir(there), _saves.path_exists(gone), _saves.path_is_dir(gone)),
+                         (True, True, False, False))
+        self.assertFalse(_saves.path_is_dir(there / "_state.md"))
+        self.assertFalse(_saves.path_exists(runs / "a" / "_state.md" / "below a file"), "a file on the way is not a refusal")
+        with unsearchable("skillset-saves/runs"):
+            for probe in (_saves.path_exists, _saves.path_is_dir):
+                with self.assertRaises(PermissionError):
+                    probe(there)
+                with self.assertRaises(PermissionError):
+                    probe(gone)
+            self.assertTrue(_saves._exists(gone), "a record that cannot be shown absent may be there")
+            self.assertFalse(_saves.is_directory(there), "a caller that was refused already asks only whether it is a directory")
 
     def test_a_directory_where_a_record_belongs_is_damage_not_a_refusal_even_where_the_system_says_permission_denied(self):
         """Windows raises PermissionError for the read of a directory; only a file this account is refused is a refusal."""
@@ -407,6 +485,51 @@ class RefusedRecordTests(unittest.TestCase):
                     full = project.classify()
                     self.assertEqual(_saves.has_active_run(project.root), expected, full)
                     self.assertEqual(full["status"] in {"active", "orphaned"} or bool(full.get("access_denied")), expected, full)
+
+
+class AccessDeniedProseTests(unittest.TestCase):
+    """RR3-state-7: the way forward named for a record this account cannot read was the owner completing or releasing the
+    run, which changes nothing for a second account: the records of a closed run are as owner-only as a held run's."""
+
+    DOCUMENTS = ("docs/persistent-saves.md", "skills/save-protocol.md", "skills/session-memory/SKILL.md",
+                 "skills/session-memory/references/run-record.md")
+
+    def test_the_step_says_closing_the_run_is_not_the_way_forward(self):
+        step = _saves.ACCESS_DENIED_STEP
+        self.assertIn("completing or releasing the run only ends its claim and leaves its records unreadable here", step)
+        self.assertIn("readable to this account", step)
+        self.assertIn("never overwrite them", step)
+        self.assertNotIn("ask the account that owns the run", step)
+
+    def test_the_hooks_readme_does_not_say_has_active_run_is_true_only_for_a_readable_lock(self):
+        """RR3-state-8: since a record this account cannot read counts as held, "only when a coherent lock exists" was false."""
+        text = " ".join((HOOK_DIR / "README.md").read_text(encoding="utf-8").split())
+        bullet = re.search(r"- `has_active_run\(project_root\)`:(.*?)- `read_latest_pointer", text).group(1)
+        self.assertNotIn("only when", bullet)
+        self.assertIn("a record this account cannot read", bullet)
+        self.assertIn("which may be a held run", bullet)
+
+    def test_the_documents_say_which_refused_records_carry_access_denied(self):
+        """RR3-state-9: a refused state beside a readable released lock is `corrupt` without it, which the documents had said
+        of every refused record."""
+        for relative in ("docs/persistent-saves.md", "skills/save-protocol.md", "skills/harness/hooks/README.md"):
+            with self.subTest(relative):
+                path = HOOK_DIR.parents[2] / relative
+                if not path.is_file():
+                    self.skipTest(f"{relative} is not part of this copy")
+                text = " ".join(path.read_text(encoding="utf-8").split())
+                self.assertRegex(text, r"readable released lock[^.]{0,120}`corrupt` without `access_denied`")
+
+    def test_every_document_that_repeats_it_says_the_same_and_none_keeps_the_old_remedy(self):
+        for relative in self.DOCUMENTS:
+            with self.subTest(relative):
+                path = HOOK_DIR.parents[2] / relative
+                if not path.is_file():
+                    self.skipTest(f"{relative} is not part of this copy")
+                text = " ".join(path.read_text(encoding="utf-8").split())
+                self.assertRegex(text, r"(?i)completing or releasing the run (only ends|does not change)")
+                self.assertNotRegex(text, r"(?i)(owns the run|its owner|first account) (completes|to complete) or releas"
+                                          r"|way forward is the first account")
 
 
 class SharedConstantsTests(unittest.TestCase):

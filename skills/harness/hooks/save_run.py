@@ -65,6 +65,7 @@ import contextlib
 import json
 import os
 import sys
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -85,7 +86,10 @@ from data_formats import content_sha256  # noqa: E402
 from save_taxonomy import (  # noqa: E402
     ACTIVE_STATUSES, HISTORY, JOURNAL, POINTER, RUN_ID, RUN_ID_RULE, SCHEMA_VERSION, TERMINAL_STATUSES, WRITE_LOCK,
 )
-from _saves import ACCESS_DENIED_STEP, heartbeat_is_stale, inspect_run, inspect_saves, next_step, parse_timestamp, refusal  # noqa: E402
+from _saves import (  # noqa: E402
+    ACCESS_DENIED_STEP, heartbeat_is_stale, inspect_run, inspect_saves, is_directory, next_step, parse_timestamp, path_exists,
+    path_is_dir, refusal,
+)
 import _fsutil  # noqa: E402
 import _state  # noqa: E402
 
@@ -148,7 +152,7 @@ def read_json(path: Path, *, refuse: bool = False) -> dict[str, Any] | None:
         value = json.loads(path.read_text(encoding="utf-8"))
     except PermissionError:
         # Windows says the same for a directory where the record belongs, which is damage, not a refusal.
-        if refuse and not path.is_dir():
+        if refuse and not is_directory(path):
             raise
         return None
     except (OSError, ValueError, RecursionError):
@@ -228,12 +232,24 @@ class RunStore:
 
     def exclusive(self, wait: float | None = None, *, create: bool = False) -> Any:
         """Hold the writer mutex. Where nothing has been saved yet there is nothing to protect."""
-        if not create and not self.saves.is_dir():
+        if not create and not self.seen(self.saves, path_is_dir):
             return contextlib.nullcontext()
         return WriteLock(self.saves / WRITE_LOCK, self.lock_timeout if wait is None else wait,
                          self.rel(self.saves / WRITE_LOCK), create_dir=create)
 
     # ----------------------------------------------------------------- probes
+    def seen(self, path: Path, probe: Callable[[Path], bool] = path_exists) -> bool:
+        """Whether a record of the run is there. Where a directory on the way may not be searched by this account it cannot
+        be shown absent, so the writer refuses, as it does for a record it may not read."""
+        try:
+            return probe(path)
+        except PermissionError as exc:
+            # The classification names what the readers say is refused, which is a directory that exists, not the leaf
+            # that may not.
+            found = inspect_saves(self.project_root)
+            detail = found["detail"] if found.get("access_denied") else refusal(self.rel(path))
+            raise Refused(f"{detail}: {ACCESS_DENIED_STEP}") from exc
+
     def probe(self) -> str:
         """Write/read/delete probe inside the save root. Raises Degraded."""
         try:
@@ -267,12 +283,15 @@ class RunStore:
                 target.relative_to(self.project_root)
             except ValueError as exc:
                 raise Refused(f"evidence path escapes project root: {value}") from exc
-            if not target.exists():
-                missing.append(value)
-            elif target.is_file():
-                hashes[value] = sha256_file(target)
-            else:
-                hashes[value] = "directory"
+            try:
+                if not path_exists(target):
+                    missing.append(value)
+                elif target.is_file():
+                    hashes[value] = sha256_file(target)
+                else:
+                    hashes[value] = "directory"
+            except PermissionError as exc:
+                raise Refused(f"evidence path cannot be read by this account (permission denied): {value}") from exc
         if missing:
             named = [p for p in missing if p not in registered]
             inherited = [p for p in missing if p in registered]
@@ -314,7 +333,7 @@ class RunStore:
         return None
 
     def require_not_interrupted(self) -> None:
-        if self.journal_path.exists():
+        if self.seen(self.journal_path):
             raise Refused("previous checkpoint was interrupted; run recover --rollback first")
 
     def require_owner(self, owner: str, lock: dict[str, Any] | None) -> None:
@@ -344,20 +363,20 @@ class RunStore:
 
         The harness audit reads these to see the failures it exists to audit. It
         never creates a run directory for one, and its own failure changes nothing."""
-        if not self.run_dir.is_dir():
+        if not is_directory(self.run_dir):
             return
         with contextlib.suppress(Degraded):
             self.append_audit(event, {"operation": operation, "owner": owner, "reason": reason})
 
     def snapshot(self, revision: int) -> None:
-        if not self.state_path.exists() and not self.lock_path.exists():
+        if not self.seen(self.state_path) and not self.seen(self.lock_path):
             return
         try:
             self.history.mkdir(exist_ok=True)
         except OSError as exc:
             raise Degraded(f"history snapshot failed: {_why(exc)}") from exc
         for src, kind in ((self.state_path, "state"), (self.lock_path, "lock")):
-            if not src.exists():
+            if not self.seen(src):
                 continue
             dest = self.history / f"rev-{revision}.{kind}.json"
             if self.describes(read_json(dest), revision):
@@ -430,9 +449,9 @@ class RunStore:
                           "(for admiral, the intake report)")
         paths = sorted({self.normalize_evidence(value) for value in evidence})
         with self.exclusive(create=True):
-            if self.journal_path.exists():
+            if self.seen(self.journal_path):
                 raise Refused(f"run {self.run_id} has an interrupted publish (journal present); run recover --rollback first")
-            if self.state_path.exists() or self.lock_path.exists():
+            if self.seen(self.state_path) or self.seen(self.lock_path):
                 raise Refused(f"run {self.run_id} already exists; use checkpoint or recover")
             competing = self.competing_owner(owner)
             if competing:
@@ -596,7 +615,7 @@ class RunStore:
     def recover(self, owner: str, reason: str, rollback: bool) -> dict[str, Any]:
         with self.exclusive():
             state, lock = self.current()
-            journaled = self.journal_path.exists()
+            journaled = self.seen(self.journal_path)
             if rollback and not journaled:
                 raise Refused("recover --rollback settles an interrupted publish and no _journal.json is present; "
                               "reclaim a stale lock with recover --reason instead")
@@ -613,7 +632,7 @@ class RunStore:
     def recovery_evidence(self, lock: dict[str, Any] | None, reason: str) -> dict[str, Any]:
         return {"prior_lock_path": self.rel(self.lock_path), "prior_heartbeat": (lock or {}).get("heartbeat"),
                 "prior_owner": (lock or {}).get("owner"),
-                "prior_lock_sha256": sha256_file(self.lock_path) if self.lock_path.exists() else None, "reason": reason}
+                "prior_lock_sha256": sha256_file(self.lock_path) if self.seen(self.lock_path) else None, "reason": reason}
 
     def settle_interrupted(self, owner: str, reason: str, state: dict[str, Any] | None, lock: dict[str, Any] | None) -> dict[str, Any]:
         """Roll an interrupted publish forward when its core finished, otherwise back.
@@ -655,7 +674,7 @@ class RunStore:
                              "status": "held" if state.get("status") in ACTIVE_STATUSES else "released",
                              "session_pin": state.get("status") in ACTIVE_STATUSES, "revision": target}
             source = "state file (lock rebuilt)"
-        elif state_snap.exists() or lock_snap.exists():
+        elif self.seen(state_snap) or self.seen(lock_snap):
             raise Refused(f"history snapshot for revision {target} is unreadable or is not this run's record, and the state file "
                           f"is not at that revision; escalate to the owner")
         else:
@@ -678,7 +697,7 @@ class RunStore:
         try:
             self.history.mkdir(exist_ok=True)
             for path, kind in ((self.lock_path, "lock"), (self.state_path, "state")):
-                if path.exists():
+                if self.seen(path):
                     digest = sha256_file(path)
                     _fsutil.replace_with_retry(path, self.history / f"rev-1.{kind}.unpublished-{stamp}.json")
                     retired[kind] = digest
@@ -717,7 +736,11 @@ class RunStore:
         requested = inspect_run(self.project_root, self.run_id)
         result["operation"] = "status"
         result["run_id_requested"] = self.run_id
-        result["interrupted"] = self.journal_path.exists()
+        try:
+            result["interrupted"] = path_exists(self.journal_path)
+        except PermissionError:
+            # What this account is refused is in the classification above; a journal behind it is neither shown nor denied.
+            result["interrupted"] = False
         if result["interrupted"]:
             result["detail"] = f"interrupted checkpoint journal present: {self.rel(self.journal_path)}"
             result["status"] = "interrupted"

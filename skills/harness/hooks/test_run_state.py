@@ -25,10 +25,12 @@ was counted as a hook fault.
 from __future__ import annotations
 
 import errno
+import functools
 import io
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -126,6 +128,55 @@ def modes_are_enforced() -> bool:
         except PermissionError:
             return True
         return False
+
+
+@contextmanager
+def unsearchable(*directories: str):
+    """Everything below the directories ending in these paths is out of reach, as it is for an account that may not search them.
+
+    `Path.exists` and `Path.is_dir` answer no for it, as they do where they are built on `os.path` instead of `stat`, so a
+    probe that goes through them reads a run it cannot reach as no run."""
+    real = os.stat
+
+    def stat(path, *args, **kwargs):
+        if isinstance(path, (str, os.PathLike)) and any(f"{name}/" in Path(path).as_posix() for name in directories):
+            raise PermissionError(errno.EACCES, "Permission denied", os.fspath(path))
+        return real(path, *args, **kwargs)
+
+    with (mock.patch.object(os, "stat", stat), mock.patch.object(Path, "exists", lambda self, **_: os.path.exists(self)),
+          mock.patch.object(Path, "is_dir", lambda self, **_: os.path.isdir(self))):
+        yield
+
+
+# What `mode_bound` runs: a file with no permission bits that the process must be refused.
+BOUND_PROBE = """
+import pathlib, sys, tempfile
+with tempfile.TemporaryDirectory() as tmp:
+    probe = pathlib.Path(tmp, "probe")
+    probe.write_text("x")
+    probe.chmod(0)
+    try:
+        probe.read_text()
+    except PermissionError:
+        sys.exit(0)
+    sys.exit(1)
+"""
+
+
+@functools.cache
+def mode_bound() -> list[str] | None:
+    """The command prefix under which a process is bound by file modes, so a directory it may not search is really refused.
+
+    Empty where this process already is, `setpriv` without the two capabilities that let root past the modes where that
+    works, and None where neither does (root without `setpriv`, an administrator on Windows)."""
+    if modes_are_enforced():
+        return []
+    setpriv = shutil.which("setpriv")
+    if setpriv:
+        prefix = [setpriv, "--bounding-set=-dac_override,-dac_read_search"]
+        if subprocess.run([*prefix, sys.executable, "-c", BOUND_PROBE], capture_output=True, check=False).returncode == 0:
+            return prefix
+    return None
 
 
 class RunStateCase(unittest.TestCase):
@@ -859,7 +910,37 @@ class SecondAccountTests(RunStateCase):
                 with refusing(tail), self.assertRaises(save_run.Refused) as caught:
                     self.store("run-2").create("admiral", ["README.md"], "agent", "next", {})
                 self.assertIn(f"skillset-saves/{path} exists but this account cannot read it", str(caught.exception))
-                self.assertIn("ask the account that owns the run", str(caught.exception))
+                self.assertIn(_saves.ACCESS_DENIED_STEP, str(caught.exception))
+                self.setUp()
+
+    def test_a_refused_state_beside_a_readable_released_lock_is_a_closed_run_and_create_goes_ahead(self):
+        """RR3-state-9: the lock decides. The key is not carried, the guard does not count the run as held, and the writer
+        is not refused, which is what the documents say of this one arrangement."""
+        self.create()
+        self.assertEqual(self.save("release")[0], 0)
+        with refusing("run-1/_state.md"):
+            status = self.store().status()
+            held = _saves.has_active_run(self.project)
+            code, out = self.in_process("create", "--evidence", "README.md", run_id="run-2")
+        self.assertEqual(status["status"], "corrupt", status)
+        self.assertNotIn("access_denied", status)
+        self.assertEqual(status["next_step"], _saves.NEXT_STEPS["corrupt"])
+        self.assertFalse(held)
+        self.assertEqual((code, out["result"]), (0, "ok"), out)
+
+    def test_closing_the_run_does_not_lift_the_refusal_because_its_records_stay_unreadable(self):
+        """RR3-state-7: the step used to name the owner completing or releasing the run as the way forward, and the second
+        account met the same refusal afterwards: a closed run's records are as owner-only as a held one's."""
+        for close in ("complete", "release"):
+            with self.subTest(close):
+                self.create()
+                self.assertEqual(self.save(close)[0], 0)
+                with refusing(*self.OWNER_ONLY):
+                    code, out = self.in_process("create", "--evidence", "README.md", run_id="run-2")
+                self.assertEqual(code, 1, out)
+                self.assertIn("this account cannot read it (permission denied)", out["reason"])
+                self.assertIn("completing or releasing the run only ends its claim", out["reason"])
+                self.assertFalse((self.project / "skillset-saves" / "runs" / "run-2").exists())
                 self.setUp()
 
     def test_resuming_or_recovering_beside_a_record_it_cannot_read_is_refused_too(self):
@@ -879,6 +960,56 @@ class SecondAccountTests(RunStateCase):
                 self.assertEqual(code, 1, out)
                 self.assertIn("exists but this account cannot read it (permission denied)", out["reason"])
                 self.assertNotIn("no lock", out["reason"])
+
+    def test_a_directory_the_account_may_not_search_refuses_every_operation_in_the_words_the_readers_use(self):
+        """RR3-state-6: the probes of the writer were `Path.exists`, which raised out of `create` and `status` as an engine
+        error and out of the refusal handler of every other operation, and which answers no where pathlib is built on
+        `os.path`. The reads of the records are left alone here, so what is refused is the way to the run."""
+        self.create()
+        pointer = (self.project / "skillset-saves" / "_latest.md").read_bytes()
+        operations = (("create", "--evidence", "README.md"), ("checkpoint",), ("heartbeat",), ("complete",), ("release",),
+                      ("block",), ("recover", "--reason", "why"))
+        for operation, *extra in operations:
+            with self.subTest(operation), unsearchable("skillset-saves/runs"):
+                code, out = self.in_process(operation, *extra, run_id="run-2" if operation == "create" else "run-1")
+                self.assertEqual((code, out["result"]), (1, "refused"), out)
+                self.assertIn("skillset-saves/runs/run-1 exists but this account cannot read it (permission denied)", out["reason"])
+                self.assertIn(_saves.ACCESS_DENIED_STEP, out["reason"])
+        self.assertFalse((self.project / "skillset-saves" / "runs" / "run-2").exists(), "a refused create leaves no directory")
+        self.assertEqual((self.project / "skillset-saves" / "_latest.md").read_bytes(), pointer, "the pointer is not overwritten")
+
+    def test_evidence_under_a_directory_the_account_may_not_search_is_refused_naming_the_path(self):
+        """The same probe sat in the evidence hashing: an engine error with an absolute path, or `evidence path missing`."""
+        evidence = self.project / "docs" / "private" / "spec.md"
+        evidence.parent.mkdir(parents=True)
+        evidence.write_text("x\n", encoding="utf-8")
+        with unsearchable("docs/private"):
+            code, out = self.in_process("create", "--evidence", "docs/private/spec.md")
+        self.assertEqual((code, out["result"]), (1, "refused"), out)
+        self.assertEqual(out["reason"], "evidence path cannot be read by this account (permission denied): docs/private/spec.md")
+        self.assertFalse(self.run_dir.exists())
+
+    def test_status_reports_evidence_it_cannot_check_beside_the_run_s_own_classification(self):
+        evidence = self.project / "docs" / "private" / "spec.md"
+        evidence.parent.mkdir(parents=True)
+        evidence.write_text("x\n", encoding="utf-8")
+        self.create("docs/private/spec.md")
+        with unsearchable("docs/private"):
+            result = self.store().status()
+            held = _saves.has_active_run(self.project)
+        self.assertEqual((result["status"], result["evidence_unverifiable"]), ("active", ["docs/private/spec.md"]), result)
+        self.assertNotIn("access_denied", result)
+        self.assertEqual(result["requested_run"]["state"], "active", result)
+        self.assertTrue(held)
+
+    def test_status_classifies_a_directory_it_may_not_search_instead_of_raising(self):
+        self.create()
+        with unsearchable("skillset-saves/runs"):
+            result = self.store("run-2").status()
+        self.assertEqual((result["status"], result["access_denied"], result["interrupted"]),
+                         ("corrupt", ["skillset-saves/runs/run-1"], False), result)
+        self.assertEqual(result["requested_run"]["state"], "corrupt")
+        self.assertEqual(result["next_step"], _saves.ACCESS_DENIED_STEP)
 
     def test_a_directory_where_a_record_belongs_is_not_called_a_permission_problem(self):
         """Windows raises PermissionError for the read of a directory; the writer still says what is wrong."""
@@ -934,6 +1065,108 @@ class SecondAccountTests(RunStateCase):
         self.assertEqual((code, out["status"]), (0, "corrupt"), out)
         self.assertEqual(sorted(out["access_denied"]), ["skillset-saves/runs/run-1/_lock.md", "skillset-saves/runs/run-1/_state.md"])
         self.assertIn("and 1 more record exist but this account cannot read them", out["detail"])
+
+
+class UnsearchableDirectoryTests(RunStateCase):
+    """RR3-state-6 with a real directory: a run made under `umask 077` is a 0700 tree, which a second account may not search.
+
+    The directory has no permission bits and the writer runs in a child bound by the file modes (see `mode_bound`), so
+    this is the failure itself and not a simulation of it; it skips only where the process cannot drop its privileges."""
+
+    HAS_ACTIVE_RUN = ("import pathlib, sys; sys.path.insert(0, sys.argv[1]); import _saves; "
+                      "print(_saves.has_active_run(pathlib.Path(sys.argv[2])))")
+    ARRANGEMENTS = {"runs": "skillset-saves/runs", "the run": "skillset-saves/runs/run-1", "the save root": "skillset-saves"}
+
+    def setUp(self):
+        super().setUp()
+        self.bound = mode_bound()
+        if self.bound is None:
+            self.skipTest("this process bypasses file modes and cannot drop the privileges that do")
+        self.create()
+        self.before = {name: (self.project / "skillset-saves" / name).read_bytes() for name in ("_latest.md", "runs/run-1/_state.md")}
+
+    @contextmanager
+    def closed(self, relative: str):
+        path = self.project / relative
+        path.chmod(0)
+        try:
+            yield
+        finally:
+            path.chmod(0o755)
+
+    def child(self, command: list[str]) -> subprocess.CompletedProcess:
+        return subprocess.run([*self.bound, *command], text=True, capture_output=True, check=False)
+
+    def bound_save(self, *args: str, run_id: str = "run-1") -> tuple[int, dict]:
+        proc = self.child(self.command(run_id, *args))
+        text = (proc.stdout or proc.stderr).strip()
+        try:
+            return proc.returncode, json.loads(text[text.index("{"):])
+        except ValueError:
+            return proc.returncode, {"result": "no JSON result", "output": text[-300:]}
+
+    def test_status_classifies_the_directory_where_it_used_to_die_with_an_engine_error(self):
+        for label, relative in self.ARRANGEMENTS.items():
+            with self.subTest(label), self.closed(relative):
+                for run_id in ("run-1", "run-2"):
+                    code, out = self.bound_save("status", run_id=run_id)
+                    self.assertEqual((code, out.get("status")), (0, "corrupt"), out)
+                    self.assertTrue(out["access_denied"], out)
+                    self.assertRegex(out["detail"], r"cannot read (it|them) \(permission denied\)")
+                    self.assertEqual(out["next_step"], _saves.ACCESS_DENIED_STEP)
+                    if run_id == "run-1":
+                        self.assertEqual(out["requested_run"]["state"], "corrupt", out)
+
+    def test_every_operation_refuses_naming_the_directory_instead_of_raising(self):
+        operations = (("create", "--evidence", "README.md"), ("checkpoint",), ("heartbeat",), ("complete",), ("release",),
+                      ("block",), ("recover", "--reason", "why"))
+        for label, relative in self.ARRANGEMENTS.items():
+            for operation, *extra in operations:
+                with self.subTest(f"{operation}, {label}"), self.closed(relative):
+                    code, out = self.bound_save(operation, *extra, run_id="run-2" if operation == "create" else "run-1")
+                    self.assertEqual((code, out["result"]), (1, "refused"), out)
+                    self.assertRegex(out["reason"], r"cannot read (it|them) \(permission denied\)")
+                    self.assertIn(_saves.ACCESS_DENIED_STEP, out["reason"])
+                    self.assertNotIn(str(self.project), out["reason"], "no absolute path is reported")
+        after = {name: (self.project / "skillset-saves" / name).read_bytes() for name in self.before}
+        self.assertEqual(after, self.before, "nothing was written")
+        self.assertFalse((self.run_dir.parent / "run-2").exists())
+
+    def test_evidence_in_a_directory_that_cannot_be_searched_is_refused_naming_the_path(self):
+        evidence = self.project / "docs" / "private" / "spec.md"
+        evidence.parent.mkdir(parents=True)
+        evidence.write_text("x\n", encoding="utf-8")
+        with self.closed("docs/private"):
+            code, out = self.bound_save("checkpoint", "--evidence", "docs/private/spec.md")
+        self.assertEqual((code, out["result"]), (1, "refused"), out)
+        self.assertEqual(out["reason"], "evidence path cannot be read by this account (permission denied): docs/private/spec.md")
+
+    def test_evidence_in_a_directory_that_cannot_be_searched_does_not_make_the_owners_run_corrupt(self):
+        """RR3-state-10: a `chmod` of an evidence directory read, to the owner of the run, as another account's unreadable run."""
+        evidence = self.project / "docs" / "private" / "spec.md"
+        evidence.parent.mkdir(parents=True)
+        evidence.write_text("x\n", encoding="utf-8")
+        self.assertEqual(self.save("checkpoint", "--evidence", "docs/private/spec.md")[0], 0)
+        with self.closed("docs/private"):
+            code, out = self.bound_save("status")
+            self.assertEqual((code, out.get("status")), (0, "active"), out)
+            self.assertNotIn("access_denied", out)
+            self.assertEqual(out["evidence_unverifiable"], ["docs/private/spec.md"], out)
+            self.assertEqual(out["requested_run"]["state"], "active", out)
+            held = self.child([sys.executable, "-c", self.HAS_ACTIVE_RUN, str(HOOK_DIR), str(self.project)])
+            self.assertEqual(held.stdout.strip(), "True", held.stderr)
+            code, out = self.bound_save("heartbeat")
+            self.assertEqual((code, out["result"]), (0, "ok"), out)
+
+    def test_the_hooks_and_readiness_see_the_run_they_cannot_reach(self):
+        for label, relative in self.ARRANGEMENTS.items():
+            with self.subTest(label), self.closed(relative):
+                held = self.child([sys.executable, "-c", self.HAS_ACTIVE_RUN, str(HOOK_DIR), str(self.project)])
+                self.assertEqual(held.stdout.strip(), "True", held.stderr)
+                ready = self.child([sys.executable, str(HOOK_DIR / "check_readiness.py"), "--project-root", str(self.project), "--json"])
+                saves = json.loads(ready.stdout)
+                self.assertEqual(saves["saves"]["status"], "corrupt", saves)
+                self.assertTrue(saves["saves"]["access_denied"] and not saves["capabilities"]["saves_readable"], saves)
 
 
 class TrailVocabularyTests(RunStateCase):

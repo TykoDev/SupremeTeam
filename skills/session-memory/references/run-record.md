@@ -179,8 +179,12 @@ resume path until an owner decides: the canonical bytes stay untouched, because
 they are the only record of what the run was when it broke. A record that is not
 valid UTF-8, or is nested deeply enough to overflow the parser, is `corrupt`, not
 an error. A closed run whose evidence was pruned is not `corrupt`; its
-`evidence_missing` lists the paths. A record this account is refused (records are
+`evidence_missing` lists the paths. Evidence under a directory this account may not
+search is listed as `evidence_unverifiable` instead, and the run keeps the
+classification its own records give. A record this account is refused (records are
 owner-only, so a second account sharing the directory cannot read the first one's)
 is `corrupt` too, with `access_denied` naming the file and the reason `permission
-denied`: it may be a held run, `create` refuses beside it, and its owner completes
-or releases the run.
+denied`: it may be a held run and `create` refuses beside it. Its owner completing
+or releasing the run does not change that, because the records of a closed run stay
+owner-only: they have to be made readable to this account, or removed by an account
+that may delete them.

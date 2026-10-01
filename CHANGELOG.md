@@ -79,7 +79,7 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   the registry entry offers, which `commander` and the design gatekeeper now state
   instead of "the versions intersect". `--blocked-phrases` is the wrapper scripts'
   option, not `check.py`'s. `package-manifest.yaml` lists the ten residue classes
-  `package_check.py` matches, and the typed-record rosters name `mock_parity` and
+  `package_check.py` matches and the file its secret names come from, and the typed-record rosters name `mock_parity` and
   `mock_rendering`.
 - The guard keeps one record per boundary. `guard_state.py` normalises every glob
   before it compares or stores it, so `src\payments\**`, `./src/payments/**`,

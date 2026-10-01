@@ -60,7 +60,10 @@ enforcement:
     (interpreter-cache, runtime-state, save-state, test-scratch, render-scratch,
     coverage-residue, eval-workspace, archives, vcs-metadata, secrets), refuses
     symlinks, confirms nine required assets are present,
-    and exits 1 on any violation or 2 on a manifest error. Two suites run it and
+    and exits 1 on any violation or 2 on a manifest error. The runtime-state,
+    save-state and secrets names are read from
+    skill-maker/skill-creator/scripts/residue-classes.json, the list the skill
+    packager refuses by as well. Two suites run it and
     therefore exercise this manifest's globs through it:
     validation/test_save_contracts.py PackageCheckTests asserts that
     .harness-state/** and **/__pycache__/** drop those trees before the residue

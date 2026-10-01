@@ -579,6 +579,11 @@ class PackageManifestProseTests(unittest.TestCase):
         self.assertEqual(list(package_check.RESIDUE_CLASSES), names)
         self.assertEqual(validate_manifests.NUMBER_WORDS[len(package_check.RESIDUE_CLASSES)], count)
 
+    def test_the_shared_residue_file_it_names_is_the_one_package_check_reads(self):
+        relative = package_check.SHARED_RESIDUE_FILE.relative_to(SKILLS).as_posix()
+        self.assertIn(relative, self.prose)
+        self.assertTrue(package_check.SHARED_RESIDUE_FILE.is_file())
+
     def test_the_required_assets_it_counts_are_the_ones_package_check_has(self):
         found = re.search(r"confirms (\w+) required assets", self.prose)
         self.assertIsNotNone(found, "the manifest no longer says how many required assets package_check confirms")

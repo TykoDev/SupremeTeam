@@ -53,6 +53,7 @@ The harness hooks operate at multiple lifecycle layers to ensure safety, traceab
                               │  • Rule C: Single-writer records (save_run, taste, guard)
                               │  • Rule D: Read-only run boundaries
                               │  • Rule E: Coverage destination advisory
+                              │  • Rule F: Hook scripts and registration files
                               ▼
 [Executed Action] ───► PostToolUse (post_tool_use.py) [Layer 4]
                               │  • Trajectory regulation (repeat fails, loops, streaks)
@@ -72,7 +73,9 @@ Every file in `skills/harness/hooks/` serves an explicit, non-overlapping archit
 | File | Type / Event | Layer | Description |
 | :--- | :--- | :---: | :--- |
 | [`pre_tool_use.py`](pre_tool_use.py) | `PreToolUse` | 3 | Registered host entry point wrapper; forwards directly to `guard_hook.py`. |
-| [`guard_hook.py`](guard_hook.py) | Engine (`PreToolUse`) | 3 | Action Realization engine enforcing Rules A through E (destructive commands, boundaries, single writers). |
+| [`guard_hook.py`](guard_hook.py) | Engine (`PreToolUse`) | 3 | Action Realization engine enforcing Rules A through F, one function per rule (destructive commands, boundaries, read-only runs, single writers, hook files) plus the Rule E advisory. |
+| [`_cmdscan.py`](_cmdscan.py) | Internal Module | 3 | Shell command analyser: quoting, substitutions, heredocs, `cd`, wrappers (`sudo`, `env`, `xargs`, `sh -c`, `find -exec`, `powershell -Command`, `cmd /c`) and the write targets of the usual verbs, in time linear in the command. |
+| [`_paths.py`](_paths.py) | Internal Module | 3 | Path and glob canonicaliser: separators, `.`/`..`, `~`, drive letters, links and case, one `Boundary` per glob for the deny direction and an anchored allow-list test. |
 | [`post_tool_use.py`](post_tool_use.py) | `PostToolUse` | 4 | Trajectory Regulation engine: catches loops and repeated failures, sweeps coverage residue, refreshes heartbeats. |
 | [`user_prompt_submit.py`](user_prompt_submit.py) | `UserPromptSubmit` | Routing | Entry-routing advisor steering lifecycle tasks to `admiral` and reinforcing held session pins. |
 | [`save_run.py`](save_run.py) | CLI / Utility | Persistence | Sole sanctioned writer for canonical run records (`_state.md`, `_lock.md`, `_audit-trail.md`, `_journal.json`, `_latest.md`). |
@@ -82,11 +85,24 @@ Every file in `skills/harness/hooks/` serves an explicit, non-overlapping archit
 | [`check_readiness.py`](check_readiness.py) | CLI / Diagnostic | - | Evaluates runtime prerequisites: Python version (>= 3.13), hook registration, observed firing, and save state. Read-only. |
 | [`verify_registration.py`](verify_registration.py) | CLI / Diagnostic | - | Non-mutating inspector checking whether hooks are configured, resolvable, and executable in host configs, whether their matchers cover the tools they need, and which interpreter they launch. |
 | [`repair_registration.py`](repair_registration.py) | CLI / Diagnostic | - | Scoped dry-run diff preview and `--apply` repair tool for host hook configuration with timestamped backups; records the hook script hashes. |
-| [`_state.py`](_state.py) | Internal Module | 3 & 4 | Fail-open foundation helper: project-root resolution, trajectory recording, guard state access, and heartbeat refresh. |
+| [`_state.py`](_state.py) | Internal Module | 3 & 4 | Fail-open foundation helper: the one project-root resolver, hook input decoding, trajectory recording, guard state access, fault counting, and heartbeat refresh. |
+| [`_fsutil.py`](_fsutil.py) | Internal Module | 3 & 4 | The one atomic write (per-process staging, retry, in-place fallback) and the one OS advisory lock (`AdvisoryLock`) the hooks and writers share. |
+| [`_bootstrap.py`](_bootstrap.py) | Internal Module | - | Puts this directory and `skills/scripts` on `sys.path` once, so modules import what they need by its real name. |
+| [`_testkit.py`](_testkit.py) | Test Support | - | Shared scaffolding for the guard tests: an in-process `decide()` and a subprocess `run_hook()` that read the project from the environment as a host does. |
 | [`_saves.py`](_saves.py) | Internal Module | Persistence | Shared parser and classifier for `skillset-saves/`: `SaveRecord` dataclass, state validation, and evidence resolution. |
 | [`.gitignore`](.gitignore) | Config | - | Excludes runtime observations, temporary scratch files, and Python bytecode caches. |
 | [`test_hooks.py`](test_hooks.py) | Test Suite | - | Unit and integration tests for `pre_tool_use.py`, `guard_hook.py`, `post_tool_use.py`, and `user_prompt_submit.py`. |
-| [`test_hooks_hardening.py`](test_hooks_hardening.py) | Test Suite | - | Security and robustness tests: path normalization, injection attempts, malformed payloads, and fail-open guarantees. |
+| [`test_hooks_hardening.py`](test_hooks_hardening.py) | Test Suite | - | Registration analysis, trajectory isolation per session, freeze record handling, registration repair and the readiness capability map. |
+| [`test_hooks_robustness.py`](test_hooks_robustness.py) | Test Suite | - | The end-to-end hardening claims: path spellings and Windows/POSIX separators, symbolic links, a fixed-seed fuzz of the three registered hooks, and universal fail-open with a deny that stays a deny. |
+| [`test_guard_rules.py`](test_guard_rules.py) | Test Suite | - | Rules A to F one by one (a positive and a negative case per destructive-command rule), the never-weaker differential against the old rules, fallbacks, rule isolation and cost bounds. |
+| [`test_guard_cmdscan.py`](test_guard_cmdscan.py) | Test Suite | - | The command analyser: lexing, wrappers, write-target tables, nesting and cost. |
+| [`test_guard_paths.py`](test_guard_paths.py) | Test Suite | - | The path and glob canonicaliser: spellings, links, case, allow versus deny direction. |
+| [`test_guard_harness_files.py`](test_guard_harness_files.py) | Test Suite | - | Rule F: the hook scripts and registration files are protected while the guard is in use, and not otherwise. |
+| [`test_pre_tool_entry.py`](test_pre_tool_entry.py) | Test Suite | - | The registered PreToolUse entry fails open readably, on a fault and on a Python below the floor. |
+| [`test_state_hardening.py`](test_state_hardening.py) | Test Suite | - | Hook input decoding, fault counting, trusted state directory, grant cap and the project-root order. |
+| [`test_fsutil.py`](test_fsutil.py) | Test Suite | - | The shared atomic write and advisory lock. |
+| [`test_hooks_maintenance.py`](test_hooks_maintenance.py) | Test Suite | - | The coverage sweep (read-only runs, active runs, isolated `coverage combine`), neutralised context text, the fault trace of the post-tool and prompt hooks, and import structure. |
+| [`test_audit_improve_parts.py`](test_audit_improve_parts.py) | Test Suite | - | The audit as one function per record class, with a golden report pinning the output. |
 | [`test_hooks_lifecycle.py`](test_hooks_lifecycle.py) | Test Suite | - | Persistence lifecycle tests: `save_run.py` state transitions, atomic journaling, and read-only run confinement. |
 | [`test_hooks_observed.py`](test_hooks_observed.py) | Test Suite | - | Verification tests for observed host hook firing vs synthetic simulation. |
 | [`test_guard_state.py`](test_guard_state.py) | Test Suite | - | Authority and boundary tests for `guard_state.py` (freeze/block entries, owner checks, allow-dangerous expiries). |
@@ -104,8 +120,10 @@ Every file in `skills/harness/hooks/` serves an explicit, non-overlapping archit
 Per [`../../harness-doctrine.md`](../../harness-doctrine.md), every hook and helper adheres to strict engineering invariants:
 
 - **Standard Library Only:** Zero external runtime dependencies (`pip install` is never required).
-- **Fail Open:** Any internal fault, missing file, or unexpected exception exits 0 silently, allowing the host loop to proceed uninterrupted. A harness defect must never crash or deadlock an agent session.
-- **Inert on Competent Actions:** Denials and warnings fire only on mechanically certain signals (literal destructive shell patterns, exact path glob matches, or structured exit codes) — never on ambiguous intent or fuzzy heuristic guesses.
+- **Fail Open, and Say So:** Any internal fault, missing file, or unexpected exception exits 0 silently, allowing the host loop to proceed uninterrupted. A harness defect must never crash or deadlock an agent session. The fault is not lost: each hook counts what it swallowed by exception type (never by content) in its observation record (see [Fault trace](#fault-trace)).
+- **A Deny Stays a Deny:** Fail open means a fault allows the action, never that a damaged state file turns a rule off. A guard record in the wrong shape, an unusable state directory, or a failing rule leaves the destructive-command rule and every other rule that can still run in force.
+- **A Text Guard Is Not a Hard Lock:** the guard reads the command or path a tool is about to use. It cannot see what it is not shown (see [What the guard cannot see](#what-the-guard-cannot-see)), so a boundary that must hold against a determined actor also needs version-control protection or filesystem permissions.
+- **Inert on Competent Actions:** Denials and warnings fire only on mechanically certain signals (a destructive command read from its arguments, a canonical path match, or a structured exit code) — never on ambiguous intent or fuzzy heuristic guesses.
 - **Config vs. Observed Firing:** Inspecting a host configuration file confirms only that a command is *configured*, *resolvable*, and *executable*. It does not prove the host fired the hook. Readiness marks host firing as `hooks_observed: unverified` until real payloads containing host session IDs are recorded under `.harness-state/observations/`.
 - **Single-Writer Protection:** Authoritative state classes (`skillset-saves/`, `.harness-state/guard-state.json`, `taste.*`) have dedicated writers. The harness actively denies direct edits and mutating shell writes to these files.
 
@@ -119,34 +137,50 @@ Invoked by the host before any write-capable or shell tool executes. `pre_tool_u
 
 #### Rule Hierarchy and Enforcement Contract
 
-`guard_hook.py` applies five rules in strict priority order:
+`guard_hook.py` applies its rules in strict priority order (A, B, D, C, F; Rule E is advice, never a deny). Each rule is one function of the call, so each has its own tests, and a rule that faults is counted and skipped without switching off the others.
 
-1. **Rule A — Dangerous Shell Patterns:**
-   - Detects destructive commands that almost never represent legitimate agent work:
-     - `rm --no-preserve-root`, recursive root/drive wipes (`rm -rf /`, `rm -rf ~`, `rm -rf $HOME`, `rm -rf *`).
-     - PowerShell/cmd recursive root deletions (`Remove-Item -Recurse C:\`, `rd /s C:\`, `format`).
-     - Shell fork bombs (`:(){ :|:& };:`).
-     - Raw filesystem formats and block device overwrites (`mkfs`, `dd of=/dev/sd*`, `> /dev/sd*`).
-     - Recursive permission stripping (`chmod -R 000 /`).
-     - Force-pushing to protected branches (`git push --force origin main`, `git push origin master -f`).
-   - **Exemption:** Bounded by an active, unexpired, owner-bearing grant in `.harness-state/guard-state.json` via `guard_state.py allow-dangerous`. A legacy bare `true` flag is rejected.
+1. **Rule A — Dangerous Shell Commands:**
+   - Detects destructive commands that almost never represent legitimate agent work, from the command's arguments rather than its raw text: `rm --no-preserve-root`, recursive wipes of a root, home or drive (`rm -rf /`, `rm -rf ~/`, `rm -rf "$HOME/"`, `/bin/rm -rf /*`, `rm -rf *`), the same inside `sh -c`, `$(...)`, `sudo`, `env`, `xargs` and `find -exec`; PowerShell and cmd recursive root deletions (`Remove-Item -Recurse C:\`, `rd /s C:\`, `format`); fork bombs; raw filesystem formats and block device overwrites (`mkfs`, `dd of=/dev/sd*`); recursive permission stripping (`chmod -R 000 /`); and force-pushing to protected branches (`git push --force origin main`, `git -C r push origin master -f`).
+   - It is the union of the structural rules and the older textual rules, so it is never weaker than the textual rules were; a quoted mention of a destructive command (`echo "rm -rf /"`) is therefore still a false positive, as before.
+   - **Exemption:** Bounded by an active, unexpired, owner-bearing grant in `.harness-state/guard-state.json` via `guard_state.py allow-dangerous`, never more than 8 hours (the writer refuses more, the reader treats a longer grant as malformed). A legacy bare `true` flag is rejected, and a grant is ignored when the state directory is a link or belongs to another user.
 
 2. **Rule B — Frozen and Blocked Boundaries:**
-   - Enforces write locks declared by `guard` and `freeze` (`frozen_globs` and `blocked_globs` in `guard-state.json`).
-   - **Path tools (`Edit`, `Write`, `NotebookEdit`, `apply_patch`):** Denies any write targeting a path matching a frozen/blocked glob.
-   - **Shell tools (`Bash`, `PowerShell`):** Denies only when the command is *mutating* (e.g. `rm`, `mv`, `cp`, `git commit`, `Set-Content`, `Out-File`, redirects `>`) **and** targets a frozen path token. Read-only commands (`cat`, `grep`, `ls`, `Get-Content`) pass freely.
+   - Enforces write locks declared by `guard` and `freeze` (`frozen_globs` and `blocked_globs`). `blocked_globs` is a write boundary, never enforced against reads.
+   - **Path tools (`Edit`, `Write`, `MultiEdit`, `NotebookEdit`, `apply_patch`; tool names match in any case; `file_path`, `filePath`, `path` and `target_file` are read):** denies any write whose canonical path lies in a frozen/blocked glob: `.`/`..` segments, doubled separators, backslashes, `~`, drive letters, links and case are resolved first.
+   - **Shell tools (`Bash`, `PowerShell`):** the command is analysed; every write target (redirects, `tee`, `sed -i`, `cp`/`mv` destinations, `curl -o`, `dd of=`, `git checkout --`, `git apply`, PowerShell cmdlets, `cmd` verbs, and so on) is checked, `cd` is followed, and a tree verb (`rm -r`, `mv`, `git clean`) aimed at a directory above a boundary counts as hitting it. Reads (`cat`, `grep`, `ls`, `Get-Content`) pass.
+   - A relative glob is anchored at the project root: `src/**` does not reach `docs/src/`.
 
 3. **Rule C — Single-Writer Record Protection:**
-   - Denies edit tools and mutating shell commands from directly modifying core run persistence files (`skillset-saves/_latest.md`, `runs/*/_state.md`, `_lock.md`, `_audit-trail.md`, `_journal.json`, `_history/`). These must be updated only via `save_run.py`.
-   - Denies direct writes to Taste records (`taste.json`, `taste.md`, `taste.journal.jsonl`, `taste.lock`). These must be updated only via `skills/taste/taste_prefs.py`.
-   - Denies direct writes to `.harness-state/guard-state.json`. It must be updated only via `guard_state.py`.
+   - Denies edit tools and mutating shell commands from modifying core run persistence files (`skillset-saves/_latest.md`, `runs/*/_state.md`, `_lock.md`, `_audit-trail.md`, `_journal.json`, `_history/`), which only `save_run.py` may update; the Taste records (`taste.json`, `taste.md`, `taste.journal.jsonl`, `taste.lock`), which only `skills/taste/taste_prefs.py` may update; and `.harness-state/guard-state.json`, which only `guard_state.py` may update.
+   - Matching is case-insensitive and canonical. A script that is the sanctioned writer is exempt structurally, because a script's arguments are data and never write targets: `python save_run.py checkpoint ...` passes, while a redirect from the same command into a core file is still denied. Removing or moving the directories that hold these records (`.harness-state`, `skillset-saves`, `runs`, a run, `_history`, `preferences`) is denied too.
 
 4. **Rule D — Read-Only Run Enforcement:**
-   - While an unreleased `read_only` entry exists in `guard-state.json` (e.g. for an investigation or security audit), all file mutations outside `.harness-state/**` and the run's own declared save path are denied.
+   - While an unreleased `read_only` entry exists (an investigation or security audit), every write target must lie inside `.harness-state/**` or the run's `allow` globs: naming one allowed path in a command that also writes elsewhere no longer satisfies it. Git commands that change the repository and name no path (`git add -A`, `git push`, `git merge`) are denied. The coverage sweep obeys the same list.
 
 5. **Rule E — Coverage Destination Advisory:**
    - If a shell command initiates test coverage without an explicit output destination (`coverage run -p` without `combine`, `pytest --cov` without `--cov-report`, `nyc`/`c8` without `--report-dir`), emits an advisory `additionalContext` message directing the agent to place coverage evidence under `evidence/coverage/`.
    - **Contract:** Never denies the command; provides guidance before execution.
+
+6. **Rule F — Hook Scripts and Registration Files:**
+   - Denies edit tools and shell writes to `skills/harness/hooks/` and to the host hook registration files (`.claude/settings.json`, `.claude/settings.local.json`, `.codex/hooks.json`, `.github/hooks.json` and their user-scope equivalents, including the Cursor and OpenCode plugin paths), because one edit to `guard_hook.py` would otherwise persist and switch the guard off while readiness kept reporting the hooks registered.
+   - **Engaged only while the guard is in use:** a boundary is recorded or a run is pinned. Developing the hooks in a plain checkout is never blocked. A maintainer who has to edit them inside a run starts the host with `SUPREMETEAM_HARNESS_DEV=1`, which only the person launching the host can set. The sanctioned registration writers (`repair_registration.py`, `scripts/install_hooks.py`) are scripts and keep working. Detecting a change since registration is the registration tooling's job, not this rule's.
+
+#### What the guard cannot see
+
+The guard is a text guard. It analyses the command a tool is about to run and the path an edit tool names; it does not run anything and it is not a sandbox. These are known limits, stated here so no one relies on more than it gives:
+
+- a program that builds a path at run time, or reads it from a file, an environment variable it sets itself, or the network;
+- a script file that writes somewhere its command line does not name (`python build.py`, `make`, `npm run`);
+- interpreter inline code (`python -c`, `node -e`, `perl -e`): it is searched for protected paths, not interpreted, so a read-only run is not enforced against what inline code does beyond naming a protected path;
+- a tool name it does not know, and a tool input in a shape it cannot read, which are allowed through;
+- a link created in the same command that then writes through it;
+- a command it cannot parse (unbalanced quoting): the older textual rules still run on the raw text, which is never weaker than before, but it is not an analysis.
+
+The hook also fails open on its own faults. Back anything that must not change with version control, filesystem permissions or a sandbox as well.
+
+#### Fault trace
+
+Every place a hook swallows an exception to fail open also counts it. `.harness-state/observations/<Event>.json` (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`) carries `faults` (an integer) and `last_fault` (`{"type": <exception class name>, "at": <UTC timestamp>}`) beside the `observed` and `simulated` records. Only the type is recorded, never a message, path or command, so a fault cannot leak content into state. `_state.load_observations()` returns both fields, and `size_audit.py` and `audit_improve.py` report their own faults under `PostToolUse`. Readiness can surface the counts; they say whether a hook that fired also worked.
 
 ---
 
@@ -164,9 +198,10 @@ Invoked after tool execution completes. Watches for execution pathologies and in
 
 2. **Coverage Residue Sweep:**
    - Runs for shell tools (`Bash`, `PowerShell`, `shell`).
-   - If a test command left coverage residue at the project root (`.coverage`, `.coverage.*`, `htmlcov/`, `.nyc_output/`), relocates the files into the active run's `evidence/coverage/` (or `.harness-state/test-work/coverage-residue/` if no run is active).
-   - If multiple `.coverage.*` fragments exist and the `coverage` package is available, runs `coverage combine --keep` *inside the destination directory*.
-   - Never sweeps into or out of generated roots (`skillset-saves/`, `.harness-state/`). Bounded to 5,000 entries.
+   - If a test command left coverage residue at the project root (`.coverage`, `.coverage.*`, `htmlcov/`, `.nyc_output/`), relocates the files into the active run's `evidence/coverage/` (or `.harness-state/test-work/coverage-residue/` if no run is active). A run is active in the sense `_saves.inspect_saves` uses: a coherent run with a fresh lock. A pointer that still names a completed, released, blocked or stale run does not make that run the owner of new evidence.
+   - It is a write, so it obeys the boundaries: nothing inside a frozen or blocked glob is moved, and while a run is recorded read-only nothing is moved unless both the file and its destination lie in the run's allow list (the hint then says the residue was left in place, and why).
+   - If multiple `.coverage.*` fragments exist, runs `python -P -m coverage combine --keep <destination>` from the interpreter's own directory, so no directory the project controls is on the import path and no project configuration file is read. Whether `coverage` is installed is answered by that process: when it is not, the fragments are kept uncombined and the hint says so.
+   - Never sweeps into or out of generated roots (`skillset-saves/`, `.harness-state/`). Bounded to 5,000 entries. Run names and file names that reach the hint are neutralised and capped.
 
 3. **Maintenance Scan Triggering:**
    - Checks if a 6-hour interval has elapsed since the last runtime size audit and invokes `size_audit.py`.
@@ -263,9 +298,14 @@ python skills/harness/hooks/guard_state.py release-read-only --run-id run-123 --
 python skills/harness/hooks/guard_state.py status [--json]
 ```
 
+#### Behaviour worth knowing
+- **One spelling per boundary.** Every glob is normalised before it is compared or stored (`src\payments\**`, `./src/payments/**`, `src//payments/**` and the absolute form of a project path are all `src/payments/**`), so one boundary is one record and one release. A glob that can never match (empty, `.`, or climbing out of the project with `..`) is refused rather than recorded as a boundary that enforces nothing. Records written before this and stored in another spelling are still matched by their normalised form.
+- **One writer at a time.** Every command holds an OS advisory lock (`guard-state.json.lock`) from reading the record to replacing it, so two sessions cannot lose each other's change and a crashed holder never wedges it. `--lock-timeout SECONDS` (default 5) bounds the wait; a writer that cannot get the lock exits 1 and changes nothing.
+- **Bounded grants.** `allow-dangerous --minutes` is capped at 480 (8 hours); the hook also reads a grant with more than that left as malformed.
+
 #### Exit Codes
 - `0`: Success.
-- `1`: Refused (unauthorized requester, missing owner, malformed input, or corrupt JSON).
+- `1`: Refused (unauthorized requester, missing owner, malformed input, an unmatchable glob, a busy lock, or corrupt JSON).
 - `2`: Usage error.
 
 ---
@@ -447,9 +487,11 @@ python skills/harness/hooks/audit_improve.py --run --project-root .
 ### `_state.py` (Core Helper — Runtime State)
 
 Underlying fail-open utility for Layer 3 and Layer 4 hooks:
-- `find_project_root()`: Traverses upwards from cwd searching for root markers (`skillset-saves/`, `.harness-state/`, `.git`) or environment overrides.
-- `read_hook_input()`: Reads and parses JSON payloads from stdin safely.
-- `load_guard_state()`: Reads `.harness-state/guard-state.json` fail-open.
+- `project_root()` / `find_project_root()`: the one project-root resolver (see [Environment Variables Reference](#environment-variables-reference) for the order); every hook, writer and reader in this directory uses it.
+- `read_hook_input(event)`: Reads the JSON payload from stdin as bytes decoded as UTF-8 with replacement (a legacy console code page never makes a payload unreadable) and counts a payload that does not parse as a fault of `event`.
+- `load_guard_state()`: Reads `.harness-state/guard-state.json` fail-open: a list in the wrong shape names nothing to enforce and does not stop the rest of the record from being read; a permissive grant is dropped when the state directory is a link or belongs to another user (`state_dir_trusted`); a grant with more than `MAX_GRANT_MINUTES` left is treated as malformed. `read_only_allow()` is the allow list Rule D and the coverage sweep share.
+- `record_fault(event, error)` / `load_observations()`: the fault count described under [Fault trace](#fault-trace).
+- `safe_text(value, limit)`: neutralises and caps text taken from state before it is shown to the model. `read_mapping(path)` reads a run record.
 - `record_observation()`: Appends hook execution records under `.harness-state/observations/` with session ID tracking.
 - `refresh_run_heartbeat()`: Throttled update of the active run's heartbeat in `_state.md` and `_lock.md`.
 - `record_trajectory_step()`: Appends tool call signatures to `.harness-state/trajectories/` and prunes records older than 7 days.
@@ -523,8 +565,11 @@ python -m unittest discover -s skills/harness/hooks -p "test_*.py"
 
 ### Coverage by Test Module
 
-- **[`test_hooks.py`](test_hooks.py):** Comprehensive testing of `pre_tool_use.py`, `guard_hook.py`, `post_tool_use.py`, and `user_prompt_submit.py`, including Rules A through E, coverage residue relocation, and prompt routing.
-- **[`test_hooks_hardening.py`](test_hooks_hardening.py):** Path canonicalization, Windows backslash vs POSIX slash handling, symlink protection, malformed JSON fuzzing, and universal fail-open guarantees.
+- **[`test_hooks.py`](test_hooks.py):** Testing of `pre_tool_use.py`, `guard_hook.py`, `post_tool_use.py`, and `user_prompt_submit.py` through the registered scripts, including coverage residue relocation and prompt routing.
+- **[`test_guard_rules.py`](test_guard_rules.py), [`test_guard_cmdscan.py`](test_guard_cmdscan.py), [`test_guard_paths.py`](test_guard_paths.py), [`test_guard_harness_files.py`](test_guard_harness_files.py), [`test_pre_tool_entry.py`](test_pre_tool_entry.py):** the guard rule by rule: a positive and a negative case for each destructive-command rule, the differential proving the structural rules are never weaker than the old textual ones, the command analyser, the path canonicaliser, Rule F, and the entry point's fail-open.
+- **[`test_hooks_robustness.py`](test_hooks_robustness.py):** the hardening claims, end to end through the registered hooks: path canonicalization (dot segments, doubled separators, absolute and mixed spellings), Windows backslash versus POSIX slash handling in paths, recorded globs and shell verbs, symlink protection (links into a frozen tree, out of an allow list, to the guard record, behind the state directory, and links the sweep and size scan must not follow), a fixed-seed malformed-JSON fuzz of the three hooks (exit 0, no traceback, no internal fault on a payload that parses, a dangerous command still denied inside any noise), and universal fail-open with a deny that stays a deny.
+- **[`test_hooks_hardening.py`](test_hooks_hardening.py):** registration analysis, trajectory isolation per session, freeze record handling, registration repair, and the readiness capability map.
+- **[`test_state_hardening.py`](test_state_hardening.py), [`test_fsutil.py`](test_fsutil.py), [`test_hooks_maintenance.py`](test_hooks_maintenance.py), [`test_audit_improve_parts.py`](test_audit_improve_parts.py):** input decoding, fault counting, the trusted state directory, the shared atomic write and lock, the coverage sweep and the text the hooks show the model, the post-tool and prompt hooks' fault trace and import structure, and the audit's per-record-class parts.
 - **[`test_hooks_lifecycle.py`](test_hooks_lifecycle.py):** `save_run.py` lifecycle transitions, atomic publishing behind `_journal.json`, revision history, and `read_only` run confinement.
 - **[`test_hooks_observed.py`](test_hooks_observed.py):** Tests the distinction between configured host configs and actual observed executions under `.harness-state/observations/`.
 - **[`test_guard_state.py`](test_guard_state.py):** `guard_state.py` CLI testing: owner authorization, authority-validated release, `allow_dangerous` duration bounds, and single-writer lockouts.

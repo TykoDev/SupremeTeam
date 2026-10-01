@@ -455,5 +455,45 @@ class FailOpenTests(Project):
                     self.assertNotIn(b"Traceback", proc.stderr)
 
 
+class RunIdTests(Project):
+    """QR-PY-10: a run id becomes a directory name, so traversal in it is refused by the writer and ignored by the reader."""
+
+    HOSTILE = ("", ".", "..", "../x", "..\\x", "a/b", "a\\b", "x/../y", "/abs", "C:evil", "C:\\evil", "a:b", "a*b", "a?b", 'a"b', "a<b", "a>b", "a|b")
+
+    def test_the_writer_refuses_every_traversal_and_reserved_spelling_and_accepts_a_plain_id(self):
+        import save_run
+
+        for run_id in self.HOSTILE:
+            with self.subTest(run_id=run_id):
+                with self.assertRaises(save_run.Refused):
+                    save_run.safe_run_id(run_id)
+        for run_id in ("r1", "2026-09-29_full-review-audit_k7q2xd", "a.b-c_d"):
+            with self.subTest(run_id=run_id):
+                self.assertEqual(save_run.safe_run_id(run_id), run_id)
+
+    def test_the_reader_scopes_nothing_by_an_id_that_could_leave_the_runs_directory(self):
+        import _state
+
+        saves = self.root / "skillset-saves"
+        saves.mkdir()
+        for run_id in ("../x", "a/b", "..", "", "a b", "x" * 200):
+            (saves / "_latest.md").write_text(json.dumps({"run_id": run_id}), encoding="utf-8")
+            with self.subTest(run_id=run_id):
+                self.assertEqual(_state.active_run_id(self.root), "no-run")
+        (saves / "_latest.md").write_text(json.dumps({"run_id": "r1"}), encoding="utf-8")
+        self.assertEqual(_state.active_run_id(self.root), "r1")
+
+    def test_the_command_line_writer_creates_nothing_outside_the_runs_directory(self):
+        (self.root / "README.md").write_text("# fixture\n", encoding="utf-8")
+        for run_id in ("../escape", "a/b"):
+            with self.subTest(run_id=run_id):
+                proc = subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), "create", "--run-id", run_id, "--evidence", "README.md",
+                                       "--project-root", str(self.root)], capture_output=True, text=True, env=kit.clean_env(self.root), check=False)
+                self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertFalse((self.root / "skillset-saves" / "escape").exists())
+        self.assertFalse((self.root / "escape").exists())
+        self.assertEqual(sorted(p.name for p in (self.root / "skillset-saves" / "runs").glob("*")) if (self.root / "skillset-saves" / "runs").is_dir() else [], [])
+
+
 if __name__ == "__main__":
     unittest.main()

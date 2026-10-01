@@ -8,6 +8,8 @@ shell the suite happens to run in.
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -23,6 +25,7 @@ HOOK_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOK_DIR))
 import _bootstrap  # noqa: E402
 import _saves  # noqa: E402
+import check_readiness  # noqa: E402
 import repair_registration as repair  # noqa: E402
 import verify_registration as verify  # noqa: E402
 import test_run_state as fixtures  # noqa: E402
@@ -230,30 +233,53 @@ class ReadinessSemanticsTests(Scratch):
         self.assertEqual((data["saves"]["status"], data["saves"]["next_step"]), ("active", ""))
         self.assertNotIn("  next:", self.run_tool("check_readiness.py", "--host", "auto").stdout)
 
-    @unittest.skipUnless(fixtures.modes_are_enforced(), "this process bypasses file modes")
-    def test_a_run_record_the_account_cannot_read_is_said_plainly_and_is_not_a_missing_one(self):
-        """RR3-state-1: owner-only records read, for a second account, as `pointer missing or malformed`."""
+    LOCK = "skillset-saves/runs/r1/_lock.md"
+
+    def run_with_a_lock_to_refuse(self) -> None:
         self.claude_settings(self.registered())
         (self.project / "README.md").write_text("x\n", encoding="utf-8")
         created = subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), "create", "--project-root", str(self.project),
                                   "--run-id", "r1", "--evidence", "README.md"], capture_output=True, text=True, check=False,
                                  env=plain_env(self.home))
         self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
-        lock = self.project / "skillset-saves" / "runs" / "r1" / "_lock.md"
-        self.addCleanup(lock.chmod, 0o600)
-        lock.chmod(0)
-        path = "skillset-saves/runs/r1/_lock.md"
-        result, data = self.readiness("--host", "auto", "--require-active-run")
+
+    def assert_said_plainly(self, data: dict, text: str) -> None:
         saves = data["saves"]
-        self.assertEqual((saves["status"], saves["access_denied"]), ("corrupt", [path]), saves)
-        self.assertIn(f"{path} exists but this account cannot read it (permission denied)", saves["detail"])
+        self.assertEqual((saves["status"], saves["access_denied"]), ("corrupt", [self.LOCK]), saves)
+        self.assertIn(f"{self.LOCK} exists but this account cannot read it (permission denied)", saves["detail"])
         self.assertEqual(saves["next_step"], _saves.ACCESS_DENIED_STEP)
         self.assertFalse(data["capabilities"]["saves_readable"])
         self.assertFalse(data["capabilities"]["active_run"])
         self.assertTrue(any("cannot read it (permission denied)" in blocker for blocker in data["blockers"]), data["blockers"])
-        text = self.run_tool("check_readiness.py", "--host", "auto").stdout
-        self.assertIn(f"Saves: corrupt - {path} exists but this account cannot read it (permission denied)", text)
+        self.assertIn(f"Saves: corrupt - {self.LOCK} exists but this account cannot read it (permission denied)", text)
         self.assertIn(f"  next: {_saves.ACCESS_DENIED_STEP}", text)
+
+    @unittest.skipUnless(fixtures.modes_are_enforced(), "this process bypasses file modes")
+    def test_a_run_record_the_account_cannot_read_is_said_plainly_and_is_not_a_missing_one(self):
+        """RR3-state-1: owner-only records read, for a second account, as `pointer missing or malformed`."""
+        self.run_with_a_lock_to_refuse()
+        lock = self.project / self.LOCK
+        self.addCleanup(lock.chmod, 0o600)
+        lock.chmod(0)
+        _, data = self.readiness("--host", "auto", "--require-active-run")
+        self.assert_said_plainly(data, self.run_tool("check_readiness.py", "--host", "auto").stdout)
+
+    def test_a_refused_run_record_is_said_plainly_for_a_process_the_file_modes_do_not_bind(self):
+        """RR3-state-11: the test above skips where the modes do not bind the process, and the mutation that made
+        `saves_readable` ignore `access_denied` passed the default run. Here the refused read is simulated, so it runs for every
+        account and the same assertions hold."""
+        self.run_with_a_lock_to_refuse()
+
+        def report(*args: str) -> tuple[int, str]:
+            out = io.StringIO()
+            argv = ["check_readiness.py", "--host", "claude", "--project-root", str(self.project), *args]
+            with (fixtures.refusing("runs/r1/_lock.md"), mock.patch.object(sys, "argv", argv),
+                  mock.patch.dict(os.environ, plain_env(self.home), clear=True), contextlib.redirect_stdout(out)):
+                return check_readiness.main(), out.getvalue()
+
+        code, as_json = report("--json", "--require-active-run")
+        self.assertEqual(code, 1, as_json)
+        self.assert_said_plainly(json.loads(as_json), report()[1])
 
     def test_project_root_reaches_the_hook_inspection(self):
         # BUGH-19: the hooks live in the other project; the working directory is a bare one.
@@ -772,6 +798,15 @@ class IntegrityTests(Scratch):
         record = self.project / ".harness-state" / verify.HASH_RECORD
         self.assertIn(f"integrity: the hook files match the record in {record}", out.stdout)
         self.assertEqual(report["claude"]["hash_record"], str(record))
+
+    def test_a_project_that_recorded_the_hooks_and_changed_nothing_is_not_warned_about_a_missing_record(self):
+        """RR3-state-11: the warning is for the project with no record. A clean, recorded one had no test against it."""
+        self.run_tool("repair_registration.py", "--host", "claude", "--scope", "project", "--apply")
+        ready = json.loads(self.run_tool("check_readiness.py", "--host", "claude", "--json").stdout)
+        record = self.project / ".harness-state" / verify.HASH_RECORD
+        self.assertEqual({s["integrity"] for s in ready["hooks"]["states"].values()}, {"unchanged"})
+        self.assertEqual(ready["hooks"]["hash_record"], str(record))
+        self.assertFalse([w for w in ready["warnings"] if "no record in" in w or "changed since registration" in w], ready["warnings"])
 
     def test_no_record_is_reported_as_unrecorded_and_names_the_record_it_looked_for(self):
         """RR3-state-4, RR-V3-6: `unrecorded` was silent, which read as `nothing to report`."""

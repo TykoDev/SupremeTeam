@@ -1,18 +1,23 @@
 schema_version: 1
 kind: supremeteam-tech-stack-registry
 verified_at: "2026-10-01"
+verification_ttl_days: 180
 verification: >-
-  verified_at is the date each versions entry below was last read against its
-  overlay's own text and against support_ends. It is not a check against upstream
-  releases, which this repository cannot make offline: a version here is a major an
-  owner accepted, not a statement that it is current. Nothing reads verified_at or
-  support_ends yet, so a stale date is visible to a reader and to no gate.
+  verified_at is the date every versions entry below was last read against its
+  overlay's own text and against support_ends; the entries are re-read together, so
+  one date covers them all. It is not a check against upstream releases, which this
+  repository cannot make offline: a version here is a major an owner accepted, not a
+  statement that it is current. The gate reads two things when it checks a stack lock
+  (harness/gatekeeper/check.py, warn_registry_freshness): a lock on an overlay whose
+  support_ends date has passed, and a registry whose verified_at is more than
+  verification_ttl_days old. Both still pass and each adds a warning to the result,
+  because choosing a supported version is the owner's decision and the gate makes none.
   astro is marked in its own overlay as a historical, unmaintained snapshot with no
   end date, so it has no support_ends entry.
   vue-nuxt locks Nuxt 3 (versions 3 and 3.14), whose end of life passed on
-  2026-07-31, the date support_ends records. The pin is unchanged on purpose:
-  choosing a supported major for it is an owner decision, and neither this file nor
-  the gate makes it.
+  2026-07-31, the date support_ends records, so every lock on it carries that
+  warning. The pin is unchanged on purpose: choosing a supported major for it is an
+  owner decision.
 support_ends:
   vue-nuxt: "2026-07-31"
 provenance: >-

@@ -46,8 +46,10 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   policy declares, including `intake/report_grilling.md`. A run directory with no
   record is classified `uninitialized`. `save_run.py checkpoint --drop-evidence`
   retires a registered path that moved or was pruned.
-- The tech-stack registry records `verified_at`, `support_ends` and a note on what
-  its digests do and do not prove.
+- The tech-stack registry records `verified_at`, `verification_ttl_days`, `support_ends` and a
+  note on what its digests do and do not prove. A stack lock on an overlay whose support has
+  ended (`vue-nuxt`, since 2026-07-31), or against a registry not re-read within its window,
+  still passes and the gate's result lists a warning.
 - The guard's modules and suites. `skills/harness/hooks/` gains `_cmdscan.py` (the
   shell command analyser), `_paths.py` (the path and glob canonicaliser),
   `_fsutil.py` (the one atomic write and OS advisory lock), `_bootstrap.py` and

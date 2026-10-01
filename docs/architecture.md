@@ -125,9 +125,11 @@ afterwards.
 
 A digest in the registry is the integrity of the overlay text, not where the
 guidance came from. The registry also records when its pins were last read
-(`verified_at`) and the end-of-support dates the overlays state (`support_ends`);
-nothing checks either yet, so a lock on a slug whose support has ended is visible to
-a reader and not to the gate.
+(`verified_at`, with a `verification_ttl_days` window) and the end-of-support dates
+the overlays state (`support_ends`). The gate reads both: a lock on a slug whose
+support has ended, or against a registry not re-read within its window, still passes
+and the result carries a warning, because choosing a supported version is the owner's
+decision.
 
 Out: an approved design package with requirements, architecture, interface
 contracts, design system, plan, implementation spec, and traceability.

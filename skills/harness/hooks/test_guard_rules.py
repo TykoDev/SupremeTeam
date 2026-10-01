@@ -509,10 +509,29 @@ class LaunchedWriterTests(GuardCase):
         self.guard(FROZEN)
         self.check(("rm -rf src", "watch 'rm -rf src'", "ls | entr -s 'rm -rf src'", "parallel rm -rf ::: src"), deny=True, fragment="frozen boundary")
 
+    def test_the_single_writer_rule_reads_them_with_and_without_a_boundary(self):
+        for state in ({}, FROZEN, self.BLOCK):
+            self.guard(state)
+            for path, fragment in ((RECORD_SPELLINGS[0], "save_run.py"), (RECORD_SPELLINGS[1], "guard_state.py")):
+                with self.subTest(state=sorted(state), path=path):
+                    self.each(LAUNCHED_WRITERS, [path], deny=True, fragment=fragment)
+                    self.each(LAUNCHED_WRITERS_PS, [path], deny=True, tool="PowerShell", fragment=fragment)
+        self.guard({})
+        self.each(LAUNCHED_WRITERS, UNPROTECTED_SPELLINGS, deny=False)
+
+    def test_the_single_writer_rule_judges_a_launchers_named_target_too(self):
+        self.check(("watch 'rm skillset-saves/runs/r1/_state.md'", "parallel rm ::: skillset-saves/runs/r1/_lock.md",
+                    "ls | parallel rm skillset-saves/_write.lock"), deny=True, fragment="save_run.py")
+        self.check(("ls | entr -s 'rm .harness-state/guard-state.json'", "watch 'echo {} > .harness-state/guard-state.json'"), deny=True, fragment="guard_state.py")
+        self.check(("watch 'rm build/a'", "parallel rm ::: skillset-saves/runs/r1/design/reports/report_plan.md"), deny=False)
+
     def test_a_backslash_n_after_a_path_does_not_hide_it(self):
         self.guard(FROZEN)
         self.check(("printf 'rm src/payments/a\\n' | sh", "printf 'touch src/payments/a\\n\\n' | bash", "printf 'rm src\\\\payments\\\\a\\n' | sh"),
                    deny=True, fragment="frozen boundary")
+        self.guard({})
+        self.check(("printf 'rm skillset-saves/runs/r1/_state.md\\n' | sh", "printf 'rm .harness-state/guard-state.json\\n' | sh"),
+                   deny=True)
 
     def test_a_windows_spelling_names_the_path_in_the_text(self):
         self.guard(FROZEN)

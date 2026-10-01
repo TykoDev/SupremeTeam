@@ -796,12 +796,19 @@ def rule_single_writer(call: "Call") -> "str | None":
     if not call.shell:
         return None
     if call.analysis.ok:
-        for write, targets in call.shell_targets():
-            for target in targets:
-                reason = _protected_reason(target, above=write.via in _REMOVE_VIA)
-                if reason:
-                    return reason
-        return _code_protected(call.analysis.code, call)
+        analyses = list(_analyses(call.analysis))
+        for analysis in analyses:
+            for write, targets in call.shell_targets(analysis=analysis):
+                for target in targets:
+                    reason = _protected_reason(target, above=write.via in _REMOVE_VIA)
+                    if reason:
+                        return reason
+            reason = _code_protected(analysis.code, call)
+            if reason:
+                return reason
+        # The same reading as Rule B: a write the analyser cannot place in a command that spells a protected file.
+        text = _unplaced_command(call, analyses)
+        return _code_protected([text], call) if text is not None else None
     if not _textual_mutates(call.command):
         return None
     text = _normal_text(call.command)

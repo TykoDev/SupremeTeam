@@ -155,7 +155,10 @@ prompt-submit hook, and the gate checker's run-root verification.
    second operating-system account sharing the project directory cannot read the
    first one's) is `corrupt` with `access_denied` naming it, never absent or
    malformed: it may be a held run, so `create` and every operation that would pin
-   a run refuse beside it, and the guard counts it as held.
+   a run refuse beside it, and the guard counts it as held. `access_denied` marks
+   the records that may hold the pin (the pointer, a lock, a state beside a lock
+   that says held); a state this account cannot read beside a readable released
+   lock is a closed run, `corrupt` without `access_denied`, and `create` is allowed.
 2. Verify lock owner, heartbeat, status, revision lineage, and referenced
    artifacts. Heartbeat contract: the heartbeat is an ISO-8601 `heartbeat:`
    timestamp field inside the run's `_lock.md`, refreshed on every checkpoint or

@@ -913,6 +913,21 @@ class SecondAccountTests(RunStateCase):
                 self.assertIn(_saves.ACCESS_DENIED_STEP, str(caught.exception))
                 self.setUp()
 
+    def test_a_refused_state_beside_a_readable_released_lock_is_a_closed_run_and_create_goes_ahead(self):
+        """RR3-state-9: the lock decides. The key is not carried, the guard does not count the run as held, and the writer
+        is not refused, which is what the documents say of this one arrangement."""
+        self.create()
+        self.assertEqual(self.save("release")[0], 0)
+        with refusing("run-1/_state.md"):
+            status = self.store().status()
+            held = _saves.has_active_run(self.project)
+            code, out = self.in_process("create", "--evidence", "README.md", run_id="run-2")
+        self.assertEqual(status["status"], "corrupt", status)
+        self.assertNotIn("access_denied", status)
+        self.assertEqual(status["next_step"], _saves.NEXT_STEPS["corrupt"])
+        self.assertFalse(held)
+        self.assertEqual((code, out["result"]), (0, "ok"), out)
+
     def test_closing_the_run_does_not_lift_the_refusal_because_its_records_stay_unreadable(self):
         """RR3-state-7: the step used to name the owner completing or releasing the run as the way forward, and the second
         account met the same refusal afterwards: a closed run's records are as owner-only as a held one's."""

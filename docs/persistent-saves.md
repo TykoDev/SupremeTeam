@@ -136,7 +136,12 @@ the second account cannot see the first one's runs, and it does not take that fo
 empty save root. A record that exists and that the account is refused is classified
 `corrupt` with `access_denied` naming the file (`skillset-saves/runs/<id>/_lock.md
 exists but this account cannot read it (permission denied)`), never as a missing or
-malformed one. `create`, resuming a released run and `recover` refuse beside it with
+malformed one. `access_denied` is carried by the records that may hold the session pin:
+the pointer, a lock, and a state beside a lock that says held. A state the account
+cannot read beside a readable released lock is `corrupt` without `access_denied`: the
+lock shows the run closed, so the guard does not count it as held, `create` is
+allowed, and the next step is the one for damage, preserve it and escalate. `create`,
+resuming a released run and `recover` refuse beside a record that may hold the pin with
 that path and reason; every other operation on that run says the same instead of
 "no lock"; the readiness diagnostic prints it under `Saves:` with its next step; and
 the hook-file gate and the session-pin reminder count it as a held run, because it

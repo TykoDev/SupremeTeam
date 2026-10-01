@@ -334,6 +334,30 @@ class RefusedRecordTests(unittest.TestCase):
         self.assertEqual(result["status"], "corrupt")
         self.assertNotIn("access_denied", result)
         self.assertIn("cannot read it (permission denied)", result["detail"])
+        self.assertEqual(_saves.next_step(result), _saves.NEXT_STEPS["corrupt"])
+
+    def test_access_denied_marks_exactly_the_records_that_may_hold_the_pin(self):
+        """RR3-state-9: the key is not carried for every refused record, and the documents say which ones: the pointer, a
+        lock, and a state beside a lock that says held. `has_active_run` counts exactly those."""
+        arrangements = {
+            "the pointer": (lambda p: (p.run("a"), p.pointer("a")), "/_latest.md", True),
+            "the lock of a held run": (lambda p: (p.run("a"), p.pointer("a")), "runs/a/_lock.md", True),
+            "the lock of a closed run": (lambda p: (p.run("a", status="complete"), p.pointer("a")), "runs/a/_lock.md", True),
+            "the state beside a held lock": (lambda p: (p.run("a"), p.pointer("a")), "runs/a/_state.md", True),
+            "the state beside a released lock": (lambda p: (p.run("a", status="released"), p.pointer("a")), "runs/a/_state.md", False),
+            "the state beside a complete run's released lock": (lambda p: (p.run("a", status="complete"), p.pointer("a")),
+                                                                "runs/a/_state.md", False),
+        }
+        for label, (build, tail, pinning) in arrangements.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                project = SavedProject(Path(tmp).resolve(), now=datetime.now(timezone.utc))
+                build(project)
+                with refusing(tail):
+                    result = project.classify()
+                    self.assertEqual(_saves.has_active_run(project.root), pinning, result)
+                self.assertEqual(result["status"], "corrupt", result)
+                self.assertEqual("access_denied" in result, pinning, result)
+                self.assertIn("cannot read it (permission denied)", result["detail"])
 
     def test_a_refused_record_never_hides_a_readable_held_run_and_outranks_every_answer_that_says_none(self):
         arrangements = {
@@ -458,6 +482,17 @@ class AccessDeniedProseTests(unittest.TestCase):
         self.assertNotIn("only when", bullet)
         self.assertIn("a record this account cannot read", bullet)
         self.assertIn("which may be a held run", bullet)
+
+    def test_the_documents_say_which_refused_records_carry_access_denied(self):
+        """RR3-state-9: a refused state beside a readable released lock is `corrupt` without it, which the documents had said
+        of every refused record."""
+        for relative in ("docs/persistent-saves.md", "skills/save-protocol.md", "skills/harness/hooks/README.md"):
+            with self.subTest(relative):
+                path = HOOK_DIR.parents[2] / relative
+                if not path.is_file():
+                    self.skipTest(f"{relative} is not part of this copy")
+                text = " ".join(path.read_text(encoding="utf-8").split())
+                self.assertRegex(text, r"readable released lock[^.]{0,120}`corrupt` without `access_denied`")
 
     def test_every_document_that_repeats_it_says_the_same_and_none_keeps_the_old_remedy(self):
         for relative in self.DOCUMENTS:

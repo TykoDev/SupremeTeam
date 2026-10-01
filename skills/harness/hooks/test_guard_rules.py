@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import random
 import re
+import subprocess
 import sys
 import time
 import unittest
@@ -493,14 +494,15 @@ class SingleWriterTests(GuardCase):
                 self.assertIn("guard_state.py", kit.reason(self.edit(path)))
         for path in (self.STATE, "skillset-saves//runs/r1/_state.md", "skillset-saves/runs/r1/_STATE.MD", "skillset-saves/runs/x/../r1/_lock.md",
                      "skillset-saves/_latest.md", "skillset-saves/runs/r1/_audit-trail.md", "skillset-saves/runs/r1/_journal.json",
-                     "skillset-saves/runs/r1/_history/rev-1.state.json", f"{self.root}/skillset-saves/./runs/r1/_state.md"):
+                     "skillset-saves/runs/r1/_history/rev-1.state.json", f"{self.root}/skillset-saves/./runs/r1/_state.md",
+                     "skillset-saves/_write.lock", "skillset-saves//_write.lock", "skillset-saves/_WRITE.LOCK", f"{self.root}/skillset-saves/./_write.lock"):
             with self.subTest(path=path):
                 self.assertIn("save_run.py", kit.reason(self.edit(path)))
         for path in ("skillset-saves/preferences/taste.json", "skillset-saves/preferences/TASTE.MD", "skillset-saves/preferences/_history/r-1.json"):
             with self.subTest(path=path):
                 self.assertIn("taste_prefs.py", kit.reason(self.edit(path)))
         for path in ("skillset-saves/runs/r1/design/reports/report_plan.md", "skillset-saves/runs/r1/_state.md.bak",
-                     ".harness-state/trajectories/x.json", "docs/guard-state.json"):
+                     ".harness-state/trajectories/x.json", "docs/guard-state.json", "skillset-saves/runs/r1/_write.lock", "src/_write.lock"):
             with self.subTest(allowed=path):
                 self.assertEqual(self.edit(path), "", path)
 
@@ -532,7 +534,33 @@ class SingleWriterTests(GuardCase):
             "echo x > skillset-saves//runs/r1/./_state.md", "echo x > skillset-saves/runs/r1/_STATE.MD", f"echo x > {self.root}/{self.STATE}",
             "cd skillset-saves/runs/r1 && echo x > _lock.md", f"echo x | sudo tee {self.STATE}", f"sh -c 'echo x > {self.STATE}'",
             "rm -rf skillset-saves/runs/r1", "rm -rf skillset-saves", "mv skillset-saves/runs/r1 elsewhere",
+            "echo x > skillset-saves/_write.lock", ": > skillset-saves/_write.lock", "rm skillset-saves/_write.lock", "rm -f skillset-saves/./_write.lock",
+            "mv skillset-saves/_write.lock skillset-saves/_write.lock.old", "cp /dev/null skillset-saves/_write.lock", "truncate -s 0 skillset-saves/_write.lock",
+            "cd skillset-saves && rm _write.lock", "python3 -c \"open('skillset-saves/_write.lock','w')\"", "sh -c 'rm skillset-saves/_write.lock'",
         ), deny=True, fragment="save_run.py")
+
+    def test_the_registered_hook_lets_the_writer_create_its_mutex_and_refuses_a_hand_edit_of_it(self):
+        """A script's arguments are data, not write targets: the commands the protocol names pass, they make the lock, and the lock is then guarded."""
+        (self.root / "README.md").write_text("# fixture\n", encoding="utf-8")
+        saves = self.root / "skillset-saves"
+        for operation, extra in (("create", ("--evidence", "README.md")), ("checkpoint", ()), ("heartbeat", ())):
+            command = f"python skills/harness/hooks/save_run.py {operation} --run-id r1 {' '.join(extra)}".strip()
+            with self.subTest(operation=operation):
+                passed = kit.run_hook("pre_tool_use.py", kit.bash(command), self.root)
+                self.assertEqual((passed.returncode, passed.stdout), (0, b""))
+                ran = subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), operation, "--run-id", "r1", *extra, "--project-root", str(self.root)],
+                                     capture_output=True, text=True, check=False)
+                self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+        self.assertTrue((saves / "_write.lock").is_file())
+        for label, payload in (("write tool", kit.edit(str(saves / "_write.lock"))), ("remove", kit.bash("rm skillset-saves/_write.lock")),
+                               ("redirect", kit.bash("echo x > skillset-saves/_write.lock"))):
+            with self.subTest(hand_edit=label):
+                refused = kit.run_hook("pre_tool_use.py", payload, self.root)
+                self.assertTrue(kit.denied(refused.stdout.decode("utf-8")), refused.stdout)
+                self.assertIn("save_run.py", kit.reason(refused.stdout.decode("utf-8")))
+
+    def test_the_writer_mutex_is_found_in_a_command_that_cannot_be_tokenised_too(self):
+        self.check(("echo \"x > skillset-saves/_write.lock", "rm skillset-saves/_write.lock 'unterminated"), deny=True, fragment="save_run.py")
 
     def test_the_shell_cannot_reach_project_taste_state_either(self):
         self.check(("echo x > skillset-saves/preferences/taste.json", "cp x skillset-saves/preferences/taste.md",
@@ -546,6 +574,8 @@ class SingleWriterTests(GuardCase):
             "python skills/harness/hooks/guard_state.py status", f"python skills/harness/hooks/save_run.py checkpoint --run-id r1 --evidence {self.STATE}",
             "python skills/harness/hooks/save_run.py recover --run-id r1 --reason 'stale skillset-saves/runs/r1/_lock.md, >30 min'",
             "python skills/harness/hooks/save_run.py status --run-id r1 > skillset-saves/runs/r1/review/status.json",
+            "cat skillset-saves/_write.lock", "ls -l skillset-saves/_write.lock", "python skills/harness/hooks/save_run.py create --run-id r1 --evidence README.md",
+            "python skills/harness/hooks/save_run.py checkpoint --run-id r1 --evidence README.md --lock-timeout 5",
             'echo "x" > skillset-saves/runs/r1/design/reports/report_plan.md', "python -c 'print(1)'",
             "python skills/taste/taste_prefs.py set --scope project --id ui.style --value '\"compact\"'",
             "echo x > .harness-state/notes.json", "cat skillset-saves/preferences/taste.json", "rm -rf .harness-state/test-work",

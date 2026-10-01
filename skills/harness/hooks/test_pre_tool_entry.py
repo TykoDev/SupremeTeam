@@ -15,20 +15,24 @@ import ast
 import contextlib
 import io
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
 HOOK_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOK_DIR))
+import _bootstrap  # noqa: E402
 import _testkit as kit  # noqa: E402
 import pre_tool_use  # noqa: E402
 
 # The hook modules this package owns: each must import on an interpreter below the floor.
 OWNED_MODULES = ("_bootstrap", "_cmdscan", "_fsutil", "_paths", "_state", "guard_hook", "guard_state", "post_tool_use",
-                 "pre_tool_use", "size_audit", "audit_improve", "user_prompt_submit")
+                 "pre_tool_use", "run_heartbeat", "size_audit", "audit_improve", "user_prompt_submit")
 OLDER = kit.older_interpreters()
 BELOW_FLOOR = (3, 10, 12, "final", 0)
 
@@ -123,23 +127,80 @@ class EntryPointTests(unittest.TestCase):
         self.assertEqual((proc.returncode, proc.stdout), (0, b""))
 
 
+class PartialCopyTests(unittest.TestCase):
+    """A copy of the harness whose `skills/scripts` lacks `save_taxonomy.py` still guards and still lets the other two hooks run.
+
+    `_state` reads the run-id grammar from that module. Importing it unconditionally switched the guard off (the entry fails
+    open on an import fault) and made the other two entries exit 1 with a traceback, where before they only lost the run scope."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        skills = Path(tmp.name).resolve() / "skills"
+        ignore = shutil.ignore_patterns("test_*.py", "__pycache__")
+        shutil.copytree(HOOK_DIR, skills / "harness" / "hooks", ignore=ignore)
+        shutil.copytree(_bootstrap.SCRIPTS, skills / "scripts", ignore=ignore)
+        (skills / "scripts" / "save_taxonomy.py").unlink()
+        self.hooks = skills / "harness" / "hooks"
+        self.project = Path(tmp.name).resolve() / "project"
+        (self.project / ".git").mkdir(parents=True)
+
+    def run_entry(self, script: str, payload: dict) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, str(self.hooks / script)], input=json.dumps(payload).encode("utf-8"), capture_output=True,
+                              env=kit.clean_env(self.project), check=False)
+
+    def test_the_guard_still_denies_and_allows(self):
+        denied = self.run_entry("pre_tool_use.py", kit.bash("rm -rf /"))
+        self.assertEqual(denied.returncode, 0, denied.stderr)
+        self.assertTrue(kit.denied(denied.stdout.decode("utf-8")), denied.stdout)
+        allowed = self.run_entry("pre_tool_use.py", kit.bash("ls -la"))
+        self.assertEqual((allowed.returncode, allowed.stdout), (0, b""))
+
+    def test_the_other_two_entries_exit_zero_without_a_traceback(self):
+        prompt = self.run_entry("user_prompt_submit.py", {"prompt": "add a feature"})
+        self.assertEqual((prompt.returncode, prompt.stderr), (0, b""))
+        self.assertIn("admiral", prompt.stdout.decode("utf-8"))
+        post = self.run_entry("post_tool_use.py", {"tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_response": {}})
+        self.assertEqual((post.returncode, post.stderr), (0, b""))
+
+    def test_the_run_scope_is_no_run_where_the_grammar_is_missing(self):
+        code = "import sys; sys.path.insert(0, %r); import _state; print(_state.RUN_ID, _state.active_run_id(%r))" % (str(self.hooks), str(self.project))
+        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+        self.assertEqual((proc.returncode, proc.stdout.strip()), (0, "None no-run"), proc.stderr)
+
+
 class ImportabilityTests(unittest.TestCase):
     """No hook module evaluates syntax or a name a Python below the floor lacks while it is being imported (DX-13's other half)."""
 
     def test_no_unquoted_union_annotation_without_the_future_import(self):
         for name in OWNED_MODULES:
-            tree = ast.parse((HOOK_DIR / f"{name}.py").read_text(encoding="utf-8"))
-            future = any(isinstance(node, ast.ImportFrom) and node.module == "__future__"
-                         and any(alias.name == "annotations" for alias in node.names) for node in tree.body)
-            unions = [line for annotation, line in _annotations(tree)
-                      if any(isinstance(part, ast.BinOp) and isinstance(part.op, ast.BitOr) for part in ast.walk(annotation))]
+            unions = _union_annotations_at_import((HOOK_DIR / f"{name}.py").read_text(encoding="utf-8"))
             with self.subTest(module=name):
-                self.assertTrue(future or not unions, f"{name}.py evaluates `X | Y` annotations at import (line {unions[:3]}) without `from __future__ import annotations`")
+                self.assertEqual(unions, [], f"{name}.py evaluates `X | Y` annotations at import (line {unions[:3]}) without `from __future__ import annotations`")
 
-    def test_every_owned_module_parses_for_python_3_9(self):
-        for name in OWNED_MODULES:
-            with self.subTest(module=name):
-                ast.parse((HOOK_DIR / f"{name}.py").read_text(encoding="utf-8"), feature_version=(3, 9))
+    def test_no_file_a_registered_hook_runs_evaluates_a_union_annotation_at_import(self):
+        """The three entry scripts import `_state` at module level and `_state` imports `save_taxonomy` from `skills/scripts`,
+        so the files a Python 3.9 would have to import are the ones `enforcement_files()` lists, not only this directory's."""
+        for path in _bootstrap.enforcement_files():
+            unions = _union_annotations_at_import(path.read_text(encoding="utf-8"))
+            with self.subTest(file=path.name):
+                self.assertEqual(unions, [], f"{path.name} evaluates `X | Y` annotations at import (line {unions[:3]}) without `from __future__ import annotations`")
+
+    def test_the_scan_finds_the_annotation_that_broke_state_on_python_3_9(self):
+        """`def refresh_run_heartbeat(data: dict, event: str) -> dict | None` stood in `_state.py` without the future import until round 2."""
+        broken = "def refresh_run_heartbeat(data: dict, event: str) -> dict | None:\n    return None\n"
+        self.assertEqual(_union_annotations_at_import(broken), [1])
+        self.assertEqual(_union_annotations_at_import("class C:\n    field: int | None = None\n"), [2])
+        self.assertEqual(_union_annotations_at_import("def f(a: int | str) -> None:\n    return None\n"), [1])
+        self.assertEqual(_union_annotations_at_import("from __future__ import annotations\n" + broken), [])
+        self.assertEqual(_union_annotations_at_import('def f() -> "dict | None":\n    return None\n'), [])
+        self.assertEqual(_union_annotations_at_import("def f() -> dict:\n    return {}\n"), [])
+
+    def test_every_file_a_registered_hook_runs_parses_for_python_3_9(self):
+        paths = {HOOK_DIR / f"{name}.py" for name in OWNED_MODULES} | set(_bootstrap.enforcement_files())
+        for path in sorted(paths):
+            with self.subTest(file=path.name):
+                ast.parse(path.read_text(encoding="utf-8"), feature_version=(3, 9))
 
     @unittest.skipUnless(OLDER, "no interpreter below the running one is installed")
     def test_every_owned_module_imports_under_each_older_interpreter(self):
@@ -186,6 +247,37 @@ class OlderInterpreterTests(unittest.TestCase):
                                     self.root, python=python)
                 self.assertEqual((post.returncode, post.stderr), (0, b""))
 
+    def test_the_writer_mutex_is_guarded_and_the_writer_command_passes(self):
+        for label, python in OLDER:
+            with self.subTest(python=label):
+                for payload in (kit.edit("skillset-saves/_write.lock"), kit.bash("rm skillset-saves/_write.lock")):
+                    refused = kit.run_hook("pre_tool_use.py", payload, self.root, python=python)
+                    self.assertTrue(kit.denied(refused.stdout.decode("utf-8")), refused.stdout)
+                passed = kit.run_hook("pre_tool_use.py", kit.bash("python skills/harness/hooks/save_run.py checkpoint --run-id r1"), self.root, python=python)
+                self.assertEqual((passed.returncode, passed.stdout, passed.stderr), (0, b"", b""))
+
+    def test_every_entry_refreshes_a_due_heartbeat_under_each_older_interpreter(self):
+        """The refresh moved out of `_state` into `run_heartbeat` (QR-PY-14); the three entries still reach the real writer from it."""
+        (self.root / "README.md").write_text("# fixture\n", encoding="utf-8")
+        created = subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), "create", "--run-id", "run-1", "--evidence", "README.md",
+                                  "--project-root", str(self.root)], capture_output=True, text=True, env=kit.clean_env(self.root), check=False)
+        self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
+        lock = self.root / "skillset-saves" / "runs" / "run-1" / "_lock.md"
+        throttle = self.root / ".harness-state" / "observations" / "heartbeat-scan.json"
+        entries = (("pre_tool_use.py", "PreToolUse", kit.bash("ls")), ("post_tool_use.py", "PostToolUse", kit.bash("ls")),
+                   ("user_prompt_submit.py", "UserPromptSubmit", {"prompt": "/status"}))
+        for label, python in OLDER:
+            for script, event, payload in entries:
+                record = json.loads(lock.read_text(encoding="utf-8"))
+                record["heartbeat"] = (datetime.now(timezone.utc) - timedelta(minutes=12)).isoformat()
+                record.pop("heartbeat_source", None)
+                lock.write_text(json.dumps(record), encoding="utf-8")
+                throttle.unlink(missing_ok=True)
+                with self.subTest(python=label, entry=script):
+                    proc = kit.run_hook(script, {**payload, "session_id": "host-1"}, self.root, python=python)
+                    self.assertEqual((proc.returncode, proc.stderr), (0, b""))
+                    self.assertEqual(json.loads(lock.read_text(encoding="utf-8")).get("heartbeat_source"), f"hook:{event}")
+
     def test_a_real_failure_to_import_the_guard_is_readable_and_counted(self):
         for label, python in OLDER:
             with self.subTest(python=label):
@@ -199,6 +291,16 @@ class OlderInterpreterTests(unittest.TestCase):
                 record = _observation(self.root)
                 self.assertEqual((record["faults"], record["last_fault"]["type"]), (1, "SyntaxError"))
                 (self.root / ".harness-state" / "observations" / "PreToolUse.json").unlink()
+
+
+def _union_annotations_at_import(source: str) -> list:
+    """The lines of annotations written as `X | Y` that a Python below 3.10 would evaluate; none when the module defers them all."""
+    tree = ast.parse(source)
+    if any(isinstance(node, ast.ImportFrom) and node.module == "__future__" and any(alias.name == "annotations" for alias in node.names)
+           for node in tree.body):
+        return []
+    return [line for annotation, line in _annotations(tree)
+            if any(isinstance(part, ast.BinOp) and isinstance(part.op, ast.BitOr) for part in ast.walk(annotation))]
 
 
 def _annotations(tree):

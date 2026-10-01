@@ -44,6 +44,7 @@ from pathlib import Path
 import _bootstrap
 import _paths
 import _state
+import run_heartbeat
 
 _REPEAT_FAIL_THRESHOLD = 3
 _EMPTY_STREAK_THRESHOLD = 3
@@ -466,7 +467,7 @@ def main() -> None:
 
     data = _state.read_hook_input()
     _state.record_observation("PostToolUse", data)
-    _state.refresh_run_heartbeat(data, "PostToolUse")
+    run_heartbeat.refresh(data, "PostToolUse")
     # Scoped identity: host session id, else environment, else host process.
     # Independent invocations without a session id never share one history.
     session_id, _identity_source = _state.trajectory_identity(data)

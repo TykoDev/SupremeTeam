@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 
 import _state
+import run_heartbeat
 
 _ROUTE_REMINDER = (
     "Supreme Team entry routing: no active run detected. `admiral` is the "
@@ -85,7 +86,7 @@ def _active_run() -> bool:
 def main() -> None:
     data = _state.read_hook_input("UserPromptSubmit")
     _state.record_observation("UserPromptSubmit", data)
-    _state.refresh_run_heartbeat(data, "UserPromptSubmit")
+    run_heartbeat.refresh(data, "UserPromptSubmit")
     prompt = str(data.get("prompt", "") or "")
 
     # Empty prompt: nothing to route.

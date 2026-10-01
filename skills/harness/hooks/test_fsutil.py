@@ -134,6 +134,27 @@ class AtomicWriteTests(unittest.TestCase):
         self.assertTrue(any("replaced in place" in note for note in notes), notes)
         self.assertEqual(self.leftovers(), [])
 
+    def test_a_target_that_must_be_replaced_whole_is_refused_not_overwritten_in_place(self):
+        """The registration writer replaced a host config atomically or raised; `in_place=False` keeps that on the shared write."""
+        target = self.dir / "a.json"
+        target.write_text("old", encoding="utf-8")
+        notes: list = []
+        with mock.patch.object(_fsutil.os, "replace", side_effect=PermissionError(errno.EACCES, "denied")), \
+                mock.patch.object(_fsutil.time, "sleep"):
+            with self.assertRaises(PermissionError):
+                _fsutil.atomic_write(target, "new", notes=notes, in_place=False)
+        self.assertEqual(target.read_text(encoding="utf-8"), "old")
+        self.assertEqual((notes, self.leftovers()), ([], []))
+
+    def test_an_interrupt_during_the_write_leaves_no_staging_file_and_the_old_bytes(self):
+        target = self.dir / "a.json"
+        target.write_text("old", encoding="utf-8")
+        with mock.patch.object(_fsutil.os, "fsync", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                _fsutil.atomic_write(target, "new")
+        self.assertEqual(target.read_text(encoding="utf-8"), "old")
+        self.assertEqual(self.leftovers(), [])
+
     def test_a_missing_target_that_cannot_be_created_raises(self):
         with mock.patch.object(_fsutil.os, "replace", side_effect=PermissionError(errno.EACCES, "denied")), \
                 mock.patch.object(_fsutil.time, "sleep"):

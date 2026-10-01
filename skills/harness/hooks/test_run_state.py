@@ -45,6 +45,7 @@ SAVE_RUN = HOOK_DIR / "save_run.py"
 sys.path.insert(0, str(HOOK_DIR))
 import _saves  # noqa: E402
 import _state  # noqa: E402
+import run_heartbeat  # noqa: E402
 import save_run  # noqa: E402
 
 # A real writer, stopped after it has read the run and decided but before it
@@ -343,7 +344,7 @@ class HeartbeatHotPathTests(RunStateCase):
         self.addCleanup(scan.stop)
 
     def refresh(self):
-        return _state.refresh_run_heartbeat({"session_id": "host-1"}, "PreToolUse")
+        return run_heartbeat.refresh({"session_id": "host-1"}, "PreToolUse")
 
     def test_a_fresh_heartbeat_costs_no_scan(self):
         self.create()
@@ -515,7 +516,7 @@ class LegacyRunIdTests(RunStateCase):
         self.legacy("my run")
         self.age_records(12)
         with mock.patch.dict(os.environ, {"SUPREMETEAM_PROJECT_DIR": str(self.project)}):
-            result = _state.refresh_run_heartbeat({"session_id": "host-1"}, "PreToolUse")
+            result = run_heartbeat.refresh({"session_id": "host-1"}, "PreToolUse")
         self.assertEqual(result["source"], "hook:PreToolUse", result)
         self.assertEqual(_state.load_observations(self.project).get("PreToolUse", {}).get("faults", 0), 0)
 

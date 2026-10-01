@@ -66,15 +66,18 @@ def _fsync(handle) -> None:
         pass  # a file system without fsync still got the bytes
 
 
-def atomic_write(path: Path, data: "str | bytes", *, mode: "int | None" = None, notes: "list[str] | None" = None) -> None:
+def atomic_write(path: Path, data: "str | bytes", *, mode: "int | None" = None, notes: "list[str] | None" = None,
+                 in_place: bool = True) -> None:
     """Replace ``path`` with ``data`` in one step, or leave it as it was; raises ``OSError``.
 
     The staging file is named per process, so writers that overlap never truncate
     each other's half-written bytes, and it is opened exclusively without following
-    a link, so a staging name planted as a symlink is not written through. A target
-    whose ACL denies the rename (a file another sandbox user created) is
-    overwritten in place after the retries, and that non-atomic step is appended to
-    ``notes`` so it is visible rather than silent.
+    a link, so a staging name planted as a symlink is not written through. It is
+    removed again on any failure, an interrupt included. A target whose ACL denies
+    the rename (a file another sandbox user created) is overwritten in place after
+    the retries, and that non-atomic step is appended to ``notes`` so it is visible
+    rather than silent. ``in_place=False`` raises the denial instead and leaves the
+    target untouched, for a file that has to be replaced whole or not at all.
 
     ``mode`` None leaves the permission bits to the process umask. An explicit mode
     is the one the file ends with, applied again after creation because the umask can
@@ -98,7 +101,7 @@ def atomic_write(path: Path, data: "str | bytes", *, mode: "int | None" = None, 
         try:
             replace_with_retry(tmp, path)
         except PermissionError as exc:
-            if not path.exists():
+            if not in_place or not path.exists():
                 raise
             with open(path, "wb") as handle:
                 handle.write(payload)
@@ -110,7 +113,7 @@ def atomic_write(path: Path, data: "str | bytes", *, mode: "int | None" = None, 
                 pass
             if notes is not None:
                 notes.append(f"{path.name}: replaced in place (target ACL denies rename: {exc.__class__.__name__})")
-    except OSError:
+    except BaseException:
         try:
             tmp.unlink()
         except OSError:

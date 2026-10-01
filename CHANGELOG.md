@@ -9,6 +9,14 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ### Added
 
+- Installs carry the repository `LICENSE` at the install root (`skills/LICENSE`, a
+  byte copy kept identical to the root file by a test).
+- `--target copilot` (`-Target Copilot`) on both installers, hooks only; `auto` never
+  picks it. The installers also probe `python3.13` and `python3.14` when looking for a
+  compatible interpreter.
+- `ruff.toml` and a `lint` CI job that pins the ruff version; the repository's unused
+  imports, unused locals and dead code are removed so the job starts clean.
+- `validate_manifests.py` is a command-line tool with `--help` that refuses unknown flags.
 - Continuous integration. `.github/workflows/ci.yml` runs the seven test suites
   and the validators on Windows, macOS and Linux, on Python 3.13 and 3.14, with
   and without PyYAML. `skills/runtime-manifest.yaml` declares it (`ci_matrix`,
@@ -52,6 +60,13 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ### Changed
 
+- `save_run.py block` refuses `--reason` instead of accepting and discarding it, and run
+  ids are checked against the pattern the reader uses, so a writer can no longer create a
+  run id the reader would not find.
+- The verifier and readiness print a repair command that exists where they run, not a
+  checkout-relative one that fails in an installed copy.
+- `quick_validate` rejects extension keys no skill uses.
+- The `audit` evidence kind is removed from the gate spec and engine: no key mapped to it.
 - The guard keeps one record per boundary. `guard_state.py` normalises every glob
   before it compares or stores it, so `src\payments\**`, `./src/payments/**`,
   `src//payments/**` and the absolute form of a project path are one record and one

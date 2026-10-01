@@ -278,7 +278,7 @@ their group. This manifest is the authoritative flat index regardless of depth.
 
 The checkout also carries files outside `skills/`, which the installers do not copy:
 `README.md`, `QUICK-START.md`, `Install.md`, `BENCHMARK.md`,
-`CHANGELOG.md`, `CONTRIBUTING.md`, `LICENSE`, `docs/`, the installers in `scripts/`
+`CHANGELOG.md`, `CONTRIBUTING.md`, `LICENSE`, `ruff.toml`, `docs/`, the installers in `scripts/`
 (`install.sh`, `install.ps1`, `install_hooks.py`, `install-items.txt`,
 `test_install.py`) and the CI workflow `.github/workflows/ci.yml`.
 

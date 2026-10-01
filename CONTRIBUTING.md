@@ -34,6 +34,11 @@ python skills/scripts/validate_manifests.py
 python skills/scripts/package_check.py --root .
 ```
 
+Lint is a separate CI job. Install the version pinned in `.github/workflows/ci.yml`
+(`python -m pip install ruff==0.16.9` today) and run `ruff check .`; the rules and why
+each is on are in `ruff.toml`, and `skills/validation/test_lint_config.py` keeps the CI job
+and that file in step.
+
 On Windows use `py -3` for `python`. To run one module, pass its file name as the
 pattern, for example `-s skills/scripts -p "test_validate_manifests.py"`.
 

@@ -98,8 +98,10 @@ To see the change before running the installer for real, install first without
 python3 scripts/install_hooks.py --target claude --hook-root "$HOME/.agents/skills/harness/hooks" --dry-run
 ```
 
-Copilot has hook support but no installer target and no skills directory; register
-it with `python3 scripts/install_hooks.py --target copilot --hook-root "$HOME/.agents/skills/harness/hooks"`.
+Copilot has hook support but no skills directory. The installers take it as a hooks-only
+target (`--target copilot`, `-Target Copilot`); `auto` never picks it, so name it. To register
+only its hooks, run
+`python3 scripts/install_hooks.py --target copilot --hook-root "$HOME/.agents/skills/harness/hooks"`.
 
 Then open `/hooks` or restart the host if it wants to review them first.
 

@@ -81,7 +81,7 @@ error.
 
 **Manifest schema 2.** Adds `boundary` (must match `--boundary`), `owner` (must
 match the spec `submitter`), `run_id`, typed records for keys named in
-`evidence_types` (scan, render, probe, audit, findings, verdict, stack_lock,
+`evidence_types` (scan, render, probe, findings, verdict, stack_lock,
 revision_ref, and the Taste records preference_diff, confirmation,
 conflict_analysis, persistence_result, effective_profile, consumer_handoff,
 variant_set for the four redesign mocks and for the one variant built from the

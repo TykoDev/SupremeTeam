@@ -17,8 +17,9 @@ bash ./scripts/install.sh
 ```
 
 Installs the common `~/.agents/skills` target, refreshes any host mirror it finds,
-and retires directories left by older layouts. Codex and Cursor mirrors are created
-only when named or already present. Re-run the same command to upgrade, and add
+and retires directories left by older layouts. The install carries the repository's
+`LICENSE` at its root. Codex and Cursor mirrors are created only when named or already
+present. Re-run the same command to upgrade, and add
 `--dry-run` (`-DryRun`) first to see what it would do without writing anything.
 
 The installer only replaces or removes what it installed. Each target gets a
@@ -56,7 +57,7 @@ creates carries a `.supremeteam-managed` marker. On an upgrade:
 | Preview only | `-DryRun` | `--dry-run` |
 
 Teams: `Design`, `Build`, `Review`, `Browser`, `Release`, `Safety`, `Testing`,
-`All`. Hosts: `auto`, `codex`, `claude`, `cursor`, `opencode`. Per-host
+`All`. Hosts: `auto`, `codex`, `claude`, `cursor`, `opencode`, `copilot` (hooks only; `auto` never picks it). Per-host
 destination flags exist too (`-CodexDestination`, `--claude-destination`, and so
 on); `-InstallClaude` and `--install-claude` are older aliases for the Claude
 target. `--help` (`Get-Help .\scripts\install.ps1`) lists every option.
@@ -129,7 +130,8 @@ added when there is local evidence of the host.
 | Cursor | `~/.cursor/skills/` | `%USERPROFILE%\.cursor\skills\` |
 
 GitHub Copilot has no skills directory here: only its hook configuration is
-written, and only when you register hooks for it (see [Runtime hooks](#runtime-hooks)).
+written, and only when you name it (`--target copilot`, `-Target Copilot`) and register
+hooks for it (see [Runtime hooks](#runtime-hooks)).
 
 Claude Code and OpenCode mirror automatically when present. Codex and Cursor
 mirror only when named explicitly or already holding an install. On upgrade,

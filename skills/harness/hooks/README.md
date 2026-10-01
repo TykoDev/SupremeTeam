@@ -249,7 +249,7 @@ python skills/harness/hooks/save_run.py heartbeat --run-id <run-id> [--owner <ow
 # Mark run complete (releases session pin, preserves final state)
 python skills/harness/hooks/save_run.py complete --run-id <run-id> [--owner <owner>]
 
-# Mark run blocked (preserves the run pointer; --reason belongs to recover and checkpoint --drop-evidence, block does not record it)
+# Mark run blocked (preserves the run pointer; block refuses --reason, which belongs to recover and checkpoint --drop-evidence: say why with --next-action or --set)
 python skills/harness/hooks/save_run.py block --run-id <run-id> --next-action "<what unblocks it>" [--set blocked_reason=<text>]
 
 # Release lock (clears session pin to allow other operations)

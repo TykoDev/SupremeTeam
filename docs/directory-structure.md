@@ -12,6 +12,7 @@ SupremeTeam/
 ├── CHANGELOG.md                          # What changed
 ├── CONTRIBUTING.md                       # Running the suites, fail-open and fail-loud, commits
 ├── LICENSE                               # MIT
+├── ruff.toml                             # Lint rules CI enforces
 ├── .gitattributes                        # LF text in the repository, binary file types
 ├── .gitignore                            # Run state, local environments, interpreter and coverage residue
 ├── .github/workflows/ci.yml              # Runs the suites and validators on three OSes
@@ -39,6 +40,7 @@ SupremeTeam/
     ├── team-manifest.yaml                # Roster
     ├── runtime-manifest.yaml             # Runtime floor, launchers, commands
     ├── package-manifest.yaml             # Packaging and delivery contract
+    ├── LICENSE                           # Byte copy of the root licence, so an install carries it
     ├── execution-contract.md             # Preamble clauses and tiers
     ├── routing-doctrine.md               # Entry routing, Tier 0, session pin
     ├── grill-me-doctrine.md              # Intake interview
@@ -148,7 +150,8 @@ test, so run the suite and read its last line.
 - **Validation**, `skills/validation/`: `test_catalog_contracts.py`, `test_orchestration.py`,
   `test_pipeline_contracts.py`, `test_pipeline_workflows.py`, `test_save_contracts.py`,
   `test_save_prose.py`, `test_save_taxonomy.py`, `test_trigger_routing.py`,
-  `test_eval_tools.py`, `test_repository_hygiene.py`, `test_docs_inventory.py`
+  `test_eval_tools.py`, `test_repository_hygiene.py`, `test_docs_inventory.py`,
+  `test_lint_config.py`
 - **Scripts**, `skills/scripts/`: `test_check_runtime_contract.py`,
   `test_check_runtime_detection.py`, `test_check_runtime_layout.py`,
   `test_check_runtime_redaction.py`, `test_check_runtime_scaffold.py`,

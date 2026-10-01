@@ -109,7 +109,7 @@ matters most for `tests` and `runtime`:
   `input_revision` differs from the package revision.
 - **Required only for `scan` and `render` records.** Those two fail with
   `<key> record must bind inputs (path + sha256) to the inspected source` when
-  they name none. A `probe` or `audit` record (`tests`, `runtime`,
+  they name none. A `probe` record (`tests`, `runtime`,
   `executed_probes`, `reproduction`, `evidence_chain`, `test_matrix`,
   `denial_path_evidence`, `mock_parity`, `parity_evidence`) may omit `inputs`,
   and then passes with nothing tying it to any source. The result lists each
@@ -172,7 +172,7 @@ mechanical column.
 
 | Standard | Backing | What fails |
 |----------|---------|------------|
-| Evidence that names source `inputs` stays bound to them by path and sha256 | Machine-checked by `check.py` for any typed record that carries `inputs`; the inputs are required for `scan` and `render` records only | `input hash drift (stale evidence)`, `input missing`, `input entry requires path and sha256`, and for scan and render alone `record must bind inputs (path + sha256) to the inspected source`. A `probe` or `audit` record with no `inputs` passes and is listed in `warnings`. |
+| Evidence that names source `inputs` stays bound to them by path and sha256 | Machine-checked by `check.py` for any typed record that carries `inputs`; the inputs are required for `scan` and `render` records only | `input hash drift (stale evidence)`, `input missing`, `input entry requires path and sha256`, and for scan and render alone `record must bind inputs (path + sha256) to the inspected source`. A `probe` record with no `inputs` passes and is listed in `warnings`. |
 | A typed record is what it claims to be | Judgement, apart from one contradiction | `check.py` checks shape, artifact digests, input digests, and that a pass does not sit beside a non-zero exit code (`result pass contradicts exit_code`, `exit_code must be an integer`). It never opens an artifact, so that a log is the runner's own output, that a scan ran, or that a capture shows the surface is for the gatekeeper. |
 | A key declared artifact-backed points at a hashed artifact | Machine-checked by `check.py` | `evidence not artifact-backed`, `evidence references unhashed path`, `evidence references defective artifact` |
 | A named artifact exists and matches its declared digest | Machine-checked by `check.py` | `missing artifact`, `invalid artifact digest`, `artifact hash mismatch` |

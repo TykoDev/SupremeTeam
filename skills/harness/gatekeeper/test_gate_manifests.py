@@ -336,6 +336,7 @@ class GateSpecContractTests(unittest.TestCase):
             self.assertLessEqual(set(boundary.get("fallback_values", {})),
                                  set(boundary["required_evidence"]))
 
+    @unittest.skipUnless(GATE_DOC.is_file(), "installed copy: docs/ is not part of an install")
     def test_documented_boundary_table_matches_gate_spec(self):
         """Every documented boundary table must exactly mirror gates.yaml."""
         spec = load_spec()["boundaries"]

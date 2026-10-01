@@ -187,8 +187,10 @@ value. Submit at schema 2: at schema 1 four of the six keys — everything but
 are documentation rather than enforcement. Schema 2 narrows that to three, since
 `security_evidence` becomes a checked `findings` record.
 
-Exit 0 is a mechanical fact, not approval; exit 2 is an engine error and never a
-pass.
+A typed record is the submitter's own statement: the validator never opens an
+artifact or re-runs a command, so whether `tests` is the runner's own log stays a
+judgement. Exit 0 is a mechanical fact, not approval; exit 2 is an engine error
+and never a pass.
 
 ### The two key spaces collide by name
 

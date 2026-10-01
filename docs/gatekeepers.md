@@ -90,6 +90,17 @@ decision must stand all four down on the wording that matches it.
 At manifest schema 2, keys listed in `evidence_types` have to be structured
 records rather than prose.
 
+A manifest inside a run must declare schema 2: an absent or schema-1
+`schema_version` fails, and the package is checked as schema 2 anyway. The one
+place schema 1 still passes is a flat package outside a run. Its exit 0 means the
+required keys are present and the hashes hold; no typed record, waiver wording or
+finding policy was checked, so a scan or a waiver is free text that passed. The
+result says so (`manifest_schema_version: 1` and a `warnings` entry), and the
+gatekeeper that reads such a pass returns REVISE for a schema-2 manifest instead
+of approving it. Nothing in a flat package says whether it is a legacy manifest or a
+hand-made downgrade, so the validator warns instead of failing and leaves that
+reading to the gatekeeper.
+
 | Type | Keys | Must carry |
 |---|---|---|
 | `probe` | `tests`, `runtime`, `executed_probes`, `reproduction`, `evidence_chain`, `test_matrix`, `denial_path_evidence`, `mock_parity`, `parity_evidence` | Hashed artifacts and `result.status: pass`. The executed log is the artifact. A bare count is not evidence. `inputs` are optional and re-hashed when present; a probe that omits them passes and is listed in `warnings`. |

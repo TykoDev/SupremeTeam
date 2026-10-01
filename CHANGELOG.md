@@ -67,6 +67,18 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   checkout-relative one that fails in an installed copy.
 - `quick_validate` rejects extension keys no skill uses.
 - The `audit` evidence kind is removed from the gate spec and engine: no key mapped to it.
+  Every document that still listed it no longer does, and a test compares the kind
+  lists with `gates.yaml`.
+- The gate documents say what the validator does and no more. A typed record is the
+  submitter's own statement: the validator never opens an artifact, and each gatekeeper
+  skill says so. A flat schema-1 package outside a run still passes, with a warning, and
+  the gatekeepers are told to return REVISE for a schema-2 manifest instead of reading
+  that pass as the whole contract. A `stack_lock` needs every declared version to be one
+  the registry entry offers, which `commander` and the design gatekeeper now state
+  instead of "the versions intersect". `--blocked-phrases` is the wrapper scripts'
+  option, not `check.py`'s. `package-manifest.yaml` lists the ten residue classes
+  `package_check.py` matches, and the typed-record rosters name `mock_parity` and
+  `mock_rendering`.
 - The guard keeps one record per boundary. `guard_state.py` normalises every glob
   before it compares or stores it, so `src\payments\**`, `./src/payments/**`,
   `src//payments/**` and the absolute form of a project path are one record and one
@@ -155,7 +167,10 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 - The images in `docs/assets` are re-encoded (3.6 MB to 0.5 MB) with the same
   names and aspect ratios.
 - `skills/taste/taste_prefs.py` is no longer the only executable file in the tree.
-- `.gitignore` also ignores `.DS_Store`, `.env`, `.venv/` and `.claude/worktrees/`.
+- `.gitignore` also ignores `.DS_Store`, `.env`, `.venv/` and `.claude/worktrees/`, and
+  everything `package_check.py` refuses to package: key and certificate files,
+  `id_*` keys, `.npmrc`, `.netrc`, `.pypirc`, `credentials*.json`, `*.zip`, `*.skill`,
+  skill-eval workspaces and `.supremeteam/`. A test checks one path of each residue class.
 - Documentation. Commands are written for a checkout; README, Install.md,
   QUICK-START.md, AGENTS.md and the admiral skill now say once how they read in an
   installed copy (`skills/` is the install root, `python` is `python3` or `py -3`)

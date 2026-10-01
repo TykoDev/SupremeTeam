@@ -539,6 +539,11 @@ def documentation_gaps(texts: dict[str, str], skill_count: int, taste_skills: in
         if name in texts and needle not in texts[name]:
             gaps.append(f"documentation mirror {name} is missing {needle!r}")
 
+    def opening_missing(name: str, needle: str) -> None:
+        """The needle has to open a line: a page that quotes it to explain the check would satisfy a substring."""
+        if name in texts and not any(line.startswith(needle) for line in texts[name].splitlines()):
+            gaps.append(f"documentation mirror {name} has no line starting {needle!r}")
+
     def count_missing(name: str, count: int, noun: str) -> None:
         spelled = [f"{count} {noun}"] + ([f"{NUMBER_WORDS[count]} {noun}"] if count < len(NUMBER_WORDS) else [])
         if name in texts and not any(form in texts[name].lower() for form in spelled):
@@ -559,8 +564,8 @@ def documentation_gaps(texts: dict[str, str], skill_count: int, taste_skills: in
     missing("README.md", f"{skill_count} skills · {len(pipelines)} pipelines")
     count_missing("docs/architecture.md", len(pipelines), "pipelines")
     rows_missing("docs/architecture.md", pipeline_rows)
-    missing("docs/skills.md", f"{skill_count} of them.")
-    missing("docs/skills.md", f"## Taste ({taste_skills})")
+    opening_missing("docs/skills.md", f"{skill_count} of them.")
+    opening_missing("docs/skills.md", f"## Taste ({taste_skills})")
     rows_missing("docs/gatekeepers.md", [[boundary] for boundary in sorted(boundaries)])
     missing("docs/directory-structure.md", f"Gate spec: {len(boundaries)} boundaries")
     missing("docs/directory-structure.md", f"Pipeline map: {len(pipelines)} pipelines")

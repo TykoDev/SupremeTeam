@@ -47,8 +47,8 @@ this table is untyped — required and non-falsy, nothing more.
 
 | Record type | Keys carrying it | What the validator enforces |
 | --- | --- | --- |
-| `probe` | `tests` `runtime` `executed_probes` `reproduction` `evidence_chain` `test_matrix` `denial_path_evidence` `parity_evidence` | hashed artifacts plus `result.status: pass`; the executed log is the artifact, a count is not |
-| `render` | `rendered_verification` | hashed captures, breakpoints, themes, and `inputs` bound by sha256 to the rendered source |
+| `probe` | `tests` `runtime` `executed_probes` `reproduction` `evidence_chain` `test_matrix` `denial_path_evidence` `mock_parity` `parity_evidence` | hashed artifacts plus `result.status: pass`; the executed log is the artifact, a count is not |
+| `render` | `rendered_verification` `mock_rendering` | hashed captures, breakpoints, themes, and `inputs` bound by sha256 to the rendered source |
 | `scan` | `vulnerability_scan` | tool, command, exit_code, observed_at, bound `inputs`, and a `pass` status — `unavailable` or `error` is a data gap |
 | `findings` | `findings` `security_evidence` `defects` `accessibility_evidence` | `{items: [{id, severity, status, …}]}` under the shared severity model and the finding policy |
 | `verdict` | `review_verdict` | APPROVED, or REVISE/ESCALATE with a challenge record naming `by` and `reason` |

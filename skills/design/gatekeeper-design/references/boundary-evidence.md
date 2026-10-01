@@ -25,7 +25,7 @@ Submitter `commander`. Nine required keys; four artifact-backed.
 | `architecture` | artifact | untyped | a path in `artifact_hashes` |
 | `plan` | artifact | untyped | a path in `artifact_hashes` |
 | `taste_snapshot` | artifact | untyped | a path in `artifact_hashes`, or a sanctioned applicability record |
-| `stack_lock` | claim | `stack_lock` | `{slug, versions, overlay_sha256}` checked against `../../../tech-stacks/registry.yaml`: the slug exists, the overlay digest matches both the registry and the file, and the versions intersect |
+| `stack_lock` | claim | `stack_lock` | `{slug, versions, overlay_sha256}` checked against `../../../tech-stacks/registry.yaml`: the slug exists, the overlay digest matches both the registry and the file, and every declared version is one the registry entry offers |
 | `interfaces` | claim | untyped | present and non-falsy |
 | `acceptance` | claim | untyped | present and non-falsy. This is the criteria build will be measured against, so an empty-but-wordy value is a judgment failure the validator cannot see |
 | `security_seed` | claim | untyped | present and non-falsy. The threat-model seed `security-builder` answers at build |

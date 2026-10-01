@@ -1078,10 +1078,17 @@ class LockTests(WriterCase):
         child = subprocess.Popen([sys.executable, "-c", hang, str(SCRIPT), str(self.project)])
         self.addCleanup(child.wait)
         self.addCleanup(child.kill)
+        def holder_pid() -> object:
+            # The file exists a moment before the holder is written into it, so an empty read is not yet an answer.
+            try:
+                return json.loads(self.lock_path("project").read_text(encoding="utf-8")).get("pid")
+            except (OSError, ValueError):
+                return None
+
         deadline = time.time() + 30
-        while not self.lock_path("project").exists() and time.time() < deadline:
+        while holder_pid() != child.pid and time.time() < deadline:
             time.sleep(0.01)
-        self.assertEqual(json.loads(self.lock_path("project").read_text(encoding="utf-8"))["pid"], child.pid)
+        self.assertEqual(holder_pid(), child.pid)
         error = self.refused("set", "--scope", "project", "--id", "b", "--value", "2")
         self.assertEqual((error["code"], error["holder_pid"]), ("locked", child.pid))
         child.kill()

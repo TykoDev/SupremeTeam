@@ -345,6 +345,8 @@ _TREE_VIA = _REMOVE_VIA | _DEPOSIT_VIA | frozenset({"git checkout", "git restore
 # Rule C reads the same trees, less the git commands that leave ignored files alone; `git clean` (`-x` reaches them)
 # stays.
 _RECORD_TREE_VIA = _REMOVE_VIA | _DEPOSIT_VIA | frozenset({"git clean"})
+# The archive extracts: aimed at the project root they reach every boundary only while an Admiral run is active.
+_EXTRACT_VIA = frozenset({"tar", "unzip", "7z"})
 
 
 def _written_paths(tool_input: dict, *, include_patch: bool = False) -> list:
@@ -469,16 +471,26 @@ def _mentioned(texts, call: "Call", boundaries) -> "_paths.Boundary | None":
     return None
 
 
-def _shell_hit(call: "Call", boundaries, tree_via=_TREE_VIA, analysis=None) -> "_paths.Boundary | None":
+def _at_or_above_root(call: "Call", target: "_paths.Target") -> bool:
+    """True when ``target`` is the project root or a directory above it."""
+    roots = call.locate(_paths.posix(call.root), []).abs
+    return any(root == form or root.startswith(form.rstrip("/") + "/") for form in target.abs for root in roots)
+
+
+def _shell_hit(call: "Call", boundaries, tree_via=_TREE_VIA, analysis=None, root_extracts: bool = True) -> "_paths.Boundary | None":
     """The first boundary a shell write lies on, or one a tree-wide command aimed above it reaches into.
 
     ``analysis`` is the command line's own by default; pass one of the nested analyses (see ``_analyses``) to judge
-    the writes of a command a launcher or script block runs."""
+    the writes of a command a launcher or script block runs. With ``root_extracts`` false an archive extract aimed at
+    the project root or above it (``unzip fixtures.zip``, ``tar -xzf vendor.tgz``) is not read as reaching every
+    boundary below: unpacking at the root is ordinary work, so a freeze leaves it alone (Rule C still reads what such
+    an archive would put into the records, and Rule F refuses it while an Admiral run is active)."""
     for write, targets in call.shell_targets(analysis=analysis):
         above = write.via in tree_via
         for target in targets:
+            reach = above and (root_extracts or write.via not in _EXTRACT_VIA or not _at_or_above_root(call, target))
             for boundary in boundaries:
-                if boundary.matches(target) or (above and boundary.covers(target)):
+                if boundary.matches(target) or (reach and boundary.covers(target)):
                     return boundary
     return None
 
@@ -584,7 +596,7 @@ def rule_frozen(call: "Call") -> "str | None":
         hit = None
         analyses = list(_analyses(call.analysis))
         for analysis in analyses:
-            hit = _shell_hit(call, boundaries, analysis=analysis) or _mentioned(analysis.code, call, boundaries)
+            hit = _shell_hit(call, boundaries, analysis=analysis, root_extracts=False) or _mentioned(analysis.code, call, boundaries)
             if hit:
                 break
         text = _unplaced_command(call, analyses) if hit is None else None
@@ -793,6 +805,188 @@ def _protected_reason(target: "_paths.Target", above: bool = False) -> "str | No
     return None
 
 
+# --- Rule C at the project root: what a command aimed above the record directories would put into them ----------
+
+# The directories under the project root that hold single-writer records, and the record that makes each one count:
+# a command aimed at the root reaches them only when one of these exists, so a project with no guard record and no
+# saves is never refused here.
+_RECORD_HOMES = ((".harness-state", ("guard-state.json",)),
+                 ("skillset-saves", ("_latest.md", "_write.lock", "runs", "preferences")))
+_ROOT_RECORDS_REASON = (
+    "Blocked by harness Action Realization layer: this command is aimed at the project root and would {how} {names}, "
+    "which hold records with one writer each (save_run.py, taste_prefs.py, guard_state.py). Aim it at a named "
+    "directory, exclude those directories (git clean -e, rsync --exclude), or extract the archive elsewhere and copy "
+    "what you need."
+)
+_ARCHIVE_MEMBER_LIMIT = 200_000
+_DELETE_FLAG = re.compile(r"^--del(?:ete(?:-\w+)?)?$")
+
+
+def _homes_present(root: Path) -> list:
+    """The record directories under ``root`` that hold a record now."""
+    present = []
+    for home, records in _RECORD_HOMES:
+        try:
+            if any((root / home / name).exists() for name in records):
+                present.append(home)
+        except OSError:
+            present.append(home)
+    return present
+
+
+def _below_root(call: "Call", target: "_paths.Target") -> "str | None":
+    """The path from ``target`` down to the project root (``""`` at the root, ``proj/`` from its parent), or None when
+    ``target`` is not the root or above it."""
+    roots = call.locate(_paths.posix(call.root), []).abs
+    for form in target.abs:
+        for root in roots:
+            if root == form:
+                return ""
+            prefix = form.rstrip("/") + "/"
+            if root.startswith(prefix):
+                return root[len(prefix):] + "/"
+    return None
+
+
+def _command_bases(call: "Call", cwds) -> list:
+    return [*call.starts, *(word if _paths.is_absolute(word) else posixpath.join(start, word) for word in cwds for start in call.starts)]
+
+
+def _member_home(name: str, prefix: str, homes) -> "str | None":
+    """The record directory an archive member or copied entry ``name`` lands in, ``prefix`` below where it is unpacked."""
+    path = posixpath.normpath(name.replace("\\", "/").lstrip("/")).lower()
+    for home in homes:
+        top = (prefix + home).lower()
+        if path == top or path.startswith(top + "/"):
+            return home
+    return None
+
+
+def _archive_members(path: str) -> "list | None":
+    """The member names of a tar or zip archive on disk, or None when it cannot be read (absent, another format, too big)."""
+    import tarfile
+    import zipfile
+
+    try:
+        if zipfile.is_zipfile(path):
+            with zipfile.ZipFile(path) as archive:
+                names = archive.namelist()
+        elif tarfile.is_tarfile(path):
+            names = []
+            with tarfile.open(path) as archive:
+                for member in archive:
+                    names.append(member.name)
+                    if len(names) > _ARCHIVE_MEMBER_LIMIT:
+                        return None
+        else:
+            return None
+    except (OSError, EOFError, tarfile.TarError, zipfile.BadZipFile, ValueError):
+        return None
+    return names if len(names) <= _ARCHIVE_MEMBER_LIMIT else None
+
+
+def _source_reaches(source: str, contents: bool, prefix: str, home: str) -> bool:
+    """True when copying ``source`` (a path on disk) to a destination ``prefix`` above the project root would land on
+    ``home`` (a record directory under the root): its entries do for a contents copy (``x/.``, an ``rsync`` source with
+    a trailing slash), its own name does otherwise."""
+    if contents:
+        return os.path.exists(os.path.join(source, prefix, home))
+    name = os.path.basename(source.rstrip("/\\"))
+    first, _, rest = (prefix + home).partition("/")
+    return name.lower() == first.lower() and (not rest or os.path.exists(os.path.join(source, rest)))
+
+
+def _excluded(home: str, patterns) -> bool:
+    import fnmatch
+
+    return any(fnmatch.fnmatch(home, pattern.strip("/").split("/")[0]) for pattern in patterns if pattern.strip("/"))
+
+
+def _git_ignores(root: Path, home: str) -> bool:
+    """True when the project's own ignore files name ``home`` (then `git clean -d` without `-x` leaves it alone)."""
+    for name in (".gitignore", ".git/info/exclude"):
+        try:
+            lines = (root / name).read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        if _excluded(home, [line.strip() for line in lines if line.strip() and not line.startswith(("#", "!"))]):
+            return True
+    return False
+
+
+def _root_command_reach(call: "Call", command) -> "tuple | None":
+    """``(how, homes)`` when ``command`` is aimed at the project root and would remove or replace a record directory."""
+    homes = _homes_present(call.root)
+    if not homes:
+        return None
+    bases = _command_bases(call, command.cwds)
+    verb = command.verb
+    if verb == "git":
+        parts = _cmdscan.git_clean_parts(command.argv)
+        if parts is None:
+            return None
+        pathspecs, directories, flags, excludes = parts
+        letters = "".join(f[1:] for f in flags if not f.startswith("--"))
+        if "n" in letters or "--dry-run" in flags or not ("f" in letters or "--force" in flags or "i" in letters):
+            return None
+        if "d" not in letters:
+            return None
+        bases = [posixpath.join(base, d) if not _paths.is_absolute(d) else d for d in directories for base in bases] or bases
+        if not any(_below_root(call, call.locate(spec, bases)) is not None for spec in (pathspecs or ["."])):
+            return None
+        ignored_too = "x" in letters or "X" in letters
+        hit = [home for home in homes if not _excluded(home, excludes) and (ignored_too or not _git_ignores(call.root, home))]
+        return ("remove", hit) if hit else None
+    extract = _cmdscan.extract_parts(verb, command.argv)
+    if extract is not None:
+        archive, destination = extract
+        prefix = _below_root(call, call.locate(destination, bases))
+        if prefix is None:
+            return None
+        members = _archive_members(call.locate(archive, bases).abs[0]) if archive else None
+        if members is None:
+            return "unpack an archive the guard cannot read over", homes
+        hit = sorted({home for name in members for home in [_member_home(name, prefix, homes)] if home})
+        return ("unpack files into", hit) if hit else None
+    copy = _cmdscan.copy_parts(verb, command.argv)
+    if copy is None:
+        return None
+    sources, destination, flags, excludes = copy
+    prefix = _below_root(call, call.locate(destination, bases))
+    if prefix is None:
+        return None
+    homes = [home for home in homes if not _excluded(home, excludes)]
+    if verb == "rsync" and any(_DELETE_FLAG.match(flag) for flag in flags):
+        return ("delete what the source lacks from", homes) if homes else None
+    hit = set()
+    for source in sources:
+        # A source the command does not fix (a variable, a remote host:path, a glob that matches nothing, a path that is
+        # not there) could hold anything, so it is read as reaching every record directory.
+        if "$" in source or "`" in source or (re.match(r"^[^/\\]+:", source) and not re.match(r"^[A-Za-z]:", source)):
+            hit.update(homes)
+            continue
+        local = call.locate(source, bases).abs[0]
+        contents = source.endswith(("/.", "\\.")) or (verb == "rsync" and source.endswith(("/", "\\")))
+        candidates = _glob.glob(local) if any(c in source for c in "*?[") else [local]
+        if not candidates or not all(os.path.exists(c) for c in candidates):
+            hit.update(homes)
+            continue
+        hit.update(home for home in homes for c in candidates if _source_reaches(c, contents, prefix, home))
+    return ("copy over", sorted(hit)) if hit else None
+
+
+def _root_records_reason(call: "Call", analysis) -> "str | None":
+    """Rule C for a command aimed at the project root (or above it) instead of at the directory that holds a record."""
+    for command in analysis.commands:
+        if command.verb not in ("git", "tar", "unzip", "7z", "7za", "7zr", "cp", "ln", "install", "scp", "rsync"):
+            continue
+        reach = _root_command_reach(call, command)
+        if reach:
+            how, homes = reach
+            return _ROOT_RECORDS_REASON.format(how=how, names=" and ".join(f"{home}/" for home in homes))
+    return None
+
+
 def _code_protected(texts, call: "Call") -> "str | None":
     seen: set = set()
     for text in texts:
@@ -831,7 +1025,7 @@ def rule_single_writer(call: "Call") -> "str | None":
                     reason = _protected_reason(target, above=write.via in _RECORD_TREE_VIA)
                     if reason:
                         return reason
-            reason = _code_protected(analysis.code, call)
+            reason = _code_protected(analysis.code, call) or _root_records_reason(call, analysis)
             if reason:
                 return reason
         # The same reading as Rule B: a write the analyser cannot place in a command that spells a protected file.
@@ -880,15 +1074,20 @@ def _harness_boundaries(root) -> list:
     return [_paths.Boundary(glob, root) for glob in globs]
 
 
-def _protection_engaged(call: "Call") -> bool:
-    if any(call.guard.get(key) for key in ("frozen_globs", "blocked_globs", "read_only")):
-        return True
+def _run_active(call: "Call") -> bool:
+    """True while an Admiral run is pinned in the project (``_saves.has_active_run``)."""
     import _bootstrap
 
     _bootstrap.ensure_paths()
     from _saves import has_active_run
 
     return has_active_run(call.root)
+
+
+def _protection_engaged(call: "Call") -> bool:
+    if any(call.guard.get(key) for key in ("frozen_globs", "blocked_globs", "read_only")):
+        return True
+    return _run_active(call)
 
 
 def rule_harness_files(call: "Call") -> "str | None":
@@ -901,9 +1100,13 @@ def rule_harness_files(call: "Call") -> "str | None":
     elif call.analysis.ok:
         # Read as Rule B reads a write: the commands a launcher runs, and a write the analyser cannot place
         # (`> "$OUT/.claude/settings.json"`) when the command spells a protected path.
+        # An archive extract at the project root reaches the hooks under it only while an Admiral run is active: with
+        # just a boundary recorded, unpacking at the root is ordinary work and the freeze does not read it either.
         analyses = list(_analyses(call.analysis))
-        hit = any(_shell_hit(call, boundaries, analysis=analysis) or _mentioned(analysis.code, call, boundaries)
+        hit = any(_shell_hit(call, boundaries, analysis=analysis, root_extracts=False) or _mentioned(analysis.code, call, boundaries)
                   for analysis in analyses)
+        if not hit and _run_active(call):
+            hit = any(_shell_hit(call, boundaries, analysis=analysis) for analysis in analyses)
         text = None if hit else _unplaced_command(call, analyses)
         if text is not None:
             hit = _mentioned([text], call, boundaries) is not None

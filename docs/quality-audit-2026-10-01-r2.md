@@ -470,6 +470,22 @@ Still open from this audit:
 - **Major, not yet fixed:** H-5, G-2, G-3, P-1, P-2, O-2, O-3, O-4/D-1, D-2 and
   D-3, plus O-5, which is plausible but unconfirmed.
 - **All Minor and Info findings.**
-- **Root-level limits, now listed in the hooks README limits:** a `git clean -x`
-  or an archive extract aimed at the project root, rather than at a record
-  directory, is still not read as reaching the records.
+
+### Follow-up: root-level writes
+
+The root-level gap left open above is now closed. Rule C reads a command aimed at
+the project root by what it would remove or land in the record directories, and
+only while a record exists:
+
+- `git clean -d` with `-x`/`-X`, or without them when the directory is not
+  git-ignored;
+- `rsync --delete`;
+- an archive whose members land there; the guard lists tar and zip archives,
+  and one it cannot read is refused;
+- a contents copy or sync whose source holds one, or whose source is not named
+  or not on disk.
+
+`-e` and `--exclude` lift the refusal. At the owner's request, a freeze no longer
+refuses an archive unpacked at the project root, and Rule F refuses one only
+while an Admiral run is active. Covered by `test_guard_rules.RootExtractTests`
+and `RootRecordReachTests`, which fail 21 times on the previous commit.

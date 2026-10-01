@@ -320,6 +320,19 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   skipped so the others still run, a run-id grammar that fails its import is counted and
   leaves the run scope at `no-run`, and the entry treats a `SystemExit` the guard did not
   take after printing its decision as a fault.
+- Records at the project root: Rule C read a sync, an extract, a contents copy or `git
+  clean` as reaching the records only when it was aimed at `.harness-state/` or
+  `skillset-saves/` themselves, so `git clean -fdx`, `rsync -a --delete x/ ./`, an
+  archive carrying `.harness-state/guard-state.json` unpacked at the root, or `cp -r
+  backup/. .` replaced or removed them. A command aimed at the root, or above it, is now
+  read for what it would remove or land there while a record exists: `git clean -d` by
+  `-x`/`-X`, the project's ignore files and `-e`; `rsync --delete` by `--exclude`; an
+  extract by the members of the tar or zip archive on disk (one it cannot read is
+  refused); a contents copy by what its source holds on disk.
+- An archive unpacked at the project root (`unzip fixtures.zip`, `tar -xzf vendor.tgz`)
+  is no longer refused by a freeze or a block, and Rule F refuses it only while an Admiral
+  run is active; an extract into a named directory above a boundary (`tar -C src`) is
+  still refused.
 - G-1: a gate manifest three or more directories below a run's phase directory was read
   as a detached package, where schema 1 is accepted and the run's rules do not apply, so
   a `review-to-delivery` package with an open Critical finding passed. `check.py` now finds
@@ -496,12 +509,13 @@ recorded here, or a record the skill does not carry, fails it.
   lacks), a warning for a leading-slash glob outside the project that names a directory that
   exists, relative globs anchored at the project root, a writer lock, and what an
   unreadable record means.
-- `guard` 1.4.0: a grant is capped at 8 hours, the hook scripts are protected (Rule F,
+- `guard` 1.5.0: a grant is capped at 8 hours, the hook scripts are protected (Rule F,
   advisory, whole registration file), a write after an unfollowable directory chain is
   denied (Rule G, with its own failure-mode row), a read-only run denies writes with no
   named target (pipes, launchers, PowerShell blocks, diffs), an unreadable record is counted
-  and announced, writers serialise on a lock, and Rule F covers the `skills/scripts`
-  modules the hooks import.
+  and announced, writers serialise on a lock, Rule F covers the `skills/scripts`
+  modules the hooks import, and Rule C reads a command aimed at the project root by what
+  it would put into or remove from the record directories.
 - `unfreeze` 1.1.0: releases by the normalised glob and records the cap on a grant.
 - `gatekeeper-admiral` 1.1.0: a REVISE row for a schema-1 result, the typed-record
   roster and what a typed record leaves unchecked.

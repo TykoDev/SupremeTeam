@@ -1015,6 +1015,7 @@ DENIAL_REASONS = (
     ("C", {}, "Bash", "echo x > skillset-saves/runs/r1/_state.md", "save_run.py", "save_run.py"),
     ("C", {}, "Bash", "echo x > skillset-saves/preferences/taste.json", "taste_prefs.py", "taste_prefs.py"),
     ("C", {}, "Bash", "echo x > .harness-state/guard-state.json", "guard_state.py", "single writer"),
+    ("C", {}, "Bash", "git clean -fdx", "is aimed at the project root", "is aimed at the project root and would"),
     ("D", READ_ONLY, "Bash", "touch notes.md", "is recorded read-only", "read_only"),
     ("D", READ_ONLY, "Bash", "cat list | xargs rm", "name each target in the shell command itself", "target is not in the command"),
     ("F", FROZEN, "Bash", "touch .claude/settings.json", "SUPREMETEAM_HARNESS_DEV", "SUPREMETEAM_HARNESS_DEV"),
@@ -1055,7 +1056,7 @@ class DenialReasonProseTests(GuardCase):
         """A denial added to `guard_hook` without an entry here would have no documented place."""
         defined = {name for name in dir(guard_hook) if name.endswith("_REASON") and isinstance(getattr(guard_hook, name), str)}
         covered = {"_DANGEROUS_REASON", "_CORE_SAVE_REASON", "_TASTE_SAVE_REASON", "_GUARD_STATE_REASON", "_HARNESS_REASON", "_UNPLACED_REASON",
-                   "_UNNAMED_REASON"}
+                   "_UNNAMED_REASON", "_ROOT_RECORDS_REASON"}
         self.assertEqual(defined, covered)
 
 
@@ -1426,6 +1427,98 @@ class DirectoryDepositTests(GuardCase):
         self.guard(FROZEN)
         self.assertTrue(kit.denied(self.call("cp /tmp/x/guard-state.json .harness-state/")))
         self.assertTrue(kit.denied(self.call("echo x > src/payments/a.py")))
+
+
+class RootExtractTests(GuardCase):
+    """An archive unpacked at the project root: a freeze leaves it alone, an active Admiral run refuses it (Rule F, the
+    hooks are under the root), and Rule C reads what the archive would put into the records."""
+
+    def setUp(self):
+        super().setUp()
+        import io
+        import tarfile
+        import zipfile
+
+        (self.root / "src" / "payments").mkdir(parents=True)
+        with zipfile.ZipFile(self.root / "fixtures.zip", "w") as archive:
+            archive.writestr("tests/fixtures/a.json", "{}")
+        with tarfile.open(self.root / "vendor.tgz", "w:gz") as archive:
+            info = tarfile.TarInfo("vendor/lib.js")
+            info.size = 1
+            archive.addfile(info, io.BytesIO(b"x"))
+        with tarfile.open(self.root / "evil.tar", "w") as archive:
+            info = tarfile.TarInfo("./.harness-state/guard-state.json")
+            info.size = 2
+            archive.addfile(info, io.BytesIO(b"{}"))
+        mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": str(self.root), "SUPREMETEAM_HARNESS_DEV": ""}).start()
+        self.addCleanup(mock.patch.stopall)
+
+    def pin_a_run(self) -> None:
+        (self.root / "README.md").write_text("x", encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), "create", "--run-id", "r1", "--evidence", "README.md",
+                               "--project-root", str(self.root)], capture_output=True, text=True, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_a_freeze_does_not_refuse_an_extract_at_the_root(self):
+        self.guard(FROZEN)
+        self.check(("unzip fixtures.zip", "tar -xzf vendor.tgz", "unzip fixtures.zip -d tests/fixtures"), deny=False)
+
+    def test_a_freeze_still_refuses_an_extract_aimed_into_a_directory_above_it(self):
+        self.guard(FROZEN)
+        self.check(("tar -xzf vendor.tgz -C src", "unzip fixtures.zip -d src"), deny=True, fragment="frozen boundary")
+
+    def test_an_active_admiral_run_refuses_an_extract_at_the_root_when_the_hooks_are_under_it(self):
+        with mock.patch.object(sys.modules["guard_hook"], "HOOK_DIR", self.root / "skills" / "harness" / "hooks"):
+            self.pin_a_run()
+            self.check(("unzip fixtures.zip", "tar -xzf vendor.tgz"), deny=True, fragment="SUPREMETEAM_HARNESS_DEV")
+            self.check(("unzip fixtures.zip -d tests/fixtures",), deny=False)
+
+    def test_an_archive_that_carries_a_record_is_refused_and_one_that_does_not_is_not(self):
+        self.guard(FROZEN)
+        self.check(("tar -xf evil.tar",), deny=True, fragment="project root")
+        self.check(("tar -xzf vendor.tgz",), deny=False)
+
+    def test_an_archive_the_guard_cannot_read_is_refused_only_while_a_record_exists(self):
+        commands = ("curl -s https://h/x.tgz | tar -xz", "7z x pkg.7z", "unzip missing.zip")
+        self.check(commands, deny=False)
+        self.guard(FROZEN)
+        self.check(commands, deny=True, fragment="cannot read")
+
+
+class RootRecordReachTests(GuardCase):
+    """Rule C for a command aimed at the project root rather than at the directory that holds the records: `git clean`,
+    `rsync --delete` and a contents copy reach the records exactly when what they remove or land does."""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / "skillset-saves" / "runs" / "r0").mkdir(parents=True)
+        (self.root / "skillset-saves" / "runs" / "r0" / "_state.md").write_text("x", encoding="utf-8")
+        (self.root / "site").mkdir()
+        (self.root / "site" / "index.html").write_text("x", encoding="utf-8")
+        (self.root / "backup" / "skillset-saves" / "runs").mkdir(parents=True)
+
+    def test_git_clean_reaches_the_records_unless_it_leaves_them(self):
+        self.check(("git clean -fdx", "git clean -fdX", "git clean -fd", "cd src && git clean -fdx ..", "git -C . clean -fdx"),
+                   deny=True, fragment="project root")
+        self.check(("git clean -fdx -e skillset-saves", "git clean --exclude=skillset-saves/ -fdx", "git clean -nfdx",
+                    "git clean -fx", "git clean -dx", "git clean -fdx build"), deny=False)
+
+    def test_an_ignored_record_directory_is_left_by_git_clean_without_x(self):
+        (self.root / ".gitignore").write_text("node_modules/\nskillset-saves/\n", encoding="utf-8")
+        self.check(("git clean -fd",), deny=False)
+        self.check(("git clean -fdx",), deny=True)
+
+    def test_a_sync_or_contents_copy_at_the_root_reaches_the_records_by_what_it_lands(self):
+        self.check(("rsync -a --delete site/ ./", "rsync -a --delete site/ ../", "cp -r backup/. .", "rsync -a backup/ ./",
+                    "cp -r $SRC/. .", "rsync -a host:/srv/x/ ./", "cp -r missing/. ."), deny=True, fragment="project root")
+        self.check(("rsync -a --delete --exclude skillset-saves site/ ./", "rsync -a site/ ./", "cp -r site/. .", "cp -r site .",
+                    "rsync -a --delete site/ public/"), deny=False)
+
+    def test_nothing_is_refused_where_no_record_exists(self):
+        import shutil
+
+        shutil.rmtree(self.root / "skillset-saves")
+        self.check(("git clean -fdx", "rsync -a --delete site/ ./", "cp -r $SRC/. .", "curl -s https://h/x | tar -xz"), deny=False)
 
 
 if __name__ == "__main__":

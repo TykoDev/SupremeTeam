@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -336,6 +337,256 @@ def _stack_evidence(path: str, reason: str) -> dict[str, str]:
     return {"path": path, "reason": reason}
 
 
+@dataclass
+class _Scope:
+    """The files of one package scope and the stack evidence collected from them."""
+
+    registry: dict[str, dict[str, Any]]
+    files: list[Path]
+    root: Path
+    text_cache: dict[Path, str | None]
+    errors: list[str]
+    relative_paths: dict[str, Path]
+    root_paths: dict[str, Path]
+    dependencies: set[str]
+    scripts: dict[str, str]
+    matches: dict[str, list[dict[str, str]]]
+
+    def add(self, slug: str, *evidence: dict[str, str]) -> None:
+        if slug not in self.registry:
+            add_error(self.errors, f"detected stack {slug} has no registry entry")
+            return
+        self.matches.setdefault(slug, []).extend(evidence)
+
+    def root_named(self, name: str) -> str | None:
+        for relative in self.root_paths:
+            if relative.lower() == name.lower():
+                return relative
+        return None
+
+    def paths_starting(self, prefix: str) -> list[str]:
+        return sorted(
+            relative
+            for relative in self.relative_paths
+            if Path(relative).name.lower().startswith(prefix.lower())
+        )
+
+    def read(self, path: Path) -> str | None:
+        return read_cached_text(path, self.root, self.errors, self.text_cache, required=True)
+
+
+def _sorted_evidence(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    return sorted(
+        {(item["path"], item["reason"]): item for item in items}.values(),
+        key=lambda item: (item["path"], item["reason"]),
+    )
+
+
+def _detect_frontend_stacks(scope: _Scope, package_relative: str | None) -> None:
+    dependencies = scope.dependencies
+    vite_configs = scope.paths_starting("vite.config.")
+    vite_script = script_uses_command(scope.scripts, "vite")
+    if "vite" in dependencies or vite_script or vite_configs:
+        if package_relative and ("vite" in dependencies or vite_script):
+            scope.add("vite-spa", _stack_evidence(package_relative, "package.json contains Vite evidence"))
+        for relative in vite_configs:
+            scope.add("vite-spa", _stack_evidence(relative, "Vite project configuration"))
+
+    next_configs = scope.paths_starting("next.config.")
+    if "next" in dependencies or next_configs:
+        evidence_path = package_relative or next_configs[0]
+        scope.add("react-nextjs", _stack_evidence(evidence_path, "package.json or Next.js configuration contains Next.js evidence"))
+
+    angular_config = scope.root_named("angular.json")
+    if "@angular/core" in dependencies or angular_config:
+        scope.add("angular", _stack_evidence(package_relative or angular_config, "package.json or angular.json contains Angular evidence"))
+
+    astro_configs = scope.paths_starting("astro.config.")
+    if "astro" in dependencies or astro_configs:
+        scope.add("astro", _stack_evidence(package_relative or astro_configs[0], "package.json or Astro configuration contains Astro evidence"))
+
+    svelte_configs = scope.paths_starting("svelte.config.")
+    if "@sveltejs/kit" in dependencies or svelte_configs:
+        scope.add("svelte-sveltekit", _stack_evidence(package_relative or svelte_configs[0], "package.json or Svelte configuration contains SvelteKit evidence"))
+
+    nuxt_configs = scope.paths_starting("nuxt.config.")
+    if "nuxt" in dependencies or nuxt_configs:
+        scope.add("vue-nuxt", _stack_evidence(package_relative or nuxt_configs[0], "package.json or Nuxt configuration contains Nuxt evidence"))
+
+    if package_relative and dependencies & TANSTACK_START_PACKAGES:
+        scope.add("react-tanstack", _stack_evidence(package_relative, "package.json contains TanStack Start evidence"))
+        if "react-tanstack" in scope.matches:
+            # TanStack Start is the Vite application and its overlay pins Vite, so a
+            # separate Vite SPA lock would name the wrong framework.
+            scope.matches.pop("vite-spa", None)
+
+
+def _detect_javascript_runtimes(scope: _Scope, package_relative: str | None) -> None:
+    relative_paths = scope.relative_paths
+    root_paths = scope.root_paths
+    if (
+        package_relative
+        and scope.root_named("tsconfig.json")
+        and ("typescript" in scope.dependencies or any(Path(relative).suffix.lower() in {".ts", ".tsx"} for relative in relative_paths))
+        and not scope.matches.keys() & FRONTEND_STACKS
+    ):
+        scope.add("node-typescript", _stack_evidence(package_relative, "TypeScript package and source evidence"))
+
+    if any(Path(relative).name.lower() in {"bun.lock", "bun.lockb", "bunfig.toml"} for relative in root_paths):
+        if scope.root_named("tsconfig.json") or any(Path(relative).suffix.lower() in {".ts", ".tsx"} for relative in relative_paths):
+            scope.add("bun-typescript", _stack_evidence(
+                next(relative for relative in root_paths if Path(relative).name.lower() in {"bun.lock", "bun.lockb", "bunfig.toml"}),
+                "Bun lock or configuration with TypeScript evidence",
+            ))
+
+    deno_relative = next(
+        (relative for relative in root_paths if Path(relative).name.lower() in {"deno.json", "deno.jsonc"}),
+        None,
+    )
+    if deno_relative:
+        scope.add("deno-typescript", _stack_evidence(deno_relative, "Deno configuration"))
+
+
+def _detect_backend_stacks(scope: _Scope) -> None:
+    for filename in ("main.py", "app.py"):
+        relative = scope.root_named(filename)
+        if not relative:
+            continue
+        text = scope.read(scope.root_paths[relative])
+        if text and python_imports_module(text, PYTHON_FASTAPI_MODULES):
+            scope.add("python-fastapi", _stack_evidence(relative, "Python web runtime import evidence"))
+
+    go_mod = scope.root_named("go.mod")
+    go_entry = go_entrypoint(scope.files, scope.root, scope.text_cache, scope.errors)
+    if go_mod and go_entry:
+        text = scope.read(scope.root_paths[go_mod]) or ""
+        if re.search(r"(?i)(?:gin-gonic/gin|/gin\b)", text):
+            scope.add("go-gin", _stack_evidence(go_mod, "Go module declares Gin"), _stack_evidence(go_entry, "Go executable entrypoint"))
+
+    cargo = scope.root_named("cargo.toml")
+    rust_entry = cargo_binary_entry(scope.files, scope.root, scope.text_cache, scope.errors) if cargo else None
+    if cargo and rust_entry:
+        text = scope.read(scope.root_paths[cargo]) or ""
+        if re.search(r"(?i)\baxum\b", text):
+            scope.add("rust-axum", _stack_evidence(cargo, "Cargo manifest declares Axum"), _stack_evidence(rust_entry, "Rust executable entrypoint"))
+
+    csproj = next(
+        (relative for relative in scope.root_paths if Path(relative).suffix.lower() in {".csproj", ".fsproj", ".vbproj"}),
+        None,
+    )
+    if csproj:
+        text = scope.read(scope.root_paths[csproj]) or ""
+        if re.search(r"(?i)(?:Microsoft\.AspNetCore|Microsoft.NET.Sdk.Web|AspNetCore)", text):
+            scope.add("dotnet-aspnet", _stack_evidence(csproj, ".NET web project manifest"))
+
+
+def _detect_in_scope(
+    registry: dict[str, dict[str, Any]],
+    files: list[Path],
+    root: Path,
+    package: dict[str, Any],
+    text_cache: dict[Path, str | None],
+    errors: list[str],
+) -> list[dict[str, Any]]:
+    relative_paths = {
+        relative_path(path, root): path
+        for path in files
+        if classify_path(relative_path(path, root)) == "production"
+    }
+    scope = _Scope(
+        registry=registry,
+        files=files,
+        root=root,
+        text_cache=text_cache,
+        errors=errors,
+        relative_paths=relative_paths,
+        root_paths={
+            relative: path
+            for relative, path in relative_paths.items()
+            if "/" not in relative
+        },
+        dependencies=_package_dependencies(package),
+        scripts=_package_scripts(package),
+        matches={},
+    )
+    package_relative = scope.root_named("package.json")
+    _detect_frontend_stacks(scope, package_relative)
+    _detect_javascript_runtimes(scope, package_relative)
+    _detect_backend_stacks(scope)
+
+    result: list[dict[str, Any]] = []
+    for slug in sorted(scope.matches):
+        row = registry[slug]
+        result.append(
+            {
+                "slug": slug,
+                "framework": row.get("framework"),
+                "versions": row.get("versions", []),
+                "evidence": _sorted_evidence(scope.matches[slug]),
+            }
+        )
+    return result
+
+
+def _detect_across_packages(
+    registry: dict[str, dict[str, Any]],
+    files: list[Path],
+    root: Path,
+    text_cache: dict[Path, str | None],
+    errors: list[str],
+    packages: list[tuple[Path, dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    package_roots = {package_path.parent for package_path, _ in packages}
+    scopes = [(package_path.parent, package_value) for package_path, package_value in packages]
+    if root not in package_roots:
+        # Root-level evidence (go.mod, Cargo.toml, main.py, a csproj) belongs to the
+        # project even when only nested packages carry a package.json, so the
+        # files no package claims are detected as a scope of their own.
+        scopes.append((root, {}))
+    for package_root, package_value in scopes:
+        scoped_files = [
+            path
+            for path in files
+            if path.is_relative_to(package_root)
+            and (
+                package_root in package_roots
+                or not any(path.is_relative_to(claimed) for claimed in package_roots)
+            )
+        ]
+        for stack in _detect_in_scope(
+            registry,
+            scoped_files,
+            package_root,
+            package_value,
+            text_cache,
+            errors,
+        ):
+            target = merged.setdefault(
+                stack["slug"],
+                {
+                    "slug": stack["slug"],
+                    "framework": stack.get("framework"),
+                    "versions": stack.get("versions", []),
+                    "evidence": [],
+                },
+            )
+            for evidence in stack.get("evidence", []):
+                evidence_path = package_root / str(evidence["path"])
+                target["evidence"].append(
+                    {
+                        "path": relative_path(evidence_path, root),
+                        "reason": evidence["reason"],
+                    }
+                )
+    result = []
+    for slug in sorted(merged):
+        row = merged[slug]
+        row["evidence"] = _sorted_evidence(row["evidence"])
+        result.append(row)
+    return result
+
+
 def detect_stacks(
     registry: dict[str, dict[str, Any]],
     files: list[Path],
@@ -347,202 +598,8 @@ def detect_stacks(
     packages: list[tuple[Path, dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
     if packages is not None:
-        merged: dict[str, dict[str, Any]] = {}
-        package_roots = {package_path.parent for package_path, _ in packages}
-        scopes = [(package_path.parent, package_value) for package_path, package_value in packages]
-        if root not in package_roots:
-            # Root-level evidence (go.mod, Cargo.toml, main.py, a csproj) belongs to the
-            # project even when only nested packages carry a package.json, so the
-            # files no package claims are detected as a scope of their own.
-            scopes.append((root, {}))
-        for package_root, package_value in scopes:
-            scoped_files = [
-                path
-                for path in files
-                if path.is_relative_to(package_root)
-                and (
-                    package_root in package_roots
-                    or not any(path.is_relative_to(claimed) for claimed in package_roots)
-                )
-            ]
-            for stack in detect_stacks(
-                registry,
-                scoped_files,
-                package_root,
-                package_value,
-                text_cache,
-                errors,
-            ):
-                target = merged.setdefault(
-                    stack["slug"],
-                    {
-                        "slug": stack["slug"],
-                        "framework": stack.get("framework"),
-                        "versions": stack.get("versions", []),
-                        "evidence": [],
-                    },
-                )
-                for evidence in stack.get("evidence", []):
-                    evidence_path = package_root / str(evidence["path"])
-                    target["evidence"].append(
-                        {
-                            "path": relative_path(evidence_path, root),
-                            "reason": evidence["reason"],
-                        }
-                    )
-        result = []
-        for slug in sorted(merged):
-            row = merged[slug]
-            row["evidence"] = sorted(
-                {(item["path"], item["reason"]): item for item in row["evidence"]}.values(),
-                key=lambda item: (item["path"], item["reason"]),
-            )
-            result.append(row)
-        return result
-
-    relative_paths = {
-        relative_path(path, root): path
-        for path in files
-        if classify_path(relative_path(path, root)) == "production"
-    }
-    root_paths = {
-        relative: path
-        for relative, path in relative_paths.items()
-        if "/" not in relative
-    }
-    dependencies = _package_dependencies(package)
-    scripts = _package_scripts(package)
-    matches: dict[str, list[dict[str, str]]] = {}
-
-    def add(slug: str, *evidence: dict[str, str]) -> None:
-        if slug not in registry:
-            add_error(errors, f"detected stack {slug} has no registry entry")
-            return
-        matches.setdefault(slug, []).extend(evidence)
-
-    def root_named(name: str) -> str | None:
-        for relative in root_paths:
-            if relative.lower() == name.lower():
-                return relative
-        return None
-
-    def paths_starting(prefix: str) -> list[str]:
-        return sorted(
-            relative
-            for relative in relative_paths
-            if Path(relative).name.lower().startswith(prefix.lower())
-        )
-
-    package_relative = root_named("package.json")
-    vite_configs = paths_starting("vite.config.")
-    vite_script = script_uses_command(scripts, "vite")
-    if "vite" in dependencies or vite_script or vite_configs:
-        if package_relative and ("vite" in dependencies or vite_script):
-            add("vite-spa", _stack_evidence(package_relative, "package.json contains Vite evidence"))
-        for relative in vite_configs:
-            add("vite-spa", _stack_evidence(relative, "Vite project configuration"))
-
-    next_configs = paths_starting("next.config.")
-    if "next" in dependencies or next_configs:
-        evidence_path = package_relative or next_configs[0]
-        add("react-nextjs", _stack_evidence(evidence_path, "package.json or Next.js configuration contains Next.js evidence"))
-
-    angular_config = root_named("angular.json")
-    if "@angular/core" in dependencies or angular_config:
-        add("angular", _stack_evidence(package_relative or angular_config, "package.json or angular.json contains Angular evidence"))
-
-    astro_configs = paths_starting("astro.config.")
-    if "astro" in dependencies or astro_configs:
-        add("astro", _stack_evidence(package_relative or astro_configs[0], "package.json or Astro configuration contains Astro evidence"))
-
-    svelte_configs = paths_starting("svelte.config.")
-    if "@sveltejs/kit" in dependencies or svelte_configs:
-        add("svelte-sveltekit", _stack_evidence(package_relative or svelte_configs[0], "package.json or Svelte configuration contains SvelteKit evidence"))
-
-    nuxt_configs = paths_starting("nuxt.config.")
-    if "nuxt" in dependencies or nuxt_configs:
-        add("vue-nuxt", _stack_evidence(package_relative or nuxt_configs[0], "package.json or Nuxt configuration contains Nuxt evidence"))
-
-    if package_relative:
-        if dependencies & TANSTACK_START_PACKAGES:
-            add("react-tanstack", _stack_evidence(package_relative, "package.json contains TanStack Start evidence"))
-            if "react-tanstack" in matches:
-                # TanStack Start is the Vite application and its overlay pins Vite, so a
-                # separate Vite SPA lock would name the wrong framework.
-                matches.pop("vite-spa", None)
-
-        if (
-            root_named("tsconfig.json")
-            and ("typescript" in dependencies or any(Path(relative).suffix.lower() in {".ts", ".tsx"} for relative in relative_paths))
-            and not matches.keys() & FRONTEND_STACKS
-        ):
-            add("node-typescript", _stack_evidence(package_relative, "TypeScript package and source evidence"))
-
-    if any(Path(relative).name.lower() in {"bun.lock", "bun.lockb", "bunfig.toml"} for relative in root_paths):
-        if root_named("tsconfig.json") or any(Path(relative).suffix.lower() in {".ts", ".tsx"} for relative in relative_paths):
-            add("bun-typescript", _stack_evidence(
-                next(relative for relative in root_paths if Path(relative).name.lower() in {"bun.lock", "bun.lockb", "bunfig.toml"}),
-                "Bun lock or configuration with TypeScript evidence",
-            ))
-
-    deno_relative = next(
-        (relative for relative in root_paths if Path(relative).name.lower() in {"deno.json", "deno.jsonc"}),
-        None,
-    )
-    if deno_relative:
-        add("deno-typescript", _stack_evidence(deno_relative, "Deno configuration"))
-
-    for filename in ("main.py", "app.py"):
-        relative = root_named(filename)
-        if not relative:
-            continue
-        path = root_paths[relative]
-        text = read_cached_text(path, root, errors, text_cache, required=True)
-        if text and python_imports_module(text, PYTHON_FASTAPI_MODULES):
-            add("python-fastapi", _stack_evidence(relative, "Python web runtime import evidence"))
-
-    go_mod = root_named("go.mod")
-    go_entry = go_entrypoint(files, root, text_cache, errors)
-    if go_mod and go_entry:
-        text = read_cached_text(root_paths[go_mod], root, errors, text_cache, required=True) or ""
-        if re.search(r"(?i)(?:gin-gonic/gin|/gin\b)", text):
-            add("go-gin", _stack_evidence(go_mod, "Go module declares Gin"), _stack_evidence(go_entry, "Go executable entrypoint"))
-
-    cargo = root_named("cargo.toml")
-    rust_entry = cargo_binary_entry(files, root, text_cache, errors) if cargo else None
-    if cargo and rust_entry:
-        text = read_cached_text(root_paths[cargo], root, errors, text_cache, required=True) or ""
-        if re.search(r"(?i)\baxum\b", text):
-            add("rust-axum", _stack_evidence(cargo, "Cargo manifest declares Axum"), _stack_evidence(rust_entry, "Rust executable entrypoint"))
-
-    csproj = next(
-        (relative for relative in root_paths if Path(relative).suffix.lower() in {".csproj", ".fsproj", ".vbproj"}),
-        None,
-    )
-    if csproj:
-        text = read_cached_text(root_paths[csproj], root, errors, text_cache, required=True) or ""
-        if re.search(r"(?i)(?:Microsoft\.AspNetCore|Microsoft.NET.Sdk.Web|AspNetCore)", text):
-            add("dotnet-aspnet", _stack_evidence(csproj, ".NET web project manifest"))
-
-    result: list[dict[str, Any]] = []
-    for slug in sorted(matches):
-        evidence = sorted(
-            {
-                (item["path"], item["reason"]): item
-                for item in matches[slug]
-            }.values(),
-            key=lambda item: (item["path"], item["reason"]),
-        )
-        row = registry[slug]
-        result.append(
-            {
-                "slug": slug,
-                "framework": row.get("framework"),
-                "versions": row.get("versions", []),
-                "evidence": evidence,
-            }
-        )
-    return result
+        return _detect_across_packages(registry, files, root, text_cache, errors, packages)
+    return _detect_in_scope(registry, files, root, package, text_cache, errors)
 
 
 def classify_project(

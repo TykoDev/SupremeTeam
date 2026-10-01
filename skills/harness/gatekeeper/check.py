@@ -106,7 +106,7 @@ VARIANT_FILES = ("spec", "tokens", "components", "app")
 #: an engine error: an unknown kind would switch its key's typed validation off
 #: and still print a pass.
 EVIDENCE_KINDS = frozenset({
-    "scan", "render", "probe", "audit", "findings", "verdict", "stack_lock", "revision_ref",
+    "scan", "render", "probe", "findings", "verdict", "stack_lock", "revision_ref",
     "preference_diff", "confirmation", "conflict_analysis", "persistence_result", "effective_profile",
     "consumer_handoff", "variant_set", "selection"})
 
@@ -514,7 +514,7 @@ class Package:
 
     # ---------------------------------------------------------------- typed
     def check_typed(self, key: str, kind: str, value: object) -> None:
-        if kind in {"scan", "render", "probe", "audit"}:
+        if kind in {"scan", "render", "probe"}:
             self.check_result_record(key, kind, value)
         elif kind == "findings":
             self.check_findings(key, value)

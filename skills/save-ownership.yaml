@@ -60,12 +60,13 @@ unowned_path_rule: >-
 enforcement:
   machine_checked: >-
     validation/test_save_contracts.py OwnershipAgreementTests pins the writer of
-    core-run-record, gate-verdict, and grilling-log, requires the tool of every
-    tool-bearing class to exist on disk, and rejects any pattern that is
-    absolute or contains a parent reference. GeneratedRootPolicyTests requires
-    generated_roots to be exactly these two roots, requires every project kind
-    scripts/output_paths.py offers to resolve under one of them, and requires
-    redesign to be a declared phase directory. scripts/validate_manifests.py
+    core-run-record, gate-verdict, and grilling-log, requires the tool of
+    core-run-record and gate-verdict (the two it names) to exist on disk, and
+    rejects any pattern that is absolute or contains a parent reference.
+    GeneratedRootPolicyTests requires generated_roots to be exactly these two
+    roots, requires every project kind scripts/output_paths.py offers to
+    resolve under one of them, and requires redesign to be a declared phase
+    directory. scripts/validate_manifests.py
     requires generated_roots to be exactly these two roots and requires every
     pipeline name in pipelines.yaml to be a declared phase directory.
     validation/test_catalog_contracts.py GuardWriterTests requires the
@@ -90,10 +91,13 @@ enforcement:
   judgement: >-
     purpose, generated_roots_rule, notes, writer_vocabulary, unowned_path_rule,
     this enforcement block, and the `rule` text of every class. No comparator
-    matches a file an agent composed by hand against the patterns of its class
-    (only what the resolver emits is matched), so a report written to the wrong
-    phase subdirectory by the right owner fails nothing here and is caught, if
-    at all, by the gate reading the wrong evidence root.
+    opens the tool of project-taste-preferences or harness-guards to see that
+    it exists (GuardWriterTests only requires the harness-guards class to name
+    guard_state.py), and none matches a file an agent composed by hand against
+    the patterns of its class (only what the resolver emits is matched), so a
+    report written to the wrong phase subdirectory by the right owner fails
+    nothing here and is caught, if at all, by the gate reading the wrong
+    evidence root.
 
 notes:
   - "Product source stays in the application's own layout. It is never written under skillset-saves; evidence that depends on it is snapshotted into <phase>/evidence/ with source path, revision, and sha256 provenance (typed-record inputs in gates.yaml)."

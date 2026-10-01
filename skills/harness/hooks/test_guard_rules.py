@@ -568,6 +568,42 @@ class ReadOnlyRunTests(GuardCase):
         self.check(("ls | while read f; do rm \"$f\"; done", "find . -name x | while read f; do touch \"$f\"; done", "while read f; do rm \"$f\"; done < list",
                     "for f in *.pyc; do rm $f; done", "ls | xargs -I{} sh -c 'rm {}'"), deny=True, fragment="is recorded read-only")
 
+    def test_powershell_script_blocks_and_pipeline_cmdlets_that_mutate_are_denied(self):
+        self.check((
+            "Get-Content list | ForEach-Object { Remove-Item $_ }", "Get-Content list | % { Remove-Item $_ }",
+            "Get-ChildItem | ForEach-Object { Set-Content $_.FullName 'x' }", "Get-ChildItem | ForEach-Object { Out-File $_.Name }",
+            "Get-ChildItem | ForEach-Object { Add-Content $_ 'x' }", "Get-ChildItem | ForEach-Object { Move-Item $_ x }",
+            "Get-ChildItem | ForEach-Object { Copy-Item $_ x }", "Get-ChildItem | ForEach-Object { New-Item $_.Name }",
+            "Get-ChildItem | ForEach-Object { Rename-Item $_ y }", "Get-ChildItem | ForEach-Object { Clear-Content $_ }",
+            "foreach ($f in Get-ChildItem) { Remove-Item $f }", "Invoke-Command -ScriptBlock { Remove-Item x }", "Start-Job { Remove-Item x }",
+            "& { Remove-Item x }", "Get-ChildItem | Remove-Item", "Get-ChildItem | Set-Content -Value x", "Get-ChildItem | Add-Content -Value x",
+            "Get-ChildItem | Clear-Content", "Get-ChildItem | New-Item -ItemType File", "Get-ChildItem | Move-Item -Destination d",
+            "Get-ChildItem | Rename-Item -NewName y", "Get-ChildItem | Where-Object { $_.Length -gt 5 } | Remove-Item",
+        ), deny=True, tool="PowerShell", fragment="is recorded read-only")
+        self.check((
+            "Get-ChildItem | ForEach-Object { $_.Name }", "Get-ChildItem | ForEach-Object { Write-Output $_.FullName }",
+            "Get-ChildItem | Where-Object { $_.Length -gt 5 }", "Get-ChildItem | Sort-Object Length | Select-Object -First 5",
+            "Get-Content list | Select-String x", "Get-ChildItem | Measure-Object", "Get-ChildItem | ForEach-Object { \"{0}\" -f $_.Name }",
+            f"Get-ChildItem | ForEach-Object {{ Copy-Item $_ skillset-saves/runs/{READ_ONLY_RUN}/investigation/ }}",
+            f"'x' | Out-File skillset-saves/runs/{READ_ONLY_RUN}/investigation/o.txt",
+            f"Get-ChildItem | ForEach-Object {{ Set-Content skillset-saves/runs/{READ_ONLY_RUN}/investigation/o.txt 'x' }}",
+        ), deny=False, tool="PowerShell")
+
+    def test_what_a_launcher_runs_is_not_judged_by_a_freeze_or_a_block(self):
+        """Only a read-only run reads these (the coordinator's rule: leave the other states as they were)."""
+        commands = ("echo 'rm x' | sh", "ls | parallel rm {}", "ls | entr rm /_", "watch 'rm x'", "patch -p1 < fix.diff", "git apply fix.patch",
+                    "echo x | python3 -", "ls | parallel gzip")
+        shell_blocks = ("Get-Content list | ForEach-Object { Remove-Item $_ }", "Get-ChildItem | Remove-Item", "Get-ChildItem | Set-Content -Value x")
+        for state in ({}, FROZEN, {"blocked_globs": [{"glob": "**/secrets/**", "owner": "ops"}]}, {"allow_dangerous": False}):
+            self.guard(state)
+            with self.subTest(state=sorted(state)):
+                self.check(commands, deny=False)
+        self.guard(FROZEN)
+        self.check(shell_blocks[:1], deny=False, tool="PowerShell")
+        self.guard(READ_ONLY)
+        self.check(commands, deny=True, fragment="is recorded read-only")
+        self.check(shell_blocks, deny=True, tool="PowerShell", fragment="is recorded read-only")
+
     def test_patch_and_git_apply_are_denied_unless_they_only_check(self):
         self.check((
             "patch -p1 < fix.diff", "patch -p1 -i fix.diff", "cat fix.diff | patch -p1", "patch < fix.diff", "git apply fix.patch", "git apply < fix.patch",

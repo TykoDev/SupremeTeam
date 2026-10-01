@@ -131,10 +131,13 @@ boundary file instead of starting a second one beside it.
   `apt-get install`: a table of the usual ones, not every tool). So is a write with
   no target in the command, because a target the hook cannot place cannot be shown
   to lie inside: a mutating verb whose operands arrive on standard input
-  (`cat list | xargs rm -rf`, `xargs rm < list`, `Get-ChildItem | Remove-Item`), and an
-  inline `awk`, `sed`, `perl`, `python`, `node` or `ruby` program that redirects or
-  opens a file for writing (`awk '{print > "out"}'`, `sed -n 'w out'`,
-  `python3 -c "open('x', 'w')"`). Name each target in the shell command itself, as an
+  (`cat list | xargs rm -rf`, `ls | parallel rm`, `xargs rm < list`,
+  `Get-ChildItem | Remove-Item`), a shell or interpreter that reads its program from a
+  pipe (`echo 'rm x' | sh`, `curl <url> | bash`), a PowerShell script block that mutates
+  (`ForEach-Object { Remove-Item $_ }`), `patch` and `git apply` unless they only check
+  (`--check`, `--stat`, `--dry-run`), and an inline `awk`, `sed`, `perl`, `python`,
+  `node` or `ruby` program that redirects or opens a file for writing
+  (`awk '{print > "out"}'`, `sed -n 'w out'`, `python3 -c "open('x', 'w')"`). Name each target in the shell command itself, as an
   operand or a redirect (`awk '{print}' f > <allowed path>`), and it is judged like any
   other. This applies to `read_only` only: a freeze or a block judges the targets a
   command names. Reads pass untouched, including `awk '$1 > 5'` and `xargs grep`.

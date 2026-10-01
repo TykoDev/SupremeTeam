@@ -57,9 +57,11 @@ Denied while the record is unreleased:
   managers, not every tool.
 - Every write with no target in the command, because a target the hook cannot place cannot be shown to
   lie inside the allow globs: a mutating verb whose operands arrive on standard input (`cat list | xargs rm`,
-  `xargs rm < list`, `Get-ChildItem | Remove-Item`) and an inline `awk`, `sed`, `perl`, `python`, `node` or `ruby`
-  program that redirects or opens a file for writing (`awk '{print > "out"}'`, `sed -n 'w out'`,
-  `python3 -c "open('x', 'w')"`). Name each target in the shell command itself, as an operand or a redirect, and
+  `ls | parallel rm`, `xargs rm < list`, `Get-ChildItem | Remove-Item`), a shell or interpreter that reads its program
+  from a pipe (`echo 'rm x' | sh`, `curl <url> | bash`), a PowerShell script block that mutates
+  (`ForEach-Object { Remove-Item $_ }`), `patch` and `git apply` unless they only check (`git apply --check`,
+  `patch --dry-run`), and an inline `awk`, `sed`, `perl`, `python`, `node` or `ruby` program that redirects or opens
+  a file for writing (`awk '{print > "out"}'`, `sed -n 'w out'`, `python3 -c "open('x', 'w')"`). Name each target in the shell command itself, as an operand or a redirect, and
   it is judged like any other: `awk '{print}' f > <allowed path>` passes.
 
 Passing untouched:

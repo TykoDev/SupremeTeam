@@ -1231,8 +1231,6 @@ _XARGS_ARG = frozenset({"-n", "-P", "-L", "-s", "-d", "-E", "-a", "--max-args", 
                         "--max-chars", "--delimiter", "--eof", "--arg-file"})
 # Stands in for the operands a command reads from standard input: a path word no real command line contains.
 _STDIN = _Arg("<stdin>")
-# The cmdlets whose path parameter takes the objects of the pipeline before them (``Get-ChildItem | Remove-Item``).
-_PS_PIPED = frozenset({"remove-item", "move-item", "copy-item", "rename-item", "clear-content", "set-itemproperty", "set-acl"})
 
 
 def _skip_options(rest: list, with_arg: frozenset, positional: int, assignments: bool) -> list:
@@ -1421,6 +1419,39 @@ def _hide_text(ctx: _Ctx, text: str, ps: bool) -> None:
     sub = _scratch(ctx)
     _process(text, sub, ps)
     _keep(ctx, sub)
+
+
+def _ps_blocks(text: str) -> list:
+    """The text inside each outermost ``{...}`` of PowerShell text. A script block holds commands (``ForEach-Object {
+    Remove-Item $_ }``) the pass over the line does not read as commands; quotes and backtick escapes are skipped."""
+    blocks: list = []
+    depth = start = i = 0
+    quote = ""
+    n = len(text)
+    while i < n:
+        char = text[i]
+        if quote:
+            if char == quote:
+                if text[i + 1:i + 2] == quote:
+                    i += 1
+                else:
+                    quote = ""
+            elif char == "`" and quote == '"':
+                i += 1
+        elif char in "'\"":
+            quote = char
+        elif char == "`":
+            i += 1
+        elif char == "{":
+            if depth == 0:
+                start = i + 1
+            depth += 1
+        elif char == "}" and depth:
+            depth -= 1
+            if depth == 0:
+                blocks.append(text[start:i])
+        i += 1
+    return blocks
 
 
 def _reads_program_from_stdin(verb: str, rest: list) -> bool:
@@ -1676,17 +1707,18 @@ def _ps_assignment(words: list, ctx: _Ctx) -> bool:
 
 
 def _strip_keywords(args: list) -> list:
-    while args and not args[0].unresolved:
-        text = args[0].text
+    i = 0
+    while i < len(args) and not args[i].unresolved:
+        text = args[i].text
         if text in ("for", "select", "case"):
             return []
         if text == "function":
-            args = args[2:]
+            i += 2
         elif text in _KEYWORDS:
-            args = args[1:]
+            i += 1
         else:
             break
-    return args
+    return args[i:]
 
 
 def _literal_words(verb: str, rest: list) -> "list | None":
@@ -1846,7 +1878,7 @@ def _record_targets(verb: str, rest: list, ctx: _Ctx, stdin: bool = False) -> No
     if found is None:
         return
     items, via = found
-    if stdin and (via in _PS_PIPED or not ctx.ps):
+    if stdin:
         # Operands on standard input are the verb's targets too: ask where a word appended to its arguments would land.
         probe = _find_targets(verb, [*rest, _STDIN], ctx)[0]
         if any((item[0] if isinstance(item, tuple) else item).text == _STDIN.text for item in probe):
@@ -1938,6 +1970,9 @@ def _process(text: str, ctx: _Ctx, ps: bool, scoped: bool = True) -> None:
     try:
         tokens = _Lexer(text, ps).run()
         _run_tokens(tokens, ctx)
+        if ps:
+            for block in _ps_blocks(text):
+                _hide_text(ctx, block, True)
     except (_Unbalanced, RecursionError):
         ctx.out.ok = False
     finally:

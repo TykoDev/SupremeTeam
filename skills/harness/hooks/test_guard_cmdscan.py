@@ -839,6 +839,91 @@ class LauncherTests(unittest.TestCase):
 
 
 
+# PowerShell script blocks and the cmdlets that take their path from the pipeline.
+POWERSHELL_BLOCKS = (
+    ("Get-Content list | ForEach-Object { Remove-Item $_ }", ["$_"]),
+    ("Get-Content list | % { Remove-Item $_ }", ["$_"]),
+    ("Get-ChildItem | ForEach-Object { Set-Content $_.FullName 'x' }", ["$_.FullName"]),
+    ("Get-ChildItem | ForEach-Object { Out-File $_.Name }", ["$_.Name"]),
+    ("Get-ChildItem | ForEach-Object { Add-Content $_ 'x' }", ["$_"]),
+    ("Get-ChildItem | ForEach-Object { Move-Item $_ x }", ["$_", "x"]),
+    ("Get-ChildItem | ForEach-Object { Copy-Item $_ x }", ["x"]),
+    ("Get-ChildItem | ForEach-Object { New-Item $_.Name }", ["$_.Name"]),
+    ("Get-ChildItem | ForEach-Object { Rename-Item $_ y }", ["$_"]),
+    ("Get-ChildItem | ForEach-Object { Clear-Content $_ }", ["$_"]),
+    ("foreach ($f in Get-ChildItem) { Remove-Item $f }", ["$f"]),
+    ("Invoke-Command -ScriptBlock { Remove-Item x }", ["x"]),
+    ("Start-Job { Remove-Item x }", ["x"]),
+    ("& { Remove-Item x }", ["x"]),
+    ("if ($ok) { Remove-Item x } else { Remove-Item y }", ["x", "y"]),
+    ("Get-ChildItem | ForEach-Object { Get-Item $_ | ForEach-Object { Remove-Item $_.Name } }", ["$_.Name"]),
+)
+POWERSHELL_PIPELINE = (
+    "Get-ChildItem | Remove-Item", "Get-ChildItem | Set-Content -Value x", "Get-ChildItem | Add-Content -Value x", "Get-ChildItem | Clear-Content",
+    "Get-ChildItem | New-Item -ItemType File", "Get-ChildItem | Move-Item -Destination d", "Get-ChildItem | Rename-Item -NewName y",
+    "Get-ChildItem | Where-Object { $_.Length -gt 5 } | Remove-Item", "ls | rm", "gci | ri",
+)
+POWERSHELL_READS = (
+    "Get-ChildItem | ForEach-Object { $_.Name }", "Get-ChildItem | ForEach-Object { Write-Output $_.FullName }",
+    "Get-ChildItem | Where-Object { $_.Length -gt 5 }", "Get-ChildItem | Sort-Object Length | Select-Object -First 5",
+    "Get-ChildItem | ForEach-Object { \"{0}\" -f $_.Name }", "$a = @{ x = 1 }; $a.x", "Get-Content list | Select-String x",
+    "Get-ChildItem | ForEach-Object { Copy-Item $_ out/ }", "'x' | Out-File out.txt", "Get-ChildItem | Set-Content -Path out.txt -Value x",
+    "Get-ChildItem | Tee-Object -FilePath out.txt", "echo '{' | Out-String", "Get-ChildItem | ForEach-Object { Write-Output '}' }",
+)
+
+class PowerShellBlockTests(unittest.TestCase):
+    """PowerShell script blocks and the cmdlets that take their path from the pipeline, and the cost of reading all of the above."""
+
+    def test_a_powershell_script_block_is_read_for_the_read_only_rule_only(self):
+        for text, expected in POWERSHELL_BLOCKS:
+            with self.subTest(command=text):
+                found = sorted({path for paths, _ in hidden(text, ps=True) for path in paths})
+                self.assertEqual(found, sorted(expected), text)
+
+    def test_a_powershell_block_does_not_change_what_the_line_itself_writes(self):
+        """The commands inside the braces are the main pass's to read or not as it always did; the block adds nothing there."""
+        before = analyse("Get-Content list | ForEach-Object { Remove-Item $_ }", ps=True)
+        self.assertEqual([w.path for w in before.writes], [])
+        self.assertEqual({c.verb for c in before.commands}, {"get-content", "foreach-object"})
+
+    def test_a_powershell_cmdlet_that_takes_its_path_from_the_pipeline_is_unnamed(self):
+        for text in POWERSHELL_PIPELINE:
+            with self.subTest(command=text):
+                self.assertEqual([u.how for u in analyse(text, ps=True).unnamed], ["stdin"], text)
+
+    def test_powershell_that_names_its_path_or_only_reads_finds_nothing(self):
+        for text in POWERSHELL_READS:
+            with self.subTest(command=text):
+                found = [path for paths, named in hidden(text, ps=True) for path in paths]
+                self.assertEqual((analyse(text, ps=True).unnamed, [p for p in found if p.startswith("$")]), ([], []), text)
+
+    def test_the_script_blocks_of_a_line_are_its_outermost_braces(self):
+        for text, expected in (
+            ("ForEach-Object { a } | Where-Object { b }", [" a ", " b "]),
+            ("x { a { b } c } y", [" a { b } c "]),
+            ("echo '{ not }' \"{ nor }\" `{ nor `}", []),
+            ("echo 'it''s {' { real }", [" real "]),
+            ("{ never closed", []),
+            ("a } b", []),
+            ("@{ a = 1 }", [" a = 1 "]),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(_cmdscan._ps_blocks(text), expected)
+
+    def test_hostile_launcher_text_is_analysed_in_a_few_seconds(self):
+        size = 100_000
+        for text, ps in (("ls | parallel rm {}; " * (size // 20), False), ("parallel " * (size // 9) + "rm", False),
+                         ("ls | entr rm /_; " * (size // 17), False), ("watch 'rm x'; " * (size // 14), False),
+                         ("ls | ForEach-Object { Remove-Item $_ }; " * (size // 40), True), ("{ " * (size // 4) + "Remove-Item x" + " }" * (size // 4), True),
+                         ("ForEach-Object { " * 60 + "Remove-Item x" + " }" * 60, True), ("echo x | sh; " * (size // 13), False)):
+            with self.subTest(command=text[:30]):
+                start = time.perf_counter()
+                analyse(text, ps)
+                self.assertLess(time.perf_counter() - start, 4.0)
+
+
+
+
 class WorkingDirectoryCostTests(unittest.TestCase):
     """RR-guard-2: a chain of relative ``cd`` makes each directory the previous one plus a segment, so what the analysis
     keeps for it must stop growing, and what it cannot follow must say so."""

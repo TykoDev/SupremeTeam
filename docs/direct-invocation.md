@@ -55,12 +55,15 @@ evidence each needs is in [gatekeepers.md](gatekeepers.md).
 
 `architect`, `bob-the-builder`, `mr-robot`, the stage gatekeepers, and the rest of
 the skills under `design/`, `build/`, and `review/` are reached through their
-owning sub-orchestrator. They are not user entry points, and calling one cold will
-route you back through the front door.
+owning sub-orchestrator, by path. They are not user entry points: a host that scans
+one level deep never lists them (only the 22 skills at the install root are
+registered by name), and a request phrased as one of them goes through the front
+door instead.
 
 ## If your tool has no skill routing
 
-Provide `AGENTS.md` and the specific `SKILL.md` as context, then ask:
+`AGENTS.md` is the index of a checkout and is not installed, so this route works
+from one. Provide `AGENTS.md` and the specific `SKILL.md` as context, then ask:
 
 ```text
 Provide AGENTS.md and skills/admiral/SKILL.md, then ask: "Run the full pipeline for [description]."

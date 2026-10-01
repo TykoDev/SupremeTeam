@@ -7,11 +7,18 @@ SupremeTeam/
 ├── README.md                             # Start here
 ├── QUICK-START.md                        # Install and first run
 ├── Install.md                            # The full installation procedure
-├── AGENTS.md                             # Flat skill index for tool discovery
-├── scripts/
+├── AGENTS.md                             # Flat skill index for a checkout (not installed)
+├── BENCHMARK.md                          # Scores, routing accuracy, how each was measured
+├── CHANGELOG.md                          # What changed
+├── CONTRIBUTING.md                       # Running the suites, fail-open and fail-loud, commits
+├── LICENSE                               # MIT
+├── .github/workflows/ci.yml              # Runs the suites and validators on three OSes
+├── scripts/                              # Checkout-only: not part of an installed copy
 │   ├── install.ps1                       # Windows installer
 │   ├── install.sh                        # macOS and Linux installer
-│   └── install_hooks.py                  # Registers hooks, then verifies them
+│   ├── install-items.txt                 # What the installers copy
+│   ├── install_hooks.py                  # Registers hooks, then verifies them
+│   └── test_install.py                   # Installer suite
 ├── docs/
 │   ├── architecture.md                   # Pipelines, tiers, execution modes
 │   ├── skills.md                         # Every skill and what it owns
@@ -34,13 +41,14 @@ SupremeTeam/
     ├── routing-doctrine.md               # Entry routing, Tier 0, session pin
     ├── grill-me-doctrine.md              # Intake interview
     ├── design-doctrine.md                # Design system and its gate evidence
+    ├── taste-doctrine.md                 # Preference semantics, provenance, lifecycle
     ├── harness-doctrine.md               # Lifecycle layers, taxonomy, rules
     ├── performance-doctrine.md           # Measured optimization
     ├── save-protocol.md                  # Save layout, lifecycle, resume
     ├── mcp-tools.md                      # MCP registry with a freshness TTL
     ├── contracts/                        # Six canonical cross-phase contracts
     ├── tech-stacks/                      # 14 stack overlays + registry.yaml
-    ├── scripts/                          # Shared deterministic tooling
+    ├── scripts/                          # Shared deterministic tooling; its test_*.py suite sits in the same folder
     │   ├── data_formats.py               # JSON and YAML with a stdlib fallback
     │   ├── output_paths.py               # Resolves every generated destination
     │   ├── check_runtime.py              # Runtime contract check and the command line
@@ -52,14 +60,18 @@ SupremeTeam/
     │   ├── scaffold_scan.py              # Scaffold and placeholder marker scan
     │   ├── redaction.py                  # Secret redaction for every check_runtime report
     │   ├── scan_record.py                # Typed scan evidence records
+    │   ├── check_parity.py               # Redesign mock and prototype parity against the inventory
+    │   ├── content_hash.py               # The catalog's sha256 (text folded to LF) for evidence files
+    │   ├── save_taxonomy.py              # The save-path constants the writer, reader and resolver share
     │   ├── validate_manifests.py         # Manifest and cross-reference contracts
     │   └── package_check.py              # Packaging enumeration and residue check
-    ├── validation/                       # Contract test suites
+    ├── validation/                       # Contract test suites, run_eval.py and trigger_eval.py
     ├── harness/
     │   ├── hooks/                        # lifecycle hooks, guard and maintenance audits, save_run.py
     │   └── gatekeeper/                   # check.py (gate spec) + _gatecheck.py (shape)
     ├── admiral/                          # The front door
-    │   ├── references/                   # workflow.md, examples.md
+    │   ├── references/                   # workflow, routing, contracts, failure-modes, examples
+    │   ├── intake-brief.yaml, stub-contract.md
     │   └── agent/                        # agent-manifest.yaml, agent-protocol.md, adapters/
     ├── gatekeeper-admiral/               # Cross-stage validator
     ├── design/                           # commander, researcher, planner, architect,
@@ -110,10 +122,14 @@ Why things sit where they do:
   because they are cross-cutting.
 - Pipeline-stage skills nest under their category (`design/`, `build/`,
   `review/`).
-- Standalone tools sit directly under `skills/` for host discovery.
+- Standalone tools sit directly under `skills/` so a host that scans one level
+  deep registers them by name. Depth does matter to that loader: the 22 root-level
+  skills register, and the 31 nested specialists are reached by path through the
+  skill that delegates to them (`routing-doctrine.md`, "Host registration").
 - Contracts, doctrines, manifests, `scripts/`, `validation/`, `tech-stacks/`, and
   `harness/` live at the skill-set root so every skill can resolve them.
-- `AGENTS.md` is the flat index, so nesting depth never matters for discovery.
+- `AGENTS.md` is a flat index of a checkout. The installers do not copy it and no
+  host discovers skills from it.
 
 ## After installation
 
@@ -136,7 +152,7 @@ explicitly.
 
 | Component | Needs |
 |---|---|
-| Every skill | The root doctrines: `routing-doctrine.md`, `grill-me-doctrine.md`, `save-protocol.md`, and where relevant `design-doctrine.md`, `harness-doctrine.md`, `performance-doctrine.md`, `mcp-tools.md` |
+| Every skill | The root doctrines: `routing-doctrine.md`, `grill-me-doctrine.md`, `save-protocol.md`, and where relevant `design-doctrine.md`, `taste-doctrine.md`, `harness-doctrine.md`, `mcp-tools.md`. `performance-doctrine.md` is reached through `contracts/universal-frameworks.md`; no `SKILL.md` links it |
 | Every gate boundary | `gates.yaml` and `harness/gatekeeper/check.py` |
 | Every `gatekeeper-*` skill | `harness/gatekeeper/_gatecheck.py`, found by walking up to the skill-set root |
 | `admiral` at intake | `harness/hooks/verify_registration.py`, `check_readiness.py`, `save_run.py`, `mcp-tools.md` |

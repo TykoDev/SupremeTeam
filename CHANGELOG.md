@@ -164,6 +164,14 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   so in its report, in an installed copy.
 - The evidence-key documentation check needs the key in backticks, so an ordinary
   English word no longer counts as documenting it.
+- More of what the documents claim is compared with the code. The Submitter column of
+  every boundary table (`docs/gatekeepers.md`, `workflow-protocol.md`, the four
+  gatekeeper skills) is compared with `gates.yaml`; every class in
+  `save-ownership.yaml` must name a writer of a declared kind and a tool that exists;
+  `docs/harness.md` tests hold that every tabulated tool exists, that a mistyped
+  option is exit 2 with nothing on stdout, and the named codes of `save_run.py` and
+  `install_hooks.py`; the save-contract tests read the hook's deny envelope instead of
+  searching its output. The documents that said these were not compared now say what is.
 - The images in `docs/assets` are re-encoded (3.6 MB to 0.5 MB) with the same
   names and aspect ratios.
 - BENCHMARK.md marks its one inferred figure (`skill-maker`'s 100, read from the deduction

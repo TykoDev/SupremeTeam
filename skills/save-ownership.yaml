@@ -60,8 +60,10 @@ unowned_path_rule: >-
 enforcement:
   machine_checked: >-
     validation/test_save_contracts.py OwnershipAgreementTests pins the writer of
-    core-run-record, gate-verdict, and grilling-log, requires the tool of
-    core-run-record and gate-verdict (the two it names) to exist on disk, and
+    core-run-record, gate-verdict, and grilling-log, requires the writer of every
+    class to be a roster skill (that is also an ownership.yaml owner), one of the
+    three roles, the compound role or one of the two processes named above,
+    requires the tool of every tool-bearing class to exist on disk, and
     rejects any pattern that is absolute or contains a parent reference.
     GeneratedRootPolicyTests requires generated_roots to be exactly these two
     roots, requires every project kind scripts/output_paths.py offers to
@@ -91,9 +93,7 @@ enforcement:
   judgement: >-
     purpose, generated_roots_rule, notes, writer_vocabulary, unowned_path_rule,
     this enforcement block, and the `rule` text of every class. No comparator
-    opens the tool of project-taste-preferences or harness-guards to see that
-    it exists (GuardWriterTests only requires the harness-guards class to name
-    guard_state.py), and none matches a file an agent composed by hand against
+    matches a file an agent composed by hand against
     the patterns of its class (only what the resolver emits is matched), so a
     report written to the wrong phase subdirectory by the right owner fails
     nothing here and is caught, if at all, by the gate reading the wrong

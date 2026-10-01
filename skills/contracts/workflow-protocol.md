@@ -130,13 +130,16 @@ naming a boundary the spec does not define. The same test holds
 `docs/gatekeepers.md` to the stricter standard of matching every required
 evidence key, and a companion test holds the four gatekeeper skills to it.
 
-Only the first cell is compared. The rest of the table is not:
+That test compares only the first cell. `GateProseTests.test_every_documented_submitter_is_the_one_the_spec_names`
+in [`../validation/test_docs_inventory.py`](../validation/test_docs_inventory.py)
+reads the Submitter column of this table, of `docs/gatekeepers.md` and of the four
+gatekeeper skills. The rest of the table is not compared:
 
 | Column | Compared against gates.yaml | Consequence |
 |--------|-----------------------------|-------------|
 | Boundary | Yes, as a name set | A missing or invented boundary fails the test. |
 | Guards | No | The wording may drift silently; it is prose in this contract's state vocabulary. |
-| Submitter | No | Verified equal to the `submitter` field of every boundary as of this revision, but nothing keeps it so. |
+| Submitter | Yes, against the `submitter` field of the boundary | A wrong or stale submitter fails the test. |
 | Validator | No | Derived from the phase-gatekeeper assignment, which `gates.yaml` does not carry. |
 
 The Guards column is a deliberate paraphrase, not a copy. Two kinds of

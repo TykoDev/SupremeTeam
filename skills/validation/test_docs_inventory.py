@@ -17,6 +17,9 @@ copy, which carries only ``skills/``.
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -213,6 +216,37 @@ class GateProseTests(unittest.TestCase):
         text = (REPO / "docs" / "gatekeepers.md").read_text(encoding="utf-8")
         self.check_roster(self.roster_rows(text, "## Typed evidence records"))
 
+    SUBMITTER_HEADER = re.compile(r"^\|\s*Boundary\s*\|\s*Guards\s*\|\s*Submitter\s*\|.*$", re.M)
+
+    def submitters_in(self, text: str) -> dict:
+        """boundary -> the Submitter cell of every row of every `Boundary | Guards | Submitter` table in ``text``."""
+        boundaries = self.spec["boundaries"]
+        found = {}
+        for header in self.SUBMITTER_HEADER.finditer(text):
+            for line in text[header.end():].lstrip("\n").split("\n\n", 1)[0].splitlines():
+                cells = [cell.strip().strip("`") for cell in line.strip().strip("|").split("|")]
+                if len(cells) >= 3 and cells[0] in boundaries:
+                    found[cells[0]] = cells[2]
+        return found
+
+    def test_every_documented_submitter_is_the_one_the_spec_names(self):
+        """QR-04: the drift test read the first cell only, so a wrong Submitter cell was invisible."""
+        boundaries = set(self.spec["boundaries"])
+        documents = {
+            SKILLS / "contracts" / "workflow-protocol.md": boundaries,
+            SKILLS / "gatekeeper-admiral" / "SKILL.md": boundaries,
+            SKILLS / "design" / "gatekeeper-design" / "SKILL.md": {"design-to-build", "redesign-review"},
+            SKILLS / "build" / "gatekeeper-build" / "SKILL.md": {"build-to-review"},
+            SKILLS / "review" / "gatekeeper-code" / "SKILL.md": {"review-to-delivery"},
+        }
+        if IN_A_CHECKOUT:
+            documents[REPO / "docs" / "gatekeepers.md"] = boundaries
+        for path, expected in documents.items():
+            with self.subTest(document=path.relative_to(REPO).as_posix()):
+                rows = self.submitters_in(path.read_text(encoding="utf-8"))
+                self.assertEqual(expected, set(rows))
+                self.assertEqual({name: self.spec["boundaries"][name]["submitter"] for name in rows}, rows)
+
     def test_no_document_says_a_stack_locks_versions_intersect(self):
         """RR-gate-2: every declared version has to be one the registry entry offers; one match is not enough."""
         documents = sorted(SKILLS.rglob("*.md")) + (sorted((REPO / "docs").glob("*.md")) if IN_A_CHECKOUT else [])
@@ -249,6 +283,61 @@ class GateProseTests(unittest.TestCase):
         text = " ".join((REPO / "docs" / "gatekeepers.md").read_text(encoding="utf-8").split())
         self.assertIn("flat package outside a run", text)
         self.assertIn("no typed record, waiver wording or finding policy was checked", text)
+
+
+@CHECKOUT_ONLY
+class ExitCodeTableTests(unittest.TestCase):
+    """CR-14: docs/harness.md tabulates every tool's exit codes as "a description, not a contract the tests hold".
+
+    Two parts of it can be held cheaply: the caution that a mistyped option is argparse's own exit 2 with nothing
+    on stdout (so a 2 from `save_run.py` is not by itself `degraded`), and the named constants of the two tools
+    that define their codes.
+    """
+
+    TOOLS = (
+        "skills/harness/gatekeeper/check.py", "skills/harness/hooks/save_run.py", "skills/scripts/package_check.py",
+        "skills/scripts/validate_manifests.py", "skills/scripts/check_runtime.py", "skills/scripts/check_parity.py",
+        "skills/scripts/scan_record.py", "skills/scripts/output_paths.py", "skills/scripts/content_hash.py",
+        "skills/harness/hooks/verify_registration.py", "skills/harness/hooks/check_readiness.py",
+        "skills/harness/hooks/repair_registration.py", "skills/harness/hooks/guard_state.py", "scripts/install_hooks.py",
+        "skills/design/gatekeeper-design/scripts/check.py", "skills/build/gatekeeper-build/scripts/check.py",
+        "skills/review/gatekeeper-code/scripts/check.py", "skills/gatekeeper-admiral/scripts/check.py",
+    )
+
+    def test_a_mistyped_option_is_exit_2_with_nothing_on_stdout_in_every_tabulated_tool(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            for tool in self.TOOLS:
+                with self.subTest(tool=tool):
+                    proc = subprocess.run([sys.executable, str(REPO / tool), "--no-such-option"], cwd=scratch,
+                                          capture_output=True, text=True, stdin=subprocess.DEVNULL, check=False)
+                    self.assertEqual(2, proc.returncode, proc.stderr[-300:])
+                    self.assertEqual("", proc.stdout)
+
+    def test_the_tabulated_tools_exist(self):
+        text = (REPO / "docs" / "harness.md").read_text(encoding="utf-8")
+        section = re.search(r"^## Exit codes and streams\s*$(.*?)(?=^## )", text, re.M | re.S)
+        self.assertIsNotNone(section, "docs/harness.md lost its 'Exit codes and streams' section")
+        names = re.findall(r"^\| `([^`]+\.py)`", section.group(1), re.M)
+        self.assertGreaterEqual(len(names), 12)
+        for name in names:
+            with self.subTest(tool=name):
+                found = [path for prefix in ("skills", "skills/harness", "skills/*", ".") for path in REPO.glob(f"{prefix}/{name}")]
+                self.assertTrue(found, f"docs/harness.md tabulates {name}, which is not in the tree")
+
+    def test_the_named_exit_codes_are_the_ones_the_table_gives(self):
+        save_run = (SKILLS / "harness" / "hooks" / "save_run.py").read_text(encoding="utf-8")
+        self.assertRegex(save_run, r"EXIT_OK, EXIT_REFUSED, EXIT_DEGRADED, EXIT_ENGINE = 0, 1, 2, 3")
+        install = (REPO / "scripts" / "install_hooks.py").read_text(encoding="utf-8")
+        self.assertRegex(install, r"(?m)^EXIT_REFUSED = 2$")
+        self.assertRegex(install, r"(?m)^EXIT_DECLINED = 3$")
+        table = (REPO / "docs" / "harness.md").read_text(encoding="utf-8")
+        save_row = next(line for line in table.splitlines() if line.startswith("| `hooks/save_run.py`"))
+        cells = [cell.strip() for cell in save_row.strip("|").split("|")]
+        self.assertTrue(cells[1].startswith("`ok`") and cells[2].startswith("`refused`") and cells[3].startswith("`degraded`"))
+        self.assertTrue(cells[4].startswith("engine error"))
+        install_row = next(line for line in table.splitlines() if line.startswith("| `scripts/install_hooks.py`"))
+        install_cells = [cell.strip() for cell in install_row.strip("|").split("|")]
+        self.assertTrue(install_cells[3].startswith("a write was refused") and install_cells[4].startswith("declined"))
 
 
 @CHECKOUT_ONLY

@@ -29,9 +29,10 @@ engine error, never a pass.
 
 The table below mirrors that file. A drift test in
 `skills/harness/gatekeeper/test_gate_manifests.py` compares its boundary names and
-its backticked evidence keys with the spec and fails when those differ. The Guards
-and Submitter columns are prose that no test compares, so they are kept by hand
-and the spec's `submitter` field is the authority.
+its backticked evidence keys with the spec and fails when those differ, and
+`skills/validation/test_docs_inventory.py` compares the Submitter column with the
+spec's `submitter` field. The Guards column is prose that no test compares, so it is
+kept by hand.
 
 | Boundary | Guards | Submitter | Required evidence |
 | --- | --- | --- | --- |

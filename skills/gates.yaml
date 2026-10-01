@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "kind": "supremeteam-gate-spec",
-  "purpose": "Single deterministic source of truth for every gate boundary: required evidence keys, artifact-backed evidence, sanctioned fallback values, typed evidence records, finding policy, submitters, and the workflow-protocol state transition each boundary guards. harness/gatekeeper/check.py loads this file. The boundary tables in the gatekeeper skills and docs/gatekeepers.md repeat part of it by hand: test_documented_boundary_table_matches_gate_spec and test_gatekeeper_skill_boundary_tables_match_gate_spec in harness/gatekeeper/test_gate_manifests.py compare their boundary names and required-evidence keys with it (contracts/workflow-protocol.md on boundary names only), and nothing compares their Guards or Submitter columns.",
+  "purpose": "Single deterministic source of truth for every gate boundary: required evidence keys, artifact-backed evidence, sanctioned fallback values, typed evidence records, finding policy, submitters, and the workflow-protocol state transition each boundary guards. harness/gatekeeper/check.py loads this file. The boundary tables in the gatekeeper skills and docs/gatekeepers.md repeat part of it by hand: test_documented_boundary_table_matches_gate_spec and test_gatekeeper_skill_boundary_tables_match_gate_spec in harness/gatekeeper/test_gate_manifests.py compare their boundary names and required-evidence keys with it (contracts/workflow-protocol.md on boundary names only). validation/test_docs_inventory.py GateProseTests compares the Submitter column of those tables and of workflow-protocol.md with each boundary's submitter; nothing compares their Guards columns.",
   "verdicts": [
     "APPROVED",
     "REVISE",

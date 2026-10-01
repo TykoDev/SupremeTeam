@@ -351,7 +351,7 @@ class SpecialistEntryRoutingTests(unittest.TestCase):
     """
 
     @staticmethod
-    def _names(section: str, owner: str) -> bool:
+    def _cites(section: str, owner: str) -> bool:
         return re.search(r"`(?:[a-z0-9-]+/)?" + re.escape(owner) + r"`", section) is not None
 
     @staticmethod
@@ -433,7 +433,7 @@ class SpecialistEntryRoutingTests(unittest.TestCase):
             if not routing:
                 continue  # reported by the test above
             checked += 1
-            if not self._names(routing, owner):
+            if not self._cites(routing, owner):
                 violations.append(
                     f"{who} runs {pipeline}/{step} as its {role} but its Entry Routing "
                     f"never names the delegating owner '{owner}'")
@@ -449,14 +449,14 @@ class SpecialistEntryRoutingTests(unittest.TestCase):
                  "verification. Investigate the failure before you ship it.")
         for owner in ("taste", "ship", "investigate"):
             with self.subTest(owner=owner, kind="english word"):
-                self.assertFalse(self._names(prose, owner))
+                self.assertFalse(self._cites(prose, owner))
         for section, owner in [
             ("the prompt carries a `### Save Context` block from `taste`", "taste"),
             ("the invocation explicitly names `design/commander` as the owner", "commander"),
             ("(or `design/redesign` at `redesign-review`)", "redesign"),
         ]:
             with self.subTest(owner=owner, kind="real reference"):
-                self.assertTrue(self._names(section, owner))
+                self.assertTrue(self._cites(section, owner))
 
 
 class DelegationGraphTests(unittest.TestCase):

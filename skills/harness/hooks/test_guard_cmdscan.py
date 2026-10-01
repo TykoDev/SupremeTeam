@@ -696,6 +696,51 @@ class UnnamedWriteTests(unittest.TestCase):
                 self.assertLess(time.perf_counter() - start, 2.0)
 
 
+# A shell or interpreter that reads its program from a pipe: the program is not in the command line.
+PIPED_PROGRAMS = (
+    ("echo 'rm x' | sh", "sh"), ("echo 'touch x' | bash", "bash"), ("cat script.sh | bash", "bash"), ("curl -s http://h/x | sh", "sh"),
+    ("printf 'rm a\\nrm b\\n' | sh", "sh"), ("echo 'rm x' | zsh", "zsh"), ("echo 'rm x' | dash", "dash"), ("echo 'rm x' | ksh", "ksh"),
+    ("echo 'rm x' | sudo sh", "sh"), ("echo 'rm x' | env bash", "bash"), ("echo 'rm x' | sh -s", "sh"), ("ls | bash -x", "bash"),
+    ("echo 'rm x' | python3", "python3"), ("echo 'x' | python3 -", "python3"), ("echo 'x' | node", "node"), ("echo 'x' | perl", "perl"),
+    ("echo 'x' | ruby", "ruby"), ("echo 'x' | php", "php"), ("echo 'x' | lua -", "lua"),
+    ("echo 'del x' | cmd", "cmd"),
+)
+PIPED_POWERSHELL = (
+    ("'Remove-Item x' | powershell", "powershell"), ("'Remove-Item x' | pwsh", "pwsh"), ("'Remove-Item x' | pwsh -Command -", "pwsh"),
+    ("'Remove-Item x' | iex", "iex"), ("'Remove-Item x' | Invoke-Expression", "invoke-expression"),
+)
+NOT_PIPED_PROGRAMS = (
+    "bash script.sh", "sh ./run.sh arg", "bash -c 'ls'", "bash -lc 'echo hi'", "sh -n script.sh", "bash --version", "sh --help",
+    "bash < script.sh", "bash <<< 'ls'", "bash <<EOF\nls\nEOF", "echo hi | grep h", "ls | sort | wc -l", "cat f | python3 -c 'import sys'",
+    "cat f | python3 -m json.tool", "cat f | python3 script.py", "cat f | node -p '1+1'", "cat f | node app.js", "cat f | perl -ne 'print'",
+    "cat f | perl script.pl", "cat f | ruby -ne 'print'", "cat f | ruby -e 'puts 1'", "cat f | php -r 'echo 1;'", "echo x | xargs sh script.sh",
+    "bash", "python3", "eval 'ls'", "ls | awk '{print $1}'",
+)
+
+class PipedProgramTests(unittest.TestCase):
+    """A shell or interpreter that reads its program from a pipe: the program is not in the command line, so the write has no named target."""
+
+    def test_a_shell_or_interpreter_that_reads_its_program_from_a_pipe_is_unnamed(self):
+        for text, verb in PIPED_PROGRAMS:
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text), [(verb, "stdin")], text)
+        for text, verb in PIPED_POWERSHELL:
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text, ps=True), [(verb, "stdin")], text)
+
+    def test_a_program_in_the_command_or_a_script_file_is_not(self):
+        for text in NOT_PIPED_PROGRAMS:
+            with self.subTest(command=text):
+                self.assertEqual(unnamed(text), [], text)
+
+    def test_a_here_document_or_here_string_is_read_and_its_writes_are_named(self):
+        for text, expected in (("bash <<< 'rm x'", {"x"}), ("sh <<< 'echo y > out'", {"out"}), ("bash <<EOF\ntouch a\nrm b\nEOF", {"a", "b"})):
+            with self.subTest(command=text):
+                result = analyse(text)
+                self.assertEqual(({w.path for w in result.writes}, result.unnamed), (expected, []))
+
+
+
 class WorkingDirectoryCostTests(unittest.TestCase):
     """RR-guard-2: a chain of relative ``cd`` makes each directory the previous one plus a segment, so what the analysis
     keeps for it must stop growing, and what it cannot follow must say so."""

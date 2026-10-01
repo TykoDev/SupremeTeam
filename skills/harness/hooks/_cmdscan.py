@@ -17,7 +17,8 @@ does and returns structure the guard rules apply to:
   guard searches them for protected paths instead;
 * ``unnamed``: the writes whose target is not in the command at all (a mutating verb
   that ``xargs`` feeds from standard input, an inline program that redirects or opens
-  a file), which a rule that needs every target named (a read-only run) cannot accept.
+  a file, a shell that reads its program from a pipe), which
+  a rule that needs every target named (a read-only run) cannot accept.
 
 It is a text analysis, not a sandbox. It does not execute, resolve a path built at run
 time, follow a script file, or know a tool it has no entry for; where it cannot tell it
@@ -65,7 +66,8 @@ class Write:
 @dataclass(frozen=True)
 class Unnamed:
     """A write the command does not name a target for: ``how`` is ``stdin`` (the verb's operands arrive on standard
-    input), ``program`` (an inline program redirects or opens a file) or ``nested`` (text below ``MAX_DEPTH``, with
+    input, or a shell or interpreter reads its program there), ``program`` (an inline program redirects or opens a
+    file) or ``nested`` (text below ``MAX_DEPTH``, with
     no verb)."""
     verb: str
     how: str
@@ -1225,8 +1227,10 @@ def _skip_options(rest: list, with_arg: frozenset, positional: int, assignments:
     return rest[i + positional:]
 
 
-def _shell(rest: list, ctx: _Ctx, body: "str | None") -> "list | None":
-    """sh and friends: analyse ``-c`` text or a script on standard input; a script-file run comes back as a plain command."""
+def _shell(rest: list, ctx: _Ctx, body: "str | None", verb: str, piped: bool) -> "list | None":
+    """sh and friends: analyse ``-c`` text or a here-document; a script-file run comes back as a plain command.
+
+    A program that arrives on a pipe is not in the command line, so it is unnamed."""
     i = 0
     while i < len(rest):
         text = rest[i].text
@@ -1242,16 +1246,20 @@ def _shell(rest: list, ctx: _Ctx, body: "str | None") -> "list | None":
             return rest[i:]
     if body is not None:
         _process(body, ctx, False)
+    elif piped and not {"--version", "--help"} & {a.text for a in rest}:
+        _note_unnamed(ctx, verb, "stdin")
     return None
 
 
-def _powershell(rest: list, ctx: _Ctx, body: "str | None") -> "list | None":
+def _powershell(rest: list, ctx: _Ctx, body: "str | None", verb: str, piped: bool) -> "list | None":
     i = 0
     while i < len(rest):
         text = rest[i].text
         low = text.lower()
         if len(low) >= 2 and "-command".startswith(low) or low == "-cmd":
             tail = " ".join(a.text for a in rest[i + 1:])
+            if tail.strip() == "-" and body is None and piped:
+                _note_unnamed(ctx, verb, "stdin")
             _process(body if tail.strip() == "-" and body is not None else tail, ctx, True)
             return None
         if low in ("-encodedcommand", "-ec", "-e", "-enc") and i + 1 < len(rest):
@@ -1270,14 +1278,18 @@ def _powershell(rest: list, ctx: _Ctx, body: "str | None") -> "list | None":
             return rest[i:]
     if body is not None:
         _process(body, ctx, True)
+    elif piped:
+        _note_unnamed(ctx, verb, "stdin")
     return None
 
 
-def _cmd(rest: list, ctx: _Ctx) -> None:
+def _cmd(rest: list, ctx: _Ctx, piped: bool) -> None:
     for index, arg in enumerate(rest):
         if arg.text.lower() in ("/c", "/k", "/r"):
             _process(" ".join(a.text for a in rest[index + 1:]), ctx, True)
             return
+    if piped:
+        _note_unnamed(ctx, "cmd", "stdin")
 
 
 def _xargs(rest: list, upstream: "list | None") -> list:
@@ -1306,6 +1318,21 @@ def _xargs(rest: list, upstream: "list | None") -> list:
     if replace:
         return [([_Arg(a.text.replace(replace, word.text), a.glob, a.unresolved) for a in nested], False) for word in words]
     return [(nested + words, False)]
+
+
+def _reads_program_from_stdin(verb: str, rest: list) -> bool:
+    """True for an interpreter given neither program text nor a script file, which reads its program from standard input."""
+    operands = [a.text for a in rest if not a.text.startswith("-") or a.text == "-"]
+    if _PYTHONS.match(verb):
+        return not any(a.text.startswith(("-c", "-m")) or re.fullmatch(r"-[A-Za-z]*[cm]", a.text) for a in rest) and operands in ([], ["-"])
+    if verb == "perl":
+        _, code, left = _perl_switches(rest)
+        return not code and not left
+    if verb in _EVAL_FLAGS:
+        flags = _EVAL_FLAGS[verb]
+        given = any(a.text in flags or a.text.startswith(tuple(f + "=" for f in flags if f.startswith("--"))) for a in rest)
+        return not given and not [o for o in operands if o != "-"]
+    return False
 
 
 def _inline_code(verb: str, rest: list, body: "str | None") -> list:
@@ -1590,16 +1617,17 @@ def _run_stage(tokens: list, ctx: _Ctx, upstream: "list | None", piped: bool = F
     args = _strip_keywords(args)
     if not args:
         return None
-    _exec(args, ctx, body, upstream, piped and ctx.ps)
+    _exec(args, ctx, body, upstream, piped and ctx.ps, piped)
     verb = _verb(args[0].text)
     return _literal_words(verb, args[1:]) if verb in ("echo", "printf", "write-output", "write-host") else None
 
 
-def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None", stdin: bool = False) -> None:
+def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None", stdin: bool = False, piped: bool = False) -> None:
     """Unwrap launchers until the command that actually runs, then record it, its writes and its code.
 
     ``stdin`` is true when the command's operands may arrive on standard input: what ``xargs`` runs, and a
-    PowerShell cmdlet with a pipeline stage before it."""
+    PowerShell cmdlet with a pipeline stage before it. ``piped`` is true when any pipeline stage comes before it, so
+    a shell or interpreter with no program of its own reads one there."""
     for _ in range(64):
         if not args:
             return
@@ -1609,6 +1637,8 @@ def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None", st
             return
         rest = args[1:]
         if verb in ("eval", "invoke-expression", "iex"):
+            if not rest and piped and verb != "eval":
+                _note_unnamed(ctx, verb, "stdin")
             _process(" ".join(a.text for a in rest), ctx, ctx.ps or verb != "eval", scoped=False)
             return
         if verb == "trap":
@@ -1618,12 +1648,12 @@ def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None", st
                 _process(actions[0].text, ctx, ctx.ps, scoped=True)
             return
         if verb in _SHELLS or verb in _POWERSHELLS:
-            plain = _shell(rest, ctx, body) if verb in _SHELLS else _powershell(rest, ctx, body)
+            plain = _shell(rest, ctx, body, verb, piped) if verb in _SHELLS else _powershell(rest, ctx, body, verb, piped)
             if plain is not None:
                 _finish(args, ctx, body)
             return
         if verb == "cmd":
-            _cmd(rest, ctx)
+            _cmd(rest, ctx, piped)
             return
         if verb == "xargs":
             for command, fed in _xargs(rest, upstream):
@@ -1635,7 +1665,7 @@ def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None", st
         args = _skip_options(rest, *wrapper)
     else:
         return
-    _finish(args, ctx, body, stdin)
+    _finish(args, ctx, body, stdin, piped)
 
 
 def _go(ctx: _Ctx, moved: str) -> None:
@@ -1715,7 +1745,7 @@ def _record_targets(verb: str, rest: list, ctx: _Ctx, stdin: bool = False) -> No
         _note_write(ctx, argument.text, label, cwds, argument.glob, argument.unresolved)
 
 
-def _finish(args: list, ctx: _Ctx, body: "str | None", stdin: bool = False) -> None:
+def _finish(args: list, ctx: _Ctx, body: "str | None", stdin: bool = False, piped: bool = False) -> None:
     verb = _verb(args[0].text)
     rest = args[1:]
     command = Command(verb, tuple(a.text for a in rest), _recent(ctx))
@@ -1734,6 +1764,8 @@ def _finish(args: list, ctx: _Ctx, body: "str | None", stdin: bool = False) -> N
     ctx.out.code.extend(code)
     if _program_writes(verb, rest, code):
         _note_unnamed(ctx, verb, "program")
+    if piped and body is None and not code and _reads_program_from_stdin(verb, rest):
+        _note_unnamed(ctx, verb, "stdin")
     if _DOTNET_FILE.search(args[0].text):
         ctx.out.code.append(ctx.text)
         _note_unnamed(ctx, verb, "program")

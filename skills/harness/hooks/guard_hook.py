@@ -530,9 +530,10 @@ def _read_only_reason(records) -> str:
 # A write the command names no target for is not inside the run's paths whatever it writes: the contract is that every
 # target lies inside, and one the analyser cannot place cannot satisfy it.
 _UNNAMED_REASON = (
-    " A write whose target is not in the command (operands that arrive on standard input, as with `xargs rm`, or a "
-    "redirect or file open inside an awk, sed, perl, python, ruby or node program) cannot be shown to be inside "
-    "them: name each target in the shell command itself, as an operand or a redirect."
+    " A write whose target is not in the command (operands that arrive on standard input, as with `xargs rm`, a program "
+    "read from a pipe, or a redirect or file open inside an awk, sed, perl, python, ruby "
+    "or node program) cannot be shown to be inside them: name each target in the shell command itself, as an operand "
+    "or a redirect."
 )
 
 

@@ -25,7 +25,7 @@ advice.
 
 **How to use it:**
 
-1. **Install** — hand [Install.md](Install.md) to your agent, or run the scripts in [scripts/](scripts/).
+1. **Install** — hand [Install.md](Install.md) to your agent, or run the scripts in [scripts/](scripts/). Runtime hooks are optional and registered separately (`--register-hooks`, which edits host config files and asks first on a terminal); Claude Code, Codex and GitHub Copilot take config entries, Cursor and OpenCode a plugin.
 2. **Start a run** — call `admiral`. It interviews you, writes the scope down, creates a run on disk, and hands off phase one.
 3. **Let it flow** — small reversible edits just get done; security, deploy, and production work always run the full route.
 

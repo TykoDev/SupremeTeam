@@ -52,6 +52,8 @@ anything. [Install.md](Install.md) has the details.
 | Pick teams | `-Team Design,Review` | `--team design --team review` |
 | Pick hosts | `-Target Codex,Claude` | `--target codex --target claude` |
 | Register hooks | `-RegisterHooks` | `--register-hooks` |
+| Which hook config | `-HooksScope Project` | `--hooks-scope project` |
+| Skip the hook question | `-HooksYes` | `--hooks-yes` |
 | Custom path | `-Destination "path"` | `--destination "path"` |
 | Preview only | `-DryRun` | `--dry-run` |
 
@@ -76,7 +78,8 @@ Hook registration: ...
 
 `Moved aside` names any of your items that shared a name with an installed one and
 where they are now. `Hook registration` reads `not requested`, `skipped (no host
-detected)` or `completed`; only `completed` means registration ran.
+detected)`, `declined (nothing was written)` or `completed`; only `completed` means
+registration ran.
 
 ## 2. Register the hooks (optional, recommended)
 
@@ -91,6 +94,27 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -RegisterHooks
 ```bash
 bash ./scripts/install.sh --register-hooks
 ```
+
+Registration edits host config files, and by default the global ones in your home
+directory: `~/.claude/settings.json`, `~/.codex/hooks.json`, or a plugin package
+for Cursor and OpenCode. Run from a terminal, the installer prints exactly what it
+would change in each file and asks before it writes; `--hooks-yes` (`-HooksYes`)
+skips the question, and with no terminal it writes straight away. Every file keeps
+a `.bak-<timestamp>` backup and its permissions. `--hooks-scope project` (or
+`local`, for Claude Code's per-machine file) writes the project around the
+directory you run the installer from instead; a `project` file is usually
+committed and holds machine-absolute paths. [Install.md](Install.md#runtime-hooks)
+lists the file for every host and scope, and [how to undo it](Install.md#uninstall).
+
+To see the change before running the installer for real, install first without
+`--register-hooks`, then:
+
+```bash
+python scripts/install_hooks.py --target claude --hook-root "$HOME/.agents/skills/harness/hooks" --dry-run
+```
+
+Copilot has hook support but no installer target and no skills directory; register
+it with `python scripts/install_hooks.py --target copilot --hook-root "$HOME/.agents/skills/harness/hooks"`.
 
 Then open `/hooks` or restart the host if it wants to review them first.
 
@@ -111,10 +135,15 @@ python skills/scripts/validate_manifests.py
 python skills/scripts/package_check.py --root .
 ```
 
-`check_readiness.py` gives you a capability map, not a pass or fail:
-`python_runtime`, `hooks_configured`, `hooks_executable`, `hooks_observed`,
-`saves_readable`, `active_run`, `deterministic_validators`. Missing hooks knock
-out deterministic enforcement and leave everything else intact.
+`check_readiness.py` gives you a capability map: `python_runtime`,
+`hooks_configured`, `hooks_executable`, `hooks_coverage`, `hooks_interpreter`,
+`hooks_observed`, `hooks_faults`, `saves_readable`, `active_run`,
+`deterministic_validators`. The `Ready` line covers Python, and a run when you
+pass `--require-active-run`. Hooks are optional: missing hooks are listed next to
+it, knock out deterministic enforcement and leave everything else intact. Add
+`--require-hooks` to make working hooks part of ready. `--host auto` checks the
+hosts that have a config file or a host environment variable and says which, so a
+host you do not use is not reported as unregistered.
 
 `hooks_observed` stays `unverified` until a hook actually fires. Reading config
 proves a hook is registered, never that it ran, and the diagnostic will not
@@ -128,7 +157,8 @@ python skills/harness/hooks/repair_registration.py --host claude --scope project
 ```
 
 The preview is the default, and it never touches global host config unless you
-ask for `--scope user`.
+ask for `--scope user`. It registers the Python that runs it (an absolute path,
+started with `-X utf8`); `--python "py -3.13"` names another.
 
 Then ask your assistant:
 
@@ -206,4 +236,6 @@ python scripts\install_hooks.py --target claude --hook-root "$destination\harnes
 ```
 
 Swap `--target` for your host (`codex`, `claude`, `copilot`; `cursor`/`opencode`
-write a plugin package). Skip the hook line to leave routing and guards advisory.
+write a plugin package). Add `--dry-run` first to see the change, and note that
+the default `--scope user` edits your global host config. Skip the hook line to
+leave routing and guards advisory.

@@ -328,7 +328,8 @@ def interpreter_warning(report: dict | None) -> str | None:
         return None
     if report["meets_floor"] is False:
         return (f"interpreter {report['launcher']!r} is Python {report['version']}, below the {report['floor']} floor; "
-                "the hooks will fail open and enforce nothing")
+                "the hooks will fail open and enforce nothing (point the registered command at a newer Python, "
+                "or remove the three entries and register again)")
     if not report["on_path"]:
         return f"interpreter {report['launcher']!r} was not found on this PATH; the host must supply it"
     return None

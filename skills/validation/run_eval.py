@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Run-level eval: which skill does a real session actually invoke?
+"""Run-level eval: which skills does a real session actually register?
 
 ``trigger_eval.py`` asks a model to pick a skill from a list. This runs an actual
-session against an installed catalog and watches what it does. The two measure
-different things, and the difference is the point: a description can win a
+session against an installed catalog and reads what the host registered. The two
+measure different things, and the difference is the point: a description can win a
 routing question and still never fire, because the host's skill loader has to
 have registered it first.
 
@@ -21,13 +21,22 @@ nested, where the loader does not offer them, which is what "reached only throug
 the owning sub-orchestrator" means expressed in the filesystem. ``--registration``
 re-measures that split, and is worth rerunning whenever a skill is added or moved.
 
-The workspace matters. Asked to investigate a failure in an empty directory, a
-session reasonably starts exploring rather than invoking anything, and the run
-scores a miss that says nothing about the catalog. ``seed_workspace`` writes a
-small plausible project so the request is not absurd on its face.
+Both sessions start in the same small project, written by ``seed_workspace``, so
+the catalog is the only difference between them.
 
     python skills/validation/run_eval.py --registration
-    python skills/validation/run_eval.py --queries 12 --out run-report.json
+    python skills/validation/run_eval.py --registration --out run-report.json
+
+Registration is the only thing measured here: no routing session is run, and what a
+session does with a registered skill is measured nowhere in this repository (see
+BENCHMARK.md, "What is not measured"). ``--registration`` names that measurement and
+is accepted so the documented command line keeps working.
+
+Exit codes:
+    0  both sessions completed and the report was printed
+    1  a session could not be run or reported no skill list (the claude CLI is
+       missing, timed out, exited non-zero, or never emitted its init event), so
+       nothing was measured and no report is printed
 """
 from __future__ import annotations
 
@@ -43,9 +52,8 @@ from pathlib import Path
 SKILLS = Path(__file__).resolve().parent.parent
 REPO = SKILLS.parent
 
-#: Files that make a request like "why does checkout fail" a sensible thing to
-#: ask. Small on purpose: enough context to act on, too little to explore for
-#: long, and nothing that hints at which skill should answer.
+#: A small plausible project for both sessions to start in. Nothing in it hints
+#: at any skill.
 SEED = {
     "README.md": "# storefront\n\nCheckout and catalogue service.\n",
     "src/checkout.py": (
@@ -85,13 +93,25 @@ def install_catalog(root: Path) -> int:
     return len(list(target.rglob("SKILL.md")))
 
 
-def _claude(cwd: Path, prompt: str, turns: int, timeout: int) -> list[dict]:
+class ClaudeRunError(RuntimeError):
+    """A `claude` session did not complete, so there is nothing to measure."""
+
+
+def _claude(cwd: Path, prompt: str, timeout: int) -> list[dict]:
     cmd = ["claude", "-p", prompt, "--output-format", "stream-json",
-           "--verbose", "--max-turns", str(turns)]
+           "--verbose", "--max-turns", "1"]
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    proc = subprocess.run(cmd, cwd=str(cwd), env=env, capture_output=True,
-                          text=True, encoding="utf-8", errors="replace",
-                          timeout=timeout, stdin=subprocess.DEVNULL)
+    try:
+        proc = subprocess.run(cmd, cwd=str(cwd), env=env, capture_output=True,
+                              text=True, encoding="utf-8", errors="replace",
+                              timeout=timeout, stdin=subprocess.DEVNULL)
+    except FileNotFoundError as exc:
+        raise ClaudeRunError("the claude CLI was not found on PATH") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ClaudeRunError(f"claude did not finish within {timeout}s") from exc
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip().splitlines()
+        raise ClaudeRunError(f"claude exited {proc.returncode}: {detail[0][:200] if detail else 'no output'}")
     events = []
     for line in proc.stdout.splitlines():
         try:
@@ -102,33 +122,16 @@ def _claude(cwd: Path, prompt: str, turns: int, timeout: int) -> list[dict]:
 
 
 def registered_skills(events: list[dict]) -> list[str]:
+    """The skill list the host reported when the session started.
+
+    A session with no init event reported nothing, which is not the same as an
+    empty list: reading it as "zero skills registered" would report every catalog
+    skill as unregistered whenever the CLI failed.
+    """
     for ev in events:
         if ev.get("type") == "system" and ev.get("subtype") == "init":
             return ev.get("skills") or []
-    return []
-
-
-def invoked_skill(events: list[dict]) -> str | None:
-    """The first Skill tool call, which is the routing decision itself.
-
-    Later tool calls are the work, not the choice. A session that reads a
-    SKILL.md without invoking it has not routed to that skill — it is looking,
-    which is what an orchestrator does before delegating.
-    """
-    for ev in events:
-        if ev.get("type") != "assistant":
-            continue
-        for block in ev.get("message", {}).get("content", []):
-            if block.get("type") == "tool_use" and block.get("name") == "Skill":
-                return str(block.get("input", {}).get("skill", "")) or None
-    return None
-
-
-def cost_of(events: list[dict]) -> float:
-    for ev in events:
-        if ev.get("type") == "result":
-            return float(ev.get("total_cost_usd") or 0.0)
-    return 0.0
+    raise ClaudeRunError("the session emitted no system init event, so no skill list was measured")
 
 
 def check_registration(timeout: int) -> dict:
@@ -147,13 +150,13 @@ def check_registration(timeout: int) -> dict:
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         root = Path(tmp)
         seed_workspace(root)
-        baseline = set(registered_skills(_claude(root, "hi", 1, timeout)))
+        baseline = set(registered_skills(_claude(root, "hi", timeout)))
 
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         root = Path(tmp)
         on_disk = install_catalog(root)
         seed_workspace(root)
-        withcat = set(registered_skills(_claude(root, "hi", 1, timeout)))
+        withcat = set(registered_skills(_claude(root, "hi", timeout)))
 
     added = withcat - baseline
     by_name = {}
@@ -183,17 +186,19 @@ def main() -> int:
     except (AttributeError, OSError):  # pragma: no cover
         pass
 
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description="Report which catalog skills a real host session registers.")
     ap.add_argument("--registration", action="store_true",
-                    help="report which skills the host actually registers, and stop")
-    ap.add_argument("--queries", type=int, default=0,
-                    help="how many routing runs to perform (each is a full session)")
-    ap.add_argument("--turns", type=int, default=2)
-    ap.add_argument("--timeout", type=int, default=300)
+                    help="measure which skills the host registers; this is the only measurement, "
+                         "accepted so the documented command line keeps working")
+    ap.add_argument("--timeout", type=int, default=300, help="seconds allowed per session")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
-    report = {"registration": check_registration(args.timeout)}
+    try:
+        report = {"registration": check_registration(args.timeout)}
+    except ClaudeRunError as exc:
+        print(f"error: nothing was measured: {exc}", file=sys.stderr)
+        return 1
     reg = report["registration"]
     print(f"catalog on disk:      {reg['on_disk']} skills")
     print(f"host alone registers: {reg['baseline_count']}  (its own plus the user-level dir)")

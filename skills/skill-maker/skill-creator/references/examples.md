@@ -156,26 +156,30 @@ That line, written to a file and hashed, is the `validation_report` evidence at
 `skill-maker-to-delivery`; the key is artifact-backed, so the claim alone is not
 evidence.
 
+The output directory is absolute: the working directory is `skill-creator/`, so the run's
+relative path would resolve into the skill instead of the run (the packager refuses that).
+
 ```bash
-python -m scripts.package_skill ../../log-triage skillset-saves/runs/2026-04-12_log-triage_5fe2/skill-creation/packages
+python -m scripts.package_skill ../../log-triage /work/project/skillset-saves/runs/2026-04-12_log-triage_5fe2/skill-creation/packages
 ```
 
 ```text
-📦 Packaging skill: ../../log-triage
-   Output directory: skillset-saves/runs/2026-04-12_log-triage_5fe2/skill-creation/packages
+Packaging skill: ../../log-triage
+   Output directory: /work/project/skillset-saves/runs/2026-04-12_log-triage_5fe2/skill-creation/packages
 
-🔍 Validating skill...
-✅ Skill is valid!
+Validating skill...
+OK: Skill is valid!
 
+  Skipped: log-triage/evals/evals.json
   Added: log-triage/SKILL.md
   Added: log-triage/references/patterns.md
   Added: log-triage/scripts/cluster_traces.py
-  Skipped: log-triage/evals/evals.json
 
-✅ Successfully packaged skill to: .../packages/log-triage.skill
+OK: Successfully packaged skill to: /work/project/skillset-saves/runs/2026-04-12_log-triage_5fe2/skill-creation/packages/log-triage.skill
 ```
 
-- `evals/` at the skill root, `__pycache__`, `*.pyc`, and `.DS_Store` are excluded by design; the archive is rooted at the folder name.
+- `evals/` at the skill root, `.git`, `node_modules`, `__pycache__`, `*.pyc`, and `.DS_Store` are skipped by design; the archive is rooted at the folder name.
+- A symlink, a secret (`.env`, `*.pem`, `*.key`) or run state in the folder is refused instead: every offender is listed, no archive is written, and the exit status is 1.
 - Returned: the `.skill` path, the contents list, and the validation line with its digest.
 
 ---

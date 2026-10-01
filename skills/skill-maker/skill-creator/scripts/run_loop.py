@@ -4,36 +4,54 @@
 Combines run_eval.py and improve_description.py in a loop, tracking history
 and returning the best description found. Supports train/test split to prevent
 overfitting.
+
+Exit codes:
+    0  the loop reached an exit reason: all_passed or max_iterations
+    1  it stopped early - no project root, a query with no completed run
+       (timeouts, claude errors), or no usable description from the improver.
+       The JSON is still printed, with `error` set and the history so far.
+    2  invalid arguments
 """
 
 import argparse
 import json
 import random
 import sys
-import tempfile
-
-
-def _eval_reports_dir():
-    """Live reports go under the project's .harness-state/eval-reports/, never the OS temp dir."""
-    import pathlib
-    start = pathlib.Path.cwd().resolve()
-    root = next((c for c in (start, *start.parents)
-                 if any((c / m).exists() for m in ("skillset-saves", ".harness-state", ".git"))), start)
-    target = root / ".harness-state" / "eval-reports"
-    target.mkdir(parents=True, exist_ok=True)
-    return target
 import time
 import webbrowser
 from pathlib import Path
 
 from scripts.generate_report import generate_html
 from scripts.improve_description import improve_description
-from scripts.run_eval import find_project_root, run_eval
-from scripts.utils import parse_skill_md
+from scripts.run_eval import run_eval
+from scripts.utils import ProjectRootError, find_project_root, parse_skill_md
+
+
+def _eval_reports_dir(project_root: Path) -> Path:
+    """Live reports go under the project's .harness-state/eval-reports/, never the OS temp dir."""
+    target = project_root / ".harness-state" / "eval-reports"
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def _check_settings(max_iterations: int, holdout: float) -> None:
+    if max_iterations < 1:
+        raise ValueError(f"max_iterations must be at least 1, got {max_iterations}")
+    if not 0 <= holdout < 1:
+        raise ValueError(f"holdout must be at least 0 and below 1, got {holdout}")
+
+
+def _holdout_count(n: int, holdout: float) -> int:
+    """How many of n queries go to the test set: one at least when n allows it, never the last."""
+    return max(0, min(max(1, int(n * holdout)), n - 1))
 
 
 def split_eval_set(eval_set: list[dict], holdout: float, seed: int = 42) -> tuple[list[dict], list[dict]]:
-    """Split eval set into train and test sets, stratified by should_trigger."""
+    """Split eval set into train and test sets, stratified by should_trigger.
+
+    Each class keeps at least one query in train. A train set without a positive
+    query passes on the first iteration whatever the description says.
+    """
     random.seed(seed)
 
     # Separate by should_trigger
@@ -45,8 +63,8 @@ def split_eval_set(eval_set: list[dict], holdout: float, seed: int = 42) -> tupl
     random.shuffle(no_trigger)
 
     # Calculate split points
-    n_trigger_test = max(1, int(len(trigger) * holdout))
-    n_no_trigger_test = max(1, int(len(no_trigger) * holdout))
+    n_trigger_test = _holdout_count(len(trigger), holdout)
+    n_no_trigger_test = _holdout_count(len(no_trigger), holdout)
 
     # Split
     test_set = trigger[:n_trigger_test] + no_trigger[:n_no_trigger_test]
@@ -69,9 +87,18 @@ def run_loop(
     verbose: bool,
     live_report_path: Path | None = None,
     log_dir: Path | None = None,
+    project_root: Path | None = None,
 ) -> dict:
-    """Run the eval + improvement loop."""
-    project_root = find_project_root()
+    """Run the eval + improvement loop.
+
+    Raises ValueError for unusable settings and ProjectRootError when no project
+    root can be found. An iteration that cannot be measured, or an improver that
+    returns nothing usable, ends the loop instead: the result then carries
+    ``error`` and an ``exit_reason`` naming the iteration, and ``best_*`` cover
+    only the iterations that were measured.
+    """
+    _check_settings(max_iterations, holdout)
+    project_root = find_project_root(project_root)
     name, original_description, content = parse_skill_md(skill_path)
     current_description = description_override or original_description
 
@@ -86,6 +113,7 @@ def run_loop(
 
     history = []
     exit_reason = "unknown"
+    error = None
 
     for iteration in range(1, max_iterations + 1):
         if verbose:
@@ -109,6 +137,16 @@ def run_loop(
             model=model,
         )
         eval_elapsed = time.time() - t0
+
+        # A query none of whose runs completed has no score. Counting it as a miss
+        # would send the improver after a failure that never happened.
+        unmeasured = [r for r in all_results["results"] if r["pass"] is None]
+        if unmeasured:
+            error = (f"iteration {iteration}: {len(unmeasured)} of {len(all_results['results'])} queries had no "
+                     "completed run (timeout, claude error or no result); check that claude is signed in, or "
+                     "raise --timeout / lower --num-workers")
+            exit_reason = f"eval_failed (iteration {iteration})"
+            break
 
         # Split results back into train/test by matching queries
         train_queries_set = {q["query"] for q in train_set}
@@ -159,7 +197,7 @@ def run_loop(
                 "test_size": len(test_set),
                 "history": history,
             }
-            live_report_path.write_text(generate_html(partial_output, auto_refresh=True, skill_name=name))
+            live_report_path.write_text(generate_html(partial_output, auto_refresh=True, skill_name=name), encoding="utf-8")
 
         if verbose:
             def print_eval_stats(label, results, elapsed):
@@ -199,7 +237,7 @@ def run_loop(
 
         # Improve the description based on train results
         if verbose:
-            print(f"\nImproving description...", file=sys.stderr)
+            print("\nImproving description...", file=sys.stderr)
 
         t0 = time.time()
         # Strip test scores from history so improvement model can't see them
@@ -207,16 +245,21 @@ def run_loop(
             {k: v for k, v in h.items() if not k.startswith("test_")}
             for h in history
         ]
-        new_description = improve_description(
-            skill_name=name,
-            skill_content=content,
-            current_description=current_description,
-            eval_results=train_results,
-            history=blinded_history,
-            model=model,
-            log_dir=log_dir,
-            iteration=iteration,
-        )
+        try:
+            new_description = improve_description(
+                skill_name=name,
+                skill_content=content,
+                current_description=current_description,
+                eval_results=train_results,
+                history=blinded_history,
+                model=model,
+                log_dir=log_dir,
+                iteration=iteration,
+            )
+        except RuntimeError as e:
+            error = f"iteration {iteration}: could not propose a new description: {e}"
+            exit_reason = f"improve_failed (iteration {iteration})"
+            break
         improve_elapsed = time.time() - t0
 
         if verbose:
@@ -225,24 +268,26 @@ def run_loop(
         current_description = new_description
 
     # Find the best iteration by TEST score (or train if no test set)
-    if test_set:
-        best = max(history, key=lambda h: h["test_passed"] or 0)
-        best_score = f"{best['test_passed']}/{best['test_total']}"
-    else:
-        best = max(history, key=lambda h: h["train_passed"])
-        best_score = f"{best['train_passed']}/{best['train_total']}"
+    best = None
+    if history:
+        best = max(history, key=(lambda h: h["test_passed"] or 0) if test_set else (lambda h: h["train_passed"]))
+    best_train_score = f"{best['train_passed']}/{best['train_total']}" if best else None
+    best_test_score = f"{best['test_passed']}/{best['test_total']}" if best and test_set else None
+    best_score = best_test_score or best_train_score
 
     if verbose:
         print(f"\nExit reason: {exit_reason}", file=sys.stderr)
-        print(f"Best score: {best_score} (iteration {best['iteration']})", file=sys.stderr)
+        if best:
+            print(f"Best score: {best_score} (iteration {best['iteration']})", file=sys.stderr)
 
     return {
         "exit_reason": exit_reason,
+        "error": error,
         "original_description": original_description,
-        "best_description": best["description"],
+        "best_description": best["description"] if best else original_description,
         "best_score": best_score,
-        "best_train_score": f"{best['train_passed']}/{best['train_total']}",
-        "best_test_score": f"{best['test_passed']}/{best['test_total']}" if test_set else None,
+        "best_train_score": best_train_score,
+        "best_test_score": best_test_score,
         "final_description": current_description,
         "iterations_run": len(history),
         "holdout": holdout,
@@ -259,21 +304,35 @@ def main():
     parser.add_argument("--description", default=None, help="Override starting description")
     parser.add_argument("--num-workers", type=int, default=10, help="Number of parallel workers")
     parser.add_argument("--timeout", type=int, default=30, help="Timeout per query in seconds")
-    parser.add_argument("--max-iterations", type=int, default=5, help="Max improvement iterations")
+    parser.add_argument("--max-iterations", type=int, default=5, help="Max improvement iterations (at least 1)")
     parser.add_argument("--runs-per-query", type=int, default=3, help="Number of runs per query")
     parser.add_argument("--trigger-threshold", type=float, default=0.5, help="Trigger rate threshold")
-    parser.add_argument("--holdout", type=float, default=0.4, help="Fraction of eval set to hold out for testing (0 to disable)")
+    parser.add_argument("--holdout", type=float, default=0.4, help="Fraction of eval set to hold out for testing (0 to disable, below 1)")
     parser.add_argument("--model", required=True, help="Model for improvement")
+    parser.add_argument("--project-root", default=None,
+                        help="Directory claude -p runs in (default: the nearest ancestor of the working "
+                             "directory with .claude, .git, .harness-state or skillset-saves; never the home directory)")
     parser.add_argument("--verbose", action="store_true", help="Print progress to stderr")
-    parser.add_argument("--report", default="auto", help="Generate HTML report at this path (default: 'auto' for temp file, 'none' to disable)")
+    parser.add_argument("--report", default="auto", help="Generate HTML report at this path (default: 'auto' for a file under .harness-state/eval-reports, 'none' to disable)")
     parser.add_argument("--results-dir", default=None, help="Save all outputs (results.json, report.html, log.txt) to a timestamped subdirectory here")
     args = parser.parse_args()
 
-    eval_set = json.loads(Path(args.eval_set).read_text())
+    try:
+        _check_settings(args.max_iterations, args.holdout)
+    except ValueError as e:
+        parser.error(str(e))
+
+    eval_set = json.loads(Path(args.eval_set).read_text(encoding="utf-8"))
     skill_path = Path(args.skill_path)
 
     if not (skill_path / "SKILL.md").exists():
         print(f"Error: No SKILL.md found at {skill_path}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        project_root = find_project_root(args.project_root)
+    except ProjectRootError as e:
+        print(f"Error: {e}. Run from inside a project, or pass --project-root.", file=sys.stderr)
         sys.exit(1)
 
     name, _, _ = parse_skill_md(skill_path)
@@ -282,11 +341,11 @@ def main():
     if args.report != "none":
         if args.report == "auto":
             timestamp = time.strftime("%Y%m%d_%H%M%S")
-            live_report_path = _eval_reports_dir() / f"skill_description_report_{skill_path.name}_{timestamp}.html"
+            live_report_path = _eval_reports_dir(project_root) / f"skill_description_report_{skill_path.name}_{timestamp}.html"
         else:
             live_report_path = Path(args.report)
         # Open the report immediately so the user can watch
-        live_report_path.write_text("<html><body><h1>Starting optimization loop...</h1><meta http-equiv='refresh' content='5'></body></html>")
+        live_report_path.write_text("<html><body><h1>Starting optimization loop...</h1><meta http-equiv='refresh' content='5'></body></html>", encoding="utf-8")
         webbrowser.open(str(live_report_path))
     else:
         live_report_path = None
@@ -315,24 +374,29 @@ def main():
         verbose=args.verbose,
         live_report_path=live_report_path,
         log_dir=log_dir,
+        project_root=project_root,
     )
 
     # Save JSON output
     json_output = json.dumps(output, indent=2)
     print(json_output)
     if results_dir:
-        (results_dir / "results.json").write_text(json_output)
+        (results_dir / "results.json").write_text(json_output, encoding="utf-8")
 
     # Write final HTML report (without auto-refresh)
     if live_report_path:
-        live_report_path.write_text(generate_html(output, auto_refresh=False, skill_name=name))
+        live_report_path.write_text(generate_html(output, auto_refresh=False, skill_name=name), encoding="utf-8")
         print(f"\nReport: {live_report_path}", file=sys.stderr)
 
     if results_dir and live_report_path:
-        (results_dir / "report.html").write_text(generate_html(output, auto_refresh=False, skill_name=name))
+        (results_dir / "report.html").write_text(generate_html(output, auto_refresh=False, skill_name=name), encoding="utf-8")
 
     if results_dir:
         print(f"Results saved to: {results_dir}", file=sys.stderr)
+
+    if output["error"]:
+        print(f"Error: {output['error']}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

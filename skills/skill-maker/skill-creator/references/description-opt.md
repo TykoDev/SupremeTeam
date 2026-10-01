@@ -77,11 +77,14 @@ genuinely tricky.
 Present the eval set for review using the HTML template:
 
 1. Read the template from `../assets/eval_review.html`
-2. Replace the placeholders:
+2. Replace the placeholders, escaping each for the place it lands. The queries are text a
+   model wrote, and one about a web page can contain `</script>`, which would end the page's
+   script and turn the rest into live markup:
    - `__EVAL_DATA_PLACEHOLDER__` → the JSON array of eval items (no quotes around it
-     — it's a JS variable assignment)
-   - `__SKILL_NAME_PLACEHOLDER__` → the skill's name
-   - `__SKILL_DESCRIPTION_PLACEHOLDER__` → the skill's current description
+     — it's a JS variable assignment), with `<`, `>` and `&` written as `\u003c`, `\u003e`
+     and `\u0026`: `json.dumps(items).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")`
+   - `__SKILL_NAME_PLACEHOLDER__` → the skill's name, through `html.escape`
+   - `__SKILL_DESCRIPTION_PLACEHOLDER__` → the skill's current description, through `html.escape`
 3. Resolve the destination with the governed resolver and write the rendered file
    there — never `/tmp/` and never the project root (`../SKILL.md`, Packaging):
 
@@ -140,6 +143,14 @@ The script handles the full optimization loop automatically:
 When it's done, it opens an HTML report showing results per iteration and returns
 JSON with `best_description` — selected by **test** score (not train) to avoid
 overfitting.
+
+A timeout or a `claude` error is never scored as "did not trigger". If a query has no
+completed run the loop stops, exits non-zero and prints the history so far with `error`
+and an `exit_reason` of `eval_failed (iteration N)`; if the improver returns no usable
+description after three retries the `exit_reason` is `improve_failed (iteration N)`. Raise
+`--timeout` or lower `--num-workers` and rerun. Run it from inside a project: with none
+above the working directory (an installed skill-creator) it stops and asks for
+`--project-root <dir>`, and it never uses the home directory.
 
 ---
 

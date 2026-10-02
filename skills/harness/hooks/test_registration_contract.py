@@ -19,6 +19,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HOOK_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOK_DIR))
@@ -115,6 +116,11 @@ class InstallerContractTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)
+        # A registration records the hook hashes under the project's .harness-state;
+        # point it at the scratch directory so no run writes into the checkout.
+        patcher = mock.patch.dict(os.environ, {"SUPREMETEAM_PROJECT_DIR": str(self.tmp / "project")})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def load_installer(self):
         import importlib.util
@@ -206,6 +212,14 @@ class InstallerContractTests(unittest.TestCase):
         self.assertIn("PreToolUse", result.stdout)
         self.assertIn("dry run: nothing written", result.stdout)
         self.assertFalse(settings.exists(), "a dry run created the config file")
+
+    def test_dry_run_reports_invalid_config_as_failure(self):
+        settings = self.tmp / "settings.json"
+        settings.write_text("{ not json", encoding="utf-8")
+        result = run_installer("--target", "claude", "--claude-settings", str(settings), "--dry-run")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("refusing to overwrite", result.stdout)
+        self.assertEqual(settings.read_text(encoding="utf-8"), "{ not json")
 
     def test_a_missing_hook_root_is_refused(self):
         result = subprocess.run(

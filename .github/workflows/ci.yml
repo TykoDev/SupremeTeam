@@ -1,0 +1,134 @@
+# Continuous integration for the Supreme Team catalog.
+#
+# This implements skills/runtime-manifest.yaml: the `ci_matrix` platforms, every
+# supported Python version, the optional PyYAML both installed and absent, and one
+# step per command listed under `ci.commands`. skills/scripts/validate_manifests.py
+# fails when this file stops covering that declaration, so change the two together.
+#
+# Supply chain: the two actions below are GitHub's own and are pinned to a major
+# version tag, not a commit. That is a deliberate, conservative choice: the job
+# holds a read-only token and no secrets, and a moving major tag still gets
+# security fixes. Nothing is cached, so a poisoned cache cannot reach a later run.
+#
+# Each command is its own step on purpose. Windows PowerShell does not stop a
+# multi-line script when an earlier native command fails, and one step per suite
+# shows which suite broke.
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suites:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }} / ${{ matrix.pyyaml }} PyYAML
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    # skills/validation/_catalog.py reads this: a leg that promises PyYAML fails
+    # when it is missing instead of skipping the tests that need it, and a leg that
+    # promises its absence fails when it is present.
+    env:
+      SUPREMETEAM_PYYAML: ${{ matrix.pyyaml }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.13", "3.14"]
+        pyyaml: [with, without]
+        include:
+          - os: ubuntu-latest
+            launcher: python3
+          - os: windows-latest
+            launcher: py -3
+          - os: macos-latest
+            launcher: python3
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install PyYAML
+        if: matrix.pyyaml == 'with'
+        run: python -m pip install PyYAML
+
+      # The manifest declares a launcher per platform (`py -3` on Windows). It only
+      # has to start a Python 3 here: which one it picks on a runner with several
+      # installed is the image's choice, and the interpreter under test is the
+      # `python` that setup-python put first on the path, which every step below uses.
+      - name: The declared launcher starts Python
+        run: ${{ matrix.launcher }} -c "import sys; print(sys.version)"
+
+      - name: runtime_check
+        run: python skills/scripts/check_runtime.py
+
+      - name: manifests
+        run: python skills/scripts/validate_manifests.py
+
+      - name: hooks
+        run: python -m unittest discover -s skills/harness/hooks -p "test_*.py"
+
+      - name: gates
+        run: python -m unittest discover -s skills/harness/gatekeeper -p "test_*.py"
+
+      - name: validation
+        run: python -m unittest discover -s skills/validation -p "test_*.py"
+
+      - name: scripts
+        run: python -m unittest discover -s skills/scripts -p "test_*.py"
+
+      - name: taste
+        run: python -m unittest discover -s skills/taste -p "test_*.py"
+
+      - name: installers
+        run: python -m unittest discover -s scripts -p "test_*.py"
+
+      - name: skill_creator
+        run: python -m unittest discover -s skills/skill-maker/skill-creator -p "test_*.py"
+
+      # Last, so a suite that leaves residue in the tree fails the delivery check.
+      - name: package_check
+        run: python skills/scripts/package_check.py --root .
+
+      - name: package_archive
+        run: python skills/scripts/package_check.py --root . --out .harness-state/packages/supremeteam.zip
+
+  # Not a runtime command, so it is not in the manifest's `ci.commands`: the linter is
+  # a development tool, it reads the same files on every platform, and one run is
+  # enough. skills/validation/test_lint_config.py holds this job to ruff.toml.
+  lint:
+    name: lint (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Pinned exactly: a new ruff release adds rules, and a gate whose verdict
+      # changes without a commit is a flaky one. Raise the pin with the fixes it needs.
+      - name: Install ruff
+        run: python -m pip install ruff==0.16.9
+
+      - name: ruff
+        run: ruff check .

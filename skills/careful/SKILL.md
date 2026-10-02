@@ -8,7 +8,7 @@ description: >-
   an action, not a document: issues a go, no-go, or escalate verdict and nothing else.
   Locking a path belongs to `freeze`, both halves together to `guard`, lifting a lock
   to `unfreeze`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -57,7 +57,7 @@ Route elsewhere to lock a path from any edits (`freeze`), combine intent checks 
 
 ## Deterministic Enforcement (Action Realization layer)
 
-Careful is the intent half of the Action Realization layer (`../harness-doctrine.md` §1). The deterministic half is `../harness/hooks/pre_tool_use.py`, which blocks a literally destructive command before the host executes it. A careful verdict sits on top of that block, never in place of it, so a verdict is only as safe as the block still standing behind it — and that block can be lifted session-wide by an `allow_dangerous` grant.
+Careful is the intent half of the Action Realization layer (`../harness-doctrine.md` §1). The deterministic half is `../harness/hooks/pre_tool_use.py`, which blocks a destructive command before the host executes it. It reads the command, not its spelling: the wipe of a root, home or drive in `rm -rf ~/`, `rm -rf "$HOME/"`, `/bin/rm -rf /*`, `sh -c "rm -rf /"`, `$(rm -rf /)` or `git -C r push -f origin main` is blocked the same as the plain form. It is still a text guard, so a path built at run time or a script file that does the damage is not seen. A careful verdict sits on top of that block, never in place of it, so a verdict is only as safe as the block still standing behind it — and that block can be lifted session-wide by an `allow_dangerous` grant (at most 8 hours, and honoured only from a state directory this user owns that no one has replaced with a link).
 
 **Step 0 of every careful check on a destructive action is therefore to read the live boundary:**
 
@@ -67,7 +67,7 @@ python skills/harness/hooks/guard_state.py status
 
 Quote that state in the careful record — the `allow_dangerous` value with its owner, scope, and `expires_at`; the `frozen_globs`, `blocked_globs`, and `read_only` records covering the target — and treat a live grant the requested action does not need as a finding rather than as context. Careful reads this record and never writes it; changing a boundary routes to `guard`, `freeze`, or `unfreeze`, which call the single sanctioned writer.
 
-The hook *fails open* (harness-doctrine §3), so an absent, corrupt, or unreadable `guard-state.json` tightens a verdict rather than excusing one. Read `references/enforcement.md` before the first destructive verdict: it carries how to read the `status` output, exactly which `allow_dangerous` shapes lift the block and which leave it in force, and the verdict each enforcement fault forces.
+The hook *fails open* (harness-doctrine §3) and counts each fault by type (`faults` and `last_fault` in `.harness-state/observations/PreToolUse.json`), so an absent, corrupt, or unreadable `guard-state.json` tightens a verdict rather than excusing one. Read `references/enforcement.md` before the first destructive verdict: it carries how to read the `status` output, exactly which `allow_dangerous` shapes lift the block and which leave it in force, and the verdict each enforcement fault forces.
 
 ## Collaboration Surface
 

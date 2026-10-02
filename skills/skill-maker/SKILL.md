@@ -8,7 +8,7 @@ description: >
   skill behavior without naming one — and when `admiral` delegates skill or team creation.
   Routes drafting, evals, fixes, scoring, and packaging to specialists; not for general code
   review, architecture, or non-skill authoring.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -28,6 +28,16 @@ delegated sub-orchestrator under the routing contract.
 > "Orchestrate, delegate, gate. The orchestrator routes work and enforces the quality
 > loop. It never writes skill content or scores rubric dimensions — that is the
 > specialists' job."
+
+## Operator index
+
+Read `Entry Routing` and the six-clause `Execution Contract` first. Then jump to
+the stage named by the handoff: Stage 0 intake, Stage 1 create, Stage 2 review,
+Stage 3 improve, Stage 4 optimize, or Stage 5 package. Use `Quality gate
+management` only when processing a verdict, `Team Creation Protocol` only for a
+team request, and `Save Protocol` only when the handoff enables persistence.
+The reference-file table at the end identifies deeper material; do not load it
+unless the selected stage points there.
 
 ## Use This Skill When
 
@@ -260,7 +270,7 @@ Delegate to **skill-creator** in Package mode.
 
 **Handoff includes:**
 - Skill directory path
-- Output directory: the active run's `skillset-saves/runs/{run-id}/skill-creation/packages/` (resolved with `python skills/scripts/output_paths.py --run-id <run-id> --phase skill-creation --kind packages --name <skill>.skill` — all four are required; the resolver rejects an empty `--run-id`, `--phase`, or `--name`), or `.harness-state/packages/` outside a run; never the skill directory or the project root
+- Output directory, as an absolute path: the active run's `skillset-saves/runs/{run-id}/skill-creation/packages/`, which is the parent of the `path` that `python skills/scripts/output_paths.py --run-id <run-id> --phase skill-creation --kind packages --name <skill>.skill` prints (all four arguments are required; the resolver rejects an empty `--run-id`, `--phase`, or `--name`, and prints the archive's file path while the packager takes its directory). Outside a run, omit it and the packager writes `.harness-state/packages/` under the project root. Never the skill directory or the project root
 
 **Expected return:**
 - `.skill` file path

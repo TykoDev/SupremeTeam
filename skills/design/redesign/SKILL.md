@@ -9,7 +9,7 @@ description: >-
   compare four redesigns, or ask for alternative design systems — even when Admiral
   is never named. Defers to `admiral` when reached cold; a first-time design belongs
   to `design/commander`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 

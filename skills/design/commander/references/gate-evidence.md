@@ -34,7 +34,7 @@ below state what each key must contain and what may stand in for it.
 | `plan` | `design/planner` | The hashed delivery plan, sequenced against the approved architecture rather than beside it | Yes | None | None |
 | `acceptance` | `design/planner` | The criteria the build will be measured against at `build-to-review` | No | None | None |
 | `security_seed` | `build/security-builder` | The trust boundaries the design introduces or moves, and the control the build owes at each one | No | None | **None.** `fallback_values` carries no entry for this key, so it is not waivable here and no applicability record substitutes for it. With no trust boundary in scope, the value is the recorded determination — who decided there is no boundary movement, and on what basis — which satisfies the mechanical check as a plain statement |
-| `stack_lock` | `commander` | The `tech-stacks/registry.yaml` slug, the locked versions, and the overlay sha256, validated so the slug exists, the overlay digest matches both registry and file, and the versions intersect | No | `stack_lock` | `no new runtime or framework - existing stack unchanged` |
+| `stack_lock` | `commander` | The `tech-stacks/registry.yaml` slug, the locked versions, and the overlay sha256, validated so the slug exists, the overlay digest matches both registry and file, and every declared version is one the registry entry offers | No | `stack_lock` | `no new runtime or framework - existing stack unchanged` |
 | `taste_snapshot` | `taste` | The immutable effective-profile snapshot: canonical digest, project and global source revisions, resolved and shadowed entries, unresolved conflicts, applicability decision | Yes | None | `no saved Taste profile available` |
 | `ui_evidence` | `design/architect` | The component template and UI/UX handoff `../../../design-doctrine.md` §5 requires: generated tokens, components, preview, and `design-system.md` | No | None | `no user-facing surface - design system not engaged` |
 
@@ -43,7 +43,7 @@ below state what each key must contain and what may stand in for it.
 Three keys at this boundary are waivable, and each waiver is a claim about the
 project rather than about the run's convenience:
 
-- `stack_lock` — waivable only when the design introduces no runtime, framework, or dependency. Detect the slug deterministically with `python skills/scripts/check_runtime.py --detect-project` before claiming this; a registry that has no slug for the detected runtime is not the same as no new runtime, and is handled in `../SKILL.md` Failure Modes.
+- `stack_lock` — waivable only when the design introduces no runtime, framework, or dependency. Detect the slug deterministically with `python skills/scripts/check_runtime.py --project-root . --detect-project`, run from the project root, before claiming this; the report prints the root it inspected, warns when nothing under it looks like a project, and fails when a walk limit cut the inspection short, so an empty stack list from the wrong directory or from a truncated walk is not read as no new runtime. A registry that has no slug for the detected runtime is not the same as no new runtime either, and is handled in `../SKILL.md` Failure Modes.
 - `taste_snapshot` — waivable only when neither Taste store holds a profile. A profile that exists but was not requested is a missing key, not an absent one.
 - `ui_evidence` — waivable only when the design produces no user-facing surface. A backend-only service uses it; a design whose UI work was skipped for time does not.
 
@@ -58,6 +58,6 @@ author rather than defaulting to the submitter:
 
 | Fallback | Decided by | Recorded during |
 | --- | --- | --- |
-| `stack_lock` no-new-runtime | commander | the stack-lock stage, after `check_runtime.py --detect-project` |
+| `stack_lock` no-new-runtime | commander | the stack-lock stage, after `check_runtime.py --project-root . --detect-project` |
 | `taste_snapshot` no-profile | commander, on the resolution Admiral/Taste returns | intake, before the first specialist delegation |
 | `ui_evidence` no-surface | architect, confirmed by commander against the scope statement | the interface-and-design-system stage decision |

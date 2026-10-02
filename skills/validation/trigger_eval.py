@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Behavioural trigger eval: does the right skill win, out of all 52?
+"""Behavioural trigger eval: does the right skill win, out of the whole roster?
 
 Every other check in this catalog is structural. This one is not: it asks a real
 model to route a real request against the real roster, and scores whether the
@@ -9,8 +9,9 @@ Why a catalog-level eval rather than the per-skill one in
 ``skill-maker/skill-creator/scripts/run_eval.py``: that harness registers a
 single skill and asks whether it fires. A skill can fire correctly in isolation
 and still be wrong in the catalog, because another skill's description claims the
-same phrasing. Discrimination is the property that matters once there are 52 of
-them, and it is only visible when all 52 compete for the same request.
+same phrasing. Discrimination is the property that matters once a catalog has
+dozens of skills, and it is only visible when all of them compete for the same
+request.
 
 The corpus is not invented — it is taken from the catalog, in three forms of
 increasing difficulty, because the easy forms flatter the result:
@@ -42,6 +43,16 @@ when the trigger surface changes.
 
     python skills/validation/trigger_eval.py --pilot              # one batch, to price it
     python skills/validation/trigger_eval.py --mode both --paraphrase --out report.json
+
+A batch that fails (the CLI errors, times out, or returns something unparseable) is
+not a measurement: its queries are reported as unscored, never as misroutes, and the
+accuracy covers only the queries that were scored. When no batch was scored the
+accuracy is undefined (null in the report).
+
+Exit codes:
+    0  every batch was scored
+    1  the roster could not be built (a SKILL.md whose frontmatter is not valid
+       YAML), or at least one batch failed; the report is still written
 """
 from __future__ import annotations
 
@@ -68,6 +79,12 @@ EXPLAIN = re.compile(r"\s+[—-]\s+.*$")
 
 
 def frontmatter(text: str) -> dict:
+    """The parsed frontmatter, or {} when there is none.
+
+    Raises ValueError when it is not valid YAML. Returning {} for that would leave
+    the skill in the roster with an empty description, and the model would be asked
+    to route against a catalog that no longer describes it.
+    """
     if not text.startswith("---"):
         return {}
     end = text.find("\n---", 3)
@@ -75,8 +92,8 @@ def frontmatter(text: str) -> dict:
         return {}
     try:
         return yaml.safe_load(text[3:end]) or {}
-    except yaml.YAMLError:
-        return {}
+    except yaml.YAMLError as exc:
+        raise ValueError(f"frontmatter is not valid YAML: {exc}") from exc
 
 
 def triggers_for(text: str) -> list[str]:
@@ -125,11 +142,18 @@ def triggers_from_description(description: str) -> list[str]:
 
 
 def roster() -> dict[str, dict]:
+    """Every skill with its description and triggers. Raises ValueError, naming each
+    SKILL.md at fault, before any paid call is made."""
     out = {}
+    broken = []
     for path in sorted(SKILLS.rglob("SKILL.md")):
         text = path.read_text(encoding="utf-8", errors="replace")
-        meta = frontmatter(text)
         name = path.parent.relative_to(SKILLS).as_posix()
+        try:
+            meta = frontmatter(text)
+        except ValueError as exc:
+            broken.append(f"{name}: {exc}")
+            continue
         description = str(meta.get("description", "")).strip()
         advertised = triggers_for(text)
         out[name] = {
@@ -138,6 +162,8 @@ def roster() -> dict[str, dict]:
             "from_description_only": not advertised,
             "routed": routing_away(text),
         }
+    if broken:
+        raise ValueError("cannot build the roster:\n  " + "\n  ".join(broken))
     return out
 
 
@@ -266,6 +292,9 @@ def _claude(prompt: str, model: str | None, timeout: int) -> tuple[str, float]:
     if proc.returncode != 0:
         raise RuntimeError(f"claude exited {proc.returncode}: {proc.stderr[:400]}")
     payload = json.loads(proc.stdout)
+    if payload.get("is_error"):
+        # An error message is text too; parsed as routing answers it scores as misroutes.
+        raise RuntimeError(f"claude reported an error: {str(payload.get('result'))[:400]}")
     return payload.get("result") or "", float(payload.get("total_cost_usd") or 0.0)
 
 
@@ -333,7 +362,11 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
-    skills = roster()
+    try:
+        skills = roster()
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     missing = [n for n, i in skills.items() if not i["triggers"]]
     no_section = [n for n, i in skills.items() if i["from_description_only"]]
     corpus = build_corpus(skills, args.per_skill, args.mode)
@@ -351,7 +384,7 @@ def main() -> int:
         print(f"pilot: 1 batch of {len(batches[0])}")
 
     owners = delegating_owners(skills)
-    results, cost_total = [], 0.0
+    results, cost_total, failed_batches = [], 0.0, 0
     for index, batch in enumerate(batches, 1):
         asked = None
         try:
@@ -360,6 +393,7 @@ def main() -> int:
                 cost_total += cost
             answers, cost = ask(batch, skills, args.model, args.timeout, asked)
         except Exception as exc:  # a failed batch must not discard the rest
+            failed_batches += 1
             print(f"  batch {index}/{len(batches)}: FAILED ({exc})", flush=True)
             for item in batch:
                 results.append({**item, "actual": None, "correct": False, "error": str(exc)[:120]})
@@ -383,7 +417,10 @@ def main() -> int:
         print(f"  batch {index}/{len(batches)}: {hits}/{len(batch)} correct  (${cost:.2f})", flush=True)
 
     scored = [r for r in results if "error" not in r]
+    unscored = len(results) - len(scored)
     correct = sum(1 for r in scored if r["correct"])
+    # Undefined, not zero, when nothing was scored: 0% would read as a catalog that routes nothing.
+    accuracy = correct / len(scored) if scored else None
 
     # Persist before printing. A run costs real money and twenty minutes; the
     # first full paraphrase run computed its results and then lost all of them to
@@ -391,12 +428,19 @@ def main() -> int:
     # paraphrase contained an arrow and Windows stdout is cp1252 by default.
     if args.out:
         args.out.write_text(json.dumps(
-            {"accuracy": correct / max(len(scored), 1), "cost_usd": round(cost_total, 4),
+            {"accuracy": accuracy, "scored": len(scored), "unscored": unscored,
+             "failed_batches": failed_batches, "batches": len(batches), "cost_usd": round(cost_total, 4),
              "mode": args.mode, "paraphrased": bool(args.paraphrase),
              "results": results}, indent=1), encoding="utf-8")
         print(f"wrote {args.out}", flush=True)
 
-    print(f"\naccuracy {correct}/{len(scored)} = {correct/max(len(scored),1):.1%}   total ${cost_total:.2f}")
+    if scored:
+        print(f"\naccuracy {correct}/{len(scored)} = {accuracy:.1%}   total ${cost_total:.2f}")
+    else:
+        print(f"\nno query was scored: accuracy is undefined   total ${cost_total:.2f}")
+    if failed_batches:
+        print(f"{failed_batches} of {len(batches)} batches failed; {unscored} queries were not scored "
+              "(see the FAILED lines above)", file=sys.stderr)
 
     confusion: dict[tuple[str, str], int] = {}
     for r in scored:
@@ -420,7 +464,7 @@ def main() -> int:
             if asked and asked != r["query"]:
                 print(f"      asked as:  {asked}")
 
-    return 0
+    return 1 if failed_batches else 0
 
 
 if __name__ == "__main__":

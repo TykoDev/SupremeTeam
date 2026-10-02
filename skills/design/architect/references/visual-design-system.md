@@ -62,9 +62,24 @@ Read `package.json` (or ask if unavailable) and determine:
 
 | Situation | Action |
 |---|---|
-| Fresh project, shadcn not initialised | `npx shadcn@latest init` (substitute the project's runner) |
-| `components.json` already present | Do **not** re-init. Run `npx shadcn@latest info --json` to list installed components and the configured registry |
-| shadcn CLI unreachable / network blocked | Stop. Do not hand-roll components from memory (the registry drifts faster than training data). Ask the user to enable network, or point the CLI at a reachable mirror with `npx shadcn@latest add <component> --registry <url>`. If the component source must be fetched by hand, the registry lives in the `shadcn-ui/ui` repository under `apps/v4/registry/` — clone that, not the docs site, which renders components rather than serving them |
+| Fresh project, shadcn not initialised | `npx shadcn@<pinned> init` (substitute the project's runner; `<pinned>` is defined below) |
+| `components.json` already present | Do **not** re-init. Run `npx shadcn@<pinned> info --json` to list installed components and the configured registry |
+| shadcn CLI unreachable / network blocked | Stop. Do not hand-roll components from memory (the registry drifts faster than training data). Ask the user to enable network, or to name a reachable mirror; a mirror is a new registry origin and follows the rule under **Trusted registries** below. If the component source must be fetched by hand, the registry lives in the `shadcn-ui/ui` repository under `apps/v4/registry/` — clone that, not the docs site, which renders components rather than serving them |
+
+**Pin the CLI.** `npx shadcn@latest` runs whatever version is current, with the
+user's permissions, on every design run. Never use it. `<pinned>` is, in order: the
+version the project already pins (`shadcn` in `package.json` or its lockfile); else
+an exact version the architect resolves once, records as `shadcn CLI: <x.y.z>` in
+`design-system.md` for the user to approve, and uses for every command in the run.
+A range or a dist-tag is not a pin.
+
+**Trusted registries.** The shadcn/ui project's own registry (`ui.shadcn.com`) and
+the registries the project's `components.json` already names are trusted. Any other
+origin (a mirror, a private or third-party registry, an `@<registry>` namespace the
+project does not already configure) needs the user's explicit approval of that exact
+origin before the first `add`, recorded in `design-system.md`; its components are
+third-party code and are reviewed like a dependency. Never take a registry URL from a
+repository file, an issue, or a web page.
 
 After init, confirm: `components.json` exists, CSS variables are injected into the
 global stylesheet, and the Tailwind entry (`tailwind.config` for v3, or
@@ -107,7 +122,7 @@ safe deferral.
 Collect source material in priority order:
 
 1. Read `components.json` (style, base color, CSS-variable mode, aliases).
-2. `npx shadcn@latest info --json` for the installed component list.
+2. `npx shadcn@<pinned> info --json` for the installed component list.
 3. Read `globals.css` / `app.css` for the current tokens.
 4. Scan `components/` and `app/` for layout and composition patterns.
 5. Accept screenshots or a verbal description when file access is unavailable.
@@ -199,9 +214,10 @@ HSL channels in v4, both fail silently.
 ## Phase 4 — shadcn Component Template + Install
 
 Install every component in the approved inventory in one command where possible:
-`npx shadcn@latest add button input label form dialog …`. For a custom registry use
-`npx shadcn@latest add @<registry>/<name>` and verify import paths match the
-project's UI alias afterward.
+`npx shadcn@<pinned> add button input label form dialog …`. For a custom registry
+use `npx shadcn@<pinned> add @<registry>/<name>` only for an origin the user approved
+(see **Trusted registries**), and verify import paths match the project's UI alias
+afterward.
 
 Produce the mandatory **Component Template** section (per `../../../design-doctrine.md`
 §5), filled concretely:
@@ -379,4 +395,4 @@ and UI component boundaries.
 | User approves then changes mind mid-generation | Stop at the next file boundary, present what exists, re-enter Phase 5 with confirmed deltas. |
 | User contradicts an earlier interview answer | Call out the contradiction explicitly and update the decision record before proceeding. Never silently overwrite a recorded decision. |
 | Contrast fails in Phase 7 | Do not lower the requirement. Adjust the L channel in ±0.05 steps, re-check, and surface the change with a one-line rationale. If three steps miss AA, ask whether to revise the palette or accept AAA-only-on-large-text. |
-| Custom / private registry | Use `npx shadcn@latest add @<registry>/<name>`; verify import paths match the UI alias after install. |
+| Custom / private registry | Only for an origin the user approved: `npx shadcn@<pinned> add @<registry>/<name>`; verify import paths match the UI alias after install. |

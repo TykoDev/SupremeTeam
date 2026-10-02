@@ -28,8 +28,11 @@ finding policy is, and the one skill allowed to submit.
 engine error, never a pass.
 
 The table below mirrors that file. A drift test in
-`skills/harness/gatekeeper/test_gate_manifests.py` fails if the two ever disagree,
-so this table cannot quietly rot.
+`skills/harness/gatekeeper/test_gate_manifests.py` compares its boundary names and
+its backticked evidence keys with the spec and fails when those differ, and
+`skills/validation/test_docs_inventory.py` compares the Submitter column with the
+spec's `submitter` field. The Guards column is prose that no test compares, so it is
+kept by hand.
 
 | Boundary | Guards | Submitter | Required evidence |
 | --- | --- | --- | --- |
@@ -66,8 +69,10 @@ Fifteen keys may instead carry a typed applicability record naming `reason`,
 `fixes_applied`, `team_manifest`, `before_revision`, `consumer_handoff`,
 `residual_uncertainty`, and — at `redesign-review` only, and only when the
 selection named no variant — `selected_variant`, `parity_evidence`, and
-`accessibility_evidence`. Any other bare string is rejected. `confirmation` has no
-fallback: inferred preferences and global writes, promotions, resets, or
+`accessibility_evidence`. Any other bare string is rejected, and so is a record
+whose `reason` is anything but one of those exact wordings for that key at that
+boundary (`applicability reason not sanctioned`): a waiver in the submitter's own
+words is not a waiver. `confirmation` has no fallback: inferred preferences and global writes, promotions, resets, or
 revocations always require an explicit confirmation record. A boundary can also
 refuse a fallback for a key it requires (`no_fallback`): at `redesign-review`,
 `mock_rendering` accepts neither the fallback string nor an applicability
@@ -78,35 +83,64 @@ a deferral leaves no living prototype to render; instead it, `selected_variant`,
 one sanctioned wording for the recorded decision — `selection deferred - no
 variant built` or `merge brief recorded - implemented as a fifth direction in
 the design pipeline`. The validator enforces both directions: a decision naming
-a variant may not stand any of the four down, and any other decision must stand
-all four down on the wording that matches it.
+a variant may not stand any of the four down in any wording, and any other
+decision must stand all four down on the wording that matches it.
 
 ## Typed evidence records
 
 At manifest schema 2, keys listed in `evidence_types` have to be structured
 records rather than prose.
 
+A manifest inside a run must declare schema 2: an absent or schema-1
+`schema_version` fails, and the package is checked as schema 2 anyway. The one
+place schema 1 still passes is a flat package outside a run. Its exit 0 means the
+required keys are present and the hashes hold; no typed record, waiver wording or
+finding policy was checked, so a scan or a waiver is free text that passed. The
+result says so (`manifest_schema_version: 1` and a `warnings` entry), and the
+gatekeeper that reads such a pass returns REVISE for a schema-2 manifest instead
+of approving it. Nothing in a flat package says whether it is a legacy manifest or a
+hand-made downgrade, so the validator warns instead of failing and leaves that
+reading to the gatekeeper.
+
 | Type | Keys | Must carry |
 |---|---|---|
-| `probe` | `tests`, `runtime`, `executed_probes`, `reproduction`, `evidence_chain`, `test_matrix`, `denial_path_evidence`, `mock_parity`, `parity_evidence` | Hashed artifacts and `result.status: pass`. The executed log is the artifact. A bare count is not evidence. |
-| `scan` | `vulnerability_scan` | Hashed artifacts, tool, command, exit code, `observed_at`, `inputs` bound by sha256, and a passing status. `unavailable` or `error` is a data gap, never a clean scan. |
+| `probe` | `tests`, `runtime`, `executed_probes`, `reproduction`, `evidence_chain`, `test_matrix`, `denial_path_evidence`, `mock_parity`, `parity_evidence` | Hashed artifacts and `result.status: pass`. The executed log is the artifact. A bare count is not evidence. `inputs` are optional and re-hashed when present; a probe that omits them passes and is listed in `warnings`. |
+| `scan` | `vulnerability_scan` | Hashed artifacts, tool, command, exit code, `observed_at`, `inputs` bound by sha256, and a passing status. `unavailable` or `error` is a data gap, never a clean scan. A pass never sits beside a non-zero exit code, and it records that the scanner exited 0, not that it found nothing. |
 | `render` | `rendered_verification`, `mock_rendering` | Hashed captures, the breakpoints and themes covered, `inputs` bound to the rendered source, and pass or `inferred` with a stated limitation. |
 | `findings` | `findings`, `security_evidence`, `defects`, `accessibility_evidence` | Items with id, severity, status. Critical must be verified or not-applicable with a reason. Major must be verified, not-applicable with a reason, or deferred with a named owner and reopen trigger. |
 | `verdict` | `review_verdict` | APPROVED, or REVISE/ESCALATE with a challenge record naming `by` and `reason`. |
-| `stack_lock` | `stack_lock` | Registry slug, versions, and overlay sha256, checked against `skills/tech-stacks/registry.yaml`. |
+| `stack_lock` | `stack_lock` | Registry slug, versions, and overlay sha256, checked against `skills/tech-stacks/registry.yaml` and the overlay file: the file must exist, its digest must match, and every declared version must be one the registry offers. A lock on a slug whose `support_ends` has passed, or against a registry older than its `verification_ttl_days`, still passes and is listed in `warnings`. |
 | `revision_ref` | `approved_design_revision`, `approved_delivery` | A non-empty approved upstream revision identifier. |
 | `preference_diff` | `preference_diff` | Added, updated, deprecated, revoked, and unchanged ids, plus before/after SHA-256 digests. |
 | `confirmation` | `confirmation` | Actor, timestamp, confirmed scope, exact candidate ids, and source run. |
 | `conflict_analysis` | `conflict_analysis` | Conflicting ids, precedence decision, unresolved conflicts, and accessibility/policy collisions. |
 | `persistence_result` | `persistence_result` | Requested destinations, committed revisions, SHA-256 hashes, atomicity status, and rollback result. |
 | `effective_profile` | `effective_profile` | Every effective entry's id, source scope, and source id, plus the profile digest. |
-| `consumer_handoff` | `consumer_handoff` | Consuming pipeline, immutable effective-profile digest, and applicability summary. |
+| `consumer_handoff` | `consumer_handoff` | Consuming pipeline, immutable effective-profile digest (which must equal the `effective_profile` record's digest), and applicability summary. |
 | `variant_set` | `mock_set`, `selected_variant` | A list of entries with unique ids, each declaring hashed files. The list name, the file fields, and the count all come from `evidence_type_params`, read by evidence key: `mock_set` holds exactly four `mocks` with `spec`, `tokens`, `components`, and `mock`; `selected_variant` holds the one `variants` entry with `spec`, `tokens`, `components`, and `app`. |
 | `selection` | `selection` | The hashed selection report, a `decision` of `variant`, `merge`, or `deferred`, a `chosen` mock id (null unless the decision is `variant`), a `recommended` mock id, and `decided_by`, `decided_at`, `basis`. On `variant` the built variant's id must equal `chosen`. |
 
 `inputs` is the part that stops evidence going stale. It binds a record to the
 project source it describes, so when that source changes the evidence fails as
-`input hash drift` instead of quietly continuing to look valid.
+`input hash drift` instead of quietly continuing to look valid. Scan and render
+records must carry it. A test or probe record carries it only if its author binds
+it, which `test-builder` is told to do; one that does not passes the gate and is
+listed in the result's `warnings`.
+
+### What the gate verifies, and what it takes on trust
+
+A typed record is the submitter's own statement. The gate checks it against
+itself and against the files it names, and goes no further.
+
+| The gate verifies | The gate takes on trust |
+|---|---|
+| Every artifact a record names exists and matches its sha256 | That the artifact is what the record says: the runner's own log, the scanner's own output, a capture of the surface |
+| Every `inputs` entry still hashes to the recorded value (`input hash drift`), and scan and render records carry some | That a test or probe record binds any source at all; one that binds none is listed in `warnings` |
+| `result.status` is an allowed, passing value, and a pass does not sit beside a non-zero `exit_code` | That `tool`, `command`, `observed_at`, and `exit_code` are true; the gate never runs or re-runs anything |
+| Each record has the shape its type requires | Who wrote it: `decided_by`, `actor`, and `by` are free text |
+
+The last column is what a gatekeeper's judgement is for. An approved package
+proves the left column and nothing in the right one.
 
 ## The two validators
 
@@ -146,6 +180,16 @@ Every verdict record carries `verdict_id`, `package_fingerprint`, and
 `gate_spec_digest`. It is reusable only when `check.py --prior` reports
 `prior_reusable: true`, which needs the same boundary, submission, revision,
 fingerprint, and gate spec.
+
+Those three values are plain sha256 hashes of public inputs, not signatures. They
+show that two records were computed from the same manifest, spec, and identity,
+and they catch accidental drift. Anyone can compute them, so a stored
+`verdict_*.json` proves nothing about who wrote it or that `check.py` ran, and
+`--prior` is trusted as supplied. The result names every input that was not the
+shipped one: `gate_spec_is_shipped`, `registry_is_shipped`, and `prior_record`,
+each with a `warnings` entry when it is not. At delivery, re-run `check.py` with
+no `--gates`, `--registry`, or `--prior` and read `gate_spec_is_shipped: true`
+from that fresh result rather than trusting a file on disk.
 
 ## Faster REVISE cycles
 

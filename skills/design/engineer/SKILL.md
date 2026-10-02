@@ -9,7 +9,7 @@ description: >-
   the per-slice spec inside it. Returns to `design/commander`; defers architecture to
   `design/architect`, milestones to `design/planner`, code to
   `build/bob-the-builder`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -43,7 +43,7 @@ Engineer is an internal design specialist, not an entry point.
 `../../routing-doctrine.md` places every `design/` skill it does not name
 separately in the internal-specialist row, reached only through the owning
 sub-orchestrator. Run the active-handoff check before writing a spec, because the
-approved design package, the locked stack, the revision the spec is written
+approved design package, the detected stack, the revision the spec is written
 against, and the save path all arrive with the handoff, and none of them can be
 reconstructed cold.
 
@@ -62,7 +62,7 @@ delegating owner for the design boundary.
 
 - The approved `architecture` and `interface-contract` from `design/architect`: component boundaries, data flow, invariants, failure behavior, trust boundaries, and the endpoint contracts a slice has to satisfy.
 - The approved `plan` from `design/planner`: milestones, delivery slices, rollout and rollback shape, risk handling, and the per-slice acceptance conditions the spec turns into checks.
-- The locked stack, runtime targets, migration constraints, and operational commitments carried in by `design/commander`.
+- The detected stack (registry slug and versions, which `design/commander` locks in the stage after this one), runtime targets, migration constraints, and operational commitments carried in by `design/commander`.
 - Test strategy expectations from the design package: reproduction tests for bug fixes, contract tests for endpoints, runtime verification for UI or operational flows.
 - Questions that still affect module boundaries, migrations, rollout safety, or operational readiness.
 
@@ -100,7 +100,7 @@ as a `REVISE`.
 
 ## Workflow
 
-1. Confirm the package is sliceable before slicing it: architecture, interface contracts, and plan approved for the whole requested scope, and a stack lock naming the runtime the slices target. Run the `../../grill-me-doctrine.md` intake interview over the implementation branches only — slice boundaries, migration and cutover strategy, rollout mechanism, and the form acceptance evidence takes — one decision at a time, always recommending an answer, and reading the design package instead of asking whenever it already answers.
+1. Confirm the package is sliceable before slicing it: architecture, interface contracts, and plan approved for the whole requested scope, and the runtime the slices target, detected with `python skills/scripts/check_runtime.py --project-root . --detect-project` (or, with no project to inspect, named by the approved architecture). The stack lock is not a precondition: `../../pipelines.yaml` orders it after this stage, and `design/commander` locks the stack the spec records. Run the `../../grill-me-doctrine.md` intake interview over the implementation branches only — slice boundaries, migration and cutover strategy, rollout mechanism, and the form acceptance evidence takes — one decision at a time, always recommending an answer, and reading the design package instead of asking whenever it already answers.
 2. Break the approved design into delivery slices, each filling the eight fields above, mapped to modules, API endpoint contracts, data changes, jobs, integrations, and validation needs.
 3. For every behavior-changing slice, define the proof-first test path: reproduction or failing test first, minimal implementation, then refactor with tests still passing. A docs-only or static-content slice records why TDD does not apply rather than leaving the field blank.
 4. Order the slices by dependency, migration risk, rollout safety, and testability so build work proceeds incrementally without hidden prerequisites, and name the one command that becomes meaningful after each slice.
@@ -111,7 +111,7 @@ as a `REVISE`.
 
 - **Grill-Me Intake**: `../../grill-me-doctrine.md` names engineer a bound skill. Before the spec is written, resolve every load-bearing implementation branch one question at a time, use the planning-mode decision prompt contract for unresolved choices, always recommend an answer, and explore the design package, codebase, and prior artifacts instead of asking when the answer is discoverable. Scope the interview to decisions that change the spec, a migration path, a rollback commitment, or user-visible behavior; design intent is settled upstream and is not reopened here.
 - **Proof-first delivery**: Each behavior-changing slice names the test that fails before the change and passes after it, because a proof written after the code proves the code rather than the behavior. Do not schedule repeated unchanged test runs as reassurance.
-- **Design contract fidelity**: Implementation detail stays inside the approved architecture, interface contracts, and stack lock. A slice that needs a different contract is an escalation to the owning skill, not a local decision, because a silently reopened contract reaches build as an unapproved redesign.
+- **Design contract fidelity**: Implementation detail stays inside the approved architecture, interface contracts, and detected stack. A slice that needs a different contract is an escalation to the owning skill, not a local decision, because a silently reopened contract reaches build as an unapproved redesign.
 - **Shared severity**: Grade every finding Critical | Major | Minor | Info, the four-tier model clause 3 of `../../execution-contract.md` defines, so upstream and downstream packages read risk identically.
 - **Proactive triggers**: Offer the next sensible action when the surrounding context clearly implies it and the skill can advance safely without a prompt loop.
 - **Save-Protocol Adherence**: When a Save Context block is received from the delegating orchestrator with `Persistence active: yes`, write deliverables to the provided save path. Saving is mandatory when persistence is active.
@@ -146,7 +146,7 @@ Skip only when the requested scope proves an implementation spec is genuinely ou
 | The implementation spec ignores migrations, backfills, feature-flag rollout, or observability even though the design clearly needs them | Treat the spec as operationally incomplete and add the missing delivery constraints before it advances. |
 | A required non-functional target depends on implementation choices that the current slice plan does not actually support | Preserve the risk against the affected slice and require either a different approach or a narrower target promise. |
 | A delivery slice changes endpoint behavior without a matching API contract update | Treat it as architecture drift and route the change back to `design/architect` before build begins. |
-| The engineering plan quietly reopens an approved design contract or locked stack choice under the label of implementation detail | Escalate the contract change instead of letting build work inherit a silent redesign. |
+| The engineering plan quietly reopens an approved design contract or detected stack choice under the label of implementation detail | Escalate the contract change instead of letting build work inherit a silent redesign. |
 
 ## Save Protocol
 

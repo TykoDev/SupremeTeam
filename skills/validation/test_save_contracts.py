@@ -13,17 +13,28 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+import _catalog
+
+ROOT = _catalog.SKILLS
 SCRIPTS = ROOT / "scripts"
 HOOKS = ROOT / "harness" / "hooks"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(HOOKS))
-from data_formats import load_data  # noqa: E402
 from output_paths import resolve  # noqa: E402
+
+from validate_manifests import team_members  # noqa: E402
 
 SAVE_RUN = HOOKS / "save_run.py"
 SCAN = SCRIPTS / "scan_record.py"
 PACKAGE_CHECK = SCRIPTS / "package_check.py"
+
+
+def deny_reason(stdout: str) -> str:
+    """The reason of a PreToolUse deny, read from the hook's JSON envelope; fails when the hook did not deny."""
+    decision = json.loads(stdout)["hookSpecificOutput"]
+    if decision["permissionDecision"] != "deny":
+        raise AssertionError(f"the hook did not deny: {decision}")
+    return decision["permissionDecisionReason"]
 
 
 def run(script: Path, *args: str, cwd: Path | None = None) -> tuple[int, dict]:
@@ -78,12 +89,14 @@ class SaveLifecycleTests(unittest.TestCase):
         code, out = self.save("complete", "--run-id", "run-1")
         self.assertEqual(code, 0, out)
         code, out = self.save("status", "--run-id", "run-1")
-        self.assertEqual(out["status"], "inactive", out)
+        self.assertEqual(out["status"], "complete", out)
+        self.assertEqual(out["run_status"], "complete")
         lock = json.loads((self.project / "skillset-saves/runs/run-1/_lock.md").read_text(encoding="utf-8"))
         self.assertEqual(lock["status"], "released")
         self.assertFalse(lock["session_pin"])
         audit = (self.project / "skillset-saves/runs/run-1/_audit-trail.md").read_text(encoding="utf-8").splitlines()
-        self.assertEqual([json.loads(line)["event"] for line in audit], ["create", "checkpoint", "complete"])
+        # The refused stale-revision checkpoint above is on the trail between the two it bracketed.
+        self.assertEqual([json.loads(line)["event"] for line in audit], ["create", "checkpoint", "refused", "complete"])
 
     def test_competing_owner_and_wrong_owner_are_refused(self):
         self.save("create", "--run-id", "run-1", "--evidence", "README.md")
@@ -146,7 +159,7 @@ class SaveLifecycleTests(unittest.TestCase):
             with self.subTest(path=path):
                 payload = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(self.project / path)}})
                 proc = subprocess.run([sys.executable, str(HOOKS / "pre_tool_use.py")], input=payload, text=True, capture_output=True, env=env, check=False)
-                self.assertIn("save_run.py", proc.stdout)
+                self.assertIn("save_run.py", deny_reason(proc.stdout))
         payload = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(self.project / "skillset-saves/runs/other/design/reports/report_plan.md")}})
         proc = subprocess.run([sys.executable, str(HOOKS / "pre_tool_use.py")], input=payload, text=True, capture_output=True, env=env, check=False)
         self.assertEqual(proc.stdout.strip(), "")
@@ -159,7 +172,7 @@ class SaveLifecycleTests(unittest.TestCase):
                 target = self.project / "skillset-saves/preferences" / path
                 payload = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(target)}})
                 proc = subprocess.run([sys.executable, str(HOOKS / "pre_tool_use.py")], input=payload, text=True, capture_output=True, env=env, check=False)
-                self.assertIn("skills/taste/taste_prefs.py", proc.stdout)
+                self.assertIn("skills/taste/taste_prefs.py", deny_reason(proc.stdout))
         payload = json.dumps({"tool_name": "Read", "tool_input": {"file_path": str(self.project / "skillset-saves/preferences/taste.json")}})
         proc = subprocess.run([sys.executable, str(HOOKS / "pre_tool_use.py")], input=payload, text=True, capture_output=True, env=env, check=False)
         self.assertEqual(proc.stdout.strip(), "")
@@ -171,7 +184,8 @@ class OutputPathTests(unittest.TestCase):
         cases = {
             "manifest": dict(run_id="r1", phase="design"),
             "reports": dict(run_id="r1", phase="design", name="report_plan.md"),
-            "artifacts": dict(run_id="r1", phase="design-system", name="tokens.css"),
+            "artifacts": dict(run_id="r1", phase="design", name="tokens.css"),
+            "phase_report": dict(run_id="r1", phase="intake", name="report_grilling.md"),
             "evidence": dict(run_id="r1", phase="security", name="scan-pip-audit.json"),
             "packages": dict(run_id="r1", phase="skill-creation", name="my-skill.skill"),
             "verdict": dict(run_id="r1", phase="review", boundary="review-to-delivery"),
@@ -205,6 +219,7 @@ class GeneratedRootPolicyTests(unittest.TestCase):
 
     CASES = {
         "manifest": dict(run_id="r1", phase="redesign"),
+        "phase_report": dict(run_id="r1", phase="review", name="review-packet.md"),
         "reports": dict(run_id="r1", phase="design", name="report_plan.md"),
         "artifacts": dict(run_id="r1", phase="redesign", name="variants/v1/app.html"),
         "evidence": dict(run_id="r1", phase="redesign", name="parity-v1.json"),
@@ -233,7 +248,7 @@ class GeneratedRootPolicyTests(unittest.TestCase):
                     self.assertIn(first, GENERATED_ROOTS, (kind, item))
 
     def test_save_ownership_declares_exactly_the_two_roots(self):
-        save = load_data(ROOT / "save-ownership.yaml")
+        save = _catalog.load_spec("save-ownership.yaml")
         self.assertEqual(list(save["generated_roots"]), ["skillset-saves", ".harness-state"])
         self.assertIn("redesign", save["phase_directories"])
 
@@ -317,8 +332,8 @@ class PackageCheckTests(unittest.TestCase):
 
 class OwnershipAgreementTests(unittest.TestCase):
     def test_save_ownership_agrees_with_ownership_and_pipelines(self):
-        ownership = load_data(ROOT / "ownership.yaml")
-        save_ownership = load_data(ROOT / "save-ownership.yaml")
+        ownership = _catalog.load_spec("ownership.yaml")
+        save_ownership = _catalog.load_spec("save-ownership.yaml")
         classes = {c["id"]: c for c in save_ownership["classes"]}
         self.assertEqual(classes["core-run-record"]["writer"], "session-memory")
         self.assertEqual(classes["gate-verdict"]["writer"], "gatekeeper")
@@ -333,8 +348,33 @@ class OwnershipAgreementTests(unittest.TestCase):
                 self.assertFalse(pattern.startswith("/"), pattern)
                 self.assertNotIn("..", pattern)
 
+    #: The kinds of writer `save-ownership.yaml` `writer_vocabulary` declares besides a roster skill.
+    ROLES = {"gatekeeper", "safety-guardrails", "phase-lead"}
+    COMPOUND_ROLES = {"phase-lead-or-delegated-specialist"}
+    PROCESSES = {"harness-hooks", "harness-tests"}
+
+    def test_every_class_has_a_writer_of_a_declared_kind_and_every_tool_exists(self):
+        """QR-04: the pin above covers three writers of sixteen classes and the tools of two of four."""
+        save_ownership = _catalog.load_spec("save-ownership.yaml")
+        roster = team_members(_catalog.load_spec("team-manifest.yaml"))
+        owners = set(_catalog.load_spec("ownership.yaml")["owners"])
+        vocabulary = save_ownership["writer_vocabulary"]
+        for klass in save_ownership["classes"]:
+            writer = klass["writer"]
+            with self.subTest(klass=klass["id"], writer=writer):
+                self.assertIn(writer, roster | self.ROLES | self.COMPOUND_ROLES | self.PROCESSES)
+                if writer in roster:
+                    self.assertIn(writer, owners, "a skill that writes a class is an ownership.yaml owner")
+                    self.assertIn(writer, vocabulary["skills"])
+                if writer in self.PROCESSES:
+                    self.assertIn(writer, vocabulary["processes"])
+                if "tool" in klass:
+                    tool = klass["tool"].split()[0]
+                    self.assertTrue((ROOT.parent / tool).is_file(), f"{klass['id']} names {tool}, which does not exist")
+        self.assertEqual(set(), (self.PROCESSES | self.COMPOUND_ROLES) & roster, "a process or compound role is not a skill")
+
     def test_every_pipeline_phase_has_a_save_directory(self):
-        save_ownership = load_data(ROOT / "save-ownership.yaml")
+        save_ownership = _catalog.load_spec("save-ownership.yaml")
         directories = set(save_ownership["phase_directories"])
         pipelines = json.loads((ROOT / "pipelines.yaml").read_text(encoding="utf-8"))["pipelines"]
         for name in pipelines:

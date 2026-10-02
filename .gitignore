@@ -1,11 +1,40 @@
 # Runtime state and local run deliverables; never commit.
 skillset-saves/
 .harness-state/
+.supremeteam/
 harness-test-work/
+gatekeeper-test-work/
 .playwright-mcp/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Local environments, credentials and machine files.
+.venv/
+.env
+.env.*
+.DS_Store
+.claude/worktrees/
+
+# Everything skills/scripts/package_check.py refuses to package: credential
+# files, archives and skill-eval workspaces. Ignoring them here keeps `git add .`
+# from staging what the delivery check would then reject.
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+.npmrc
+.netrc
+.pypirc
+credentials*.json
+*.zip
+*.skill
+*-workspace/
+**/evals/workspace/
 
 # Coverage residue. Coverage data belongs in the run at
 # skillset-saves/runs/<run>/<phase>/evidence/coverage/ (output_paths.py --kind
@@ -16,6 +45,3 @@ __pycache__/
 .coverage/
 htmlcov/
 .nyc_output/
-GLM-SCORE.html
-GLM-SCORE-2.html
-GLM-SCORE-3.html

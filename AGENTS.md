@@ -1,12 +1,17 @@
 # Supreme Team Skill Manifest
 
-The flat index of every skill in this repository. Tools and agents read this file
-for discovery and routing. All paths are relative to the repository root.
+The flat index of every skill in this repository, for tools and agents that are
+pointed at a checkout. This file is a checkout-only index: the installers do not
+copy it, and no host discovers skills from it. All paths are relative to the
+repository root; in an installed copy `skills/` is the install root (see
+[Install.md](Install.md#paths-and-the-python-command)).
 
-**Install first.** Assistants do not discover skills from a checkout unless their
-skill path points here, or the tree has been copied into `~/.agents/skills/` (or
-`%USERPROFILE%\.agents\skills\`). Keep the grouped `skills/` tree intact. See
-[Install.md](Install.md).
+**Install first.** Assistants find skills through their own skill directories, so
+install the tree (the installers copy `skills/` into `~/.agents/skills/`, or
+`%USERPROFILE%\.agents\skills\`, and mirror it into each host's directory) and keep
+the grouped layout intact. A host that scans one level deep registers the 22
+skills at the install root by name; the 31 nested specialists are reached by path
+through the skill that delegates to them. See [Install.md](Install.md).
 
 **Do not commit runtime state.** `skillset-saves/` and `.harness-state/` are
 generated and Git-ignored. Saved runs, locks, audit trails, and guard records stay
@@ -23,12 +28,22 @@ Precedence: explicit slash command or standalone tool, then an active session pi
 then the Tier 0 fast path for minor reversible tasks, then `admiral`, then
 ordinary conversation.
 
-| Tier | Skills |
+The classes are the ones in `skills/routing-doctrine.md` (Routing classes), which
+is the table the tests compare with the roster; this table repeats it and the
+doctrine wins where they differ.
+
+| Routing class | Skills |
 |---|---|
 | Entry orchestrator | `admiral` |
-| In-scope, defers to admiral when reached cold | `design/commander`, `design/redesign`, `build/build-management`, `review/code-chief`, `skill-maker`, `investigate`, `taste`, `session-memory`, `gatekeeper-admiral`, `review/cso` |
-| Internal specialists | every skill under `design/`, `build/`, `review/` not listed above; `review/cso` owns a pipeline and belongs to the row above |
-| Standalone tools | `careful`, `freeze`, `guard`, `unfreeze`, `browse`, `open-browser`, `setup-browser-cookies`, `pair-agent`, `ship`, `setup-deploy`, `land-and-deploy`, `document-release`, `qa`, `qa-only`, `benchmark` |
+| Pipeline owners (must defer) | `design/commander`, `build/build-management`, `review/code-chief`, `review/cso`, `investigate`, `design/redesign`, `skill-maker`, `taste` |
+| Dual-mode entry | `qa`, `qa-only`, `ship` |
+| Gatekeepers (must defer) | `gatekeeper-admiral`, `design/gatekeeper-design`, `build/gatekeeper-build`, `review/gatekeeper-code` |
+| Session memory | `session-memory` |
+| Internal specialists | every skill under `design/`, `build/`, `review/` not named above; `taste/taste-review`; `skill-maker/skill-creator`; `skill-maker/skill-reviewer` |
+| Standalone tools | `audit-improve`, `careful`, `freeze`, `guard`, `unfreeze`, `browse`, `open-browser`, `setup-browser-cookies`, `pair-agent`, `benchmark`, `setup-deploy`, `land-and-deploy`, `document-release` |
+
+"Must defer" and "dual-mode" are about how a skill is reached cold; the doctrine
+defines both. Pipelines, owners and boundaries are in the next section.
 
 ## Pipelines and gate boundaries
 
@@ -47,9 +62,9 @@ Declared in `skills/pipelines.yaml`, gated by `skills/gates.yaml`.
 | `skill-creation` | `skill-maker` | `skill-maker-to-delivery` |
 | `release` | `ship` | `deploy-readiness` |
 
-## The 52 skills
+## The 53 skills
 
-### Admiral layer
+### Admiral layer (2)
 
 | Skill | Path | Role |
 |---|---|---|
@@ -103,7 +118,7 @@ of 14 overlays behind `stack_lock`, not a skill.
 | **devex-review** | `skills/review/devex-review/SKILL.md` | Onboarding, tooling, docs clarity, integration friction |
 | **gatekeeper-code** | `skills/review/gatekeeper-code/SKILL.md` | Review phase-exit validator |
 
-### Cross-cutting (6)
+### Cross-cutting (5)
 
 | Skill | Path | Role |
 |---|---|---|
@@ -112,8 +127,19 @@ of 14 overlays behind `stack_lock`, not a skill.
 | **skill-creator** | `skills/skill-maker/skill-creator/SKILL.md` | Drafts and improves skills: authoring, supporting files, evals, packaging |
 | **skill-reviewer** | `skills/skill-maker/skill-reviewer/SKILL.md` | Adversarial quality gate; scores 0 to 100 across ten rubric dimensions |
 | **session-memory** | `skills/session-memory/SKILL.md` | Owns the run record and durable learnings; writes only through `harness/hooks/save_run.py` |
+
+### Taste (2)
+
+| Skill | Path | Role |
+|---|---|---|
 | **taste** | `skills/taste/SKILL.md` | Preference lifecycle pipeline owner, canonical writer, consumer handoff owner, and Taste gate submitter |
 | **taste-review** | `skills/taste/taste-review/SKILL.md` | Read-only reviewer for preference provenance, conflicts, redaction, confirmation, and persistence safety |
+
+### Harness audit (1, standalone)
+
+| Skill | Path | Role |
+|---|---|---|
+| **audit-improve** | `skills/audit-improve/SKILL.md` | Audits harness and saved-run failures, then routes supported improvements through Admiral and skill-maker |
 
 ### Browser automation (4, standalone)
 
@@ -197,21 +223,41 @@ Not skills. These are the files the skills are checked against.
 
 | Component | Path | Purpose |
 |---|---|---|
-| **pre_tool_use.py** | `skills/harness/hooks/pre_tool_use.py` | `PreToolUse`: blocks dangerous commands, guarded writes, direct edits to core run files |
+| **pre_tool_use.py** | `skills/harness/hooks/pre_tool_use.py` | `PreToolUse`: the registered entry point; forwards to `guard_hook.py` and fails open, readably, on a fault |
+| **guard_hook.py** | `skills/harness/hooks/guard_hook.py` | The guard engine: Rules A to G, one function per rule (destructive commands, frozen and blocked boundaries, read-only runs, single writers, the hook scripts and their registration files, a write the analysis cannot place) plus the coverage advisory |
+| **_cmdscan.py** | `skills/harness/hooks/_cmdscan.py` | Shell command analyser behind the guard: quoting, wrappers, heredocs, `cd`, and the write targets of the usual verbs |
+| **_paths.py** | `skills/harness/hooks/_paths.py` | Path and glob canonicaliser behind the guard: separators, `.` and `..`, `~`, drive letters, links and case |
+| **guard_state.py** | `skills/harness/hooks/guard_state.py` | The only writer of the guard record (`.harness-state/guard-state.json`) that `guard`, `freeze` and `unfreeze` request |
 | **post_tool_use.py** | `skills/harness/hooks/post_tool_use.py` | `PostToolUse`: records trajectory degeneration, refreshes the run heartbeat |
+| **size_audit.py** | `skills/harness/hooks/size_audit.py` | Periodic bounded report of oversized runtime files and directories |
+| **audit_improve.py** | `skills/harness/hooks/audit_improve.py` | Bounded read-only audit of saved failures and a skill-maker handoff |
 | **user_prompt_submit.py** | `skills/harness/hooks/user_prompt_submit.py` | `UserPromptSubmit`: advisory entry-routing and session-pin reminder |
 | **save_run.py** | `skills/harness/hooks/save_run.py` | The only writer of the run record |
 | **_saves.py** | `skills/harness/hooks/_saves.py` | Shared reader that classifies saved state |
-| **_state.py** | `skills/harness/hooks/_state.py` | Fail-open state helper: project root, guard state, trajectories, heartbeat |
+| **_state.py** | `skills/harness/hooks/_state.py` | Fail-open state helper: project root, hook input decoding, guard state, fault counting, trajectories |
+| **run_heartbeat.py** | `skills/harness/hooks/run_heartbeat.py` | The heartbeat refresh every registered hook runs on a host event: throttled, fail-open, written only through `save_run.py` |
+| **_fsutil.py** | `skills/harness/hooks/_fsutil.py` | The one atomic write and the one OS advisory lock the hook-directory writers share |
+| **_bootstrap.py** | `skills/harness/hooks/_bootstrap.py` | Puts the hooks directory and `skills/scripts` on `sys.path` once, so modules import each other by name, and lists the files a registered hook runs to decide |
+| **_testkit.py** | `skills/harness/hooks/_testkit.py` | Test support for the guard suites: an in-process `decide()` and a subprocess `run_hook()` |
 | **verify_registration.py** | `skills/harness/hooks/verify_registration.py` | Inspects host hook config without mutating it |
 | **repair_registration.py** | `skills/harness/hooks/repair_registration.py` | Previews a scoped registration repair; applies only with `--apply` |
 | **check_readiness.py** | `skills/harness/hooks/check_readiness.py` | Python, hooks, and save state as an independent capability map |
 | **gatekeeper/check.py** | `skills/harness/gatekeeper/check.py` | Boundary validator; loads `gates.yaml` |
 | **gatekeeper/_gatecheck.py** | `skills/harness/gatekeeper/_gatecheck.py` | Package-shape engine behind each `gatekeeper-*/scripts/check.py` |
 
-Shared tooling is in `skills/scripts/`: `data_formats.py`, `output_paths.py`,
-`check_runtime.py`, `scan_record.py`, `validate_manifests.py`, `package_check.py`.
-Contract suites are in `skills/validation/`.
+Shared tooling is in `skills/scripts/`. Its command-line tools are
+`check_runtime.py`, `output_paths.py`, `scan_record.py`, `check_parity.py`,
+`content_hash.py`, `validate_manifests.py` and `package_check.py`;
+`data_formats.py` is the JSON and YAML reader every script shares, and the rest are
+modules behind `check_runtime.py` and the save layout, listed in
+[docs/directory-structure.md](docs/directory-structure.md). Contract suites are in
+`skills/validation/`; the other suites sit beside the code they test: `test_*.py` in
+`skills/harness/hooks/` (the guard, state, writers and registration), in
+`skills/harness/gatekeeper/`, in `skills/scripts/`, in `skills/taste/` and in
+`skills/skill-maker/skill-creator/scripts/`, and `scripts/test_install.py` for the
+installers. The file-by-file list of the hooks directory is its
+[README](skills/harness/hooks/README.md); the commands that run all seven suites
+are in [CONTRIBUTING.md](CONTRIBUTING.md#run-the-suites).
 
 Hook registration lives in host-native config and happens only on explicit opt-in
 (`-RegisterHooks` / `--register-hooks`). Hooks are stdlib only and fail open. The
@@ -220,14 +266,21 @@ never approve it.
 
 ## Layout
 
-**52 skills**: Admiral 2, Design 9, Build 8, Review 11, Investigate 1,
-Skill-Maker 3, Session-Memory 1, Taste 2, Browser 4, Release 4, Safety 4, Testing 3. Plus
+**53 skills**: Admiral 2, Design 9, Build 8, Review 11, Investigate 1,
+Skill-Maker 3, Session-Memory 1, Taste 2, Harness Audit 1, Browser 4, Release 4,
+Safety 4, Testing 3. Plus
 the runtime harness, eight doctrine and protocol files, six canonical contracts,
 and the machine-readable specs.
 
 `admiral`, `gatekeeper-admiral`, `investigate`, `skill-maker`, `session-memory`,
-and `taste` sit directly under `skills/` because they are cross-cutting.
+`taste`, and `audit-improve` sit directly under `skills/` because they are cross-cutting.
 Pipeline-stage skills nest under their category directory; standalone tools under
 their group. This manifest is the authoritative flat index regardless of depth.
+
+The checkout also carries files outside `skills/`, which the installers do not copy:
+`README.md`, `QUICK-START.md`, `Install.md`, `BENCHMARK.md`,
+`CHANGELOG.md`, `CONTRIBUTING.md`, `LICENSE`, `ruff.toml`, `docs/`, the installers in `scripts/`
+(`install.sh`, `install.ps1`, `install_hooks.py`, `install-items.txt`,
+`test_install.py`) and the CI workflow `.github/workflows/ci.yml`.
 
 Full tree in [docs/directory-structure.md](docs/directory-structure.md).

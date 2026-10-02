@@ -32,33 +32,36 @@ Most of this doctrine is semantic and is applied by judgement. A narrow band is
 mechanically checked, and it is checked at two different places: the writer
 (`skills/taste/taste_prefs.py`) validates what is stored, and the gate
 (`skills/harness/gatekeeper/check.py`, against [gates.yaml](gates.yaml))
-validates the typed records a taste run submits at `taste-review`. Neither
-validates the category registry in §3, the field list in §4, or the six
-lifecycle states in §5.
+validates the typed records a taste run submits at `taste-review`. The writer
+checks the category registry in §3 and the four required fields in §4 only on a
+new proposal, and neither place validates the six lifecycle states in §5.
 
 | Statement | Status | What actually checks it |
 | --- | --- | --- |
 | The stored record's schema, version, scope kind, required top-level keys, and self-consistent sha256 digest | machine-checked | `taste_prefs.py`, `validate()` |
-| A corrupt or unreadable store is refused rather than repaired or silently replaced | machine-checked | `taste_prefs.py`, `load()` raising `corrupt_record` (§4) |
+| A store that is unreadable, or fails the check above, is refused as `corrupt_record` rather than repaired or silently replaced | machine-checked | `taste_prefs.py`, `load()` (§4) |
 | A write to an existing store carries `--expect-revision`, and a stale revision is refused | machine-checked | `taste_prefs.py`, `expected_revisions()` and the `stale_revision` error |
-| Only one writer mutates a store at a time | machine-checked | `taste_prefs.py`, `lock()` raising `locked` |
-| A preference id is a stable lowercase identifier | machine-checked | `taste_prefs.py`, the `[a-z0-9][a-z0-9._-]{0,127}` pattern in `mutate()` |
+| Only one writer mutates a store at a time, and a lock whose holder is provably gone is reclaimed rather than wedging the store | machine-checked | `taste_prefs.py`, `lock()` raising `locked`, `reclaim()`, and `Held.verify()` raising `lock_lost` (Failure paths) |
+| A preference id is a stable lowercase identifier | machine-checked | `taste_prefs.py`, the `[a-z0-9][a-z0-9._-]{0,127}` pattern in `check_id()` |
+| An id does not embed a secret, contain a credential word, or end in a personal-data word | machine-checked | `taste_prefs.py`, `check_id()` and `sensitive_key()` |
 | Secrets, credentials, and personal identifiers are refused or redacted; text and list sizes are bounded | machine-checked | `taste_prefs.py`, `validate_safe()` |
 | `confirm` applies only to a `proposed` entry (§5) | machine-checked | `taste_prefs.py`, the `invalid_state` error in `mutate()` |
 | `promote` writes global scope and `specialize` writes project scope (§6) | machine-checked | `taste_prefs.py`, the `invalid_scope` errors in `main()` |
 | Writes to the durable Taste path go through the sanctioned writer only | machine-checked where hooks are registered | `skills/harness/hooks/pre_tool_use.py`, with [save-ownership.yaml](save-ownership.yaml) |
 | At `taste-review`, the typed `preference_diff`, `confirmation`, `conflict_analysis`, `persistence_result`, `effective_profile`, and `consumer_handoff` records carry their required fields and sha256 digests | machine-checked | `skills/harness/gatekeeper/check.py`, driven by `evidence_type_rules` in [gates.yaml](gates.yaml) |
-| The eleven category identifiers in §3 | **judgement** | nothing — the writer stores an opaque `value` and never inspects a category |
-| The entry fields in §4 | **judgement** | nothing — see §4 |
+| The eleven category identifiers in §3 | machine-checked on a new proposal; **judgement** for every other entry | `taste_prefs.py`, `validate_proposal()`; `set`, `import`, and stored entries are not checked |
+| The entry fields in §4 | machine-checked for `category`, `normalized_rule`, `strength`, and `source` on a new proposal; **judgement** for every other field and for every entry `propose` did not create | `taste_prefs.py`, `validate_proposal()`; see §4 |
+| The writer's category, strength, and source vocabularies and its operation table equal §3, §4, and §6, and every error code it raises is named in the runbooks | machine-checked | `skills/taste/test_taste_store.py`, `DoctrineParityTests` |
 | The six lifecycle states in §5 | **judgement** | nothing — the store persists three states plus tombstones; see §5 |
 | The merge procedure in §7 | **judgement, partially implemented** | `taste_prefs.py` `effective` implements part of it; see §7 |
 | The boundary in §1, including that Taste never outranks a mandatory requirement | judgement | nothing; `conflict_analysis` records the collision but does not adjudicate it |
 | That an inference was genuinely confirmed by the user | judgement at the store; machine-checked at the gate | the `confirmation` typed record is required at `taste-review`, but the writer cannot tell an explicit `set` from a confirmed inference |
-| This document itself | **judgement** | nothing — no comparator opens this file. `taste_prefs.py` validates the stored record and `check.py` validates the submitted typed records; neither resolves a rule to this text. Every mechanical row above holds because of the writer and [gates.yaml](gates.yaml), so a clause deleted here fails no suite. |
+| This document itself | **judgement**, apart from what the parity row above names | `DoctrineParityTests` reads the §3 table, the §4 `strength` and `source` lines, the §6 operation table, and the error codes this file names, and nothing else in it. `taste_prefs.py` validates the stored record and `check.py` validates the submitted typed records; neither resolves any other rule to this text. Every other mechanical row above holds because of the writer and [gates.yaml](gates.yaml), so a clause deleted outside those places fails no suite. |
 
 The practical consequence: a store that passes `taste_prefs.py` is well-formed,
-not doctrinally correct. Category, provenance, and lifecycle correctness rest on
-the skill that writes the entry and the reviewer at `taste-review`.
+not doctrinally correct. Only a new proposal is checked against §3 and §4;
+category, provenance, and lifecycle correctness of every other entry rest on the
+skill that writes it and the reviewer at `taste-review`.
 
 ## 1. Boundary of Taste
 
@@ -134,15 +137,18 @@ Extensions require a documented, stable identifier with defined semantics and
 must not duplicate an existing category. Display labels may vary, but stored
 identifiers do not.
 
-**No comparator checks this registry.** `taste_prefs.py` stores each entry's
-content as an opaque `value` and never reads a `category` out of it, so an entry
-carrying an invented or misspelled category is written without complaint. Two
-other documents restate this list and must stay tied to it: the redesign
-variant rule in [design-doctrine.md](design-doctrine.md) §9, which requires four
-directions differing in at least three of these categories, and the taste
-grilling in [grill-me-doctrine.md](grill-me-doctrine.md), whose prompt order is
-a permutation of these eleven identifiers. Changing an identifier here means
-changing both, and nothing will fail if that is forgotten.
+**Where the registry is checked.** `taste_prefs.py` requires a new proposal's
+`category` to be one of these eleven identifiers and refuses any other with
+`invalid_entry`, and `DoctrineParityTests` keeps the writer's list equal to the
+table above. It does not read a `category` out of an entry that `set`, `import`,
+or an earlier writer created, so an invented or misspelled category there is
+stored without complaint. Two other documents restate this list and must stay
+tied to it: the redesign variant rule in [design-doctrine.md](design-doctrine.md)
+§9, which requires four directions differing in at least three of these
+categories, and the taste grilling in [grill-me-doctrine.md](grill-me-doctrine.md),
+whose prompt order is a permutation of these eleven identifiers. Changing an
+identifier here means changing both, and nothing will fail if that is
+forgotten.
 
 ## 4. Entry record and provenance
 
@@ -176,21 +182,36 @@ the normalized rule remains the resolution input.
 
 **What the writer actually persists.** `taste_prefs.py` stores each entry as
 three keys — `state`, `value`, and `updated_at` — where `value` is the caller's
-JSON blob. The fields above live inside `value` and are validated only for
-safety and size, never for presence, type, or vocabulary. Two consequences
-follow, and both are load-bearing:
+JSON blob. The fields above live inside `value`. Every value is validated for
+safety and size. Presence, type, and vocabulary are checked only on a new
+proposal, and only for the four fields the taste grilling also requires of a
+candidate. Three consequences follow, and all are load-bearing:
 
-- The field list above is a judgement contract on the skill that writes the
-  entry. An entry missing `category`, `normalized_rule`, or `source` is stored
-  successfully and is a doctrine violation the store cannot detect.
-- `preference_id` and `scope` are the exceptions. The id is the entry's key and
-  is pattern-checked; the scope is the store the entry lives in. Those two are
-  mechanically real.
+- `propose` requires `value` to be a JSON object whose `category` is a §3
+  identifier, whose `strength` is `hard`, `strong`, or `soft`, whose `source` is
+  `explicit`, `imported`, or `confirmed-inference`, and whose `normalized_rule`
+  is a non-empty string. Anything else is refused with `invalid_entry`, naming
+  the field and the allowed values. Every other field above is carried as given,
+  and so is any field this document does not name.
+- `set` and `import` accept any JSON value, so an entry they create that omits
+  these fields is a doctrine violation the store cannot detect. Entries stored
+  before this check existed are read, listed, confirmed, deprecated, revoked,
+  promoted, specialized, and exported unchanged. Recording the fields is then a
+  judgement contract on the skill that writes the entry. `confirm` moves a
+  `proposed` entry to `active` without rewriting its `value`, so it does not
+  remove `confidence`; that field's absence after confirmation is judgement too.
+- `preference_id` and `scope` are mechanically real. The id is the entry's key,
+  pattern-checked, and a new id may not embed a secret, contain a credential word,
+  or end in a personal-data word (`check_id()`); the scope is the store the entry
+  lives in.
 
 **Corrupt-record refusal.** When a canonical record exists but cannot be read or
 fails validation, the writer refuses the whole operation with `corrupt_record`,
 preserves the original bytes untouched, and reports that the file must be
-repaired or moved explicitly before a retry. This is normative, not incidental:
+repaired or moved explicitly before a retry. A record that parses but fails
+validation also carries the specific check that failed in `reason`
+(`invalid_schema`, `invalid_record`, or `digest_mismatch`) and its message in
+`detail`; an unreadable one has neither. This is normative, not incidental:
 a Taste store is never silently reinitialized, never partially repaired, and
 never replaced by a blank record on a read failure. A missing store is a
 different case and is treated as an empty store at revision 0; only an
@@ -247,12 +268,12 @@ the two differ the CLI name is the one to use.
 | --- | --- | --- | --- |
 | inspect stored entries and provenance | `list` | no | Returns every entry per selected scope, unchanged |
 | inspect store identity and revision | `status` | no | Path, existence, revision, and canonical digest per scope |
-| propose a candidate, with confidence when inferred | `propose` | yes | Writes `state: "proposed"` |
+| propose a candidate, with confidence when inferred | `propose` | yes | Writes `state: "proposed"`; the value must carry the §4 fields the writer checks |
 | confirm explicit user acceptance | `confirm` | yes | Refuses any entry that is not `proposed`; lands it `active` |
 | create or supersede user-authored Taste and make it active | `set` | yes | Replaces an existing id in place (§5) |
-| import external entries, retaining provenance | `import` | yes | Reads a JSON file, caps at 1000 entries, validates every id |
-| export selected records with lifecycle and provenance intact | `export` | no | Writes a redacted JSON export carrying each store's digest as provenance |
-| diff stored Taste across scopes | `diff` | no | Per-id differences between the project and global stores |
+| import external entries, retaining provenance | `import` | yes | Reads a JSON file, caps at 1000 entries, validates every id; a file that declares a schema must declare a recognised one (`invalid_schema`) |
+| export selected records with lifecycle and provenance intact | `export` | no | Writes a redacted JSON export carrying each store's digest as provenance and lists every field it dropped and value it redacted as `redactions`; redaction cannot be turned off |
+| diff stored Taste across scopes | `diff` | no | Per-id differences between the project and global stores, comparing `state` and `value` and not `updated_at`; it takes only `--scope both` |
 | promote project-to-global | `promote` | yes | Refuses unless the scope is `global` or `both` |
 | specialize global-to-project | `specialize` | yes | Refuses unless the scope is `project` or `both` |
 | deprecate | `deprecate` | yes | Writes `state: "deprecated"` |
@@ -267,8 +288,11 @@ Operations are auditable and update timestamps and lifecycle links atomically.
 The writer backs that up for the parts it owns: every mutation increments the
 store revision, chains `previous_revision_digest`, snapshots the prior revision
 under `_history/`, appends to the store journal, and commits the JSON and
-rendered Markdown pair together, rolling both back on failure. Lifecycle *links*
-between entries are content inside `value` and are not maintained by the writer.
+rendered Markdown pair together, rolling both back on failure. A rollback also
+removes the journal lines that write appended, so the journal lists committed
+revisions, plus one `lock_reclaimed` note for each abandoned lock the writer
+removed. Lifecycle *links* between entries are content inside `value` and are
+not maintained by the writer.
 
 Promotion, specialization, and `both` always create distinct records rather than
 changing inheritance semantics. `promote` and `specialize` copy the source
@@ -360,16 +384,29 @@ enters the normal lifecycle (§5, §6): nothing a grilling produces becomes
 ## Failure paths
 
 - **The store is unreadable or fails validation.** The writer refuses with
-  `corrupt_record` and preserves the original bytes (§4). Report the refusal and
-  the path; do not reinitialize, do not retry with a blank record, and do not
-  work around it by editing the file directly — direct writes to the Taste path
-  are denied by `pre_tool_use.py` where hooks are registered, and are an
-  ownership violation everywhere else.
+  `corrupt_record` and preserves the original bytes (§4); a record that failed
+  validation carries the failing check in `reason`. Report the refusal, the
+  reason, and the path; do not reinitialize, do not retry with a blank record,
+  and do not work around it by editing the file directly — direct writes to the
+  Taste path are denied by `pre_tool_use.py` where hooks are registered, and are
+  an ownership violation everywhere else.
 - **The store is missing.** That is not corruption. It is an empty store at
   revision 0, and a first mutation creates it.
 - **Another writer holds the lock.** The writer refuses with `locked` rather
-  than waiting or forcing. Surface it; a second concurrent taste run is a
-  routing problem, not a retry problem.
+  than waiting or forcing, and the error names the holder's pid and the lock's
+  age. Surface it; a second concurrent taste run is a routing problem, not a
+  retry problem. The lock does not outlive its holder: on the next write the
+  writer removes a lock whose holder is a process on this host that no longer
+  exists, or that is older than ten minutes because no mutation holds it that
+  long, appends a `lock_reclaimed` note to the store journal, and reports it in
+  the result. Windows cannot probe a process, so only the age applies there. A
+  `locked` refusal that survives this means a live writer holds the lock, and
+  the answer is to wait. Nothing needs the lock file deleted by hand, and the
+  hooks deny an edit-tool write to it.
+- **A writer's lock was reclaimed while it ran.** The writer checks that it still
+  owns its lock immediately before committing and refuses with `lock_lost` when
+  it does not. Nothing was written. Reload with `status`, re-resolve, and redo
+  the change.
 - **The expected revision does not match.** The writer refuses with
   `stale_revision`. Re-read the store with `status`, re-resolve the intended
   change against the current revision, and re-issue. Never drop
@@ -378,6 +415,8 @@ enters the normal lifecycle (§5, §6): nothing a grilling produces becomes
 - **A `--scope both` write fails on one store.** The pair commits atomically or
   rolls back to the prior bytes of both, reporting `write_failed`. Treat a
   reported rollback as the final state and verify with `status` before retrying.
+  If a restore itself fails, `write_failed` lists each `unrestored` file with the
+  `backup` that still holds its prior bytes, and that backup is kept.
 - **Two entries contradict at equal precedence.** §7 step 5 governs: leave it
   unresolved, record it in `unresolved_conflicts`, surface it, and ask. Choosing
   by recency or strength is a doctrine violation even though nothing prevents

@@ -6,7 +6,12 @@ evidence root is the manifest's own directory. Run-layout behaviour (sibling
 evidence, typed records, verdict reuse) lives in test_gate_run_layout.py.
 """
 from __future__ import annotations
-import hashlib, json, re, subprocess, sys, tempfile, unittest
+import json
+import re
+import subprocess
+import sys
+import tempfile
+import unittest
 from pathlib import Path
 
 SKILLS = Path(__file__).resolve().parents[2]
@@ -40,15 +45,20 @@ def load_spec():
 class BoundaryManifestTests(unittest.TestCase):
     def run_check(self, boundary, package, artifact="# Evidence\nObserved.\n", prior=None,
                   corrupt_hash=False, gates=None):
-        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name); art = root / ARTIFACT; art.write_text(artifact, encoding="utf-8")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        art = root / ARTIFACT
+        art.write_text(artifact, encoding="utf-8")
         package.setdefault("artifact_hashes", {})[art.name] = (
             "0" * 64 if corrupt_hash else content_sha256(art)
         )
-        manifest = root / "package.json"; manifest.write_text(json.dumps(package), encoding="utf-8")
+        manifest = root / "package.json"
+        manifest.write_text(json.dumps(package), encoding="utf-8")
         cmd = [sys.executable, str(CHECK), "--boundary", boundary, "--package", str(manifest)]
         if prior:
-            prior_path = root / "prior.json"; prior_path.write_text(json.dumps(prior), encoding="utf-8")
+            prior_path = root / "prior.json"
+            prior_path.write_text(json.dumps(prior), encoding="utf-8")
             cmd += ["--prior", str(prior_path)]
         if gates:
             cmd += ["--gates", gates]
@@ -99,6 +109,21 @@ class BoundaryManifestTests(unittest.TestCase):
                 for value in values:
                     with self.subTest(boundary=boundary, key=key):
                         self.assert_passes(boundary, self.package(boundary, {key: value}))
+
+    def test_a_flat_schema_1_package_passes_but_says_no_typed_check_ran(self):
+        """Schema 1 stays valid outside a run, but a bare pass must not read as the whole contract."""
+        r = self.run_check("build-to-review", self.package("build-to-review"))
+        self.assertEqual(r.returncode, 0, r.stdout)
+        out = json.loads(r.stdout)
+        self.assertEqual((out["manifest_schema_version"], out["declared_schema_version"]), (1, None))
+        self.assertTrue(any(w.startswith("schema 1 manifest: typed records") for w in out["warnings"]), out["warnings"])
+
+    def test_a_flat_schema_2_package_carries_no_downgrade_warning(self):
+        p = self.package("build-to-review")
+        p.update({"schema_version": 2, "boundary": "build-to-review", "owner": "build-management"})
+        out = json.loads(self.run_check("build-to-review", p).stdout)
+        self.assertEqual((out["manifest_schema_version"], out["declared_schema_version"]), (2, 2))
+        self.assertFalse(any(w.startswith("schema 1 manifest") for w in out["warnings"]), out["warnings"])
 
     # --- missing-evidence coverage, one required key per boundary
     def test_missing_required_evidence_fails(self):
@@ -157,6 +182,11 @@ class BoundaryManifestTests(unittest.TestCase):
         p["evidence"]["runtime"] = {"artifacts": [ARTIFACT], "result": {"status": "pass"}}
         p["evidence"]["approved_design_revision"] = "r0"
         r = self.run_check("build-to-review", p)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertTrue(any(f.startswith("applicability reason not sanctioned: security_evidence")
+                            for f in json.loads(r.stdout)["failures"]), r.stdout)
+        p["evidence"]["security_evidence"]["reason"] = sanctioned
+        r = self.run_check("build-to-review", p)
         self.assertEqual(r.returncode, 0, r.stdout)
 
     def test_non_waivable_key_rejects_an_applicability_record(self):
@@ -169,41 +199,65 @@ class BoundaryManifestTests(unittest.TestCase):
     # --- lineage, hashes, scanning
     def test_mixed_and_stale_revision_fail(self):
         p = self.package("review-to-delivery")
-        p["revisions"] = ["r1", "r2"]; p["verdict_revision"] = "r0"
-        r = self.run_check("review-to-delivery", p); out = json.loads(r.stdout)
-        self.assertEqual(r.returncode, 1); self.assertTrue(out["mixed_revisions"])
+        p["revisions"] = ["r1", "r2"]
+        p["verdict_revision"] = "r0"
+        r = self.run_check("review-to-delivery", p)
+        out = json.loads(r.stdout)
+        self.assertEqual(r.returncode, 1)
+        self.assertTrue(out["mixed_revisions"])
         self.assertIn("stale verdict revision", out["failures"])
 
     def test_hash_mismatch_blocked_phrase_and_broken_link_fail(self):
         r = self.run_check("design-to-build", self.package("design-to-build"),
                            "# Evidence\nTODO trust me [missing](gone.md)\n")
-        out = json.loads(r.stdout); self.assertEqual(r.returncode, 1)
+        out = json.loads(r.stdout)
+        self.assertEqual(r.returncode, 1)
         self.assertTrue(any("blocked phrase" in f for f in out["failures"]))
         self.assertTrue(any("broken link" in f for f in out["failures"]))
         mismatch = self.run_check("design-to-build", self.package("design-to-build"), corrupt_hash=True)
         self.assertIn("artifact hash mismatch", " ".join(json.loads(mismatch.stdout)["failures"]))
 
+    def test_every_default_hollow_phrase_blocks_an_artifact_at_the_boundary_validator(self):
+        """check.py used a shorter private list, so five of the shared eight phrases passed it."""
+        for phrase in ("works on my machine", "no issues whatsoever", "placeholder content",
+                       "as an AI language model", "I cannot actually verify this"):
+            with self.subTest(phrase=phrase):
+                r = self.run_check("design-to-build", self.package("design-to-build"), f"# Evidence\n{phrase}.\n")
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn("blocked phrase: evidence.md", json.loads(r.stdout)["failures"])
+
+    def test_ordinary_lowercase_words_are_not_blocked_phrases(self):
+        """The code-rot markers are case-sensitive words; check.py matched them case-insensitively."""
+        r = self.run_check("design-to-build", self.package("design-to-build"),
+                           "# Evidence\nA quick hack of the todo list; xxx and fixme are ordinary words in prose.\n")
+        self.assertEqual(r.returncode, 0, r.stdout)
+
     def test_hash_mismatched_artifact_is_still_scanned(self):
         r = self.run_check("design-to-build", self.package("design-to-build"),
                            "# Evidence\nTODO pending\n", corrupt_hash=True)
-        out = json.loads(r.stdout); self.assertEqual(r.returncode, 1)
+        out = json.loads(r.stdout)
+        self.assertEqual(r.returncode, 1)
         self.assertTrue(any("artifact hash mismatch" in f for f in out["failures"]))
         self.assertTrue(any("blocked phrase" in f for f in out["failures"]))
 
     def test_unchanged_revision_drift_fails(self):
-        prior = self.package("design-to-build"); prior["artifact_hashes"] = {ARTIFACT: "different"}
+        prior = self.package("design-to-build")
+        prior["artifact_hashes"] = {ARTIFACT: "different"}
         r = self.run_check("design-to-build", self.package("design-to-build"), prior=prior)
         self.assertEqual(r.returncode, 1)
         self.assertTrue(json.loads(r.stdout)["idempotency_drift"])
 
     def test_empty_revisions_fails(self):
-        p = self.package("design-to-build"); p["revisions"] = []
+        p = self.package("design-to-build")
+        p["revisions"] = []
         r = self.run_check("design-to-build", p)
-        out = json.loads(r.stdout); self.assertEqual(r.returncode, 1)
+        out = json.loads(r.stdout)
+        self.assertEqual(r.returncode, 1)
         self.assertIn("revisions must contain exactly one value", out["failures"])
 
     def test_submitter_mismatch_is_rejected(self):
-        p = self.package("design-to-build"); p["owner"] = "build-management"
+        p = self.package("design-to-build")
+        p["owner"] = "build-management"
         r = self.run_check("design-to-build", p)
         self.assertEqual(r.returncode, 1)
         self.assertTrue(any("submitter mismatch" in f for f in json.loads(r.stdout)["failures"]))
@@ -282,6 +336,7 @@ class GateSpecContractTests(unittest.TestCase):
             self.assertLessEqual(set(boundary.get("fallback_values", {})),
                                  set(boundary["required_evidence"]))
 
+    @unittest.skipUnless(GATE_DOC.is_file(), "installed copy: docs/ is not part of an install")
     def test_documented_boundary_table_matches_gate_spec(self):
         """Every documented boundary table must exactly mirror gates.yaml."""
         spec = load_spec()["boundaries"]
@@ -344,4 +399,5 @@ class GateSpecContractTests(unittest.TestCase):
                                 "the four gatekeepers must between them document every boundary")
 
 
-if __name__ == "__main__": unittest.main()
+if __name__ == "__main__":
+    unittest.main()

@@ -62,7 +62,7 @@ Resolve the destination with
 `python skills/scripts/output_paths.py --run-id <run-id> --phase build --kind reports --name report_debug-<slug>.md`,
 write the report there, and register its hash through a `session-memory`
 checkpoint —
-`python skills/harness/hooks/save_run.py checkpoint --run-id <run-id> --owner debugger --evidence <path>`.
+`python skills/harness/hooks/save_run.py checkpoint --run-id <run-id> --owner admiral --evidence <path>` (`--owner` names the run's lock holder, admiral, not the caller; any other owner is refused with `lock is owned by 'admiral'`).
 Captured before/after output belongs under the phase `evidence/` directory,
 resolved with `--kind evidence`, and is cited from the report by path.
 

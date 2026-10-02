@@ -9,7 +9,7 @@ description: >-
   specification into code — even when Admiral is never named. Defers to
   `admiral` when reached cold; reviewing the finished code belongs to
   `review/code-chief`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 

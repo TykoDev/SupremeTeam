@@ -54,9 +54,11 @@ blocked: ['**/secrets/**']
 read-only runs: ['2026-09-16-charge-bug']
 allow_dangerous: {'owner': 'ops-lead', 'scope': 'scratch-volume rebuild', 'expires_at': '2026-09-16T09:50:11Z', ...}
 WARNING unowned (not releasable by authority check): ['legacy/path/**']
+WARNING unmatchable (enforce nothing; re-record with a usable glob): ['..']
 ```
 
-Carry four facts into the careful record:
+Carry four facts into the careful record (and treat an `unmatchable` warning as a
+boundary that is not there):
 
 - whether `allow_dangerous` is `false` or a live grant, naming its owner, scope,
   and `expires_at`;
@@ -87,14 +89,15 @@ closed. Exactly four shapes matter:
 | Recorded value | Destructive-pattern block |
 | --- | --- |
 | `false`, or the key absent | in force |
-| bare `true` (legacy, never written by `guard_state.py`) | **lifted, with no end** |
-| a grant whose `expires_at` is in the future | **lifted until that moment** |
-| a grant with an expired, unparseable, or missing `expires_at` | in force |
+| bare `true` (legacy, never written by `guard_state.py`) | in force |
+| a complete grant (`owner`, `reason`, `scope`, `created_at`, `expires_at`) whose `expires_at` is in the future and at most 8 hours away, read from a state directory this user owns and that is not a link | **lifted until that moment** |
+| any other grant: expired, an unparseable or missing `expires_at`, a missing field, more than 8 hours left, or a state directory that is a link or belongs to another user | in force |
 
 A grant that carries no `expires_at` is malformed rather than permanent: the
 writer always records one, and a guard that cannot read its own grant stays
-closed rather than open. The only unbounded lift is the legacy bare `true`, which
-the writer never produces — one more reason the record is not hand-edited.
+closed rather than open. The legacy bare `true` is also rejected, so no
+unbounded value lifts the block, and neither does a hand-written grant that
+outlasts the writer's 8-hour cap.
 
 ## Careful reads the record and never writes it
 
@@ -108,11 +111,15 @@ grant — to `guard`, `freeze`, or
 
 ## Fail-open semantics
 
-Per `../../harness-doctrine.md` §3 the hook *fails open*: malformed state, an
+Per `../../harness-doctrine.md` §3 the hook *fails open*: an internal error, an
 unreadable path, or a host that never runs hooks lets the action proceed
-silently. A no-go therefore stands on its own evidence rather than on the hook,
-and an absent, corrupt, or unreadable `guard-state.json` is a reason to tighten
-the verdict — not to assume the command would have been caught anyway.
+silently (the fault is counted by type in `.harness-state/observations/PreToolUse.json`).
+A no-go therefore stands on its own evidence rather than on the hook, and an
+absent, corrupt, or unreadable `guard-state.json` is a reason to tighten the
+verdict — not to assume the command would have been caught anyway. The hook is
+also a text guard that reads the command, so a path built at run time or a script
+file that does the damage is not seen; `../../harness/hooks/README.md` § What the
+guard cannot see lists the limits in full.
 
 ## Enforcement faults and the verdict they force
 

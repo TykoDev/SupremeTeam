@@ -7,7 +7,7 @@ description: >-
   "don't touch the payments code". Creates the lock only: lifting it belongs to
   `unfreeze`, a verdict with no boundary to `careful`,
   the combined posture to `guard`.
-version: 1.0.0
+version: 1.3.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -66,30 +66,27 @@ python skills/harness/hooks/guard_state.py freeze --glob "src/payments/**" --own
 python skills/harness/hooks/guard_state.py status
 ```
 
-**Globs are always written with forward slashes, on every platform.** This is a
-Windows-first repository, so the backslash form is the one a contributor is most
-likely to paste:
-
-```bash
-# Wrong on Windows - a backslash path is stored verbatim and read back as a
-# different string than the one status prints.
-python skills/harness/hooks/guard_state.py freeze --glob "src\payments\**" --owner <contributor> --scope "<why>"
-
-# Right on every platform.
-python skills/harness/hooks/guard_state.py freeze --glob "src/payments/**" --owner <contributor> --scope "<why>"
-```
-
-The enforcement hook normalizes backslashes to forward slashes before matching
-(`pre_tool_use.py`), so a backslash glob still *enforces*. The writer does not:
-it stores and compares the string exactly as given, so a backslash spelling and a
-forward-slash spelling of the same boundary are two independent records, each
-needing its own release. Write the forward-slash form once and release it once.
+**Spell a glob however you like; the writer records it one way.** This is a Windows-first
+repository, so the backslash form is the one a contributor is most likely to paste. The writer
+(`guard_state.py`) normalises every glob before it compares or stores it: backslashes become
+forward slashes, `./` and doubled or inner `.` segments disappear, `..` segments are resolved, and
+the absolute form of a path inside the project becomes the project-relative one. So `src\payments\**`,
+`./src/payments/**`, `src//payments/**` and `<project>/src/payments/**` are one boundary, one record,
+one release, and `status` prints the stored form. A relative glob is anchored at the project root
+(`src/**` does not reach `docs/src/`), and a glob that can never match is refused with exit 1 and recorded as nothing, because a boundary
+that can never match would otherwise read as protection: empty, `.`, climbing out with `..`, a leading `!`,
+the root of a drive or of the file system, or an absolute path under a top-level directory this machine does not
+have. The last is the trap: `/src/payments/**` starts at the file system root, not the project root, so the
+writer refuses it and names the project-relative spelling, `src/payments/**`. The same mistake where the directory does exist (`/lib/payments/**` on a machine with a `/lib`) is recorded, because an absolute path outside the project is a real boundary (`/etc/**`), but never in silence: the writer prints a warning on stderr (exit status unchanged) that the glob guards the file system's `/lib/payments` and not the project's `lib/payments/**`, and `status` repeats it under `absolute_entries`. Read that warning, and re-record with the relative spelling if the project's path was meant; the refusal for a missing directory stays because it is the stronger signal. The hook matches the same way: it resolves
+`..`, links and case before it compares, so a spelling of a path inside a frozen glob does not
+get around it. Prefer the forward-slash form in what you write down, because that is what you will
+read back.
 
 Each run appends one owned record to `frozen_globs`. Two fields decide who can ever lift it: `owner`, and the `approvers` the writer records from `--approver`. A release is authorized by either, so a boundary whose owner may go off-shift is recorded with a named delegate at freeze time rather than negotiated later. A record stays effective until `released_at` is recorded by its owner **or by one of its approvers** — the same two-field authority the sentence above describes, and what `references/enforcement.md` § Authority fields enforces. Age alone never expires a protection.
 
 The writer exits 1 and changes nothing when the glob is already recorded and unreleased or the record on disk is corrupt, so a duplicate or damaged freeze surfaces instead of being silently overwritten. Any other non-zero exit means the freeze was **not recorded** at all — check the command actually ran before reporting a boundary that does not exist.
 
-**This hook is advisory-grade, not a hard lock.** Per harness-doctrine §3 it *fails open*: a malformed `guard-state.json`, an unreadable path, or a host that does not run hooks exits silently and lets the edit proceed, so a hook fault means a write into a frozen path is *allowed*. Back a boundary that must not change under any circumstances with version-control protections or filesystem permissions as well.
+**This hook is advisory-grade, not a hard lock.** Per harness-doctrine §3 it *fails open*: an unreadable path, an internal fault, or a host that does not run hooks exits silently and lets the edit proceed, so a hook fault means a write into a frozen path is *allowed* (each fault is counted in `.harness-state/observations/`, and a `guard-state.json` with lists in an odd shape is read list by list; one that cannot be read at all names no frozen path, so none is enforced from it until it is repaired, which the hook counts as a `GuardStateUnreadable` fault and says in the call's context, and the destructive-command rule needs none of it). The guard is also a text guard: it reads the command a tool is about to run, so a program that builds a path at run time, a script file that writes where the command line does not name, an unknown tool, or a link made in the same command is not seen, a writer fed from a list, a pipe or a variable (`echo 'rm src/payments/a' | sh`, `cat src/payments/list | xargs rm`) is refused only when the command also spells a frozen path (`cat list | xargs rm` passes), and a command that changes directory through more than 512 characters of path and then writes is denied whole (Rule G), because where the write lands cannot be told: use short paths from one directory, or split the command. Back a boundary that must not change under any circumstances with version-control protections or filesystem permissions as well.
 
 For the `frozen_globs` record shape, the state-directory resolution order, the authority fields and the two legacy shapes that defeat them, and the writer's full exit contract, see `references/enforcement.md`.
 

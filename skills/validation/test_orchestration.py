@@ -55,58 +55,20 @@ them.
 import copy
 import re
 import unittest
-from pathlib import Path
 
-try:
-    import yaml
-except ImportError:  # PyYAML is optional; fall back to the bundled parser.
-    yaml = None
+import _catalog
 
-SKILLS = Path(__file__).resolve().parents[1]
+SKILLS = _catalog.SKILLS
 
-if yaml is None:  # pragma: no cover - exercised only on a host without PyYAML
-    import sys
-    sys.path.insert(0, str(SKILLS / "scripts"))
-    from data_formats import parse_yaml as _parse
-
-    def _load(path):
-        return _parse(path.read_text(encoding="utf-8"))
-else:
-    def _load(path):
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
-
-
-def _load_text(text):
-    if yaml is None:  # pragma: no cover
-        from data_formats import parse_yaml
-        return parse_yaml(text)
-    return yaml.safe_load(text)
-
-
-GATES = _load(SKILLS / "gates.yaml")
-PIPELINES = _load(SKILLS / "pipelines.yaml")
-TEAM = _load(SKILLS / "team-manifest.yaml")
+GATES = _catalog.load_spec("gates.yaml")
+PIPELINES = _catalog.load_spec("pipelines.yaml")
+TEAM = _catalog.load_spec("team-manifest.yaml")
 DOCTRINE = (SKILLS / "routing-doctrine.md").read_text(encoding="utf-8")
 WORKFLOW = (SKILLS / "contracts" / "workflow-protocol.md").read_text(
     encoding="utf-8")
 
-_FM = re.compile(r"^---\r?\n(.*?)\r?\n---", re.S)
-
-
-def _skill_dirs():
-    """Map skill name -> directory, from the frontmatter each SKILL.md declares."""
-    found = {}
-    for md in sorted(SKILLS.rglob("SKILL.md")):
-        match = _FM.match(md.read_text(encoding="utf-8"))
-        if not match:
-            continue
-        front = _load_text(match.group(1))
-        if isinstance(front, dict) and front.get("name"):
-            found[front["name"]] = md.parent
-    return found
-
-
-SKILL_DIRS = _skill_dirs()
+#: Map skill name -> directory, from the frontmatter each SKILL.md declares.
+SKILL_DIRS = _catalog.skill_dirs()
 #: Catalog-relative path of every skill, e.g. "design/planner" -> "planner".
 SKILL_PATHS = {d.relative_to(SKILLS).as_posix(): n for n, d in SKILL_DIRS.items()}
 #: Directories directly under skills/. A reference whose first path segment is
@@ -389,7 +351,7 @@ class SpecialistEntryRoutingTests(unittest.TestCase):
     """
 
     @staticmethod
-    def _names(section: str, owner: str) -> bool:
+    def _cites(section: str, owner: str) -> bool:
         return re.search(r"`(?:[a-z0-9-]+/)?" + re.escape(owner) + r"`", section) is not None
 
     @staticmethod
@@ -471,7 +433,7 @@ class SpecialistEntryRoutingTests(unittest.TestCase):
             if not routing:
                 continue  # reported by the test above
             checked += 1
-            if not self._names(routing, owner):
+            if not self._cites(routing, owner):
                 violations.append(
                     f"{who} runs {pipeline}/{step} as its {role} but its Entry Routing "
                     f"never names the delegating owner '{owner}'")
@@ -487,14 +449,14 @@ class SpecialistEntryRoutingTests(unittest.TestCase):
                  "verification. Investigate the failure before you ship it.")
         for owner in ("taste", "ship", "investigate"):
             with self.subTest(owner=owner, kind="english word"):
-                self.assertFalse(self._names(prose, owner))
+                self.assertFalse(self._cites(prose, owner))
         for section, owner in [
             ("the prompt carries a `### Save Context` block from `taste`", "taste"),
             ("the invocation explicitly names `design/commander` as the owner", "commander"),
             ("(or `design/redesign` at `redesign-review`)", "redesign"),
         ]:
             with self.subTest(owner=owner, kind="real reference"):
-                self.assertTrue(self._names(section, owner))
+                self.assertTrue(self._cites(section, owner))
 
 
 class DelegationGraphTests(unittest.TestCase):
@@ -1356,7 +1318,7 @@ class StageConditionTests(unittest.TestCase):
                         f"({', '.join(counted)}), so which stage produces which count is "
                         f"undecidable")
                     continue
-                for key, stage in zip(counted, stages):
+                for key, stage in zip(counted, stages, strict=True):
                     required = cls.counted_count(gates, key)
                     declared = stage.get("fan_out")
                     if (declared if declared is not None else 1) != required:
@@ -1371,7 +1333,7 @@ class StageConditionTests(unittest.TestCase):
     def agent_fan_outs():
         """(manifest, owning skill, delegate, count) from every agent manifest."""
         for manifest in sorted(SKILLS.rglob("agent-manifest.yaml")):
-            data = _load(manifest) or {}
+            data = _catalog.load_spec(manifest.relative_to(SKILLS).as_posix()) or {}
             owner = SKILL_PATHS.get(manifest.parent.parent.relative_to(SKILLS).as_posix())
             for delegate in data.get("delegates_to") or []:
                 if isinstance(delegate, dict) and delegate.get("fan_out") is not None:

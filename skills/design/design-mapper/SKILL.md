@@ -9,7 +9,7 @@ description: >-
   or a prototype reproduces the existing app — even when the ask is just "what
   does this app do now?". Defers directions to `design/architect` and mocks and
   prototypes to `design/prototyper`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -136,8 +136,8 @@ Never skip the inventory in a redesign run. Baseline captures may be replaced by
 
 | Scenario | Response |
 | --- | --- |
-| The surface has no router — a single-page tool, an embedded widget, or a component library with no routes | Record one implicit route (`route.root`) with its states, components, interactions, and flows, and note the absent router under `limitations`. An empty `routes` list is not a valid inventory: `check_parity.py` scores an empty expectation set as coverage 1.0, so it would pass a variant that renders nothing. |
-| The delegation names a surface that does not exist, or the inventory arrives malformed — wrong `schema_version`, a non-list parity list, a duplicate or non-conforming id | Stop before any parity run. `check_parity.py` exits 2 with an `engine_error` on stderr for exactly these; quote the error, return it to `design/redesign` with the offending id or field, and never hand-write a record the script did not produce. |
+| The surface has no router — a single-page tool, an embedded widget, or a component library with no routes | Record one implicit route (`route.root`) with its states, components, interactions, and flows, and note the absent router under `limitations`. An empty `routes` list is not a valid inventory: an empty expectation set would score coverage 1.0 and pass a variant that renders nothing, so `check_parity.py` rejects it with exit 2. |
+| The delegation names a surface that does not exist, or the inventory arrives malformed — wrong `schema_version`, a non-list parity list, an empty `routes` or `components` list, a route `states` that is not a list, a duplicate or non-conforming id | Stop before any parity run. `check_parity.py` exits 2 with an `engine_error` on stderr for exactly these; quote the error, return it to `design/redesign` with the offending id or field, and never hand-write a record the script did not produce. |
 | `check_parity.py` exits 2 on a path — an inventory, `app.html`, or `components.html` that cannot be read | Treat the exit as the answer, not an obstacle: correct the path and re-run. Exit 0 is a pass, 1 is missing ids, 2 is an input or engine error, and only 0 or 1 produces a record. Report coverage only from a record the script wrote. |
 | Python or `check_parity.py` is unavailable in the host | Report the parity stage as unverifiable, name the command that would have run, and return to `design/redesign`; a read-through of the markup is not a probe record and must never be labelled one. |
 | `design/gatekeeper-design` returns a `REVISE` naming `design_inventory`, `mock_parity`, or `parity_evidence` | Take the whole owner group in `revise_packet.by_owner` as one batch, fix every finding in a single revision, and return the changed files with new sha256 digests so the gate re-judges only `changed_evidence`. |

@@ -45,7 +45,9 @@ cannot waive a gate, security evidence, or active-run ownership.
 
 Its boundary table is not hardcoded. It loads `skills/gates.yaml`, the canonical
 gate spec, and a missing or malformed spec is an engine error (exit 2), never a
-pass. Against that spec it verifies required boundary evidence, artifact-backed
+pass. That includes a spec naming an evidence type the engine has no validator
+for: an unknown kind would otherwise switch its key's typed checks off and still
+print a pass. Against that spec it verifies required boundary evidence, artifact-backed
 evidence (keys listed under `artifact_evidence` must reference a hashed file in
 the package unless the value is a sanctioned fallback), submission and revision
 identity, single-revision lineage, artifact existence and SHA-256 hashes, blocked
@@ -63,8 +65,10 @@ python skills/harness/gatekeeper/check.py \
 ```
 
 Exit 0 for a mechanically clean package, 1 for a package defect, 2 for an engine
-or input failure (including an unknown `--boundary`, which emits the
-`engine_error` JSON envelope on stderr). The result carries
+or input failure (including an unknown `--boundary`, and any fault inside the
+engine itself, which emit the `engine_error` JSON envelope on stderr and print
+no result). A malformed submission, such as a list where a severity belongs, is
+a package defect: exit 1 with the failure in the result. The result carries
 `mechanical_only: true`; human judgment still owns semantic quality.
 
 **Evidence root.** Artifact paths are manifest-relative. Inside the canonical
@@ -77,24 +81,46 @@ error.
 
 **Manifest schema 2.** Adds `boundary` (must match `--boundary`), `owner` (must
 match the spec `submitter`), `run_id`, typed records for keys named in
-`evidence_types` (scan, render, probe, audit, findings, verdict, stack_lock,
+`evidence_types` (scan, render, probe, findings, verdict, stack_lock,
 revision_ref, and the Taste records preference_diff, confirmation,
 conflict_analysis, persistence_result, effective_profile, consumer_handoff,
 variant_set for the four redesign mocks and for the one variant built from the
 chosen mock, and selection for the decision between them),
-`inputs` that bind evidence to project files by sha256 (line-ending agnostic: `data_formats.content_sha256`) (stale
-evidence fails as `input hash drift`), and applicability records instead of bare
-fallback strings. Schema 1 flat packages keep working.
+`inputs` that bind evidence to project files by sha256 (line-ending agnostic:
+`data_formats.content_sha256`), and applicability records instead of bare
+fallback strings. A manifest inside a run must declare schema 2: an absent or
+schema-1 `schema_version` fails, and the package is checked as schema 2 anyway so
+the typed checks still run and every failure arrives at once. Schema 1 flat
+packages keep working outside a run, and the result says in `warnings` that no
+typed check ran (`declared_schema_version` and `manifest_schema_version` show the
+downgrade).
+
+**Verified and attested.** A typed record is the submitter's own statement. The
+gate checks its shape, that each artifact it names exists and matches its digest,
+that each `inputs` entry still hashes as recorded (stale evidence fails as
+`input hash drift`; scan and render records must carry `inputs`, probe records
+need not), and that a `pass` does not sit beside a non-zero `exit_code`. It never
+compares an artifact's content with what its record claims and never re-runs a command (it reads `.md` and `.txt` artifacts only for blocked phrases and local links),
+and each probe record that binds no
+inputs is listed in `warnings`. See
+[`../../contracts/evidence-standards.md`](../../contracts/evidence-standards.md)
+§ Binding evidence to source.
 
 **Verdict records.** `--verdict-out <path>` writes the result with `verdict_id`,
 `package_fingerprint`, and `gate_spec_digest`; `--prior <record>` compares
 against it and reports `prior_reusable` plus `idempotency_drift`. A verdict is
 reusable only for the same boundary, submission, revision, fingerprint, and gate
-spec digest.
+spec digest. Those values are unkeyed sha256 hashes of public inputs: they detect
+drift, they do not authenticate, and `--prior` is trusted as supplied. The result
+reports `gate_spec_is_shipped`, `registry_is_shipped`, and `prior_record` (its
+path, its `gate_spec_digest`, and whether that is the shipped spec), with a
+`warnings` entry for each that is not the shipped input. A reader at delivery
+re-runs `check.py` with none of `--gates`, `--registry`, or `--prior` rather than
+trusting a stored verdict.
 
 ## Boundaries
 
-`gates.yaml` (spec revision 4) carries ten boundaries. Each names the
+`gates.yaml` (spec revision 5) carries ten boundaries. Each names the
 transition it guards and the single skill permitted to submit it. The
 human-readable table lives in [`../../../docs/gatekeepers.md`](../../../docs/gatekeepers.md)
 and a drift test asserts it matches `gates.yaml` exactly.
@@ -121,17 +147,18 @@ keys accept a sanctioned applicability record instead (`security_evidence`,
 at `taste-review` only `before_revision`, `consumer_handoff`,
 `residual_uncertainty`, and at `redesign-review` only `selected_variant`,
 `parity_evidence`, `accessibility_evidence`), and only the exact reasons listed
-under `fallback_values` are accepted; any other bare string fails the
-artifact-backing check. `confirmation` is never waivable, and a boundary's
+under `fallback_values` are accepted, as a record's `reason` (any other reason
+fails as `applicability reason not sanctioned`) and as a schema-1 bare string;
+any other bare string fails the artifact-backing check. `confirmation` is never waivable, and a boundary's
 `no_fallback` list removes a key's fallback there (`mock_rendering` at
 `redesign-review`: the four mocks are always built and always rendered).
 
 At `redesign-review` those waivers are not independent of each other. `selection`
 records what was decided, and `check_selection_dependencies` makes four keys
 follow it: a decision naming a variant may not stand `selected_variant`,
-`parity_evidence`, `rendered_verification` or `accessibility_evidence` down, and
-a merge or a deferral must stand all four down on the one sanctioned wording
-that matches the decision.
+`parity_evidence`, `rendered_verification` or `accessibility_evidence` down in
+any wording, and a merge or a deferral must stand all four down on the one
+sanctioned wording that matches the decision.
 
 ## Batched REVISE
 
@@ -158,12 +185,22 @@ against a prior verdict for idempotency, and applies the harness-doctrine §5
 structural check. It reports PASS / FAIL / UNCHECKED facts.
 
 ```text
-python skills/design/gatekeeper-design/scripts/check.py <package-dir> [--prior <verdict>] [--json]
+python skills/design/gatekeeper-design/scripts/check.py <package-dir> [--prior <verdict>] [--blocked-phrases <file>] [--json]
 ```
+
+The default blocked-phrase list is shared: both validators compile the one list in
+`_gatecheck.py`, so the same text is a hit in both. `--blocked-phrases` is the
+wrapper scripts' option and no other tool's: it extends that list for the package
+directory scan (one phrase per line, `#` comments allowed, a line beginning `re:`
+is a regular expression), and `check.py` has no such option, so an extension file
+never reaches the manifest's artifacts, which are scanned against the defaults
+alone.
 
 Both validators fail loud. A hook that errors lets the action proceed; a gate
 that cannot prove a package clean must never approve it, so an internal error
-becomes an `UNCHECKED` finding and a non-zero exit, never a hidden PASS.
+ends the run with an `ERROR` record and exit 2, never a hidden PASS. That covers,
+in a wrapper, a `--blocked-phrases` file that does not exist and a pattern that
+does not compile: the rule cannot be applied, so the package is not called clean.
 
 ## Regression tests
 
@@ -191,4 +228,8 @@ and boundary identity, typed result records, the finding policy, waivers,
 YAML-comment specs, quoted diagnostic markers, and verdict reuse.
 `test_gatecheck.py` covers the package-shape engine, and `test_gate_revise.py`
 the batched REVISE packet — per-key grouping, per-owner routing, and the
-changed/unchanged evidence split on a resubmission.
+changed/unchanged evidence split on a resubmission. `test_gate_engine.py` drives
+`check.py` in process, which is what lets it run a matrix (every waivable key at
+every boundary, every evidence type the spec declares) and inject an engine fault:
+waiver wording, policy fields that must be real strings, unhashable values,
+digest and path-reference shapes, typed-record consistency, and the schema rule.

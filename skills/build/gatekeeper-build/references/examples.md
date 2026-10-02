@@ -105,8 +105,10 @@ revision 3.
 
 **Validators:** neither ran. The path contains traversal sequences and does not
 resolve inside the expected build/package working area, so the script was not
-invoked; `../scripts/check.py` would itself exit 2 on the same path, before the
-engine reads anything.
+invoked. `../scripts/check.py` would itself exit 2, before the engine reads
+anything, only if the path also left the project; a path inside the project but
+outside the build working area passes the script's guard, which is why this
+rejection is the gatekeeper's to make by reading the path.
 
 **Output:**
 - Verdict: `ESCALATE`.

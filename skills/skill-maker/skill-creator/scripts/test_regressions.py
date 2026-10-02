@@ -59,7 +59,8 @@ class CreatorRegressionTests(unittest.TestCase):
         self.assertTrue(self.run_child(body))
 
     def test_timeout_cleanup(self):
-        self.assertFalse(self.run_child('import time; time.sleep(10)',timeout=0.1))
+        # A timeout is no outcome, not "did not trigger" (run_eval counts it as an error).
+        self.assertIsNone(self.run_child('import time; time.sleep(10)',timeout=0.1))
 
 if __name__=='__main__':
     unittest.main()

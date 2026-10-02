@@ -25,7 +25,6 @@ asserts the gate notices.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import subprocess
 import sys
@@ -33,25 +32,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
-try:
-    import yaml
-except ModuleNotFoundError:  # pragma: no cover - environment without PyYAML
-    yaml = None
+import _catalog
+from _catalog import SKILLS
+from data_formats import content_sha256
 
-SKILLS = Path(__file__).resolve().parent.parent
+# The specs are read the way the gate reads them, with data_formats, so this module
+# runs on a host without PyYAML instead of skipping the one end-to-end gate test.
 REPO = SKILLS.parent
 CHECK = SKILLS / "harness" / "gatekeeper" / "check.py"
-if str(SKILLS / "scripts") not in sys.path:
-    sys.path.insert(0, str(SKILLS / "scripts"))
-from data_formats import content_sha256  # noqa: E402
-
-if yaml is None:  # pragma: no cover
-    raise unittest.SkipTest("PyYAML is required for the pipeline workflow contracts")
-
-GATES = yaml.safe_load((SKILLS / "gates.yaml").read_text(encoding="utf-8"))
-PIPELINES = yaml.safe_load((SKILLS / "pipelines.yaml").read_text(encoding="utf-8"))
-OWNERSHIP = yaml.safe_load((SKILLS / "ownership.yaml").read_text(encoding="utf-8"))
-REGISTRY = yaml.safe_load((SKILLS / "tech-stacks" / "registry.yaml").read_text(encoding="utf-8"))
+GATES = _catalog.load_spec("gates.yaml")
+PIPELINES = _catalog.load_spec("pipelines.yaml")
+OWNERSHIP = _catalog.load_spec("ownership.yaml")
+REGISTRY = _catalog.load_spec("tech-stacks/registry.yaml")
 
 #: The first registry overlay, used to build a stack_lock the gate will accept.
 #: Reading it rather than hardcoding means the fixture follows the registry, and
@@ -299,27 +291,40 @@ class GateRefusalTests(unittest.TestCase):
                         verdict.get("failures"))
 
     def test_no_fallback_key_cannot_be_waived(self):
-        """A boundary's `no_fallback` list beats the global waiver map."""
-        barred = None
-        for boundary, spec in GATES["boundaries"].items():
-            for key in spec.get("no_fallback") or []:
-                if key in (GATES.get("fallback_values") or {}):
-                    barred = (boundary, key)
-                    break
-            if barred:
-                break
-        if not barred:
-            self.skipTest("no boundary bars a key that the global map would otherwise waive")
-        boundary, key = barred
+        """A boundary's `no_fallback` list beats a global waiver map that names the key.
+
+        The shipped spec bars keys that no waiver map names, so this test used to
+        find nothing to exercise and skip, and deleting the precedence from
+        check.py left the suite green. It now builds a synthetic spec that makes
+        the barred key waivable globally, with that spec's own wording as the
+        reason so only the bar can refuse the waiver, and a control run without
+        the bar that proves the same record is otherwise accepted.
+        """
+        boundary, key = next((b, k) for b, s in GATES["boundaries"].items() for k in s.get("no_fallback") or [])
+        wording = "synthetic wording that only this test's spec sanctions"
+        verdicts = {}
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            package = build_package(boundary, root)
-            package["evidence"][key] = {
-                "applicable": False, "reason": (GATES["fallback_values"][key])[0],
-                "scope": "synthetic probe", "decided_by": "test"}
-            verdict = run_gate(boundary, package, root)
-        self.assertFalse(verdict.get("pass"))
-        self.assertIn(f"evidence not waivable: {key}", verdict.get("failures", []))
+            for barred in (True, False):
+                synthetic = json.loads(json.dumps(GATES))
+                synthetic["fallback_values"][key] = [wording]
+                if not barred:
+                    del synthetic["boundaries"][boundary]["no_fallback"]
+                gates = root / f"gates-{barred}.yaml"
+                gates.write_text(json.dumps(synthetic), encoding="utf-8")
+                package = build_package(boundary, root)
+                package["evidence"][key] = {
+                    "applicable": False, "reason": wording, "scope": "synthetic probe", "decided_by": "test"}
+                manifest = root / f"manifest-{barred}.json"
+                manifest.write_text(json.dumps(package), encoding="utf-8")
+                proc = subprocess.run(
+                    [sys.executable, str(CHECK), "--boundary", boundary, "--package", str(manifest),
+                     "--gates", str(gates)],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(REPO))
+                verdicts[barred] = json.loads(proc.stdout)
+        self.assertFalse(verdicts[True]["pass"])
+        self.assertIn(f"evidence not waivable: {key}", verdicts[True]["failures"])
+        self.assertTrue(verdicts[False]["pass"], verdicts[False]["failures"])
 
 
 class RunLifecycleTests(unittest.TestCase):
@@ -358,8 +363,9 @@ class RunLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "skillset-saves").mkdir()  # the project-root marker
+            (root / "README.md").write_text("# fixture\n", encoding="utf-8")
 
-            opened = self._save(root, "create", "--run-id", "wf-probe", "--owner", owner)
+            opened = self._save(root, "create", "--run-id", "wf-probe", "--owner", owner, "--evidence", "README.md")
             self.assertEqual("ok", opened.get("result"), opened)
             revision = opened.get("revision")
             self.assertIsInstance(revision, int, opened)
@@ -408,7 +414,9 @@ class RunLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "skillset-saves").mkdir()
-            opened = self._save(root, "create", "--run-id", "wf-stale", "--owner", "build-management")
+            (root / "README.md").write_text("# fixture\n", encoding="utf-8")
+            opened = self._save(root, "create", "--run-id", "wf-stale", "--owner", "build-management",
+                                "--evidence", "README.md")
             stale = opened["revision"]
             first = self._save(root, "checkpoint", "--run-id", "wf-stale",
                                "--owner", "build-management", "--expect-revision", str(stale))

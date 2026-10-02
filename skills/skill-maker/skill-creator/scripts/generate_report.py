@@ -3,7 +3,14 @@
 
 Takes the JSON output from run_loop.py and generates a visual HTML report
 showing each description attempt with check/x for each test case.
-Distinguishes between train and test queries.
+Distinguishes between train and test queries. An empty history (a loop that
+stopped before its first measurement) renders the page with no rows.
+
+Run as a module from the skill-creator directory, so the `scripts` package
+resolves, or by path from anywhere:
+
+    python -m scripts.generate_report <results.json | -> [-o report.html] [--skill-name NAME]
+    python <skill-creator>/scripts/generate_report.py <results.json | -> [...]
 """
 
 import argparse
@@ -12,11 +19,15 @@ import json
 import sys
 from pathlib import Path
 
+try:
+    from scripts.utils import configure_stdout
+except ModuleNotFoundError:  # run by path, where only this directory is on sys.path
+    from utils import configure_stdout
+
 
 def generate_html(data: dict, auto_refresh: bool = False, skill_name: str = "") -> str:
     """Generate HTML report from loop output data. If auto_refresh is True, adds a meta refresh tag."""
     history = data.get("history", [])
-    holdout = data.get("holdout", 0)
     title_prefix = html.escape(skill_name + " \u2014 ") if skill_name else ""
 
     # Get all unique queries from train and test sets, with should_trigger info
@@ -154,12 +165,11 @@ def generate_html(data: dict, auto_refresh: bool = False, skill_name: str = "") 
 
     # Summary section
     best_test_score = data.get('best_test_score')
-    best_train_score = data.get('best_train_score')
     html_parts.append(f"""
     <div class="summary">
         <p><strong>Original:</strong> {html.escape(data.get('original_description', 'N/A'))}</p>
         <p class="best"><strong>Best:</strong> {html.escape(data.get('best_description', 'N/A'))}</p>
-        <p><strong>Best Score:</strong> {data.get('best_score', 'N/A')} {'(test)' if best_test_score else '(train)'}</p>
+        <p><strong>Best Score:</strong> {data.get('best_score') or 'N/A'} {'(test)' if best_test_score else '(train)'}</p>
         <p><strong>Iterations:</strong> {data.get('iterations_run', 0)} | <strong>Train:</strong> {data.get('train_size', '?')} | <strong>Test:</strong> {data.get('test_size', '?')}</p>
     </div>
 """)
@@ -203,7 +213,9 @@ def generate_html(data: dict, auto_refresh: bool = False, skill_name: str = "") 
 """)
 
     # Find best iteration for highlighting
-    if test_queries:
+    if not history:
+        best_iter = None
+    elif test_queries:
         best_iter = max(history, key=lambda h: h.get("test_passed") or 0).get("iteration")
     else:
         best_iter = max(history, key=lambda h: h.get("train_passed", h.get("passed", 0))).get("iteration")
@@ -211,13 +223,10 @@ def generate_html(data: dict, auto_refresh: bool = False, skill_name: str = "") 
     # Add rows for each iteration
     for h in history:
         iteration = h.get("iteration", "?")
-        train_passed = h.get("train_passed", h.get("passed", 0))
-        train_total = h.get("train_total", h.get("total", 0))
-        test_passed = h.get("test_passed")
-        test_total = h.get("test_total")
         description = h.get("description", "")
         train_results = h.get("train_results", h.get("results", []))
-        test_results = h.get("test_results", [])
+        # run_loop writes null here when the holdout is 0, so the key is present but empty.
+        test_results = h.get("test_results") or []
 
         # Create lookups for results by query
         train_by_query = {r["query"]: r for r in train_results}
@@ -302,6 +311,7 @@ def generate_html(data: dict, auto_refresh: bool = False, skill_name: str = "") 
 
 
 def main():
+    configure_stdout()
     parser = argparse.ArgumentParser(description="Generate HTML report from run_loop output")
     parser.add_argument("input", help="Path to JSON output from run_loop.py (or - for stdin)")
     parser.add_argument("-o", "--output", default=None, help="Output HTML file (default: stdout)")
@@ -311,12 +321,12 @@ def main():
     if args.input == "-":
         data = json.load(sys.stdin)
     else:
-        data = json.loads(Path(args.input).read_text())
+        data = json.loads(Path(args.input).read_text(encoding="utf-8"))
 
     html_output = generate_html(data, skill_name=args.skill_name)
 
     if args.output:
-        Path(args.output).write_text(html_output)
+        Path(args.output).write_text(html_output, encoding="utf-8")
         print(f"Report written to {args.output}", file=sys.stderr)
     else:
         print(html_output)

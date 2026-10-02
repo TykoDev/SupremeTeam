@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Harness regression tests captured from the 2026-09-05 audit (UPDATED-REPORT.md F3, F4).
-
-Registration false positives (`python -c "pass" <hook>` and a configured but
-nonexistent script), missing-session trajectory sharing, freeze records with
-release metadata, the scoped repair tool, and readiness capability reporting.
-"""
+"""Registration, trajectory isolation, and freeze record regressions."""
 from __future__ import annotations
 
 import json
@@ -14,10 +9,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 HOOK_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOK_DIR))
 import verify_registration as verify  # noqa: E402
+import _testkit as kit  # noqa: E402
 
 
 def env_for(project: Path, home: Path | None = None, **extra: str) -> dict:
@@ -45,25 +42,19 @@ class RegistrationAnalysisTests(unittest.TestCase):
 
     def test_nonexistent_configured_script_is_not_registered(self):
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["SUPREMETEAM_HOOK_ROOT"] = tmp
-            try:
+            with patch.dict(os.environ, {"SUPREMETEAM_HOOK_ROOT": tmp}):
                 state = verify.analyse(f'python "{Path(tmp) / "pre_tool_use.py"}"', "pre_tool_use.py")
-            finally:
-                os.environ.pop("SUPREMETEAM_HOOK_ROOT", None)
         self.assertTrue(state["configured"])
         self.assertFalse(state["resolvable"])
         self.assertFalse(state["executable"])
 
     def test_environment_variable_forms_and_py_launcher_are_accepted(self):
         real = HOOK_DIR / "post_tool_use.py"
-        os.environ["SUPREMETEAM_HOOK_ROOT_TEST"] = str(HOOK_DIR)
-        try:
-            for command in (f'python "$SUPREMETEAM_HOOK_ROOT_TEST/post_tool_use.py"', f'py -3.13 "%SUPREMETEAM_HOOK_ROOT_TEST%/post_tool_use.py"',
+        with patch.dict(os.environ, {"SUPREMETEAM_HOOK_ROOT_TEST": str(HOOK_DIR)}):
+            for command in ('python "$SUPREMETEAM_HOOK_ROOT_TEST/post_tool_use.py"', 'py -3.13 "%SUPREMETEAM_HOOK_ROOT_TEST%/post_tool_use.py"',
                             f'python -u -X utf8 "{real}"', f'FOO=bar python "{real}"'):
                 with self.subTest(command=command):
                     self.assertTrue(verify.analyse(command, "post_tool_use.py")["executable"], command)
-        finally:
-            os.environ.pop("SUPREMETEAM_HOOK_ROOT_TEST", None)
 
     def test_option_that_swallows_the_path_is_not_executable(self):
         real = HOOK_DIR / "post_tool_use.py"
@@ -121,10 +112,6 @@ class TrajectoryIsolationTests(unittest.TestCase):
 
 
 class FreezeRecordTests(unittest.TestCase):
-    def _write_guard(self, project: Path, state: dict) -> None:
-        (project / ".harness-state").mkdir(parents=True, exist_ok=True)
-        (project / ".harness-state" / "guard-state.json").write_text(json.dumps(state), encoding="utf-8")
-
     def _edit(self, project: Path, path: str) -> str:
         payload = json.dumps({"tool_name": "Edit", "tool_input": {"file_path": str(project / path)}})
         proc = subprocess.run([sys.executable, str(HOOK_DIR / "pre_tool_use.py")], input=payload, text=True, capture_output=True,
@@ -134,16 +121,16 @@ class FreezeRecordTests(unittest.TestCase):
     def test_old_freeze_record_stays_effective_until_released(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
-            self._write_guard(project, {"frozen_globs": [{"glob": "src/payments/**", "owner": "ops", "scope": "release",
+            kit.write_guard(project, {"frozen_globs": [{"glob": "src/payments/**", "owner": "ops", "scope": "release",
                                                           "created_at": "2000-01-01T00:00:00Z", "run_id": "old", "released_at": None}]})
             self.assertIn("deny", self._edit(project, "src/payments/a.py"))
-            self._write_guard(project, {"frozen_globs": [{"glob": "src/payments/**", "owner": "ops", "released_at": "2026-09-05T00:00:00Z"}]})
+            kit.write_guard(project, {"frozen_globs": [{"glob": "src/payments/**", "owner": "ops", "released_at": "2026-09-05T00:00:00Z"}]})
             self.assertEqual(self._edit(project, "src/payments/a.py").strip(), "")
 
     def test_mixed_string_and_record_entries(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
-            self._write_guard(project, {"frozen_globs": ["infra/*.tf", {"glob": "src/payments/**", "owner": "ops"}]})
+            kit.write_guard(project, {"frozen_globs": ["infra/*.tf", {"glob": "src/payments/**", "owner": "ops"}]})
             self.assertIn("deny", self._edit(project, "infra/main.tf"))
             self.assertIn("deny", self._edit(project, "src/payments/a.py"))
             self.assertEqual(self._edit(project, "src/other/a.py").strip(), "")

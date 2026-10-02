@@ -1,285 +1,614 @@
 # Runtime Harness Hooks
 
-Deterministic enforcement for the Action Realization and Trajectory Regulation
-layers defined in [`../../harness-doctrine.md`](../../harness-doctrine.md), plus
-the save lifecycle writer and the registration diagnostics.
+Deterministic runtime enforcement, trajectory regulation, save lifecycle management, registration diagnostics, and maintenance tooling for SupremeTeam.
 
-| File | Event | Layer | Behavior |
-|------|-------|-------|----------|
-| `pre_tool_use.py` | `PreToolUse` | 3 | Blocks dangerous shell commands (Rule A), writes into a frozen or guarded boundary (B), writes outside a read-only run (D), and direct writes to the single-writer records — core run files, Taste state, and the guard boundary record itself (C). Rule A is the one family an owner can lift: an `allow_dangerous` grant in `guard-state.json` suspends it globally while the grant is live. A legacy bare `true` lifts it with no bound; the owned grant `guard_state.py` writes lifts it only until `expires_at`. An expired, unparseable, or absent `expires_at` leaves the block in force, so a malformed grant never opens the guard. Rules B, C, and D are not liftable this way. |
-| `post_tool_use.py` | `PostToolUse` | 4 | Records trajectory observations (repeated failures, empty-output streaks, oscillation), and after a command action sweeps project-root coverage residue into the run; see Coverage residue sweep below. All three hooks refresh the pinned run's heartbeat and record observations; see Heartbeat refresh below. |
-| `user_prompt_submit.py` | `UserPromptSubmit` | entry routing | Advises routing lifecycle work through `admiral`; reinforces the session pin when a run is active. |
-| `save_run.py` | CLI | persistence | The only writer of `_state.md`, `_lock.md`, `_audit-trail.md`, `_journal.json`, and `_history/`. |
-| `guard_state.py` | CLI | 3 | The only writer of `.harness-state/guard-state.json`: records owned freeze/block boundaries, releases them by `released_at`, grants and revokes `allow_dangerous`, and opens or closes a read-only run. |
-| `_saves.py` | helper | persistence | Shared reader that classifies saved state; used by readiness, the prompt hook, and the gate checker. |
-| `_state.py` | helper | 3 and 4 | Fail-open state helper: project-root resolution, guard state, trajectory records, heartbeat refresh. |
-| `verify_registration.py` | diagnostic | - | Inspects host-native hook config without mutating it; rejects stale same-name scripts. |
-| `repair_registration.py` | diagnostic | - | Previews a scoped registration repair; applies only with `--apply`. |
-| `check_readiness.py` | diagnostic | - | Reports Python, hooks, and save state as an independent capability map. |
+These hooks implement the **Action Realization (Layer 3)** and **Trajectory Regulation (Layer 4)** boundaries defined in [`../../harness-doctrine.md`](../../harness-doctrine.md), enforce the single-writer persistence contract in [`../../save-protocol.md`](../../save-protocol.md), and provide self-healing diagnostics for host integrations.
+
+---
 
 ## Contents
 
-1. Design guarantees
-2. Save lifecycle
-3. Registration
-4. Matcher scope
-5. Guard and freeze integration
-6. Coverage residue sweep
-7. Heartbeat refresh
-8. Manual smoke test
-9. Regression tests
+1. [Architecture and Layer Mapping](#architecture-and-layer-mapping)
+2. [Complete Hook Directory Manifest](#complete-hook-directory-manifest)
+3. [Design Guarantees and Principles](#design-guarantees-and-principles)
+4. [Registered Lifecycle Hooks](#registered-lifecycle-hooks)
+   - [`pre_tool_use.py` and `guard_hook.py` (Layer 3)](#pre_tool_usepy-and-guard_hookpy-layer-3--action-realization)
+   - [`post_tool_use.py` (Layer 4)](#post_tool_usepy-layer-4--trajectory-regulation)
+   - [`user_prompt_submit.py` (Entry Routing)](#user_prompt_submitpy-entry-routing)
+5. [State and Boundary Writers](#state-and-boundary-writers)
+   - [`save_run.py` (Run Persistence Writer)](#save_runpy-cli--run-persistence-writer)
+   - [`guard_state.py` (Guard and Freeze Boundary Writer)](#guard_statepy-cli--guard-and-freeze-boundary-writer)
+6. [Registration, Verification, and Repair](#registration-verification-and-repair)
+   - [Supported Hosts and Config Locations](#supported-hosts-and-config-locations)
+   - [`check_readiness.py` (Readiness Diagnostic)](#check_readinesspy-diagnostic--runtime-readiness)
+   - [`verify_registration.py` (Config Inspector)](#verify_registrationpy-diagnostic--registration-verifier)
+   - [`repair_registration.py` (Scoped Repair)](#repair_registrationpy-diagnostic--registration-repair)
+   - [`install_hooks.py` (Registration Writer)](#scriptsinstall_hookspy-installer--registration-writer)
+   - [Removing a Registration](#removing-a-registration)
+7. [Maintenance and Telemetry Hooks](#maintenance-and-telemetry-hooks)
+   - [`size_audit.py` (Oversized Runtime Scanner)](#size_auditpy-maintenance--runtime-storage-scan)
+   - [`audit_improve.py` (Failure Telemetry and Improvement Handoff)](#audit_improvepy-maintenance--telemetry-audit)
+8. [Shared Core Helpers](#shared-core-helpers)
+   - [`_state.py` (Runtime State Helper)](#_statepy-core-helper--runtime-state)
+   - [`_saves.py` (Save Contract Parser)](#_savespy-core-helper--save-classifier)
+9. [Heartbeat Refresh](#heartbeat-refresh)
+10. [Environment Variables Reference](#environment-variables-reference)
+11. [Manual Smoke Test](#manual-smoke-test)
+12. [Regression Test Suites](#regression-test-suites)
 
-## Design guarantees
+---
 
-- Stdlib only. No `pip install`.
-- Fail open: a harness fault cannot block or crash the host loop.
-- Inert on the strong case: rules fire only on mechanically certain signals.
-- Config inspection never claims the host actually fired a hook. The readiness
-  capability map reports `hooks_observed: unverified` until a hook runs.
+## Architecture and Layer Mapping
 
-## Save lifecycle
+The harness hooks operate at multiple lifecycle layers to ensure safety, traceability, and workflow continuity:
 
-`save_run.py` is the single writer of the run record
-([`../../save-protocol.md`](../../save-protocol.md) §3):
+```
+[User Input] ────────► UserPromptSubmit (user_prompt_submit.py)
+                              │  • Advisory routing to admiral
+                              │  • Active session pin reinforcement
+                              ▼
+[Pending Action] ────► PreToolUse (pre_tool_use.py -> guard_hook.py) [Layer 3]
+                              │  • Rule A: Dangerous shell patterns & allow_dangerous
+                              │  • Rule B: Frozen & blocked globs (guard & freeze)
+                              │  • Rule C: Single-writer records (save_run, taste, guard)
+                              │  • Rule D: Read-only run boundaries
+                              │  • Rule E: Coverage destination advisory
+                              │  • Rule F: Hook scripts and registration files
+                              │  • Rule G: A write after a directory chain the analysis cannot follow
+                              ▼
+[Executed Action] ───► PostToolUse (post_tool_use.py) [Layer 4]
+                              │  • Trajectory regulation (repeat fails, loops, streaks)
+                              │  • Coverage residue sweep to evidence/coverage/
+                              │  • Throttled maintenance size audits (size_audit.py)
+                              │  • Run heartbeat refresh
+                              ▼
+[Run Management] ────► save_run.py / guard_state.py / check_readiness.py
+```
+
+---
+
+## Complete Hook Directory Manifest
+
+Every file in `skills/harness/hooks/` serves an explicit, non-overlapping architectural role:
+
+| File | Type / Event | Layer | Description |
+| :--- | :--- | :---: | :--- |
+| [`pre_tool_use.py`](pre_tool_use.py) | `PreToolUse` | 3 | Registered host entry point wrapper; forwards directly to `guard_hook.py`. |
+| [`guard_hook.py`](guard_hook.py) | Engine (`PreToolUse`) | 3 | Action Realization engine enforcing Rules A through G, one function per rule (destructive commands, a write the analysis cannot place, boundaries, read-only runs, single writers, hook files) plus the Rule E advisory. |
+| [`_cmdscan.py`](_cmdscan.py) | Internal Module | 3 | Shell command analyser: quoting, substitutions, heredocs, `cd`, wrappers (`sudo`, `env`, `xargs`, `sh -c`, `find -exec`, `powershell -Command`, `cmd /c`) and the write targets of the usual verbs, in time linear in the command. |
+| [`_paths.py`](_paths.py) | Internal Module | 3 | Path and glob canonicaliser: separators, `.`/`..`, `~`, drive letters, links and case, one `Boundary` per glob for the deny direction and an anchored allow-list test. |
+| [`post_tool_use.py`](post_tool_use.py) | `PostToolUse` | 4 | Trajectory Regulation engine: catches loops and repeated failures, sweeps coverage residue, refreshes heartbeats. |
+| [`user_prompt_submit.py`](user_prompt_submit.py) | `UserPromptSubmit` | Routing | Entry-routing advisor steering lifecycle tasks to `admiral` and reinforcing held session pins. |
+| [`save_run.py`](save_run.py) | CLI / Utility | Persistence | Sole sanctioned writer for canonical run records (`_state.md`, `_lock.md`, `_audit-trail.md`, `_journal.json`, `_latest.md`). |
+| [`guard_state.py`](guard_state.py) | CLI / Utility | 3 | Sole sanctioned writer for `.harness-state/guard-state.json` (freeze, block, read-only, allow-dangerous). |
+| [`size_audit.py`](size_audit.py) | CLI / Sub-hook | Maintenance | Periodic bounded scanner reporting oversized files/directories (>= 256 MiB) under generated runtime roots. |
+| [`audit_improve.py`](audit_improve.py) | CLI / Sub-hook | Maintenance | Reads bounded, redacted failure telemetry and formats improvement handoffs for `audit-improve` and `skill-maker`. |
+| [`check_readiness.py`](check_readiness.py) | CLI / Diagnostic | - | Evaluates runtime prerequisites: Python version (>= 3.13), hook registration, observed firing, and save state. Read-only. |
+| [`verify_registration.py`](verify_registration.py) | CLI / Diagnostic | - | Non-mutating inspector checking whether hooks are configured, resolvable, and executable in host configs, whether their matchers cover the tools they need, and which interpreter they launch. |
+| [`repair_registration.py`](repair_registration.py) | CLI / Diagnostic | - | Scoped dry-run diff preview and `--apply` repair tool for host hook configuration with timestamped backups; records the hook script hashes. |
+| [`_state.py`](_state.py) | Internal Module | 3 & 4 | Fail-open foundation helper: the one project-root resolver, hook input decoding, trajectory recording, guard state access, and fault counting. It imports no module above it, which is why the heartbeat refresh is not here. |
+| [`run_heartbeat.py`](run_heartbeat.py) | Internal Module | Persistence | The heartbeat refresh every registered hook runs on each host event (`refresh(data, event)`): throttled, fail-open, and written only through `save_run.py`. It sits above `_state` and `save_run`; neither imports it. |
+| [`_fsutil.py`](_fsutil.py) | Internal Module | 3 & 4 | The one atomic write (per-process staging removed on any failure, retry, an in-place fallback a caller can refuse with `in_place=False`, an optional explicit file mode; the registration tool writes host configs and their backups through it) and the one OS advisory lock (`AdvisoryLock`) the hooks and writers share. |
+| [`_bootstrap.py`](_bootstrap.py) | Internal Module | - | Puts this directory and `skills/scripts` on `sys.path` once, so modules import what they need by its real name, and lists the files a registered hook runs to decide (`enforcement_files()`, for the hash record). |
+| [`_testkit.py`](_testkit.py) | Test Support | - | Shared scaffolding for the guard tests: an in-process `decide()` and a subprocess `run_hook()` that read the project from the environment as a host does. |
+| [`_saves.py`](_saves.py) | Internal Module | Persistence | Shared parser and classifier for `skillset-saves/`: `SaveRecord` dataclass, state validation, and evidence resolution. |
+| [`.gitignore`](.gitignore) | Config | - | Excludes runtime observations, temporary scratch files, and Python bytecode caches. |
+| [`test_hooks.py`](test_hooks.py) | Test Suite | - | Unit and integration tests for `pre_tool_use.py`, `guard_hook.py`, `post_tool_use.py`, and `user_prompt_submit.py`. |
+| [`test_hooks_hardening.py`](test_hooks_hardening.py) | Test Suite | - | Registration analysis, trajectory isolation per session, freeze record handling, registration repair and the readiness capability map. |
+| [`test_hooks_robustness.py`](test_hooks_robustness.py) | Test Suite | - | The end-to-end hardening claims: path spellings and Windows/POSIX separators, symbolic links, a fixed-seed fuzz of the three registered hooks, and universal fail-open with a deny that stays a deny. |
+| [`test_guard_rules.py`](test_guard_rules.py) | Test Suite | - | Rules A to G one by one (a positive and a negative case per destructive-command rule), the never-weaker differential against the old rules, fallbacks, rule isolation, working-directory tracking, and cost bounds for seventeen command shapes at 100 KB. |
+| [`test_guard_cmdscan.py`](test_guard_cmdscan.py) | Test Suite | - | The command analyser: lexing, wrappers, write-target tables, the writes it cannot name a target for (stdin-fed verbs, inline programs), nesting and cost. |
+| [`test_guard_paths.py`](test_guard_paths.py) | Test Suite | - | The path and glob canonicaliser: spellings, links, case, allow versus deny direction. |
+| [`test_guard_harness_files.py`](test_guard_harness_files.py) | Test Suite | - | Rule F: the hook scripts and registration files are protected while the guard is in use, and not otherwise. |
+| [`test_pre_tool_entry.py`](test_pre_tool_entry.py) | Test Suite | - | The registered PreToolUse entry runs the guard on any interpreter (the real scripts under each older Python installed) and fails open readably, counted, on a real fault; every hook module imports on an older interpreter. |
+| [`test_state_hardening.py`](test_state_hardening.py) | Test Suite | - | Hook input decoding, fault counting, trusted state directory, grant cap and the project-root order. |
+| [`test_fsutil.py`](test_fsutil.py) | Test Suite | - | The shared atomic write and advisory lock. |
+| [`test_hooks_maintenance.py`](test_hooks_maintenance.py) | Test Suite | - | The coverage sweep (read-only runs, active runs, isolated `coverage combine`), neutralised context text, the fault trace of the post-tool and prompt hooks, and import structure. |
+| [`test_audit_improve_parts.py`](test_audit_improve_parts.py) | Test Suite | - | The audit as one function per record class, with a golden report pinning the output. |
+| [`test_hooks_lifecycle.py`](test_hooks_lifecycle.py) | Test Suite | - | Persistence lifecycle tests: `save_run.py` state transitions, atomic journaling, and read-only run confinement. |
+| [`test_run_state.py`](test_run_state.py) | Test Suite | - | The run-state writer: mutual exclusion between writers, evidence handling, closed runs, recovery, and the audit trail. |
+| [`test_saves_reader.py`](test_saves_reader.py) | Test Suite | - | Classification of saved state by `_saves.inspect_saves` and `inspect_run`: corrupt, conflicting, orphaned, unreadable, stale and closed runs. |
+| [`test_hooks_observed.py`](test_hooks_observed.py) | Test Suite | - | Verification tests for observed host hook firing vs synthetic simulation. |
+| [`test_guard_state.py`](test_guard_state.py) | Test Suite | - | Authority and boundary tests for `guard_state.py` (freeze/block entries, owner checks, allow-dangerous expiries). |
+| [`test_registration_contract.py`](test_registration_contract.py) | Test Suite | - | Multi-host registration tests for Claude Code, Codex, and GitHub Copilot configuration formats. |
+| [`test_registration_hardening.py`](test_registration_hardening.py) | Test Suite | - | Host selection, matcher coverage, interpreter checks, project-root resolution, read-only diagnostics, file modes, and hook-script integrity for `verify_registration.py`, `repair_registration.py` and `check_readiness.py`. |
+| [`test_installer_hooks.py`](test_installer_hooks.py) | Test Suite | - | `scripts/install_hooks.py` and the `--register-hooks` options of `install.sh` / `install.ps1`: non-UTF-8 files, the generated OpenCode plugin run under node, file modes, and the preview-and-ask step on a terminal. |
+| [`test_documented_flags.py`](test_documented_flags.py) | Test Suite | - | Checks every documented command line in `README.md`, `QUICK-START.md`, `Install.md` and this README against the argument parser of the script it runs. |
+| [`test_size_audit.py`](test_size_audit.py) | Test Suite | - | Traversal limits, threshold calculations, and throttle record tests for `size_audit.py`. |
+| [`test_audit_improve.py`](test_audit_improve.py) | Test Suite | - | Telemetry analysis, correlation hashing, cooldown enforcement, and handoff formatting tests for `audit_improve.py`. |
+
+---
+
+## Design Guarantees and Principles
+
+Per [`../../harness-doctrine.md`](../../harness-doctrine.md), every hook and helper adheres to strict engineering invariants:
+
+- **Standard Library Only:** Zero external runtime dependencies (`pip install` is never required).
+- **Fail Open, and Say So:** Any internal fault, missing file, or unexpected exception exits 0 silently, allowing the host loop to proceed uninterrupted. A harness defect must never crash or deadlock an agent session. The fault is not lost: each hook counts what it swallowed by exception type (never by content) in its observation record (see [Fault trace](#fault-trace)).
+- **A Deny Stays a Deny:** Fail open means a fault allows the action. It does not mean a damaged state file switches off the rules that need nothing from it: a guard record whose lists are in the wrong shape is read list by list, and an unusable state directory or a failing rule leaves the destructive-command rule and every other rule that can still run in force. A record that cannot be read at all (not JSON, not an object, a directory) names no boundary, so the frozen, blocked and read-only rules have nothing to enforce from it until it is repaired; the other rules keep running, and the hook says so: it counts a `GuardStateUnreadable` fault and adds a `[harness:guard-state]` note to the call's context, so a guard that stopped enforcing a boundary does not look the same as one with no boundary. A record that parses but holds one of those lists as a string or a mapping (`{"frozen_globs": {"glob": "src/payments/**"}}`) is not that case: it is readable, so it reads as no boundary in that list, with no fault and no note, and the rest of the record is read as usual. Only a hand edit makes that shape, because the writer writes lists; the writer's own `status` and every writer command refuse such a record, naming the key (exit 1), so the owner who looks is told, while the hook, which must not stop work over a state file, does not announce it. `test_a_valid_record_in_an_odd_shape_is_not_unreadable` pins the hook's reading and `test_a_boundary_list_in_another_shape_is_refused_by_the_writer_and_read_as_empty_by_the_hook` the writer's.
+- **A Text Guard Is Not a Hard Lock:** the guard reads the command or path a tool is about to use. It cannot see what it is not shown (see [What the guard cannot see](#what-the-guard-cannot-see)), so a boundary that must hold against a determined actor also needs version-control protection or filesystem permissions.
+- **Inert on Competent Actions:** Denials and warnings fire only on mechanically certain signals (a destructive command read from its arguments, a canonical path match, or a structured exit code) — never on ambiguous intent or fuzzy heuristic guesses.
+- **Config vs. Observed Firing:** Inspecting a host configuration file confirms only that a command is *configured*, *resolvable*, and *executable*. It does not prove the host fired the hook. Readiness marks host firing as `hooks_observed: unverified` until real payloads containing host session IDs are recorded under `.harness-state/observations/`.
+- **Single-Writer Protection:** Authoritative state classes (`skillset-saves/`, `.harness-state/guard-state.json`, `taste.*`) have dedicated writers. The harness actively denies direct edits and mutating shell writes to these files.
+
+---
+
+## Registered Lifecycle Hooks
+
+### `pre_tool_use.py` and `guard_hook.py` (Layer 3 — Action Realization)
+
+Invoked by the host before any write-capable or shell tool executes. `pre_tool_use.py` is the registered entry point that delegates to `guard_hook.py`.
+
+`pre_tool_use.py` has no interpreter gate. The supported floor is Python 3.13 (`runtime-manifest.yaml`), but a guard that switched itself off below the floor would be weaker than no floor: the guard modules import and pass the guard suites on 3.10 to 3.12, so a host registered with an older bare `python` is still guarded, and the entry simply runs the guard. Only a real failure to import or run it fails open, and then the fault is counted (see [Fault trace](#fault-trace)) and, below the floor, one line on stderr names the interpreter and the floor. A `SystemExit` counts as such a failure unless the guard took it after printing its decision: a module on the guard's import path that ends the process (`raise SystemExit(0)` appended to it) is a fault, not an allow. A rule that ends that way is counted and skipped like any rule fault, so the others still run, and a run-id grammar (`save_taxonomy.py`) that fails its import leaves the run scope at `no-run`, counted, while the guard keeps enforcing. When even the module that counts faults cannot load, one line on stderr says the call is not guarded. Readiness and the registration check warn about a registered interpreter below the floor; neither is a precondition of the guard working.
+
+#### Rule Hierarchy and Enforcement Contract
+
+`guard_hook.py` applies its rules in strict priority order (A, G, B, D, C, F; Rule E is advice, never a deny). Each rule is one function of the call, so each has its own tests, and a rule that faults is counted and skipped without switching off the others.
+
+1. **Rule A — Dangerous Shell Commands:**
+   - Detects destructive commands that almost never represent legitimate agent work, from the command's arguments rather than its raw text: `rm --no-preserve-root`, recursive wipes of a root, home or drive (`rm -rf /`, `rm -rf ~/`, `rm -rf "$HOME/"`, `/bin/rm -rf /*`, `rm -rf *`), the same inside `sh -c`, `$(...)`, `sudo`, `env`, `xargs` and `find -exec`; PowerShell and cmd recursive root deletions (`Remove-Item -Recurse C:\`, `rd /s C:\`, `format`); fork bombs; raw filesystem formats and block device overwrites (`mkfs`, `dd of=/dev/sd*`); recursive permission stripping (`chmod -R 000 /`); and force-pushing to protected branches (`git push --force origin main`, `git -C r push origin master -f`).
+   - It is the union of the structural rules and the older textual rules, so it is never weaker than the textual rules were; a quoted mention of a destructive command (`echo "rm -rf /"`) is therefore still a false positive, as before.
+   - **Exemption:** Bounded by an active, unexpired, owner-bearing grant in `.harness-state/guard-state.json` via `guard_state.py allow-dangerous`, never more than 8 hours (the writer refuses more, the reader treats a longer grant as malformed). A legacy bare `true` flag is rejected, and a grant is ignored when the state directory is a link or belongs to another user.
+
+2. **Rule B — Frozen and Blocked Boundaries:**
+   - Enforces write locks declared by `guard` and `freeze` (`frozen_globs` and `blocked_globs`). `blocked_globs` is a write boundary, never enforced against reads.
+   - **Path tools (`Edit`, `Write`, `MultiEdit`, `NotebookEdit`, `apply_patch`; tool names match in any case; `file_path`, `filePath`, `path` and `target_file` are read):** denies any write whose canonical path lies in a frozen/blocked glob: `.`/`..` segments, doubled separators, backslashes, `~`, drive letters, links and case are resolved first.
+   - **Shell tools (`Bash`, `PowerShell`):** the command is analysed; every write target (redirects, `tee`, `sed -i`, `cp`/`mv` destinations, `curl -o`, `dd of=`, `git checkout --`, `git apply`, PowerShell cmdlets, `cmd` verbs, and so on) is checked, `cd` is followed (`cd -`, `pushd` and `popd` and a bare `cd` to the home directory too, each scoped to the subshell or substitution it is in), and a tree verb (`rm -r`, `mv`, `git clean`) aimed at a directory above a boundary counts as hitting it. So does a write whose names inside the directory the command does not fix: `rsync` (whose `--delete` removes what the source lacks), an extract into a named directory (`tar -x -C src`, `unzip -d src`, `7z x -osrc`), `Copy-Item`, a recursive copy into the name it lands as (`cp -r /tmp/payments src/`), a copy of a source that names no file (`cp -r x/. src`, `cp /tmp/x/* src/`), and the in-place editors `find -exec` aims at a directory (`find src -exec sed -i ... {} +`, `truncate`, `perl -pi`). A plain copy, link or install into a directory (`cp a.py src/`, `ln -s x bin/`, `install f dir/`) is judged as the file it lands as there (`src/a.py`), so it is refused only when that file is protected. An archive unpacked at the project root (`unzip fixtures.zip`, `tar -xzf vendor.tgz`) is not read as reaching every boundary below it: unpacking at the root is ordinary work, so a freeze or a block leaves it alone, while Rule F refuses it during an active Admiral run and Rule C reads what it would put into the records. `$PWD` is the shell's own directory and a project-directory variable the host exports (`$CLAUDE_PROJECT_DIR` and the others `_state.PROJECT_ENV` names) is the path it holds, so `echo x > "$PWD/src/payments/a"` and `rm -rf "$CLAUDE_PROJECT_DIR/src"` are placed like the paths they spell. Reads (`cat`, `grep`, `ls`, `Get-Content`) pass.
+   - **What a launcher or script block runs** is judged like the command line: `watch 'rm src/payments/a'`, `ls | entr -s 'rm src/payments/a'`, `parallel rm ::: src/payments/a`, `ls | parallel rm src/payments/{}` and a PowerShell `ForEach-Object { Remove-Item src\payments\a }` or `Start-Job { ... }` write where their words say, so a target they name inside the boundary is denied, and a tree verb aimed above it (`watch 'rm -rf src'`) reaches into it as it does outside a launcher.
+   - **A write the analyser cannot place is refused when the command also names a boundary path**, as the substring rule this analyser replaced refused it (`echo 'rm src/payments/a' | sh`, `cat src/payments/list | xargs rm`, `ls src/payments | parallel rm`, `patch -p1 < src/payments/fix.diff`, `Get-ChildItem src\payments | ForEach-Object { Remove-Item $_.FullName }`, `rm "$f"; cat src/payments/a`). Two kinds of write count. One is a write the analyser found but cannot place: operands that arrive on standard input (`xargs`, `parallel`, `entr` with `/_`, a `while read` loop), the files named inside a diff (`patch`, `git apply` without `--check`, `--stat`, `--numstat` or `--summary`), a redirect or file open inside an inline program, a PowerShell cmdlet fed by the pipeline, and a target built at run time (`rm "$f"`, `rm $(cat list)`). The other is a program it cannot read: a shell or interpreter that reads its program from a pipe (`| sh`, `| bash`, `| python3`, `| iex`, `| pwsh -Command -`), which counts only when the text also spells a mutating word (a redirect, `rm`, `mv`, `cp`, `touch`, `tee`, `git checkout`, `Remove-Item`, ... or a program write such as `os.remove(`). The path test is the one inline interpreter code gets: each word of the command is placed like a path (`src/payments`, `./src/payments/a`, `src\payments\a`, inside quotes or a string, before a `\n`) and compared with the boundary. A word led by a variable the analysis cannot resolve (`$OUT/src/payments/a`, `${OUT}/src/payments/a`) is also placed without it, since the variable may stand for the project. The reason is the usual one.
+   - **It is not a flat refusal.** A command that names no boundary path passes, whatever it runs: `cat list | xargs rm`, `echo 'rm x' | sh`, `ls | parallel rm`, `rm "$f"`, `git checkout main` and `cat src/payments/run.sh | bash` (a shell on a pipe with no mutating word). The cost of the text reading is stated: `cat src/payments/list | xargs rm` is refused though it only reads the frozen list, and the target of a writer fed from a list, a pipe or a variable that the command does not spell (`cat list | xargs rm` with a frozen path in `list`) is not seen. A read-only run refuses every one of these shapes (Rule D).
+   - PowerShell cmdlet parameters are matched by unique prefix, as PowerShell matches them. An abbreviation that fits a value parameter and a switch is a switch, so the word after it stays an operand: `-f` is `-Filter` or `-Force`, and `rm -f src\payments\a` (a native `rm` on Linux, `Remove-Item` elsewhere) names its target. Round 2 read `-f` as `-Filter` and the path after it was no write target.
+   - A relative glob is anchored at the project root: `src/**` does not reach `docs/src/`.
+   - `git restore --staged` (without `--worktree`) and a `git reset` that is not `--hard`, `--merge` or `--keep` only move the index: their pathspecs are not writes into a frozen tree. A `trap` handler is read as the command line it is, so what it writes is seen.
+
+3. **Rule C — Single-Writer Record Protection:**
+   - Denies edit tools and mutating shell commands from modifying core run persistence files (`skillset-saves/_latest.md`, `runs/*/_state.md`, `_lock.md`, `_audit-trail.md`, `_journal.json`, `_history/`, and the writer mutex `skillset-saves/_write.lock`), which only `save_run.py` may update; the Taste records (`taste.json`, `taste.md`, `taste.journal.jsonl`, `taste.lock`), which only `skills/taste/taste_prefs.py` may update; and `.harness-state/guard-state.json`, which only `guard_state.py` may update.
+   - Matching is case-insensitive and canonical. A script that is the sanctioned writer is exempt structurally, because a script's arguments are data and never write targets: `python save_run.py checkpoint ...` passes, while a redirect from the same command into a core file is still denied. Removing or moving the directories that hold these records (`.harness-state`, `skillset-saves`, `runs`, a run, `_history`, `preferences`) is denied too, and so is writing into them by a name the command does not fix: a sync or extract into one (`rsync -a x/ .harness-state/`, `tar -xf a.tar -C .harness-state`), a copy of a source that names no file (`cp -r x/. .harness-state`), the in-place editors `find -exec` aims at one, and `git clean` of one. A copy, link or install of a file into one is judged as the file it lands as, so `cp /tmp/guard-state.json .harness-state/`, `cp -t .harness-state /tmp/guard-state.json` and `ln -sf /tmp/_state.md skillset-saves/runs/r1/` are refused, while a file that is no record (`cp notes.md .harness-state/`) passes.
+   - **Aimed at the project root (or above it) instead of at those directories**, a command is read for what it would remove or land there, and only while a record exists (`.harness-state/guard-state.json`, or `skillset-saves/` holding `_latest.md`, `_write.lock`, `runs` or `preferences`): `git clean -d` with `-x` or `-X`, or without them when the project's `.gitignore` or `.git/info/exclude` does not name the directory, is refused unless `-e`/`--exclude` leaves it; `rsync --delete` is refused unless `--exclude` leaves it; an archive extract is refused when a member lands in one of them (the guard lists a tar or zip archive on disk; one it cannot read, such as `curl ... | tar -xz` or a `.7z`, is refused); and a contents copy or sync (`cp -r x/. .`, `rsync -a x/ ./`) is refused when the source holds one of them, or when its source is not on disk or is not named (`$SRC/.`, `host:path`). `git clean -fdx -e .harness-state -e skillset-saves`, `rsync -a site/ ./` and `unzip fixtures.zip` pass.
+   - The commands a launcher or script block runs are judged like the command line (`watch 'rm skillset-saves/runs/r1/_state.md'`, `parallel rm ::: skillset-saves/runs/r1/_lock.md`), and a write the analyser cannot place is refused when the command also names one of these files, exactly as in Rule B (`echo 'rm skillset-saves/runs/r1/_state.md' | sh`, `cat skillset-saves/runs/r1/_state.md | xargs rm`); with no such file named it passes. This rule has no state to wait for, so it applies with or without a boundary.
+
+4. **Rule D — Read-Only Run Enforcement:**
+   - While an unreleased `read_only` entry exists (an investigation or security audit), every write target must lie inside `.harness-state/**` or the run's `allow` globs: naming one allowed path in a command that also writes elsewhere no longer satisfies it. Git commands that change the repository and name no path (`git add -A`, `git push`, `git merge`) are denied, and so are the index-only ones (`git restore --staged .`, `git reset HEAD f`): they write no file, so a freeze does not care, but they change the repository. So are the usual package-manager commands that install, remove or update (`npm install`, `pip install -r requirements.txt`, `python -m pip install`, `sudo apt-get install`, `uv pip install`, `npx playwright install`; a table of the common managers, not every tool). The coverage sweep obeys the same list.
+   - **A write with no named target is denied too**, because a target the analyser cannot place cannot be shown to lie inside. These shapes are refused flat in a read-only run. A freeze, a block and Rule C refuse them only when the command also names a path they protect (see Rules B and C):
+     - a mutating verb that `xargs` runs with no operand of its own, so its targets arrive on standard input (`cat list | xargs rm -rf`, `find . -name '*.pyc' | xargs rm`, `git ls-files | xargs sed -i s/a/b/`, `xargs rm < list`; the verbs are the ones the analyser has a write-target entry for, and operands a literal `echo` or `printf` supplies are named and judged like any other). GNU `parallel` is read the same way (`ls | parallel rm`, `parallel -a list rm`; `{}` and `-I` replacement strings, and the words after `:::`, are named operands: `parallel rm ::: a b` writes `a` and `b`, `ls | parallel cp {} <allowed>/` writes only the allowed directory). `entr` (`ls | entr rm /_`, `entr -s '<command line>'`) and a `watch` given a command line in one word (`watch 'rm x'`) are read for what they run too.
+     - a shell or interpreter that reads its program from a pipe, not from the command line or a script file: `sh`, `bash`, `zsh`, `dash`, `ksh`, `powershell`, `pwsh`, `cmd`, `iex`/`Invoke-Expression` with no argument, and `python`, `node`, `perl`, `ruby`, `php`, `lua`, `Rscript` given no program (`echo 'rm x' | sh`, `cat script.sh | bash`, `curl -s <url> | sh`, `echo ... | python3 -`). A program in the command (`bash -c '...'`), a script file (`bash script.sh`, `bash < script.sh`) and a here-document or here-string are not this case: the first and last are read, and judged target by target like any command (`bash <<< 'rm x'` writes `x`, so it is denied; `bash <<< 'ls'` reads); a script file is not read (see the limits).
+     - PowerShell: a cmdlet with no path of its own that takes it from the pipeline (`Get-ChildItem *.pyc | Remove-Item`, `Set-Content -Value x`, `Add-Content`, `Clear-Content`, `Move-Item`, `Rename-Item`, `New-Item`, ...), and every script block, `{ ... }`: the commands in it are read in a scratch pass and judged like any command, so `ForEach-Object { Remove-Item $_ }` writes `$_`, a path built at run time, and is denied, while `ForEach-Object { Copy-Item $_ <allowed>/ }` writes only the allowed directory and `ForEach-Object { $_.Name }` writes nothing.
+     - `patch` and `git apply`, whose targets are the files their diff names: denied unless the command only checks (`git apply --check`, `--stat`, `--numstat`, `--summary` without `--apply`; `patch --dry-run`, `--check`, `-C`), or `patch` is given the one file to patch (then that file is the target). A check names a diff file that is only read, so it passes wherever the diff is.
+     - an inline program that redirects or opens a file for writing:
+       - `awk`, `gawk`, `mawk`, `nawk`: a `>` or `>>` in a `print` or `printf` statement outside parentheses (`print > "out"`), except to `/dev/null`, `/dev/stdout`, `/dev/stderr` or `/dev/tty`; a pipe or `system()` when the program also names a mutating command or redirects inside a string. A comparison (`$1 > 5`, `print ($1 > 5)`) and a `|` inside a regular expression are not redirects, so those pass.
+       - `perl`, `python`, `node`, `ruby`, `php`, `lua`, `Rscript` (`-e`, `-E`, `-c`, `-r`, or a heredoc to the interpreter): opening a file with a write mode (`open(f, 'w')`, perl's `">"`, `">>"`, `"+<"` and `"|"`), calling one of the usual write, remove, rename or create functions (`write_text`, `os.remove`, `shutil.rmtree`, `writeFileSync`, `unlink`, `File.write`, `file_put_contents`), or running a command (`system`, `subprocess`, `child_process`, backticks) whose text names a mutating verb or redirects. A program that only reads (`print(1 > 0)`, `x => x * 2`, `subprocess.check_output(['git', 'log'])`) passes.
+       - `sed`: a `w` or `W` command or an `s///w` flag, and the GNU `e` command with a mutating word. `sed -n p f` and `sed s/a/b/ f` read.
+       - PowerShell `[IO.File]::` and `[IO.Directory]::` calls other than the reading ones, and any command text nested more than eight levels deep.
+
+     These are searches over the program text, not an interpretation of it: a program that writes through a call the lists do not know (`zipfile`, `sqlite3.connect`, a logging file handler) is not seen, and neither is one whose text is in a script file. The denial says to name each target in the shell command itself (`awk '{print}' f > skillset-saves/runs/<run>/out`), where it is judged against the allow list like any redirect.
+
+5. **Rule E — Coverage Destination Advisory:**
+   - If a shell command initiates test coverage without an explicit output destination (`coverage run -p` without `combine`, `pytest --cov` without `--cov-report`, `nyc`/`c8` without `--report-dir`), emits an advisory `additionalContext` message directing the agent to place coverage evidence under `evidence/coverage/`.
+   - **Contract:** Never denies the command; provides guidance before execution.
+
+6. **Rule F — Hook Scripts and Registration Files:**
+   - Denies edit tools and shell writes to `skills/harness/hooks/`, to the two `skills/scripts/` modules the hooks import (`data_formats.py`, `save_taxonomy.py`, `_bootstrap.SCRIPT_FILES`; an edit to one runs inside the guard as surely as an edit to the guard) and to the host hook registration files (`.claude/settings.json`, `.claude/settings.local.json`, `.codex/hooks.json`, `.github/hooks.json` and their user-scope equivalents, including the Cursor and OpenCode plugin paths), because one edit to `guard_hook.py` would otherwise persist and switch the guard off while readiness kept reporting the hooks registered.
+   - **Engaged only while the guard is in use:** a boundary is recorded or a run is pinned. Developing the hooks in a plain checkout is never blocked. A maintainer who has to edit them inside a run starts the host with `SUPREMETEAM_HARNESS_DEV=1`, which only the person launching the host can set. The sanctioned registration writers (`repair_registration.py`, `scripts/install_hooks.py`) are scripts and keep working. Detecting a change since registration is the registration tooling's job, not this rule's. An archive unpacked at the project root reaches the hooks under it only while an Admiral run is active; with just a boundary recorded it passes, as it does under the freeze. Shell writes are read as Rule B reads them: what a launcher or script block runs, and a write the analyser cannot place when the command also spells a protected path (`echo '{}' > "$OUT/.claude/settings.local.json"`).
+   - **Advisory, not a lock:** Rule F is the text guard applied to the guard's own files, so it sees what the guard sees and no more: an edit made outside a session (an editor, another process), through a tool the analyser has no entry for, or by a program's own code is not seen. It makes an honest or careless edit hard, not an adversarial one impossible. What catches the rest after the fact is the hash record registration writes (`.harness-state/hook-hashes.json`), which readiness compares with the files. That record covers every file a registered hook runs to decide: `_bootstrap.enforcement_files()` lists them (the three entry scripts and everything they import, which is where the rules are), one test pins that list to the import closure of the entry scripts and another pins the record to the list, so an edit of any of them reads `changed` in `verify_registration.py` and in readiness, with the file named.
+   - **The cost is stated, not hidden:** the rule covers a registration file whole, so while it is engaged an edit to an unrelated key of `.claude/settings.json` (a permission, an `env` entry) is denied as well. `permissions`, `env` and `disableAllHooks` in that file can change what the hooks do as much as the `hooks` entries can, so scoping the rule to the hook entries is a settings-aware check plus a decision about which other keys are safe; until the owner makes that decision, the owner makes those edits (or starts the host with the variable above). The denial says so.
+
+7. **Rule G — A Write the Analysis Cannot Place:**
+   - A directory chain is followed only up to 512 characters of directory: a run of `cd` commands, each adding a segment to the one before, or a single absolute `cd` whose path is that long. Past that the analyser stops, says so (`lost_directory`), and the directory of every later write is unknown, so a write could land on anything a rule protects. The command is denied whole, in every mode, with a reason that says why; a command with no write after such a chain is not affected. Following a chain of relative `cd` costs time and memory that grow with the square of its length, and nobody works that way: use short paths from one directory, or split the command. Rule G runs second, because it is a flag the analyser already set and the rules after it would spend their time locating every write of a command it denies anyway.
+
+#### What the guard cannot see
+
+The guard is a text guard. It analyses the command a tool is about to run and the path an edit tool names; it does not run anything and it is not a sandbox. These are known limits, stated here so no one relies on more than it gives:
+
+- a program that builds a path at run time, or reads it from a file, an environment variable it sets itself, or the network;
+- a script file that writes somewhere its command line does not name (a build script, `make`, `npm run`, `bash ./scripts/install.sh`), and a package manager or installer that is not in Rule D's table;
+- interpreter inline code (`python -c`, `node -e`, `perl -e`): it is searched for protected paths, not interpreted. A read-only run reads it further, but only for the shapes Rule D lists (a redirect or write-mode open, the usual file-writing calls, a command that mutates). A freeze, a block and Rule C search it for protected paths, and refuse a write the analyser found in it when the command also names one, so inline code that names no protected path is not seen to write one it builds at run time;
+- a writer in a command that names no protected path. A write the analyser cannot place (operands from a list, a pipe, a variable or a diff; a program on a pipe) is refused under a freeze, a block and Rule C only when the command also spells a path they protect (Rules B and C), so when `cat list | xargs rm`, `echo "$(cat list)" | sh`, `ls | parallel rm` or `rm "$f"` meets a protected path that the command does not spell, nothing sees it; a read-only run refuses all of them. The commands a launcher or script block runs are judged like the command line. Rule F (hook scripts and registration files) reads them the same way. Rule A's textual rules still see a destructive command in the raw text of any of them;
+- what no rule reads, in a read-only run too: a script file (`bash script.sh`, `bash < script.sh`, a Python or Node script, `make`, `npm run`), and the command a launcher with no entry runs (`fd -x`, `ssh host rm x`, `docker exec c rm x`, `su -c`, `at`);
+- a tool name it does not know, and a tool input in a shape it cannot read, which are allowed through;
+- a link created in the same command that then writes through it;
+- a git command that rewrites the tree and names no path (`git reset --hard`, `git stash`, `git clean -fd`, `git merge`, `git checkout <branch>`): under a freeze it can change a frozen file and nothing sees it, because there is no path to compare; only a read-only run denies it (Rule D);
+- what an archive unpacked at the project root puts into a frozen or blocked path: a freeze leaves such an extract alone by design (only Rule C reads its members, for the records), so `unzip frozen.zip` that carries `src/payments/a.py` passes outside an Admiral run; extract into a named directory (`-d`, `-C`) to have the freeze judge it. Rule C's reading at the root does not cover a PowerShell `Expand-Archive` or `Copy-Item`, and it judges a whole archive, not the members a command names to extract;
+- a command it cannot parse (unbalanced quoting): the older textual rules still run on the raw text, which is never weaker than before, but it is not an analysis;
+- the working directory after a `cd` chain longer than 512 characters, which Rule G refuses rather than guesses, and after a `cd` or `pushd` into a path built at run time (`cd "$d"`), which is judged as if the shell had not moved. `cd -`, `popd` and `pushd` with no directory are followed with a directory stack. A deny rule still treats the last three directories the shell was in as candidates, so going back out of a frozen directory (`pushd src/payments; ls; popd; touch top.txt`) is refused as a write into it; that errs toward denying, while a read-only run's allow list judges only the directory the shell is really in.
+
+The hook also fails open on its own faults. Back anything that must not change with version control, filesystem permissions or a sandbox as well.
+
+#### Fault trace
+
+Every place a hook swallows an exception to fail open also counts it. `.harness-state/observations/<Event>.json` (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`) carries `faults` (an integer) and `last_fault` (`{"type": <exception class name>, "at": <UTC timestamp>}`) beside the `observed` and `simulated` records. Only the type is recorded, never a message, path or command, so a fault cannot leak content into state. `_state.load_observations()` returns both fields, and `size_audit.py` and `audit_improve.py` report their own faults under `PostToolUse`. Readiness can surface the counts; they say whether a hook that fired also worked. A guard record that exists and cannot be used is counted as `GuardStateUnreadable` on every call that reads it (`PreToolUse` and the coverage sweep of `PostToolUse`), which readiness prints with the other faults; `PreToolUse` also puts a one-line notice in the context of every shell or write call while it lasts.
+
+---
+
+### `post_tool_use.py` (Layer 4 — Trajectory Regulation)
+
+Invoked after tool execution completes. Watches for execution pathologies and injects recovery hints into the conversation.
+
+#### Features and Behaviors
+
+1. **Trajectory Degeneration Detection:**
+   - **Repeated Failing Command:** Flags identical commands that fail $\ge 3$ consecutive times.
+   - **Empty Output Streak:** Flags $\ge 3$ consecutive commands returning empty output.
+   - **Two-State Oscillation:** Detects back-and-forth oscillations ($A \to B \to A \to B$) over the last 4 steps.
+   - **Output:** Emits a `PostToolUse` `additionalContext` envelope with actionable diagnostic advice. Never blocks (the tool has already run).
+
+2. **Coverage Residue Sweep:**
+   - Runs for shell tools (`Bash`, `PowerShell`, `shell`).
+   - If a test command left coverage residue at the project root (`.coverage`, `.coverage.*`, `htmlcov/`, `.nyc_output/`), relocates the files into the active run's `evidence/coverage/` (or `.harness-state/test-work/coverage-residue/` if no run is active). A run is active in the sense `_saves.inspect_saves` uses: a coherent run with a fresh lock. A pointer that still names a completed, released, blocked or stale run does not make that run the owner of new evidence.
+   - It is a write, so it obeys the boundaries: nothing inside a frozen or blocked glob is moved, and while a run is recorded read-only nothing is moved unless both the file and its destination lie in the run's allow list (the hint then says the residue was left in place, and why).
+   - If multiple `.coverage.*` fragments exist, runs `python -P -m coverage combine --keep <destination>` from the interpreter's own directory, so no directory the project controls is on the import path and no project configuration file is read. Whether `coverage` is installed is answered by that process: when it is not, the fragments are kept uncombined and the hint says so.
+   - Never sweeps into or out of generated roots (`skillset-saves/`, `.harness-state/`). Bounded to 5,000 entries. Run names and file names that reach the hint are neutralised and capped.
+
+3. **Maintenance Scan Triggering:**
+   - Checks if a 6-hour interval has elapsed since the last runtime size audit and invokes `size_audit.py`.
+
+4. **Heartbeat Refresh:**
+   - Refreshes the active run's heartbeat in `_state.md` and `_lock.md` via `save_run.py heartbeat`.
+
+---
+
+### `user_prompt_submit.py` (Entry Routing)
+
+Invoked on every user prompt turn before agent execution begins.
+
+#### Features and Behaviors
+
+1. **Lifecycle Entry Routing:**
+   - If no run is active, injects advisory context steering delivery lifecycle tasks (design, build, review, audit, security, QA, release, skill creation) to [`skills/admiral/SKILL.md`](../../admiral/SKILL.md), while noting the Tier 0 fast-path for minor reversible tasks.
+2. **Session Pin Reinforcement:**
+   - If a valid run is active (`session_pin: true` held in `_state.md`), reminds the model to treat input as session input to the active run and route work through the active sub-orchestrator.
+3. **Slash Command Pass-Through:**
+   - Explicit slash commands (e.g. `/admiral`, `/guard`, `/ship`) bypass routing reminders to allow host command handling.
+4. **`/audit-improve` Command Support:**
+   - Intercepts `/audit-improve` requests, forces an `audit_improve.py` execution, and injects the telemetry report as prompt context.
+
+---
+
+## State and Boundary Writers
+
+### `save_run.py` (CLI — Run Persistence Writer)
+
+The sole sanctioned writer for canonical run persistence under `skillset-saves/`. Hand-editing core run files is denied by Layer 3.
 
 ```bash
-python skills/harness/hooks/save_run.py create     --run-id <run> --evidence <path>
-python skills/harness/hooks/save_run.py checkpoint --run-id <run> --expect-revision <n> --evidence <path>
-python skills/harness/hooks/save_run.py heartbeat  --run-id <run>
-python skills/harness/hooks/save_run.py complete   --run-id <run>
-python skills/harness/hooks/save_run.py block      --run-id <run> --reason "<why>"
-python skills/harness/hooks/save_run.py release    --run-id <run>
-python skills/harness/hooks/save_run.py recover    --run-id <run> --reason "<why>" [--rollback]
-python skills/harness/hooks/save_run.py status     --run-id <run>
+# Create a new run (verifies directory health, runs write probe, records intake evidence)
+python skills/harness/hooks/save_run.py create --run-id <run-id> --evidence <evidence-path> [--owner <owner>]
+
+# Checkpoint a stage transition (atomic publish behind _journal.json with history snapshot)
+python skills/harness/hooks/save_run.py checkpoint --run-id <run-id> --expect-revision <rev> --evidence <path> [--set key=val]
+
+# Refresh run heartbeat (throttled, updates timestamp without changing revision)
+python skills/harness/hooks/save_run.py heartbeat --run-id <run-id> [--owner <owner>]
+
+# Mark run complete (releases session pin, preserves final state)
+python skills/harness/hooks/save_run.py complete --run-id <run-id> [--owner <owner>]
+
+# Mark run blocked (preserves the run pointer; block refuses --reason, which belongs to recover and checkpoint --drop-evidence: say why with --next-action or --set)
+python skills/harness/hooks/save_run.py block --run-id <run-id> --next-action "<what unblocks it>" [--set blocked_reason=<text>]
+
+# Release lock (clears session pin to allow other operations)
+python skills/harness/hooks/save_run.py release --run-id <run-id> [--owner <owner>]
+
+# Recover orphaned, stale, or interrupted run (rolls back incomplete journal if --rollback)
+python skills/harness/hooks/save_run.py recover --run-id <run-id> --reason "<reason>" [--rollback]
+
+# Check authoritative status of a run
+python skills/harness/hooks/save_run.py status --run-id <run-id>
 ```
 
-`create` runs the write/read/delete probe and refuses while another run holds the
-pin. Each checkpoint snapshots the previous revision, registers evidence hashes,
-and publishes state, lock, and pointer atomically behind `_journal.json`. An
-interrupted publish is visible as `interrupted` and repaired with
-`recover --rollback`. Exit 0 is `ok`, exit 1 is `refused` (a contract violation
-to resolve, never to work around by hand-editing files), exit 2 is `degraded`
-(the write failed and nothing coherent was published).
+#### Exit Codes
+- `0`: Success (`ok`).
+- `1`: Refused (`refused` — contract violation, active lock held by another owner, or corrupt state).
+- `2`: Degraded (`degraded` — disk or system write failure).
+- `3`: Engine error (`engine_error` — an operating-system or value error the contract does not name, such as an unreadable record; the JSON goes to stderr).
 
-## Registration
+---
 
-Normal skill installation does not register hooks. Register only on explicit
-opt-in:
+### `guard_state.py` (CLI — Guard and Freeze Boundary Writer)
+
+The sole sanctioned writer for `.harness-state/guard-state.json`. Direct file edits are denied by `guard_hook.py` Rule C.
 
 ```bash
-bash ./scripts/install.sh --register-hooks
+# Freeze a path pattern under an owner
+python skills/harness/hooks/guard_state.py freeze --glob "src/payments/**" --owner ops --scope "release freeze" [--approver sre]
+
+# Block a path pattern (security boundary)
+python skills/harness/hooks/guard_state.py block --glob "**/secrets/**" --owner security --scope "sensitive data"
+
+# Release a frozen or blocked boundary (requires requester authority matching owner or approvers)
+python skills/harness/hooks/guard_state.py release --glob "src/payments/**" --requester ops --reason "deployment verified"
+
+# Grant bounded dangerous command authorization (default 30 min expiry)
+python skills/harness/hooks/guard_state.py allow-dangerous --owner ops --reason "clean scratch" --scope "rm -rf ./scratch" [--minutes 30]
+
+# Revoke dangerous command authorization immediately
+python skills/harness/hooks/guard_state.py revoke-dangerous --requester ops
+
+# Record a run as read-only (confines mutations to .harness-state and the run's save path)
+python skills/harness/hooks/guard_state.py read-only --run-id run-123 --owner qa --allow "skillset-saves/runs/run-123/**"
+
+# Release read-only status
+python skills/harness/hooks/guard_state.py release-read-only --run-id run-123 --requester qa --reason "audit complete"
+
+# Inspect current boundary state
+python skills/harness/hooks/guard_state.py status [--json]
 ```
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -RegisterHooks
-```
+#### Behaviour worth knowing
+- **One spelling per boundary.** Every glob is normalised before it is compared or stored (`src\payments\**`, `./src/payments/**`, `src//payments/**` and the absolute form of a project path are all `src/payments/**`), so one boundary is one record and one release. A glob that can never match is refused, with the reason, rather than recorded as a boundary that enforces nothing: empty, `.`, climbing out of the project with `..`, a leading `!` (gitignore negation does not exist here), the root of a drive or of the file system, and an absolute path under a top-level directory this machine does not have. That last one is what `/src/payments/**` is: a leading slash means the file system root, not the project root, so the glob is refused and the message gives the project-relative spelling (`src/payments/**`). An absolute path under a directory that exists (`/etc/**`) is a real boundary outside the project and is recorded, as is a drive path a host on another system reports. But a leading slash that is not the absolute spelling of a project path is the same mistake wherever the directory exists, so the writer warns about every one on stderr (exit status unchanged) and names the project-relative spelling: `freeze --glob /lib/payments/**` is recorded where `/lib` exists, with a warning that it guards the file system's `/lib/payments` and not the project's `lib/payments/**`, and refused where it does not. The refusal stays because it is the stronger signal (nothing can ever match); the warning is for the case where something can. `status` repeats the warning for the record (`absolute_entries` and `absolute_reasons` in `--json`), and warns, with the reason, about a record already on disk that matches nothing. A read-only run's `--allow` globs get the same warning when they are recorded. No leading-slash path is judged on Windows. Records written before this and stored in another spelling are still matched by their normalised form.
+- **One writer at a time.** Every command holds an OS advisory lock (`guard-state.json.lock`) from reading the record to replacing it, so two sessions cannot lose each other's change and a crashed holder never wedges it. `--lock-timeout SECONDS` (default 5) bounds the wait; a writer that cannot get the lock exits 1 and changes nothing.
+- **Bounded grants.** `allow-dangerous --minutes` is capped at 480 (8 hours); the hook also reads a grant with more than that left as malformed.
 
-The installer writes host-native configuration:
+#### Exit Codes
+- `0`: Success.
+- `1`: Refused (unauthorized requester, missing owner, malformed input, an unmatchable glob, a busy lock, or corrupt JSON).
+- `2`: Usage error.
 
-| Host | Config | Verifiable |
-|------|--------|-----------|
-| Codex | `~/.codex/hooks.json` | yes |
-| Claude Code | `~/.claude/settings.json` | yes |
-| Copilot | `~/.config/github-copilot/hooks.json` | yes |
-| Cursor | `~/.cursor/plugins/local/supremeteam-hooks/` | no |
-| OpenCode | `~/.config/opencode/plugins/supremeteam-hooks.js` | no |
+---
 
-Codex, Claude Code, and Copilot write native JSON hook configuration that
-`verify_registration.py` can inspect. Cursor and OpenCode load a plugin package,
-so they are written but not machine-verifiable, and they are not `--host` values
-for the verifier. `--scope user|project|local` selects which file to write;
-`--dry-run` prints a diff and writes nothing.
+## Registration, Verification, and Repair
 
-After registration, open `/hooks` or restart the host if it requires hook review
-or reload.
+Registration is optional. Without it, entry routing and the write guards are advisory and nothing else changes; the diagnostics below say so and never treat it as a failure.
 
-Manual helper. It does not define the hook set: the required hooks, matchers,
-command format, and config paths all come from `verify_registration.py` and
-`repair_registration.py` under `--hook-root`, so a first-time install and a later
-repair cannot write different registrations for the same host. After writing, it
-re-reads the file and asks the verifier whether each command is executable.
+### Supported Hosts and Config Locations
+
+| Host | Configuration File | Format | Scopes (`--scope`) |
+| :--- | :--- | :--- | :--- |
+| **Codex** | `~/.codex/hooks.json` or `.codex/hooks.json` | JSON | `user`, `project` |
+| **Claude Code** | `~/.claude/settings.json`, `.claude/settings.json` or `.claude/settings.local.json` | JSON | `user`, `project`, `local` |
+| **GitHub Copilot** | `~/.config/github-copilot/hooks.json` or `.github/hooks.json` | JSON | `user`, `project` |
+| **Cursor** | `~/.cursor/plugins/local/supremeteam-hooks/` | Plugin | - |
+| **OpenCode** | `~/.config/opencode/plugins/supremeteam-hooks.js` | Plugin | - |
+
+`user` is the global file every project on the machine reads. `project` and `local` belong to the project around the working directory, found the way `find_project_root()` does it (see `_state.py`) by every tool in this section. A `project` file is usually committed and the registered commands hold machine-absolute paths, so for Claude Code prefer `local`, which is the per-machine file. GitHub Copilot has no skills directory: only its hook configuration is written, and only by `scripts/install_hooks.py --target copilot` or `repair_registration.py --host copilot`.
+
+### `check_readiness.py` (Diagnostic — Runtime Readiness)
+
+Verifies the prerequisites that orchestrators (`admiral`, `commander`) inspect at intake. It only reads: it never registers a hook, creates `.harness-state/` or save state, or installs Python.
 
 ```bash
-python scripts/install_hooks.py --hook-root "$HOME/.agents/skills/harness/hooks" --target codex
-python scripts/install_hooks.py --hook-root "$HOME/.agents/skills/harness/hooks" --target claude --scope project --dry-run
+# Check runtime readiness for the hosts that have an environment signal or a config file
+python skills/harness/hooks/check_readiness.py --host auto
+
+# Check readiness and require an active pinned run (used during resume)
+python skills/harness/hooks/check_readiness.py --host auto --require-active-run
+
+# Require working hooks as well (hooks are optional by default)
+python skills/harness/hooks/check_readiness.py --host auto --require-hooks
+
+# Inspect another project's saves and host configuration
+python skills/harness/hooks/check_readiness.py --host auto --project-root /path/to/project
+
+# Output structured JSON report
+python skills/harness/hooks/check_readiness.py --host auto --json
 ```
 
-Verification and repair:
+**Ready.** `Ready: yes` (exit 0) means Python meets the floor, the hook check reached a definite answer, and, when asked for, a run is active. Hooks are optional, so hooks that are `missing` do not make a project not ready; the report lists them as a separate fact, with the repair preview. Two things do block: a hook state the verifier could not determine (`unknown`, for example no readable configuration for the host you named, because a check with no answer is not a pass) and `--require-hooks`, which also rejects a matcher that misses tools and an interpreter that is missing or too old. The JSON report lists the reasons under `blockers` and everything else worth knowing under `warnings`.
+
+**Capability Matrix Dimensions:**
+- `python_runtime`: Python at or above the floor in `runtime-manifest.yaml` (3.13).
+- `hooks_configured`: Config entries present in the host configuration of every selected host.
+- `hooks_executable`: Target scripts exist and have valid Python invocation syntax.
+- `hooks_coverage`: over the two hooks that need tools (`PreToolUse`, `PostToolUse`): `full`, `partial` (a registered matcher misses tools, or one of the two is not registered), or `unverified` (neither is registered; the prompt hook, which needs no tools, does not count).
+- `hooks_interpreter`: `ok`, `too_old`, `not_found` (not on this PATH; a host may supply its own), or `unverified`.
+- `hooks_observed`: Real host execution observed (`observed`, `partial`, `simulated`, or `unverified`).
+- `hooks_faults`: Internal faults the hooks failed open on, when they record them. A hook that fires with faults is reported as `firing with N faults`.
+- `saves_readable`: `skillset-saves/` is structurally readable. The text report prints the next step for any saves classification but `active` under `Saves:` (`saves.next_step` in the JSON), the one `save_run.py status` gives.
+- `active_run`: Valid active run pointer and unexpired lock held.
+- `deterministic_validators`: Catalog validator scripts are accessible.
+
+### `verify_registration.py` (Diagnostic — Registration Verifier)
+
+Inspects host configuration files without modifying them:
 
 ```bash
 python skills/harness/hooks/verify_registration.py --host auto
+python skills/harness/hooks/verify_registration.py --host claude
+python skills/harness/hooks/verify_registration.py --host codex --json
+```
+
+`--host auto` (the default) checks the hosts that have an environment signal (`CODEX_*`, `CLAUDE*`, `COPILOT*`) or any config file, and names each with the reason, so a host you do not use is not reported as unregistered. `--host all` checks the three hosts regardless; a host name checks that host. User, project and (Claude Code) local files are read together.
+
+Verifies for each hook (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`):
+- `configured`: Event is declared in the host configuration.
+- `resolvable`: Target script path exists on disk.
+- `executable`: Invocation uses a direct Python launcher syntax without swallowed arguments.
+- Matcher: a registered `matcher` has to select the tools the hook needs (`Bash`, `PowerShell`, `Edit`, `Write`, `NotebookEdit`, plus `apply_patch` on Codex for the two tool hooks). A matcher that selects none of them is not a registration. A narrower one is `partial`: it is reported with the tools it misses, and `repair_registration.py` adds a group for them.
+
+Reported next to REGISTERED without failing it:
+- Interpreter: whether the registered launcher is found on this PATH and its version against the floor in `runtime-manifest.yaml`. The version is read by running that interpreter once with `-I -S -c`; an interpreter inside the project directory is never run.
+- Integrity: `unchanged`, `changed` or `unrecorded`, against the sha256 written to `.harness-state/hook-hashes.json` when the hook was registered. The record covers the hook script and every Python module in its directory (test modules excepted), found by listing the directory, so an edit of the module that holds the rules, a module added later, and a module removed all read `changed`, with the file names. It is a note, never a failure: it is expected after a deliberate edit or an upgrade, and if you made neither, restore the files. Record the new hashes with `repair_registration.py --host <host> --record-hashes`. The record belongs to the project the registration ran from; another project reports `unrecorded` until it records its own. `verify_registration.py` prints `integrity: not checked, <path> holds no record of these hook files` for it, `integrity: the hook files match the record in <path>` when they match, and names the record in the changed note; `check_readiness.py` warns per host and carries `hooks.hash_record`. The two modules the hooks import from `skills/scripts/` (`data_formats.py`, `save_taxonomy.py`) are recorded too, named `scripts/<file>`; a record made by an earlier release lacks them, so it reads `changed` once, naming both, until it is recorded again.
+- Where a registration may point: this script's own directory, `SUPREMETEAM_HOOK_ROOT`, and the `harness/hooks` directory of each install root in your home (`~/.agents/skills`, `~/.codex/skills`, `~/.claude/skills`, `~/.cursor/skills`, `~/.config/opencode/skills`) that holds the hook scripts. A check run from a host mirror therefore recognises the registration the installer wrote for the common root.
+
+#### Exit Codes
+- `0`: Every selected host is fully registered (warnings may still be printed).
+- `1`: A selected host's readable config lacks required hooks, or `--host auto` found no host at all.
+- `2`: The host or its config cannot be determined (a named host with no readable config, an unreadable file, or an internal error).
+
+### `repair_registration.py` (Diagnostic — Registration Repair)
+
+Calculates missing registrations and previews or applies minimal repairs:
+
+```bash
+# Preview changes (dry run prints unified diff without touching files)
+python skills/harness/hooks/repair_registration.py --host claude --scope project
+
+# Apply changes (creates timestamped backup <file>.bak-<timestamp> and writes atomically)
+python skills/harness/hooks/repair_registration.py --host claude --scope project --apply
+
+# Register another interpreter than the one running the script
+python skills/harness/hooks/repair_registration.py --host claude --scope local --python "py -3.13" --apply
+
+# Re-record the hook script hashes after a deliberate edit (changes no host config)
+python skills/harness/hooks/repair_registration.py --host claude --record-hashes
+```
+
+- **Interpreter:** registers the interpreter running the script (an absolute path), started with `-X utf8` so a hook payload cannot fail to decode under a legacy code page. `--python` names another; `verify_registration.py` warns when the registered one is missing or older than the floor.
+- **Minimal:** adds only what is missing, either a hook that does not launch its script or the group of tools a registered matcher leaves out. Every other key, matcher and hook is preserved.
+- **Scope:** the dry run is the default and `--scope user` is never implied. It warns when the file is global (`user`) or usually committed (`project`).
+- **Files:** a file that is not UTF-8 JSON is refused untouched (exit 2). The file and its `.bak-` backup keep the permission bits the original had; a new `user` file is owner-only.
+- **Hashes:** `--apply` records the sha256 of each registered hook script, of every Python module in its directory and of the `skills/scripts` modules the hooks import, in `.harness-state/hook-hashes.json`.
+- **Links:** a config file that is a symbolic link is never replaced by a regular file. The `user` file (a dotfiles manager's link) is written through to its target, with the backup beside the target and a warning that says so; a `project` or `local` file that is a link is refused (exit 2), because a cloned repository can plant one that points anywhere, and so is a link that leads to no file.
+
+#### Exit Codes
+- `0`: Nothing to do, or the change was applied.
+- `1`: Changes are needed and `--apply` was not given.
+- `2`: Refused (unreadable or invalid config, undefined scope) or a write failed.
+
+### `scripts/install_hooks.py` (Installer — Registration Writer)
+
+The helper behind `install.sh --register-hooks` and `install.ps1 -RegisterHooks`. It lives in the repository's `scripts/` directory, not in the installed skills, and takes its hook definitions from the installed harness under `--hook-root`, so an install and a later repair cannot disagree.
+
+```bash
+# Preview every file it would change; writes nothing
+python scripts/install_hooks.py --target claude --hook-root "$HOME/.agents/skills/harness/hooks" --dry-run
+
+# Register for the project's local file instead of the global one
+python scripts/install_hooks.py --target claude --hook-root "$HOME/.agents/skills/harness/hooks" --scope local
+
+# Register several hosts; no question asked
+python scripts/install_hooks.py --target claude --target codex --target copilot --hook-root "$HOME/.agents/skills/harness/hooks" --yes
+```
+
+- **Default scope** is `user`, because the installer puts the hook scripts under your home directory. The wrappers forward `--hooks-scope user|project|local` (`-HooksScope`).
+- **Preview and ask:** run from a terminal, it prints the unified diff of every file it would change and asks `Write these changes? [y/N]` first. `--yes` (`--hooks-yes`, `-HooksYes`) skips the question. With no terminal (CI, a pipe) it writes straight away, so automation is unchanged.
+- **Safety:** a file that is not UTF-8 JSON is refused and the other hosts still proceed; every overwrite keeps a `.bak-` copy with the original's permission bits; a new user-level file is owner-only. A config that is a symbolic link is written through at user scope (and for a path named with `--claude-settings` and its siblings) and refused at project or local scope, as `repair_registration.py` does.
+- **Cursor and OpenCode** get a plugin package it cannot verify. The OpenCode plugin starts the interpreter without a shell, so `--python-command "py -3"` is split into command and arguments, and it logs once when the interpreter cannot start.
+- **Exit codes:** `0` registered (or already was, or a dry run); `2` a write was refused or a written hook did not verify; `3` you answered no and nothing was written.
+
+### Removing a Registration
+
+There is no unregister command; the registration is three entries in a config file, and every change kept a backup.
+
+1. Open the file for each host (table above). Remove the `PreToolUse`, `PostToolUse` and `UserPromptSubmit` entries whose `command` points at `pre_tool_use.py`, `post_tool_use.py` and `user_prompt_submit.py`, or restore the newest `<file>.bak-<timestamp>` next to it if nothing else changed since.
+2. Cursor and OpenCode: delete the plugin package (`~/.cursor/plugins/local/supremeteam-hooks/`) or file (`~/.config/opencode/plugins/supremeteam-hooks.js`).
+3. Optional: delete `.harness-state/hook-hashes.json` in the projects that recorded one.
+4. Restart the host. `python skills/harness/hooks/verify_registration.py --host auto` then reports `MISSING` for it, and `check_readiness.py` still reports ready.
+
+---
+
+## Maintenance and Telemetry Hooks
+
+### `size_audit.py` (Maintenance — Runtime Storage Scan)
+
+Periodically scans `.harness-state/` and `skillset-saves/` for storage growth exceeding thresholds (default: 256 MiB):
+
+```bash
+# Run manual on-demand size audit with JSON output
+python skills/harness/hooks/size_audit.py --project-root . --force --json
+
+# Override the threshold (bytes) and the throttle interval (seconds) through the environment
+SUPREMETEAM_SIZE_AUDIT_THRESHOLD_BYTES=104857600 SUPREMETEAM_SIZE_AUDIT_INTERVAL_SECONDS=3600 python skills/harness/hooks/size_audit.py
+```
+
+- **Safety:** Never deletes files; reports cleanup candidates.
+- **Protected Paths:** Core run files (`_state.md`, `_lock.md`, `guard-state.json`, `taste.*`) are never flagged as cleanup candidates.
+- **Throttling:** Enforced via `.harness-state/observations/size-audit.json` (6 hours default).
+
+### `audit_improve.py` (Maintenance — Telemetry Audit)
+
+Gathers bounded runtime failure telemetry and prepares structured improvement packets:
+
+```bash
+# Run read-only audit across saved runs and tool trajectories (an explicit run ignores the cooldown)
+python skills/harness/hooks/audit_improve.py --run --project-root .
+```
+
+- **Redaction:** Hashes run identifiers and trajectory file names using SHA-256 prefixes; never logs raw credentials or environment secrets.
+- **Cooldown:** 6 hours between automatic advisories.
+- **Handoff:** Supplies structured findings to `skills/audit-improve/SKILL.md` for routing to `admiral` and `skill-maker`.
+
+---
+
+## Shared Core Helpers
+
+### `_state.py` (Core Helper — Runtime State)
+
+Underlying fail-open utility for Layer 3 and Layer 4 hooks:
+- `project_root()` / `find_project_root()`: the one project-root resolver (see [Environment Variables Reference](#environment-variables-reference) for the order); every hook, writer and reader in this directory uses it.
+- `read_hook_input(event)`: Reads the JSON payload from stdin as bytes decoded as UTF-8 with replacement (a legacy console code page never makes a payload unreadable) and counts a payload that does not parse as a fault of `event`.
+- `load_guard_state()`: Reads `.harness-state/guard-state.json` fail-open: a list in the wrong shape names nothing to enforce and does not stop the rest of the record from being read; a permissive grant is dropped when the state directory is a link or belongs to another user (`state_dir_trusted`); a grant with more than `MAX_GRANT_MINUTES` left is treated as malformed. `read_only_allow()` is the allow list Rule D and the coverage sweep share.
+- `record_fault(event, error)` / `load_observations()`: the fault count described under [Fault trace](#fault-trace).
+- `safe_text(value, limit)`: neutralises and caps text taken from state before it is shown to the model. `read_mapping(path)` reads a run record.
+- `record_observation()`: Appends hook execution records under `.harness-state/observations/` with session ID tracking.
+- `append_trajectory()`: Appends tool call signatures to `.harness-state/trajectories/` and prunes records older than 7 days.
+
+### `_saves.py` (Core Helper — Save Classifier)
+
+Shared parser for the canonical `skillset-saves/` layout:
+- `classify_saves(project_root)`: Classifies save directory status (`active`, `inactive`, `complete`, `stale`, `orphaned`, `conflicting`, `corrupt`, `interrupted`, `uninitialized`, `missing`, `unreadable`). A run record this account cannot read (records are owner-only) is classified `corrupt` and `inspect_saves` and `inspect_run` carry `access_denied` for it, naming the file and the permission, so it is never read as an absent record. `access_denied` is carried for the records that may hold the pin (the pointer, a lock, a state beside a lock that says held); a state this account cannot read beside a readable released lock is a closed run, `corrupt` without `access_denied`. Registered evidence under a directory this account may not search is reported as `evidence_unverifiable` beside the classification the run's own records give; it is not a record the account was refused.
+- `has_active_run(project_root)`: Boolean probe returning `True` when a coherent, fresh, unexpired run lock exists, and also for a record this account cannot read (a lock it cannot read, or a state it cannot read beside a lock that says held), which may be a held run: it errs toward held, so the protections that ask stay on. It is `False` for a refused record beside a readable released lock, which is a closed run. The guard's hook-file rule and the prompt hook ask it on every call, so it reads each run's lock and classifies in full only the runs whose lock is held and the one the pointer names (`inspect_saves(only_held=True)`), which gives the classification's answer in about a third of the time at a thousand runs.
+- `read_latest_pointer(project_root)`: Safely extracts the active run ID from `skillset-saves/_latest.md`.
+
+---
+
+## Heartbeat Refresh
+
+To prevent active runs from going stale during long autonomous workflows, all three registered hooks (`pre_tool_use.py`, `post_tool_use.py`, `user_prompt_submit.py`) refresh the active run's heartbeat through `run_heartbeat.refresh`:
+- **Conditions:** Only when the hook payload contains a valid host `session_id`, an active run lock is held, the lock is coherent and uncorrupted, and the run is not interrupted.
+- **Throttling:** Refreshes are throttled to at most once every 5 minutes.
+- **Execution:** Calls `save_run.py heartbeat --run-id <run> --owner <owner>` internally.
+- **Stale Expiry:** Without hook activity or checkpoints, a held run lock transitions to `stale` after 30 minutes.
+
+---
+
+## Environment Variables Reference
+
+| Variable | Default | Purpose |
+| :--- | :--- | :--- |
+| `SUPREMETEAM_PROJECT_DIR` | Auto-detected | Explicit project root directory override. |
+| `SUPREMETEAM_HOOK_ROOT` | Script parent directory | Explicit directory where harness hook scripts reside. |
+| `SUPREMETEAM_SESSION_ID` | Host session ID | Session identifier used to correlate hook telemetry and heartbeats. |
+| `SUPREMETEAM_SIZE_AUDIT_THRESHOLD_BYTES` | `268435456` (256 MiB) | File and directory size threshold for `size_audit.py`. |
+| `SUPREMETEAM_SIZE_AUDIT_INTERVAL_SECONDS` | `21600` (6 hours) | Throttle duration between automatic size audits. |
+| `CLAUDE_PROJECT_DIR` / `CODEX_WORKSPACE_DIR` / `GITHUB_WORKSPACE` | - | Host-specific workspace directory, tried in that order after `SUPREMETEAM_PROJECT_DIR`. |
+| `SUPREMETEAM_HARNESS_DEV` | unset | Set to exactly `1` by the person who launches the host to lift the hook-file protection (guard Rule F) for that session while developing the hooks inside a pinned run. Nothing an agent runs can set it for the host. |
+| `CLAUDE_SESSION_ID` / `CODEX_SESSION_ID` | - | Host-specific session ID fallback markers. |
+
+**Project root order.** Every hook, writer and reader in this directory resolves the project root in one place, `_state.project_root()`: the first of `SUPREMETEAM_PROJECT_DIR`, `CLAUDE_PROJECT_DIR`, `CODEX_WORKSPACE_DIR`, `GITHUB_WORKSPACE` that is set wins, and with none set the nearest ancestor of the working directory holding `skillset-saves/`, `.harness-state/` or `.git` is used (the working directory itself when there is none). A test pins the order and that no other module in the directory reads these variables.
+
+---
+
+## Manual Smoke Test
+
+Execute these piped invocations from the repository root to verify hook behavior:
+
+```bash
+# 1. Verify Rule A blocks dangerous commands
+echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | python skills/harness/hooks/pre_tool_use.py
+
+# 2. Verify Rule E coverage destination advisory
+echo '{"tool_name":"Bash","tool_input":{"command":"coverage run -p -m pytest"}}' | python skills/harness/hooks/pre_tool_use.py
+
+# 3. Verify UserPromptSubmit routing advisory
+echo '{"prompt":"design this feature"}' | python skills/harness/hooks/user_prompt_submit.py
+
+# 4. Verify host registration status
+python skills/harness/hooks/verify_registration.py --host auto
+
+# 5. Check runtime readiness
 python skills/harness/hooks/check_readiness.py --host auto
-python skills/harness/hooks/check_readiness.py --host auto --require-active-run
-python skills/harness/hooks/repair_registration.py --host claude --scope project          # preview
-python skills/harness/hooks/repair_registration.py --host claude --scope project --apply  # with owner approval
 ```
 
-`--require-active-run` is for a resume. A fresh intake has no run yet, so
-requiring one there always reports not ready.
+---
 
-## Matcher scope
+## Regression Test Suites
 
-`PreToolUse` matches write-capable and shell tools, because Layer 3 must block an
-edit or command before it lands. `PostToolUse` watches command actions and other
-supported tool names where the host exposes a post-tool event.
-`UserPromptSubmit` has no matcher in hosts that model it as a prompt-lifecycle
-event.
-
-The coverage-residue sweep narrows itself further inside `post_tool_use.py`: it
-runs only for `Bash`, `PowerShell`, and `shell` (matched case-insensitively),
-because only a command action starts a process that writes a coverage data file.
-An `Edit`, `Write`, or `Read` post-tool event sweeps nothing, even where the host
-routes it to this hook.
-
-## Guard and freeze integration
-
-`pre_tool_use.py` enforces boundaries recorded by `guard` and `freeze` at
-`.harness-state/guard-state.json`. The state helper resolves that under
-`SUPREMETEAM_PROJECT_DIR` first, then known host workspace variables, then the
-nearest ancestor of the working directory that holds `skillset-saves/`,
-`.harness-state/`, or `.git`, then the working directory itself, then an
-isolated OS temp fallback. `save_run.py`, `check_readiness.py`, and
-`verify_registration.py` default their project root the same way, so a script
-run from `skills/` never scatters state into a subdirectory.
-
-```json
-{
-  "frozen_globs": [
-    {"glob": "src/payments/**", "owner": "ops", "scope": "release freeze",
-     "created_at": "2026-09-16T10:00:00Z", "run_id": null,
-     "approvers": ["sre"], "released_at": null}
-  ],
-  "blocked_globs": [{"glob": "**/secrets/**", "owner": "ops", "released_at": null}],
-  "read_only": [
-    {"run_id": "investigation-1", "owner": "ops", "scope": "read-only investigation",
-     "allow": ["skillset-saves/runs/investigation-1/**"],
-     "created_at": "2026-09-16T10:00:00Z", "released_at": null}
-  ],
-  "allow_dangerous": {
-    "owner": "ops", "reason": "wipe the scratch volume", "scope": "rm -rf ./scratch",
-    "created_at": "2026-09-16T10:00:00Z", "expires_at": "2026-09-16T10:30:00Z"
-  }
-}
-```
-
-Write this record only with `guard_state.py`; `pre_tool_use.py` denies edit-tool
-and mutating-shell writes to it. Before that writer existed the boundary was
-self-liftable — one write clearing `frozen_globs`, or setting `allow_dangerous`,
-disabled the rules before they ran.
-
-Field notes:
-
-- **`frozen_globs` / `blocked_globs`** merge into one write boundary. A bare glob
-  string is still honored for backward compatibility, but carries no owner, so
-  `guard_state.py release` refuses it rather than trusting the requester —
-  re-record it through the writer to make it releasable.
-- **`read_only`** confines a run to its own save path plus `.harness-state/`.
-  Recorded by the `guard` skill for an investigation or audit that must not
-  change the product surface, and released by its owner. The guard record itself
-  stays protected even though `.harness-state/**` is otherwise writable during
-  such a run.
-- **`allow_dangerous`** lifts destructive-pattern blocking **globally**, not for
-  one command. It is an owned grant with an expiry (default 30 minutes); an
-  expired or malformed grant leaves the block in force, because a guard that
-  cannot read its own grant must stay closed. A legacy bare `true` is still
-  honored and behaves as a permanent kill-switch.
-- A record stays effective until its owner records `released_at`. Age alone
-  never expires a protection.
-
-When the file is absent or empty, boundary rules are inert and only the built-in
-destructive-pattern guard applies.
-
-## Coverage residue sweep
-
-Coverage data is run evidence at `<phase>/evidence/coverage/`
-(`scripts/output_paths.py --kind coverage`), never project-root residue. A run in
-a target project produced a `.coverage` tree of over 3000 files in under two
-minutes — the signature of per-process coverage (`coverage run -p`,
-`pytest --cov` across workers, `nyc`/`c8`/`vitest` per-worker temp files) with
-nothing combining or relocating the fragments.
-
-Two hooks enforce it. Before the command, `pre_tool_use.py` Rule E emits advisory
-`additionalContext` — **never a deny**, and only after every deny rule has
-declined — for a command that writes coverage with no destination named:
-`coverage run` in parallel mode with no `coverage combine` in the same command,
-`pytest --cov` with no `--cov-report`, `nyc`/`c8` with no `--report-dir` or
-`--temp-dir`, `vitest --coverage` with no `reportsDirectory`. A command that names
-its destination is silent.
-
-After the command, `post_tool_use.py` relocates what is left at the project root
-— `.coverage` (file or directory), `.coverage.*` fragments, `htmlcov/`,
-`.nyc_output/` — into the active run's `<phase>/evidence/coverage/`. The run comes
-from `skillset-saves/_latest.md` and the phase from that run's `_state.md`
-`phase_state`, mapped onto a `save-ownership.yaml` `phase_directories` entry, with
-`build` as the default. With no active run the residue goes to the declared
-scratch class `.harness-state/test-work/coverage-residue/<timestamp>/` instead.
-
-Guarantees, all of which have a regression test in `test_hooks.py`:
-
-- **Silent and inert on a clean root.** No residue, no output, exit 0.
-- **Command actions only.** `Bash`, `PowerShell`, `shell`; see Matcher scope.
-- **Never deletes.** Moves are `shutil.move`. Where the `coverage` module is
-  importable and two or more fragments were relocated, `coverage combine --keep`
-  runs *inside the destination* on the moved copies, so the fragments survive the
-  combine and nothing at the project root is consumed. A failed or unavailable
-  combine still leaves the fragments relocated.
-- **Structure preserved.** A moved tree keeps its relative layout under
-  `evidence/coverage/`, and a name that already exists there is never overwritten.
-- **Boundaries respected.** An entry inside a `frozen_globs` or `blocked_globs`
-  glob is left untouched and counted in the hint, using the same glob expansion
-  `pre_tool_use.py` blocks with.
-- **Generated roots are the destination, not the residue.** `skillset-saves/` and
-  `.harness-state/` are never swept.
-- **Bounded.** At most 5000 project-root entries per call, and a truncated sweep
-  says so in the hint rather than implying a clean root.
-- **Fail open.** Any error returns silently; the host loop never sees it.
-
-The hint states what moved, where it landed, the file count, whether the fragments
-were combined, and the rule: resolve the destination with `output_paths.py --kind
-coverage`, set `COVERAGE_FILE` / `--data-file` / `--cov-report` / `--report-dir` +
-`--temp-dir` / `--coverage.reportsDirectory` to it, and never use parallel mode
-without a combine. When a trajectory pattern also fires, the sweep report rides
-along with that hint rather than being lost behind it.
-
-## Heartbeat refresh
-
-With the hooks registered, all three hooks (`pre_tool_use.py`,
-`post_tool_use.py`, and `user_prompt_submit.py`) refresh the pinned run's
-heartbeat from real host activity: only for a payload carrying a host session id,
-only on a held, pinned, coherent, non-interrupted, still-fresh lock, throttled to
-once per five minutes, and always written through `save_run.py heartbeat` as the
-lock owner. It never revives a stale lock. Without hooks, a run goes stale after
-30 minutes without an explicit checkpoint.
-
-## Manual smoke test
-
-```bash
-echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | python pre_tool_use.py
-echo '{"tool_name":"Bash","tool_input":{"command":"coverage run -p -m pytest"}}' | python pre_tool_use.py
-echo '{"prompt":"design this system"}' | python user_prompt_submit.py
-python verify_registration.py --host auto
-```
-
-The coverage sweep, against a scratch project (it moves files, so never point it
-at a project you have not finished with):
-
-```bash
-export SUPREMETEAM_PROJECT_DIR=/tmp/scratch-project
-touch "$SUPREMETEAM_PROJECT_DIR/.coverage.host.1.abc"
-echo '{"tool_name":"Bash","tool_input":{"command":"pytest --cov"},"tool_response":{"exit_code":0,"stdout":"ok"}}' | python post_tool_use.py
-```
-
-## Regression tests
+The hook test suite resides in this directory and runs via Python's standard `unittest`:
 
 ```bash
 python -m unittest discover -s skills/harness/hooks -p "test_*.py"
 ```
 
-`test_hooks.py` covers the three lifecycle hooks, the coverage-residue sweep and
-its pre-tool advisory, registration verification, and readiness. `test_hooks_hardening.py` covers path and payload hardening,
-`test_hooks_lifecycle.py` the save lifecycle writer and the read-only run
-boundary, `test_hooks_observed.py` the observed-versus-configured distinction,
-`test_registration_contract.py` the host registration contract, and
-`test_guard_state.py` the guard boundary writer — owner-bearing records,
-authority-checked release, the bounded `allow_dangerous` grant, and the hook
-rule that keeps the record itself single-writer.
+### Coverage by Test Module
+
+- **[`test_hooks.py`](test_hooks.py):** Testing of `pre_tool_use.py`, `guard_hook.py`, `post_tool_use.py`, and `user_prompt_submit.py` through the registered scripts, including coverage residue relocation and prompt routing.
+- **[`test_guard_rules.py`](test_guard_rules.py), [`test_guard_cmdscan.py`](test_guard_cmdscan.py), [`test_guard_paths.py`](test_guard_paths.py), [`test_guard_harness_files.py`](test_guard_harness_files.py), [`test_pre_tool_entry.py`](test_pre_tool_entry.py):** the guard rule by rule: a positive and a negative case for each destructive-command rule, the differential proving the structural rules are never weaker than the old textual ones, the command analyser, the path canonicaliser, Rule F, and the entry point's fail-open.
+- **[`test_hooks_robustness.py`](test_hooks_robustness.py):** the hardening claims, end to end through the registered hooks: path canonicalization (dot segments, doubled separators, absolute and mixed spellings), Windows backslash versus POSIX slash handling in paths, recorded globs and shell verbs, symlink protection (links into a frozen tree, out of an allow list, to the guard record, behind the state directory, and links the sweep and size scan must not follow), a fixed-seed malformed-JSON fuzz of the three hooks (exit 0, no traceback, no internal fault on a payload that parses, a dangerous command still denied inside any noise), and universal fail-open with a deny that stays a deny.
+- **[`test_hooks_hardening.py`](test_hooks_hardening.py):** registration analysis, trajectory isolation per session, freeze record handling, registration repair, and the readiness capability map.
+- **[`test_state_hardening.py`](test_state_hardening.py), [`test_fsutil.py`](test_fsutil.py), [`test_hooks_maintenance.py`](test_hooks_maintenance.py), [`test_audit_improve_parts.py`](test_audit_improve_parts.py):** input decoding, fault counting, the trusted state directory, the shared atomic write and lock, the coverage sweep and the text the hooks show the model, the post-tool and prompt hooks' fault trace and import structure, and the audit's per-record-class parts.
+- **[`test_hooks_lifecycle.py`](test_hooks_lifecycle.py):** `save_run.py` lifecycle transitions, atomic publishing behind `_journal.json`, revision history, and `read_only` run confinement.
+- **[`test_hooks_observed.py`](test_hooks_observed.py):** Tests the distinction between configured host configs and actual observed executions under `.harness-state/observations/`.
+- **[`test_guard_state.py`](test_guard_state.py):** `guard_state.py` CLI testing: owner authorization, authority-validated release, `allow_dangerous` duration bounds, and single-writer lockouts.
+- **[`test_registration_contract.py`](test_registration_contract.py):** Multi-host configuration syntax and schema validation across Claude Code, Codex, and GitHub Copilot.
+- **[`test_size_audit.py`](test_size_audit.py):** Directory tree traversal caps, entry limits, threshold calculations, throttle timestamps, and protected file exemptions.
+- **[`test_audit_improve.py`](test_audit_improve.py):** Telemetry aggregation limits, error classification, SHA-256 correlation key hashing, and improvement handoff payload generation.

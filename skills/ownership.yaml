@@ -453,6 +453,12 @@ owners:
       - guard-record
     does_not_write:
       - gate-verdict
+  unfreeze:
+    role: path boundary release
+    writes:
+      - guard-record
+    does_not_write:
+      - gate-verdict
 
 artifacts:
   - id: grilling-log
@@ -968,3 +974,4 @@ handoff_rules:
   - Gatekeepers write gate-verdict and never repair a submission.
   - land-and-deploy never changes an approved package without a new revision.
   - The selected guard or freeze owner never widens a path boundary while applying a check.
+  - unfreeze is the one owner that widens a boundary, and only by releasing an entry through guard_state.py, which keeps the entry with its released_at; it never deletes the record.

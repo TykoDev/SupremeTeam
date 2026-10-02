@@ -8,7 +8,7 @@ description: >-
   readiness, or challenge the packet — even when they only ask "is the design
   done?". Defers the other gates to `build/gatekeeper-build`,
   `review/gatekeeper-code`, `gatekeeper-admiral`.
-version: 1.0.0
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -170,16 +170,25 @@ parity probe output.
 
 Both wrap the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which
 also mechanizes single-revision lineage, skip-record completeness, the
-blocked-phrase scan, idempotency drift against `--prior`, and harness-doctrine §5
-structure. Both return `PASS` / `FAIL` / `UNCHECKED` findings plus a
-`gate_status`, never a verdict, and never a judgment about design coherence. Both
-fail loud: a blocking failure exits non-zero, an internal error exits 2.
+blocked-phrase scan, idempotency drift against `--prior` (Markdown frontmatter or
+the JSON record `check.py --verdict-out` writes; a side that declares no
+`submission_id` and `revision` leaves it `IDEMPOTENCY_UNDETERMINED`), links out of
+the package (never read, reported as `LINK_ESCAPES_PACKAGE`), and harness-doctrine
+§5 structure. Each artifact is a file of its own, matched on its own name and on
+whole words of its marker; a name-matching file that lacks the marker is named in
+the failure as a near miss. Both return `PASS` / `FAIL` / `UNCHECKED` findings plus
+a `gate_status`, never a verdict, and never a judgment about design coherence.
+Both fail loud: a blocking failure exits non-zero, an internal error exits 2.
 
-Two `design-to-build` artifacts are **conditional** — API contracts and the
-frontend/UI handoff. The script cannot know whether endpoints or a user-facing
-surface are in scope, so it reports their absence as `UNCHECKED`, to be resolved
+Four `design-to-build` artifacts are **conditional**. The script cannot know
+whether endpoints or a user-facing surface are in scope, so it reports the API
+contracts and the frontend/UI handoff as `UNCHECKED` when absent, to be resolved
 against the actual scope and the `../architect/references/api-endpoint-design.md`
-and `../../design-doctrine.md` contracts.
+and `../../design-doctrine.md` contracts. The stack lock and the Taste snapshot are
+conditional because `../../gates.yaml` lets a submitter waive `stack_lock` and
+`taste_snapshot`; the manifest cites those keys instead of restating the waiver,
+and an absent file is `UNCHECKED` with the waiver named, to be resolved against the
+sanctioned applicability record the boundary validator checks.
 
 **2. The boundary validator** checks the evidence contract against
 `../../gates.yaml`:
@@ -199,8 +208,9 @@ equals `selection.chosen`, and when it is not, all four carry the matching
 wording. Judgment keeps the differentiation of the four directions
 (`../../design-doctrine.md` §9), whether each draft actually stayed a mock, and
 whether the parity records actually bind to the inventory: `inputs` is optional
-on a `probe`, so the validator does not require it. See
-`../../harness/gatekeeper/README.md`.
+on a `probe`, so the validator does not require it. A typed record is the
+submitter's own statement: the validator never compares an artifact's content
+with what its record claims and never re-runs a command (it reads `.md` and `.txt` artifacts only for blocked phrases and local links). See `../../harness/gatekeeper/README.md`.
 
 ### The two key spaces collide by name
 
@@ -245,9 +255,15 @@ A verdict returned without its evidence anchors is incomplete and is not a gate
 result.
 
 Clause 4 has a concrete local form here: `<package-dir>` is untrusted phase
-context. Both scripts resolve it, require an existing directory inside the
-working tree, and exit 2 without running the gate otherwise; confirm the same
-before invoking and return `ESCALATE` naming the rejected path.
+context. Both scripts resolve it (`..` and symlinks included), require an existing
+directory inside the project, and exit 2 without running the gate otherwise;
+confirm the same before invoking and return `ESCALATE` naming the rejected path.
+The project is found from where the gate is run: the nearest directory at or above
+the working directory that holds `skillset-saves/`, `.harness-state/`, or `.git`,
+or, when the working directory is in no project, the same search from the package
+directory. Run them from the project, as in
+`python <catalog>/design/gatekeeper-design/scripts/check.py skillset-saves/runs/<run>/design`;
+the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 
 ## Workflow
 
@@ -289,6 +305,8 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 
 | Scenario | Response |
 | --- | --- |
+| The result reports `manifest_schema_version: 1`, so no typed record, waiver wording or finding policy was checked | Return `REVISE` to `commander` (or `redesign` at `redesign-review`) for a schema-2 manifest carrying `boundary` and `owner`. Exit 0 on a flat schema-1 package means the keys are present and the hashes hold, not that `stack_lock` was checked against the registry or that a waiver used the sanctioned wording. |
+| The result's `warnings` carry a stack-lock warning: the locked stack's support has ended (`support_ends` in `../../tech-stacks/registry.yaml`), or the registry was last verified longer ago than its `verification_ttl_days` | The validator still passes; the warning is a fact for you to act on, not a failure it raised. Do not approve silently. Name the warning in the verdict and return to `commander` for the owner's decision on the stack (a supported major, or an explicit acceptance recorded in `residual_risk`); approve only once that decision is in the package. |
 | The architecture describes components, flows, or interfaces that are absent from the plan or implementation spec | Return `REVISE` and require a single coherent system view before build can rely on it. |
 | The package claims API readiness but endpoints lack request/response schemas, auth/authorization, error envelope, idempotency, or contract tests | Return `REVISE` and require the API endpoint contract template before the design package can exit. |
 | The package claims frontend readiness but lacks route inventory, screen-state coverage, API/data dependency mapping, form validation behavior, or breakpoint evidence | Return `REVISE` and require the UI/UX Handoff section before the design package can exit. |
@@ -350,4 +368,4 @@ revision.
 
 ## Packaging Notes
 
-Package `SKILL.md`, `scripts/check.py`, `scripts/check_redesign.py`, `references/workflow.md`, `references/boundary-evidence.md`, `references/key-spaces.md`, and `references/examples.md` together. Both scripts depend on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which they locate by walking up to the repo root — ship the `harness/gatekeeper/` directory alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.
+Package `SKILL.md`, `scripts/check.py`, `scripts/check_redesign.py`, `references/workflow.md`, `references/boundary-evidence.md`, `references/key-spaces.md`, and `references/examples.md` together. Both scripts depend on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which they locate by walking up from their own path to the catalog that holds `harness/gatekeeper/`; the engine reads `gates.yaml` and `pipelines.yaml` from that catalog and imports `scripts/data_formats.py`, so ship those alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.

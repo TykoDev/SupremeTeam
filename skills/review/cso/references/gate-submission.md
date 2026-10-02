@@ -51,9 +51,11 @@ rather than a bare claim.
 The only sanctioned non-artifact values at this boundary are the two fallbacks in
 the table above, and at schema 2 a bare fallback string is rejected: waiving one
 of those two keys takes an applicability record
-`{applicable: false, reason, scope, decided_by}`. `decided_by` names the
-engagement owner who declined, not cso and not the delegate that would have
-produced the evidence. The other five keys have no sanctioned fallback and cannot
+`{applicable: false, reason, scope, decided_by}` whose `reason` is exactly that
+key's sanctioned string, because `check.py` refuses any other reason
+(`applicability reason not sanctioned`). `decided_by` names the engagement
+owner who declined, not cso and not the delegate that would have produced the
+evidence. The other five keys have no sanctioned fallback and cannot
 be waived at all.
 
 ## The Self-Check
@@ -86,10 +88,10 @@ cso keeps the same stage sequencing but returns artifacts inline and propagates
 
 | Trigger | What CSO Writes |
 |---------|-----------------|
-| Phase start | Nothing on disk: the phase state is published through `session-memory` (`save_run.py checkpoint --run-id {run-id} --expect-revision <n> --owner cso --set phase_state=SECURITY_ACTIVE`; the active owner follows `--owner`, which `--set` refuses as a reserved field) before the first specialist delegation |
+| Phase start | Nothing on disk: the phase state is published through `session-memory` (`save_run.py checkpoint --run-id {run-id} --expect-revision <n> --owner admiral --set phase_state=SECURITY_ACTIVE --set delegated_to=cso`; `--owner` is the run's lock holder, which is admiral in every Admiral run: `save_run.py` refuses any other owner with `lock is owned by 'admiral'`, so the phase lead records itself through `--set delegated_to=` and never through `--owner`) before the first specialist delegation |
 | Specialist delegation | The canonical `### Save Context` block (below) naming the specialist as `Owner`, the exact `reports/`, `artifacts/`, or `evidence/` destination as `Expected artifact`, and `security-review` as `Return boundary` |
 | Specialist return | Verify the named artifact exists at its destination, then register its sha256 through a `session-memory` checkpoint (`--evidence <path>`) |
-| Scan and probe evidence | Typed records under `security/evidence/`: `scan_record.py` writes the scan record, and the probing specialist writes the denial-path log. Immutable per revision |
+| Scan and probe evidence | Typed records under `security/evidence/`: `scan_record.py` writes the scan record, and the probing specialist writes the denial-path log. Immutable per revision. The scan record names its raw output relative to `security/` (`evidence/<stem>.stdout.txt`, `.stderr.txt`), so it is embedded in the manifest unchanged and each name is hashed in `artifact_hashes` under exactly that spelling |
 | Gate submission | `security/manifest.json` (schema 2: `boundary: security-review`, `owner: cso`), carrying the hashed threat model, the scan record, the denial-path probe log, and the findings, remediation-plan, and residual-risk values |
 | Phase-gate verdict | Nothing: the gatekeeper writes `security/verdict_security-review.json` through `check.py --verdict-out`; cso records the semantic verdict in its next checkpoint |
 | Package consolidation | `security/reports/security-review-package.md` plus the manifest revision admiral submits to `gatekeeper-admiral` |

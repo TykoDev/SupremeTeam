@@ -20,15 +20,17 @@ Behavior:
   - Otherwise                    -> inject the "route through admiral" reminder.
 
 Output contract: prints the UserPromptSubmit additionalContext envelope to stdout
-and exits 0. On any error it exits 0 silently (fail open).
+and exits 0. On any error it exits 0 silently (fail open) and counts the fault by type
+in the hook's observation record (`_state.record_fault`).
 """
+from __future__ import annotations
 
-import os
+import json
 import sys
 from pathlib import Path
 
 import _state
-from _saves import has_active_run
+import run_heartbeat
 
 _ROUTE_REMINDER = (
     "Supreme Team entry routing: no active run detected. `admiral` is the "
@@ -59,7 +61,7 @@ def _emit(context: str) -> None:
             "additionalContext": context,
         }
     }
-    print(__import__("json").dumps(out))
+    print(json.dumps(out))
     sys.exit(0)
 
 
@@ -70,20 +72,36 @@ def _saves_root() -> Path:
 def _active_run() -> bool:
     """Return true only for a coherent, fresh canonical saved run."""
     try:
+        import _bootstrap
+
+        _bootstrap.ensure_paths()
+        from _saves import has_active_run
+
         return has_active_run(_saves_root().parent)
-    except Exception:
+    except Exception as exc:
+        _state.record_fault("UserPromptSubmit", exc)
         return False
 
 
 def main() -> None:
-    data = _state.read_hook_input()
+    data = _state.read_hook_input("UserPromptSubmit")
     _state.record_observation("UserPromptSubmit", data)
-    _state.refresh_run_heartbeat(data, "UserPromptSubmit")
+    run_heartbeat.refresh(data, "UserPromptSubmit")
     prompt = str(data.get("prompt", "") or "")
 
     # Empty prompt: nothing to route.
     if not prompt.strip():
         return
+
+    if prompt.strip().split(maxsplit=1)[0] == "/audit-improve":
+        try:
+            import audit_improve
+
+            report = audit_improve.maybe_audit(force=True)
+            _emit(audit_improve.advisory_for(report))
+        except Exception as exc:
+            _state.record_fault("UserPromptSubmit", exc)
+            return
 
     # Explicit slash command: deterministic host routing. Stay silent and let the
     # target skill's own Entry Routing check (routing-doctrine.md sec 3) apply.
@@ -96,9 +114,14 @@ def main() -> None:
         _emit(_ROUTE_REMINDER)
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """The registered entry: a fault never blocks the host loop (exit 0, no output); it is counted by type."""
     try:
         main()
-    except Exception:
-        # Fail open: never let a harness fault block the host loop.
-        sys.exit(0)
+    except Exception as exc:
+        _state.record_fault("UserPromptSubmit", exc)
+
+
+if __name__ == "__main__":
+    run()
+    sys.exit(0)

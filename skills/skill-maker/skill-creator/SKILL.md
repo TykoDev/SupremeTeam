@@ -9,7 +9,7 @@ description: >-
   apply, an eval run, a description optimization, or packaging. An internal
   specialist, never the front door: a cold "write me a skill" belongs to
   `skill-maker`.
-version: 1.0.0
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -31,6 +31,14 @@ directly without restarting intake.
 > "Capture the user's intent, turn it into a production-quality skill, and keep
 > iterating until it works on real tasks. Leave structural scoring to the reviewer —
 > focus on making the skill *do the right thing*."
+
+## Operator index
+
+Read `Entry Routing`, identify the delegated mode in `Modes`, and execute only
+its matching phase: Create uses Phases 1–2, Eval uses Phase 3, Improve uses
+Phase 4, Optimize uses Phase 5, and Package uses Phase 6. Consult `Failure
+Modes` on an exception and `Script and Path Safety` before running bundled
+tools. Load a reference file only when the selected phase names it.
 
 ## Use This Skill When
 
@@ -142,8 +150,9 @@ chart is ugly", "it missed the deadline column"). Full workflow details in
    baseline (no skill for new skills; old snapshot for hardening existing ones).
 3. While runs happen, draft assertions and explain them to the user.
 4. Capture timing data from task notifications as they arrive.
-5. Grade via subagent or inline, aggregate with `scripts/aggregate_benchmark.py`, and
-   launch the eval-viewer so the user can review outputs and leave feedback.
+5. Grade via subagent or inline, aggregate with `scripts/aggregate_benchmark.py` (it reads
+   the workspace layout in `references/real-evals.md` and exits non-zero when it finds no
+   graded run), and launch the eval-viewer so the user can review outputs and leave feedback.
 6. Read `feedback.json` when the user says they are done.
 
 ### Metrics to capture
@@ -221,6 +230,14 @@ Three-step summary:
    improvements, re-evaluates, loops up to 5 times. Selects `best_description` by
    *test* score to avoid overfitting.
 
+   It shells out to the `claude` CLI, which must be on `PATH` and signed in, and every run
+   is a paid model call (about 20 queries x 3 runs per iteration). `claude` runs in the
+   project root: the nearest ancestor of the working directory holding `.claude`, `.git`,
+   `.harness-state` or `skillset-saves`, never the home directory. With none (an installed
+   skill-creator sits in no project) the loop stops; pass `--project-root <dir>`. A query
+   whose runs all time out or fail is not scored as a miss: the loop stops with `error` set
+   and `exit_reason` `eval_failed (iteration N)`, keeps the history so far and exits non-zero.
+
 Apply `best_description` to SKILL.md frontmatter. Show before/after and report scores.
 
 ### Triggering caveat
@@ -248,11 +265,27 @@ On a failure, return the report to the orchestrator as a blocker rather than pac
 `.skill` built from an invalid source fails at the gate instead of at the desk.
 
 ```bash
-python -m scripts.package_skill <path/to/skill-folder>
+python -m scripts.package_skill <path/to/skill-folder> <absolute-output-directory>
 ```
 
-This writes the `.skill` ZIP to `<project>/.harness-state/packages/` by default (pass an output directory, normally the active run's `skill-creation/packages/`, to place it elsewhere), excluding `evals/`, `__pycache__`, `.pyc`,
-`.DS_Store`. Point the user to the resulting file path.
+The working directory is `skill-creator/` after the `cd` above, so a relative path resolves
+there and not in the project: `skillset-saves/runs/<run-id>/skill-creation/packages` would land
+beside this source instead of in the run, and the packager refuses to write anywhere inside
+`skill-creator/`. Pass the run's `packages/` directory as an absolute path, the project root
+you started in joined with `skillset-saves/runs/<run-id>/skill-creation/packages`.
+
+Outside a run, omit the directory: the `.skill` ZIP goes to `<project>/.harness-state/packages/`,
+`<project>` being the nearest ancestor of the working directory holding `.claude`, `.git`,
+`.harness-state` or `skillset-saves` (never the home directory). With none, the packager
+stops and asks for a directory rather than writing into the skill.
+
+It skips `evals/` at the root, `.git`, `node_modules`, `__pycache__`, `.pyc` and `.DS_Store`.
+It refuses, listing every offender and writing nothing, a symlink, a secret (`.env`, `.env.*`,
+key and certificate files, SSH identity files, `.npmrc`, `.netrc`, `.pypirc`, `credentials*.json`) or
+run state (`.harness-state`, `.supremeteam`, `skillset-saves`) anywhere in the folder: remove it
+from the source rather than working around the refusal. The exact names are
+`scripts/residue-classes.json`, the list `skills/scripts/package_check.py` reads too, so a name
+added there is refused by both. Point the user to the resulting file path.
 
 When updating an existing skill:
 - Preserve the original name — use the same directory name and `name` frontmatter
@@ -265,7 +298,7 @@ When updating an existing skill:
 | --- | --- |
 | `evals/evals.json` is missing, unparseable, or does not match the shape in `references/schemas.md` (no `evals` array, an entry without `prompt`, duplicate `id` values) | Do not repair it silently and do not grade a partial parse. Report the exact parse error or the first non-conforming entry, and either rewrite the file from the captured intent and show the user the result before running, or run with the subset that does parse while stating which entries were dropped and why. A grade computed over a silently shrunken eval set reads as a passing score. |
 | The user supplies zero test cases, or declines to write any | Do not invent test cases and present their results as evidence. Skills with subjective outputs legitimately have none: record "no behavioral evals for this iteration", hand the reviewer the structural work alone, and say plainly that only Track B signal exists. Offer one concrete starter prompt drawn from the intake so the decision is informed rather than a default. |
-| `run_loop.py` exits non-zero, times out, or returns no `best_description` | Keep the current description unchanged — a failed optimizer is not a signal to edit the trigger by hand, because the whole point of the loop is the held-out test score. Report the iteration it reached, the last scores, and the failure, then either re-run with a smaller `--max-iterations` or return Optimize as not-run so the orchestrator can skip Stage 4 deliberately. |
+| `run_loop.py` exits non-zero, times out, or returns no `best_description` | Keep the current description unchanged — a failed optimizer is not a signal to edit the trigger by hand, because the whole point of the loop is the held-out test score. Report the iteration it reached, the last scores, and the failure (the JSON it still prints carries `error` and an `exit_reason` of `eval_failed` or `improve_failed`, naming the iteration, plus the history so far), then either re-run with a smaller `--max-iterations` or return Optimize as not-run so the orchestrator can skip Stage 4 deliberately. |
 | The optimizer's `best_description` scores better on train than on test | Take the test-selected description and say so. A train-better candidate is the overfitting the split exists to catch; adopting it because the number is larger discards the only defence in the loop. |
 | `quick_validate.py` returns a failure at Phase 6 | Return the report to the orchestrator as a blocker instead of packaging. A `.skill` built from an invalid source fails at the gate rather than at the desk, and the validation line is the `validation_report` evidence either way. |
 | A user override says a reviewer finding is not real | Record the override with its reason, exclude the finding from this and later improve passes, and pass the override back to the orchestrator so the reviewer is told not to re-flag it. Do not apply a fix the user declined, and do not drop the finding from the delivery report's override table. |
@@ -369,14 +402,20 @@ orphaned — the ones not invoked directly are imported by the ones that are.
 | `run_loop.py` | 5 | The optimization loop: eval → improve → re-eval with a train/test split |
 | `generate_report.py` | 5 | Renders `run_loop.py` output as an HTML report (imported by `run_loop.py`) |
 | `aggregate_benchmark.py` | 3 | Aggregates run results into benchmark statistics with the with-skill/baseline delta |
-| `utils.py` | — | Shared helpers, including SKILL.md frontmatter parsing. Imported, never invoked |
+| `utils.py` | — | Shared helpers, including SKILL.md frontmatter parsing and link detection. Imported, never invoked |
+| `residue-classes.json` | 6 | Data, not a script: the secret and run-state names the packager refuses, shared with `skills/scripts/package_check.py` |
 | `__init__.py` | — | Marks `scripts` as a package so `python -m scripts.<name>` works |
-| `test_regressions.py` | — | Regression tests, below |
+| `test_*.py` | — | Regression tests, one module per script or behavior, below |
 
-**Regression tests.** `scripts/test_regressions.py` covers frontmatter
-validation, packaging exclusions, and the eval subprocess and pipe handling those
-scripts depend on. Run it after changing anything under `scripts/`, from the
-skill-creator directory:
+**Regression tests.** The `scripts/test_*.py` modules cover each script's failure paths:
+frontmatter validation and parser parity, packaging refusals and output location, the eval
+subprocess and pipe handling, failed runs that are not measurements, the benchmark layouts and
+which configuration the delta is measured from, the viewer's embedding, symlink and server rules, link
+detection and annotations on interpreters older than 3.12, the secret list shared with `package_check.py`, how each
+script starts (as a module or by path), the prose that points at the packager, and UTF-8 on a Windows
+code page. None
+runs the `claude` CLI or opens a network connection. Run them after changing anything under
+`scripts/` or `eval-viewer/`, from the skill-creator directory:
 
 ```bash
 python -m unittest discover -s scripts -p "test_*.py"

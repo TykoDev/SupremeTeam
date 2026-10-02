@@ -20,9 +20,19 @@ What this writer guarantees that a hand edit did not:
   lifting the destructive-pattern block is a bounded, attributable act rather
   than a permanent global flag;
 * corrupt bytes are never overwritten — a damaged record is reported, not
-  silently replaced.
+  silently replaced;
+* a glob is recorded in one spelling (``./src/**``, ``src//**`` and the
+  absolute form of a project path are all ``src/**``, as is the backslash spelling) and a glob that can never match
+  (empty, ``.``, climbing out of the project, a leading ``!``, a drive or file-system root, or an absolute path under
+  a top-level directory this machine does not have, which ``/src/**`` is) is refused with its reason, so a boundary
+  that enforces nothing is never recorded as one, and ``status`` warns about one already on disk;
+* a grant is capped at ``_state.MAX_GRANT_MINUTES`` and every command holds one lock
+  from reading the record to replacing it, so two writers cannot lose each other's
+  change.
 
 Usage::
+
+    guard_state.py [--lock-timeout SECONDS] <command> ...
 
     guard_state.py freeze  --glob G --owner O [--scope S] [--run-id R] [--approver A ...]
     guard_state.py block   --glob G --owner O [--scope S] [--run-id R] [--approver A ...]
@@ -41,16 +51,20 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import _state  # noqa: E402  (path set above so the hook helpers resolve)
+import _bootstrap
+
+_bootstrap.ensure_paths()
+import _fsutil  # noqa: E402
+import _paths  # noqa: E402
+import _state  # noqa: E402
 
 RECORD = "guard-state.json"
 DEFAULT_DANGEROUS_MINUTES = 30
+DEFAULT_LOCK_SECONDS = 5.0
 LIST_KEYS = ("frozen_globs", "blocked_globs", "read_only")
 
 
@@ -98,10 +112,11 @@ def _load() -> dict:
 
 def _save(state: dict) -> None:
     path = _path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _fsutil.atomic_write(path, json.dumps(state, indent=2, sort_keys=True) + "\n")
+    except OSError as exc:
+        _refuse(f"cannot write {path}: {_fsutil.why(exc)}")
 
 
 def _records(state: dict, key: str) -> list:
@@ -112,11 +127,26 @@ def _active(entry) -> bool:
     """A bare string is always active; a record is active until released."""
     if isinstance(entry, str):
         return bool(entry)
-    return not (entry.get("released_at") or entry.get("released") is True)
+    return not _state.is_released(entry)
 
 
 def _entry_glob(entry) -> str:
     return entry if isinstance(entry, str) else str(entry.get("glob") or "")
+
+
+def _canonical(glob: str) -> str:
+    """The one spelling two records of the same boundary share; a legacy glob that cannot be normalised stands for itself."""
+    return _paths.normalize_glob(glob, _state.project_root()) or glob
+
+
+def _normalised(glob: str) -> str:
+    problem = _paths.glob_problem(glob, _state.project_root())
+    if problem:
+        _refuse(f"{glob!r} cannot be matched: {problem}.")
+    warning = _paths.glob_warning(glob, _state.project_root())
+    if warning:
+        print(f"warning: {glob!r}: {warning}.", file=sys.stderr)
+    return _paths.normalize_glob(glob, _state.project_root())
 
 
 def _authorized(entry: dict, requester: str) -> bool:
@@ -130,15 +160,16 @@ def _authorized(entry: dict, requester: str) -> bool:
 
 def cmd_add(args, key: str) -> int:
     state = _load()
+    glob = _normalised(args.glob)
     entries = _records(state, key)
     for entry in entries:
-        if _entry_glob(entry) == args.glob and _active(entry):
+        if _canonical(_entry_glob(entry)) == glob and _active(entry):
             _refuse(
-                f"{args.glob} is already inside an active boundary in {key}. "
+                f"{glob} is already inside an active boundary in {key}. "
                 "Release it first, or record a different glob."
             )
     entries.append({
-        "glob": args.glob,
+        "glob": glob,
         "owner": args.owner,
         "scope": args.scope or "unscoped",
         "created_at": _now(),
@@ -148,17 +179,18 @@ def cmd_add(args, key: str) -> int:
     })
     state[key] = entries
     _save(state)
-    print(json.dumps({"ok": True, "action": key, "glob": args.glob,
+    print(json.dumps({"ok": True, "action": key, "glob": glob,
                       "owner": args.owner, "path": str(_path())}))
     return 0
 
 
 def cmd_release(args) -> int:
     state = _load()
+    target = _canonical(args.glob)
     hits = []
     for key in ("frozen_globs", "blocked_globs"):
         for entry in _records(state, key):
-            if _entry_glob(entry) == args.glob and _active(entry):
+            if _canonical(_entry_glob(entry)) == target and _active(entry):
                 hits.append((key, entry))
     if not hits:
         _refuse(f"no active boundary matches {args.glob}.")
@@ -190,7 +222,11 @@ def cmd_release(args) -> int:
 
 def cmd_allow_dangerous(args) -> int:
     state = _load()
+    if any(not str(getattr(args, key, "")).strip() for key in ("owner", "reason", "scope")):
+        _refuse("allow-dangerous requires a non-empty owner, reason, and scope.")
     minutes = max(1, int(args.minutes))
+    if minutes > _state.MAX_GRANT_MINUTES:
+        _refuse(f"allow-dangerous lasts at most {_state.MAX_GRANT_MINUTES} minutes; record a new grant when this one ends.")
     expires = datetime.now(timezone.utc) + timedelta(minutes=minutes)
     state["allow_dangerous"] = {
         "owner": args.owner,
@@ -224,6 +260,7 @@ def cmd_revoke_dangerous(args) -> int:
 
 def cmd_read_only(args) -> int:
     state = _load()
+    allow = [_normalised(glob) for glob in args.allow]
     entries = _records(state, "read_only")
     for entry in entries:
         if isinstance(entry, dict) and entry.get("run_id") == args.run_id and _active(entry):
@@ -232,14 +269,14 @@ def cmd_read_only(args) -> int:
         "run_id": args.run_id,
         "owner": args.owner,
         "scope": args.scope or "read-only run",
-        "allow": list(args.allow),
+        "allow": allow,
         "created_at": _now(),
         "released_at": None,
     })
     state["read_only"] = entries
     _save(state)
     print(json.dumps({"ok": True, "action": "read-only", "run_id": args.run_id,
-                      "owner": args.owner, "allow": list(args.allow)}))
+                      "owner": args.owner, "allow": allow}))
     return 0
 
 
@@ -267,11 +304,15 @@ def cmd_release_read_only(args) -> int:
 
 def cmd_status(args) -> int:
     state = _load()
+    unmatchable = [(e, problem) for key in ("frozen_globs", "blocked_globs") for e in _records(state, key)
+                   if _active(e) and (problem := _paths.glob_problem(_entry_glob(e), _state.project_root()))]
+    absolute = [(e, warning) for key in ("frozen_globs", "blocked_globs") for e in _records(state, key)
+                if _active(e) and (warning := _paths.glob_warning(_entry_glob(e), _state.project_root()))]
     report = {
         "path": str(_path()),
         "exists": _path().exists(),
-        "frozen_globs": [_entry_glob(e) for e in _records(state, "frozen_globs") if _active(e)],
-        "blocked_globs": [_entry_glob(e) for e in _records(state, "blocked_globs") if _active(e)],
+        "frozen_globs": [_canonical(_entry_glob(e)) for e in _records(state, "frozen_globs") if _active(e)],
+        "blocked_globs": [_canonical(_entry_glob(e)) for e in _records(state, "blocked_globs") if _active(e)],
         "read_only_runs": [e.get("run_id") for e in _records(state, "read_only")
                            if isinstance(e, dict) and _active(e)],
         "allow_dangerous": state.get("allow_dangerous") or False,
@@ -281,6 +322,10 @@ def cmd_status(args) -> int:
             for e in _records(state, key)
             if _active(e) and (isinstance(e, str) or not e.get("owner"))
         ],
+        "unmatchable_entries": [_entry_glob(e) for e, _ in unmatchable],
+        "unmatchable_reasons": {_entry_glob(e): reason for e, reason in unmatchable},
+        "absolute_entries": [_entry_glob(e) for e, _ in absolute],
+        "absolute_reasons": {_entry_glob(e): reason for e, reason in absolute},
     }
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
@@ -292,6 +337,14 @@ def cmd_status(args) -> int:
         print(f"allow_dangerous: {report['allow_dangerous']}")
         if report["unowned_entries"]:
             print(f"WARNING unowned (not releasable by authority check): {report['unowned_entries']}")
+        if report["unmatchable_entries"]:
+            print(f"WARNING unmatchable (enforce nothing; re-record with a usable glob): {report['unmatchable_entries']}")
+            for glob, reason in report["unmatchable_reasons"].items():
+                print(f"  {glob!r}: {reason}")
+        if report["absolute_entries"]:
+            print(f"WARNING absolute path outside the project (check the spelling): {report['absolute_entries']}")
+            for glob, reason in report["absolute_reasons"].items():
+                print(f"  {glob!r}: {reason}")
     return 0
 
 
@@ -300,6 +353,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="guard_state.py",
         description="Sole sanctioned writer for .harness-state/guard-state.json.",
     )
+    parser.add_argument("--lock-timeout", type=float, default=DEFAULT_LOCK_SECONDS,
+                        help="seconds to wait for another writer of the record before refusing")
     sub = parser.add_subparsers(dest="command", required=True)
 
     for name, key in (("freeze", "frozen_globs"), ("block", "blocked_globs")):
@@ -352,7 +407,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    if args.command == "status":
+        return args.func(args)
+    notes: list = []
+    try:
+        with _fsutil.AdvisoryLock(_path().with_name(RECORD + ".lock"), args.lock_timeout, create_dir=True,
+                                  kind="guard record lock", notes=notes):
+            for note in notes:
+                print(f"note: {note}", file=sys.stderr)
+            return args.func(args)
+    except _fsutil.LockTimeout:
+        _refuse(f"another guard_state.py is writing the record and did not finish within {args.lock_timeout:g}s; retry.")
 
 
 if __name__ == "__main__":

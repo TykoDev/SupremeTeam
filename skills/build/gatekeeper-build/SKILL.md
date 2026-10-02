@@ -8,7 +8,7 @@ description: >-
   check build readiness, review build phase output, or challenge this build packet.
   Judges inside the build phase; the handoff between stages is `gatekeeper-admiral`,
   and a list of what is missing with no decision is `build/cross-check-build-confirm`.
-version: 1.0.0
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -116,7 +116,26 @@ certification, build-gate lineage — and calls the shared engine at
 - package shape and single-revision lineage
 - skip-record completeness
 - the blocked-phrase scan
-- idempotency drift against `--prior`, and harness-doctrine §5 structure
+- idempotency drift against `--prior` (Markdown frontmatter or the JSON record
+  `check.py --verdict-out` writes; a side that declares no `submission_id` and
+  `revision` leaves it `IDEMPOTENCY_UNDETERMINED`, never a fresh submission), and
+  harness-doctrine §5 structure
+- links out of the package: a symlink whose target leaves the package directory
+  is never read and is reported as `LINK_ESCAPES_PACKAGE`
+
+Each artifact is a file of its own: one file fills one slot, the file name is
+matched on its own name and never on its directories, and a slot's marker is
+matched on whole words, so `pass` is not found in `password`. A file whose name
+fits but whose content does not is named in the failure as a near miss.
+
+The security-builder outcome is **conditional**, and the manifest does not
+restate the condition: `../../gates.yaml` lets a submitter waive `security_evidence`
+and `../../pipelines.yaml` runs the `security-checkpoint` stage only when a trust
+boundary changed, so the engine reads both and reports an absent outcome
+`UNCHECKED` with the two conditions named. Resolve it against them: no
+trust-boundary change means the waiver record must be in the manifest, which the
+boundary validator checks; a changed trust boundary means `security-builder`
+owes its outcome.
 
 It returns `PASS` / `FAIL` / `UNCHECKED` findings plus a `gate_status` and
 **never emits a verdict**: apply judgment to the `FAIL` and `UNCHECKED`
@@ -136,9 +155,15 @@ any path that:
 On a rejected path, return `ESCALATE` naming it rather than invoking the script.
 This prevents path-injection into the gate engine from a malformed or
 manipulated build context. `scripts/check.py` enforces the same guard in code as
-a backstop: it resolves `<package-dir>`, requires an existing directory inside
-the working tree, and exits 2 without running the gate on a missing,
-non-directory, or out-of-tree path.
+a backstop: it resolves `<package-dir>` (`..` and symlinks included), requires an
+existing directory inside the project, and exits 2 without running the gate on a
+missing, non-directory, or out-of-project path. The project is found from where
+the gate is run: the nearest directory at or above the working directory that
+holds `skillset-saves/`, `.harness-state/`, or `.git`, or, when the working
+directory is in no project, the same search from the package directory. Run it
+from the project, as in
+`python <catalog>/build/gatekeeper-build/scripts/check.py skillset-saves/runs/<run>/build`;
+the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 
 **2. The boundary validator** checks the evidence contract against
 `../../gates.yaml`:
@@ -162,8 +187,10 @@ value. Submit at schema 2: at schema 1 four of the six keys — everything but
 are documentation rather than enforcement. Schema 2 narrows that to three, since
 `security_evidence` becomes a checked `findings` record.
 
-Exit 0 is a mechanical fact, not approval; exit 2 is an engine error and never a
-pass.
+A typed record is the submitter's own statement: the validator never compares an
+artifact's content with what its record claims and never re-runs a command (it reads `.md` and `.txt` artifacts only for blocked phrases and local links),
+so whether `tests` is the runner's own log stays a judgement. Exit 0 is a mechanical fact, not approval; exit 2 is an engine error
+and never a pass.
 
 ### The two key spaces collide by name
 
@@ -174,9 +201,9 @@ the left never reads as satisfaction of the right.
 
 | Shape key (`scripts/check.py`) | What it matches | Evidence-key counterpart |
 | --- | --- | --- |
-| `implementation` | an `*implementation*.md`, `deliverable_*build*.md`, or `*diff*.md` deliverable in the package directory | `implementation` — same name, different object: a required, untyped, non-falsy evidence value, not a file-presence fact |
+| `implementation` | an `*implementation*.md`, `deliverable_*build*.md`, or `diff` deliverable (`diff.md`, `diff-*.md`, `*-diff.md`) in the package directory | `implementation` — same name, different object: a required, untyped, non-falsy evidence value, not a file-presence fact |
 | `tests` | a `*test*.md` deliverable — a written report | `tests` — same name, different object: a `probe` record whose artifact is the hashed test-runner log under `build/evidence/` |
-| `security` | a `*security*.md` deliverable | `security_evidence` — the names differ, and so do the objects: a `findings` record `{items: [{id, severity, status, …}]}`, or the one sanctioned applicability record |
+| `security` | a `*security*.md` deliverable; conditional, so its absence is `UNCHECKED` and names the waiver and the stage condition | `security_evidence` — the names differ, and so do the objects: a `findings` record `{items: [{id, severity, status, …}]}`, or the one sanctioned applicability record |
 | `completeness` | the cross-check-build-confirm certification file | none. A file-presence key of this script alone; the gate spec has no completeness key |
 | `build_verdict` | conditional — this gate's own verdict lineage for the revision | none. A file-presence key of this script alone |
 
@@ -257,6 +284,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | `approved_design_revision` is empty, a placeholder, or names a design revision with no approval record | Return `REVISE` to `build-management`. The key is a `revision_ref` and accepts no fallback; without it the build advances under a design nobody approved. |
 | `security_evidence` carries a bare explanatory string where a record belongs | Return `REVISE` to `security-builder`. The only admissible waiver is the typed applicability record naming reason, scope, and decided_by for "no trust-boundary change - security-builder not engaged". At schema 2 *every* bare string fails: an unsanctioned one as `security_evidence must be a findings record with an items list at schema 2`, the sanctioned wording itself as `bare fallback string not accepted at schema 2: security_evidence (use an applicability record)`. At schema 1 no string fails at all, which is the reason to insist on schema 2. |
 | Either validator fails to run — Python unavailable, permission error, `<package-dir>` rejected by the containment guard, or exit code 2 | Treat the gate as NOT satisfied and return `ESCALATE`, naming which validator failed and why. An unrun pre-check is not a clean one, and a gate that fails open is worse than no gate. |
+| `scripts/check.py` fails a slot as `ARTIFACT_MISSING` and names a near miss — a file that lacks the slot's marker, or one already counted for another slot — or reports `LINK_ESCAPES_PACKAGE` | Return `REVISE` to `build/build-management`: each slot is its own file, a file that covers several slots fills one, and a link out of the package directory is replaced by the file itself. |
 | Generated or vendored code appears in the package without ownership, scan notes, or change rationale | Return `REVISE`, isolate the affected files, and require explicit treatment of non-first-party surfaces. |
 | A claimed build fix quietly widens scope beyond the approved design or implementation contract | Escalate the scope expansion instead of letting the build packet smuggle a design change downstream. |
 | The resubmission changes the code surface but leaves the revision delta or blocker summary unchanged | Treat the verdict as stale, require a fresh delta summary, and prevent silent re-gating. |
@@ -290,4 +318,4 @@ return the verdict inline and preserve the run and revision.
 
 ## Packaging Notes
 
-Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which it locates by walking up to the repo root — ship the `harness/gatekeeper/` directory alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.
+Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which it locates by walking up from its own path to the catalog that holds `harness/gatekeeper/`; the engine reads `gates.yaml` and `pipelines.yaml` from that catalog and imports `scripts/data_formats.py`, so ship those alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.

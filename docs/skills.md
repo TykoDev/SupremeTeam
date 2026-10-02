@@ -1,17 +1,20 @@
 # The Skills
 
-52 of them. Three delivery pipelines, a few cross-cutting components, and four
-groups of standalone tools you can call whenever you like.
+53 of them. Ten pipelines (design, build and review are the delivery lifecycle),
+a few cross-cutting components, and five groups of standalone tools you can call
+whenever you like.
 
 The roster is declared in
-[`skills/team-manifest.yaml`](../skills/team-manifest.yaml) and cross-checked
-against every pipeline owner, gate submitter, and artifact writer by
-`skills/validation/test_pipeline_contracts.py`. If a skill listed here vanished,
-that suite would fail.
+[`skills/team-manifest.yaml`](../skills/team-manifest.yaml), and the validation
+suites check every pipeline owner, gate submitter, and artifact writer against it.
+Those checks read the manifest, not this page: `validate_manifests.py` compares
+this page only with the opening total and the count in the Taste heading, and
+`test_docs_inventory.py` adds the section counts up to the number of skills in the
+tree, so the tables below are kept by hand and the manifest is the authority.
 
 For the flat machine-readable index with paths, see [AGENTS.md](../AGENTS.md).
 
-![Phases, sub-pipelines, and the 49-skill breakdown](assets/1_Overview.jpg)
+![Diagram of the design, build and review phases and the standalone tool groups, drawn for an earlier, smaller roster](assets/1_Overview.jpg)
 
 ## Admiral layer (2)
 
@@ -76,7 +79,7 @@ The biggest group, because this is where most of the value is.
 | **devex-review** | Developer experience: onboarding, tooling, docs clarity, integration friction |
 | **gatekeeper-code** | Reviews the reviewers. Validates the consolidated review package |
 
-## Cross-cutting (6)
+## Cross-cutting (5)
 
 | Skill | What it does |
 |---|---|
@@ -85,7 +88,6 @@ The biggest group, because this is where most of the value is.
 | **skill-creator** | Drafts and improves skills: authoring, supporting files, evals, trigger tuning, packaging |
 | **skill-reviewer** | Adversarial quality gate. Scores 0 to 100 across ten dimensions and returns a prioritized fix list |
 | **session-memory** | Cross-session state and durable learnings. Checkpoints and resume |
-| **taste** | Preference lifecycle owner and sole semantic writer; resolves global and project profiles and submits the Taste gate |
 
 ## Taste (2)
 
@@ -94,10 +96,18 @@ The biggest group, because this is where most of the value is.
 | **taste** | Owns preference intake, canonical writes, effective-profile resolution, and the Taste gate submission |
 | **taste-review** | Read-only review of provenance, conflicts, redaction, confirmation, and persistence safety |
 
-## Standalone tools (15)
+## Standalone tools (16)
 
-Out of routing scope. Call any of these directly, at any time, with or without a
-pipeline running.
+Directly reachable: call any of these, at any time, with or without a pipeline
+running. `qa`, `qa-only` and `ship` also own a gated pipeline when `admiral`
+delegates to them, which is what routing calls dual-mode entry
+([routing.md](routing.md)).
+
+### Harness audit (1)
+
+| Skill | What it does |
+|---|---|
+| **audit-improve** | Audits generated harness and run state, then routes supported skill improvements through Admiral and skill-maker |
 
 ### Browser automation (4)
 
@@ -160,6 +170,7 @@ Not skills, but load-bearing. See [architecture.md](architecture.md),
 | `routing-doctrine.md` | Entry routing, precedence, Tier 0, session pin |
 | `grill-me-doctrine.md` | Intake interview; produces the hashed decisions artifact |
 | `design-doctrine.md` | Frontend design system, responsive tiers, accessibility, gate evidence |
+| `taste-doctrine.md` | Canonical semantics, provenance, lifecycle, scope, and resolution for user presentation and interaction preferences |
 | `harness-doctrine.md` | Lifecycle layers, failure taxonomy, non-negotiables |
 | `performance-doctrine.md` | Measured optimization, baselines, regression budgets |
 | `save-protocol.md` | Save layout, lifecycle, ownership, resume, rewind |
@@ -175,8 +186,8 @@ Not skills, but load-bearing. See [architecture.md](architecture.md),
 
 | Component | Purpose |
 |---|---|
-| `harness/hooks/` | Three lifecycle hooks, the `save_run.py` writer, the shared `_saves.py` reader, registration and readiness diagnostics |
+| `harness/hooks/` | Three lifecycle hooks (the pre-tool one is the guard, with its `guard_hook.py`, `_cmdscan.py` and `_paths.py` modules), the `save_run.py` and `guard_state.py` writers, the shared `_saves.py` reader, `_state.py`, `_fsutil.py` and `run_heartbeat.py` helpers, registration and readiness diagnostics |
 | `harness/gatekeeper/check.py` | The boundary validator. Loads `gates.yaml` |
 | `harness/gatekeeper/_gatecheck.py` | The package-shape engine behind each `gatekeeper-*/scripts/check.py` |
-| `scripts/` | Data formats, output paths, runtime and stack detection, scan records, manifest validation, package check |
+| `scripts/` | Data formats, output paths, runtime and stack detection, scan records, parity and content hashes, manifest validation, package check |
 | `validation/` | Contract suites for pipelines, ownership, and the save lifecycle |

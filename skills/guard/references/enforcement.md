@@ -22,8 +22,9 @@ The guard is the advisory expression of the Action Realization layer
 guarded boundary is also deterministically enforced by
 `../../harness/hooks/pre_tool_use.py`, which blocks writes into the guarded paths
 before they execute — so the guard is no longer advice the model can ignore. When
-the state file is absent the hook is inert and the guard remains advisory only.
-See `../../harness/hooks/README.md`.
+the state file is absent no boundary is enforced and the guard remains advisory
+only; the destructive-command rule and the single-writer rule need no record and
+still run. See `../../harness/hooks/README.md`.
 
 ## Single writer
 
@@ -52,6 +53,16 @@ Exit 0 is ok; exit 1 is refused — an authority, validation, or corrupt-record
 refusal that changes nothing and prints its reason to stderr; exit 2 is a usage
 error. A refusal is a contract violation to resolve, never something to work
 around by editing the record.
+
+The writer records a glob in one spelling (`./src/**`, `src//**`, `src\**` and the
+absolute form of a project path are all `src/**`), refuses one that can never match
+(empty, `.`, climbing out of the project with `..`, a leading `!`, a drive or file-system root, or a
+leading-slash path under a directory this machine does not have, which `/src/**` is), and keeps one record per
+glob in each key. Every command except `status` holds one lock
+(`.harness-state/guard-state.json.lock`) from reading the record to replacing it, so
+two sessions cannot lose each other's change; one that cannot take it within
+`--lock-timeout` seconds (a flag before the subcommand, default 5) exits 1 and
+changes nothing, and a crashed holder never wedges it.
 
 ## guard-state.json
 
@@ -106,15 +117,45 @@ boundary file instead of starting a second one beside it.
   writes.
 - `blocked_globs` — owned records for paths the guard forbids outright. The hook
   merges these with `frozen_globs` into one boundary, so one
-  `release --glob <g>` call covers both keys.
+  `release --glob <g>` call covers both keys. Both are *write* boundaries: a read
+  of a blocked path is never denied, so a blocked glob keeps an agent from
+  changing a secret, not from reading it.
 - `read_only` — owned records confining a run to its own save path, enforced by
-  the hook's Rule D: while an unreleased record exists, the only writable
-  locations are that record's `allow` globs and the harness state directory, and
-  any other edit-tool write or mutating shell command is denied. A command that
-  invokes `save_run.py` is exempt, so the run can still checkpoint its own
-  record, and read-only commands pass untouched.
+  the hook's Rule D: while an unreleased record exists, every write target of an
+  edit tool or of the analysed shell command must lie inside that record's
+  `allow` globs or the harness state directory (`.harness-state/**`). Naming one
+  allowed path in a command that also writes somewhere else does not satisfy it,
+  and a git command that changes the repository without naming a path
+  (`git add -A`, `git push`, `git merge`, `git restore --staged .`) is denied, as is a
+  package manager installing, removing or updating (`npm install`, `pip install`,
+  `apt-get install`: a table of the usual ones, not every tool). So is a write with
+  no target in the command, because a target the hook cannot place cannot be shown
+  to lie inside: a mutating verb whose operands arrive on standard input
+  (`cat list | xargs rm -rf`, `ls | parallel rm`, `xargs rm < list`,
+  `Get-ChildItem | Remove-Item`), a shell or interpreter that reads its program from a
+  pipe (`echo 'rm x' | sh`, `curl <url> | bash`), a PowerShell script block that mutates
+  (`ForEach-Object { Remove-Item $_ }`), `patch` and `git apply` unless they only check
+  (`--check`, `--stat`, `--dry-run`), and an inline `awk`, `sed`, `perl`, `python`,
+  `node` or `ruby` program that redirects or opens a file for writing
+  (`awk '{print > "out"}'`, `sed -n 'w out'`, `python3 -c "open('x', 'w')"`). Name each target in the shell command itself, as an
+  operand or a redirect (`awk '{print}' f > <allowed path>`), and it is judged like any
+  other. This is refused flat for `read_only` only. A freeze, a block and Rule C also read the commands a
+  launcher or script block runs (`watch 'rm src/payments/a'`) like the command line, and refuse one of these
+  writes only when the command also names a path they protect (`echo 'rm src/payments/a' | sh`,
+  `cat src/payments/list | xargs rm`); one that names none passes (`cat list | xargs rm`). Reads pass untouched,
+  including `awk '$1 > 5'` and `xargs grep`.
 - `allow_dangerous` — `false`, or an owned grant that lifts the built-in
   destructive-command block (see the next section).
+
+**The run can still checkpoint itself.** A script's arguments are data, not write
+targets, so `python skills/harness/hooks/save_run.py checkpoint ...` is not stopped
+by Rule D, and Rule C (the single-writer rule) does not treat a path passed to the
+script as a write either. That is a property of how the command is analysed, not a list of
+exempt names: a redirect from the same command into a core run file, or any other
+command that writes there, is still denied. A command the analyser cannot tokenise
+(an unbalanced quote) falls back to textual rules, which carry no such exception: a
+`save_run.py` command with a stray quote is denied while a run is read-only, and when
+it names a core run file, until it is issued again with balanced quoting.
 
 A boundary record stays effective until its owner records `released_at`; age
 alone never expires a protection, and a release never deletes the record, so who
@@ -162,8 +203,10 @@ python skills/harness/hooks/guard_state.py allow-dangerous --owner <contributor>
 
 ## Sizing the expiry
 
-The expiry defaults to 30 minutes and is set as short as the operation needs —
-but not shorter than the operation itself. The hook re-evaluates the grant on
+The expiry defaults to 30 minutes, is never more than 8 hours (the writer refuses a
+longer `--minutes`, and the hook reads a grant with more than 8 hours left as
+malformed, so a hand-written far-future expiry is not a standing kill-switch), and is
+set as short as the operation needs — but not shorter than the operation itself. The hook re-evaluates the grant on
 every tool call, so a grant that lapses mid-sequence re-arms the destructive
 pattern block between two steps of the same operation: the earlier steps have
 already run, the next one is denied, and the work is left half-done. That is
@@ -185,20 +228,35 @@ to `false`. Only the grant's owner may revoke it — the writer records no
 approvers on a grant, so this one has no delegate. It must never be the default
 value and must never be enabled silently.
 
-An expired grant, one whose `expires_at` cannot be parsed, and one carrying no
-`expires_at` at all all leave the block **in force**: a guard that cannot read
-its own grant stays closed rather than open. The writer always records an expiry,
-so a grant without one is malformed rather than permanent. Exactly one shape
-lifts the block without an end — the legacy bare `true` — and the writer never
-produces it, which is one more reason the record is not hand-edited.
+An expired grant, one whose `expires_at` cannot be parsed, one carrying no
+`expires_at`, and the legacy bare `true` all leave the block **in force**. The
+writer always records an owned grant with an expiry; an ownerless or unbounded
+value cannot lift the block.
 
 ## Fail-open semantics (advisory-grade, not a hard control)
 
-Per harness-doctrine §3 the hook *fails open*: any internal error — a malformed
-`guard-state.json`, an unreadable path, or a host that does not run the hook at
-all — exits silently and lets the action proceed. A guard fault therefore means a
-write into `blocked_globs` is *allowed*, not denied. Treat the boundary as a
-discipline aid that catches honest mistakes — do not rely on it to stop a
-determined or adversarial actor, and never use `blocked_globs` as the sole
-protection for secrets or production paths. For real isolation, use OS/filesystem
-permissions or a sandbox in addition to the guard.
+Per harness-doctrine §3 the hook *fails open*: an internal error, an unreadable
+path, or a host that does not run the hook at all lets the action proceed. A guard
+fault therefore means a write into `blocked_globs` is *allowed*, not denied. Each
+fault is counted by type in `.harness-state/observations/PreToolUse.json`. A
+`guard-state.json` that cannot be read does not switch every rule off: the hook
+applies no boundary from it, but the destructive-command rule still runs, and a
+list in the wrong shape is skipped without stopping the rest of the record.
+
+The hook is also a text guard, not a hard lock. It analyses the command a tool is
+about to run and the path an edit tool names, and runs nothing, so a program that
+builds its path at run time, a script file, a tool it has no entry for, or a link
+made in the same command can write past it, and interpreter inline code
+(`python -c`, `node -e`) is searched for protected paths rather than understood
+(a read-only run reads it further, for the shapes above).
+`../../harness/hooks/README.md` § What the guard cannot see lists these limits in
+full. Treat the boundary as a discipline aid that catches honest mistakes — do not
+rely on it to stop a determined or adversarial actor, and never use `blocked_globs`
+as the sole protection for secrets or production paths. For real isolation, use
+OS/filesystem permissions or a sandbox in addition to the guard.
+
+While a run is pinned or any boundary is recorded, Rule F also denies edits to the
+hook scripts, to the `skills/scripts/` modules they import (`data_formats.py`,
+`save_taxonomy.py`) and to the host files that register them, so the guard cannot be
+switched off from inside a session; a maintainer who must edit them starts the host
+with `SUPREMETEAM_HARNESS_DEV=1`, which only the person launching the host can set.

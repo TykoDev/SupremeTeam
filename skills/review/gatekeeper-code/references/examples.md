@@ -25,7 +25,7 @@ Context: run `r-5140`, phase `review`, submission `r-5140-v1`, revision 1, owner
 `code-chief`, return boundary `review-to-delivery`.
 
 **Validators:**
-- `../scripts/check.py skillset-saves/runs/r-5140/review`: `NEEDS_JUDGMENT`. All five core lenses present; `lens_cso` reported `UNCHECKED`.
+- `../scripts/check.py skillset-saves/runs/r-5140/review`: `NEEDS_JUDGMENT`. The bug, code, quality, security, and adversarial lens packets are present, each with its `Outcome:` and `Findings:` fields; `lens_cso` reported `UNCHECKED`.
 - Boundary validator `--boundary review-to-delivery`: exit 1. `rendered_verification` carries the bare string "UI unchanged in this round".
 
 **Output:**
@@ -64,14 +64,14 @@ change with no user-facing surface. Save Context: run `r-5208`, phase `review`,
 submission `r-5208-v1`, revision 1, owner `code-chief`.
 
 **Validators:**
-- `../scripts/check.py`: `STRUCTURE_OK`. `lens_cso` absent with an explicit `_skip-record.md` whose required fields the engine validated; `review/frontier` likewise.
+- `../scripts/check.py`: `NEEDS_JUDGMENT`. `lens_cso` and `lens_adversarial` are absent and reported `UNCHECKED`; the package carries an explicit `_skip-record.md` for each skip whose required fields the engine validated, and the gate resolves the two findings against the `pipelines.yaml` conditions named in them, because a skip record names no lens.
 - Boundary validator: exit 0.
 
 **Output:**
 - Verdict: `APPROVED`.
 - Boundary: `review-to-delivery`, submitted by `code-chief`, revision 1.
-- Evidence map: all five core lenses present and current for revision 1. `executed_probes` names `review/evidence/probes-r1.log`, hashed, `result.status: pass`, `inputs` matching every source it examined. `rendered_verification` carries the sanctioned applicability record for "no visible surface changed - rendered verification not applicable", scoped to the changed job module and decided by `design-qa` — and the diff touches no template, component, or stylesheet, so the reason is honest rather than merely well-formed. `review_verdict` is APPROVED with no challenge record attached.
-- Skips: `review/cso` skipped with a no-accepted-risk / no-release-posture justification tied to the actual scope; `review/frontier` skipped with a no-rendered-UI justification consistent with the waiver above.
+- Evidence map: the bug, code, quality, and security lenses present and current for revision 1. `executed_probes` names `review/evidence/probes-r1.log`, hashed, `result.status: pass`, `inputs` matching every source it examined. `rendered_verification` carries the sanctioned applicability record for "no visible surface changed - rendered verification not applicable", scoped to the changed job module and decided by `design-qa` — and the diff touches no template, component, or stylesheet, so the reason is honest rather than merely well-formed. `review_verdict` is APPROVED with no challenge record attached.
+- Skips: `review/cso` skipped with a no-accepted-risk / no-release-posture justification tied to the actual scope; `review/frontier` skipped with a no-rendered-UI justification consistent with the waiver above; `review/mr-robot` did not run because no exploitable surface exists, which the package's execution manifest records with the false condition.
 - Open risks: `residual_risk` records one deferred Major owned by `code-chief` with a reopen trigger on any change to the retry schedule, which the finding policy admits.
 - Next action: hand off to delivery.
 - Revision: 1. Preserve the approval record and reuse it on resume only while the package revision is unchanged.
@@ -106,6 +106,6 @@ step.
 **Output:**
 - Verdict: `ESCALATE`.
 - Boundary: `review-to-delivery`, revision 3. Not judged.
-- Evidence: exit 2 is an engine error, not a result. The shape check passing says nothing about the six evidence keys, because the two key spaces do not overlap — five green lenses and a clean structure report are compatible with every required evidence key being absent.
+- Evidence: exit 2 is an engine error, not a result. The shape check passing says nothing about the six evidence keys, because the two key spaces do not overlap — a full set of lens packets and a clean structure report are compatible with every required evidence key being absent.
 - Next action: restore `../../../gates.yaml` from the canonical source, confirm the gate spec digest, and resubmit unchanged. The gate spec is never bypassed to keep a run moving, and an unknown pre-check result is not evidence of readiness.
 - Revision: 3.

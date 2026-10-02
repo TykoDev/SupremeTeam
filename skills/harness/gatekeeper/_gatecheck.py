@@ -34,12 +34,13 @@ once in ``skills/runtime-manifest.yaml`` (``runtime.python.minimum``) and checke
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 # --- Shared four-tier severity model (cited by every gatekeeper) --------------
 # critical: package is untrusted / cannot advance without external judgment.
@@ -59,9 +60,11 @@ _TEXT_SUFFIXES = (".md", ".markdown", ".txt", ".yaml", ".yml")
 
 # Default blocked phrases: hollow-completion claims and contamination markers
 # that must never appear in a clean delivery package. Entries beginning with
-# ``re:`` are treated as regular expressions (used for word-bounded code-rot
-# markers); all others are literal, case-insensitive substrings. Each gate can
-# extend this set with a ``blocked-phrases.txt`` file next to its check.py.
+# ``re:`` are regular expressions compiled exactly as written (the code-rot
+# markers are word-bounded and case-sensitive, so the ordinary word "hack" is not
+# a hit); all others are literal, case-insensitive substrings. This is the one
+# list: the boundary validator (check.py) scans manifest artifacts against it
+# too. A gate extends it with ``--blocked-phrases <file>``.
 DEFAULT_BLOCKED_PHRASES = (
     "trust me",
     "works on my machine",
@@ -77,6 +80,26 @@ DEFAULT_BLOCKED_PHRASES = (
     r"re:\bHACK\b",
 )
 
+
+def compile_blocked_phrases(phrases: Sequence[str]) -> tuple[List[str], List[re.Pattern]]:
+    """Split a phrase list into lowercase literals and compiled ``re:`` patterns.
+
+    A pattern that does not compile raises ``ValueError``: a rule the gate cannot
+    apply must stop the gate, because skipping it would still print a clean scan.
+    """
+    literals: List[str] = []
+    regexes: List[re.Pattern] = []
+    for entry in phrases:
+        if entry.startswith("re:"):
+            try:
+                regexes.append(re.compile(entry[3:]))
+            except re.error as exc:
+                raise ValueError(f"blocked-phrase entry {entry!r} is not a valid regular expression: {exc}") from exc
+        else:
+            literals.append(entry.lower())
+    return literals, regexes
+
+
 # Tokens that signal a package adds or changes a cross-cutting runtime
 # intervention (harness-doctrine §5). Their presence alone is not a defect — it
 # only triggers the §5 structural check for a layer citation + regression note.
@@ -86,8 +109,10 @@ _INTERVENTION_MARKERS = re.compile(
     r"trajectory\s+regulation|guard\s+boundary|freeze\s+boundary)\b",
     re.IGNORECASE,
 )
+# A word boundary needs a word character on one side and the section sign is not
+# one, so only the alternatives that begin with a word are anchored on the left.
 _LAYER_CITATION = re.compile(
-    r"\b(?:Layer\s*[1-4]|§\s*[1-5]|harness-doctrine)\b", re.IGNORECASE
+    r"(?:\bLayer\s*[1-4]|§\s*[1-5]|\bharness-doctrine)\b", re.IGNORECASE
 )
 _REGRESSION_NOTE = re.compile(r"\bregression\b", re.IGNORECASE)
 
@@ -118,14 +143,31 @@ class Finding:
 
 @dataclass
 class ArtifactSpec:
-    """A required (or conditional) package artifact, matched by filename glob
-    and/or a content marker regex.
+    """A required (or conditional) package artifact: found by file name, proved
+    by what the file contains, and held to one file per slot.
+
+    patterns:       shell globs matched against the file's own name, never its
+                    directory components, so ``latest/x.md`` does not answer to
+                    ``*test*.md``.
+    content_marker: a regex, case-insensitive, that must match on whole words:
+                    letters and digits may not continue it, so ``pass`` is not
+                    found in ``password`` (``pass_rate`` and ``pass-rate`` count).
+    fields:         packet field names (``Outcome``, ``Findings``) that must each
+                    open a line as ``Name:``. This is the structural proof; a
+                    common word in prose is not.
 
     requirement:
       - "required":    absence is a MAJOR FAIL.
       - "conditional": absence is an INFO UNCHECKED — the engine cannot know
         whether this artifact is in scope (e.g. API contracts only when
         endpoints exist), so the model must confirm. Presence is a PASS.
+
+    evidence_key and stages name the contracts that decide whether the slot is
+    optional, so a wrapper states where the condition lives instead of copying
+    it: ``evidence_key`` is a gates.yaml key a submitter may waive at this
+    boundary, ``stages`` are the pipelines.yaml stages that produce the file. A
+    required slot whose key is waivable, or whose every stage carries a ``when``,
+    is held as conditional (see ``Contracts``).
     """
 
     key: str
@@ -133,15 +175,22 @@ class ArtifactSpec:
     patterns: Sequence[str]
     content_marker: Optional[str] = None
     requirement: str = "required"
+    fields: Sequence[str] = ()
+    evidence_key: Optional[str] = None
+    stages: Sequence[str] = ()
 
 
 @dataclass
 class Manifest:
-    """A boundary's deterministic acceptance shape, declared by each gate."""
+    """A boundary's deterministic acceptance shape, declared by each gate.
+
+    ``pipeline`` names the pipelines.yaml pipeline that closes at this boundary;
+    without it a slot's ``evidence_key`` and ``stages`` cannot be looked up."""
 
     boundary: str
     sub_orchestrator: str
     artifacts: Sequence[ArtifactSpec] = field(default_factory=tuple)
+    pipeline: Optional[str] = None
 
 
 @dataclass
@@ -303,23 +352,107 @@ def _parse_yaml_block(block: List[str]) -> dict:
 
 
 # =============================================================================
+# Project root and package containment
+# =============================================================================
+
+# A project root is recognised by one of these markers. harness/hooks/_state.py
+# keeps the same three; the engine does not import the hooks (they fail open, a
+# gate fails loud), and test_gate_wrappers.py fails when the two tuples drift.
+ROOT_MARKERS = ("skillset-saves", ".harness-state", ".git")
+
+
+def find_project_root(start: Path) -> Optional[Path]:
+    """Nearest ancestor of ``start`` (itself included) holding a project marker."""
+    for candidate in (start, *start.parents):
+        try:
+            if any((candidate / marker).exists() for marker in ROOT_MARKERS):
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+class PackageRefused(ValueError):
+    """The package directory cannot be read: exit 2, never a pass."""
+
+
+def resolve_package_dir(raw: str, cwd: Optional[Path] = None) -> Path:
+    """Confine the untrusted <package-dir> argument to an existing directory
+    inside the project before the engine reads it.
+
+    Saves are written to ``<project>/skillset-saves/runs/<run>/<phase>``. That is
+    inside the project but not below the catalog: a vendored copy sits within the
+    project and an installed one (``~/.agents/skills``) beside it. So the project
+    is found from where the gate is run, never from this file: the nearest marked
+    ancestor of the working directory, or of the package itself when the working
+    directory is in no project. ``resolve`` folds ``..`` and follows symlinks
+    first, so neither leads out of the project. Enforcing this in code, not only
+    in SKILL.md prose, stops a manipulated context from pointing the gate at a
+    non-existent path or at files outside the project.
+
+    ``cwd`` is the directory the project is searched from; it defaults to the
+    process's own and exists so a test can name another."""
+    try:
+        resolved = Path(raw).resolve()
+        is_dir = resolved.is_dir()
+    except (OSError, ValueError) as exc:  # an embedded NUL, a name too long
+        raise PackageRefused(f"<package-dir> cannot be read: {raw[:200]!r} ({exc})") from exc
+    if not is_dir:
+        raise PackageRefused(
+            f"<package-dir> does not exist or is not a directory: {raw!r}")
+    try:
+        here = (cwd or Path.cwd()).resolve()
+    except OSError as exc:
+        raise PackageRefused(f"cannot read the working directory: {exc}") from exc
+    root = find_project_root(here) or find_project_root(resolved)
+    if root is None:
+        raise PackageRefused(
+            f"cannot locate a project root (a directory holding skillset-saves/, "
+            f".harness-state/ or .git) above the working directory or {resolved}, so "
+            f"<package-dir> containment cannot be verified; refusing to read it.")
+    if root not in (resolved, *resolved.parents):
+        raise PackageRefused(
+            f"<package-dir> {resolved} is outside the project {root}; run the gate "
+            f"from the project that holds the package. Refusing to read it.")
+    return resolved
+
+
+# =============================================================================
 # Package discovery
 # =============================================================================
+
+def _leaves(path: Path, real_root: Path) -> bool:
+    """True when ``path`` resolves outside ``real_root``, or cannot be resolved."""
+    try:
+        path.resolve().relative_to(real_root)
+    except (OSError, ValueError):
+        return True
+    return False
+
+
+def find_escaping_links(root: Path) -> List[Path]:
+    """Symlinks and junctions inside the package whose target leaves it."""
+    real_root = root.resolve()
+    return [p for p in sorted(root.rglob("*"))
+            if (p.is_symlink() or p.is_junction()) and _leaves(p, real_root)]
+
 
 def iter_all_files(root: Path) -> List[Path]:
     """Every regular file under the package (JSON evidence records and HTML
     prototypes included), sorted for stable output. Used for artifact
-    presence; lineage and phrase scans use the text-only enumeration."""
-    return [p for p in sorted(root.rglob("*")) if p.is_file()]
+    presence; lineage and phrase scans use the text-only enumeration. A member
+    that resolves outside the package is left out, so the gate reads what the
+    package contains and nothing a link points at; ``find_escaping_links``
+    reports the links."""
+    real_root = root.resolve()
+    return [p for p in sorted(root.rglob("*"))
+            if p.is_file() and not _leaves(p, real_root)]
 
 
 def iter_package_files(root: Path) -> List[Path]:
     """All readable text files under the package, sorted for stable output."""
-    files: List[Path] = []
-    for p in sorted(root.rglob("*")):
-        if p.is_file() and p.suffix.lower() in _TEXT_SUFFIXES:
-            files.append(p)
-    return files
+    return [p for p in iter_all_files(root)
+            if p.suffix.lower() in _TEXT_SUFFIXES]
 
 
 def _read(path: Path) -> str:
@@ -334,55 +467,274 @@ def _rel(path: Path, root: Path) -> str:
 
 
 # =============================================================================
+# Contracts a manifest derives its optional slots from
+# =============================================================================
+
+class ContractsUnreadable(Exception):
+    """gates.yaml or pipelines.yaml could not be read from the catalog."""
+
+
+def _mapping(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+class Contracts:
+    """What gates.yaml and pipelines.yaml say about which artifacts are optional.
+
+    Read from the catalog this engine ships in (two levels above this file), so a
+    wrapper cites a key or a stage instead of restating its condition, and a
+    change to either file reaches every gate that cites it."""
+
+    def __init__(self, gates: dict, pipelines: dict) -> None:
+        self.gates = gates
+        self.pipelines = pipelines
+
+    @classmethod
+    def load(cls, catalog: Optional[Path] = None) -> "Contracts":
+        root = catalog or Path(__file__).resolve().parents[2]
+        scripts = str(root / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        try:
+            from data_formats import load_data  # stdlib only, ships in scripts/
+            gates = load_data(root / "gates.yaml")
+            pipelines = load_data(root / "pipelines.yaml")
+        except (ImportError, ValueError) as exc:  # DataFormatError is a ValueError
+            raise ContractsUnreadable(f"{type(exc).__name__}: {exc}") from exc
+        if not isinstance(gates, dict) or not isinstance(pipelines, dict):
+            raise ContractsUnreadable("gates.yaml and pipelines.yaml must be mappings")
+        return cls(gates, pipelines)
+
+    def _pipeline(self, name: str) -> dict:
+        return _mapping(_mapping(self.pipelines.get("pipelines")).get(name))
+
+    def boundary_of(self, pipeline: str) -> Optional[str]:
+        boundary = self._pipeline(pipeline).get("boundary")
+        return boundary if isinstance(boundary, str) else None
+
+    def waiver(self, boundary: str, key: str) -> Optional[str]:
+        """The reason a submitter may waive ``key`` at ``boundary``, if one is sanctioned."""
+        spec = _mapping(_mapping(self.gates.get("boundaries")).get(boundary))
+        if key in (spec.get("no_fallback") or ()):
+            return None
+        for table in (spec.get("fallback_values"), self.gates.get("fallback_values")):
+            reasons = _mapping(table).get(key)
+            if isinstance(reasons, list) and reasons and isinstance(reasons[0], str):
+                return reasons[0]
+        return None
+
+    def stage_condition(self, pipeline: str, stage: str) -> Optional[str]:
+        """The ``when`` that gates ``stage``, or None when the stage always runs."""
+        stages = self._pipeline(pipeline).get("stages")
+        for entry in stages if isinstance(stages, list) else ():
+            if isinstance(entry, dict) and entry.get("step") == stage:
+                when = entry.get("when")
+                return when if isinstance(when, str) and when.strip() else None
+        return None
+
+
+def _contracts_for(manifest: Manifest, report: Report) -> Optional[Contracts]:
+    """The contracts, read only when a slot cites one. When they cannot be read
+    every slot keeps its declared requirement: stricter, never looser."""
+    if not manifest.pipeline or not any(
+            spec.evidence_key or spec.stages for spec in manifest.artifacts):
+        return None
+    try:
+        return Contracts.load()
+    except ContractsUnreadable as exc:
+        report.add(Finding(
+            code="CONTRACTS_UNREADABLE", severity="minor", status=UNCHECKED,
+            message=(f"Could not read gates.yaml / pipelines.yaml ({exc}); artifacts "
+                     f"those files make optional are held to their declared requirement."),
+            location="package",
+        ))
+        return None
+
+
+def _optional_because(spec: ArtifactSpec, manifest: Manifest,
+                      contracts: Optional[Contracts]) -> str:
+    """Why the contracts make this slot optional, or "" when they do not."""
+    if contracts is None or not manifest.pipeline:
+        return ""
+    reasons: List[str] = []
+    boundary = contracts.boundary_of(manifest.pipeline)
+    if boundary and spec.evidence_key:
+        waiver = contracts.waiver(boundary, spec.evidence_key)
+        if waiver:
+            reasons.append(f'gates.yaml lets a submitter waive {spec.evidence_key} '
+                           f'at {boundary} ("{waiver}")')
+    if spec.stages:
+        conditions = [contracts.stage_condition(manifest.pipeline, stage)
+                      for stage in spec.stages]
+        if all(conditions):
+            reasons.append("pipelines.yaml runs " + " and ".join(
+                f'{stage} only when "{when}"'
+                for stage, when in zip(spec.stages, conditions, strict=True)))
+    return "; ".join(reasons)
+
+
+# =============================================================================
 # Individual deterministic checks
 # =============================================================================
+
+def _named(path: Path, patterns: Sequence[str]) -> bool:
+    """Does the file's own name match a pattern? Directory names never count."""
+    name = path.name.lower()
+    return any(fnmatch.fnmatchcase(name, pattern.lower()) for pattern in patterns)
+
+
+def _field_line(name: str) -> re.Pattern:
+    """A packet field: ``name`` opening a line (list, quote and emphasis marks
+    allowed) and followed by a colon, so frontmatter keys count too."""
+    return re.compile(r"^[ \t>*_|`\-]*" + re.escape(name) + r"[ \t*_`]*:",
+                      re.IGNORECASE | re.MULTILINE)
+
+
+def _whole_word(marker: str) -> re.Pattern:
+    return re.compile(r"(?<![^\W_])(?:" + marker + r")(?![^\W_])", re.IGNORECASE)
+
+
+def _structure_gaps(texts: Dict[Path, str], path: Path, spec: ArtifactSpec) -> List[str]:
+    """What the file lacks of the structure the slot asks for; empty when it
+    qualifies. ``texts`` caches reads across slots."""
+    if not (spec.content_marker or spec.fields):
+        return []
+    if path not in texts:
+        texts[path] = _read(path)
+    text = texts[path]
+    gaps = [f"the field {name}:" for name in spec.fields
+            if not _field_line(name).search(text)]
+    if spec.content_marker and not _whole_word(spec.content_marker).search(text):
+        gaps.append(f"a whole-word match for /{spec.content_marker}/")
+    return gaps
+
+
+def _assign(candidates: List[List[Path]], real: Dict[Path, Path]) -> List[Optional[Path]]:
+    """Give each slot a file of its own, re-routing earlier slots when a later
+    one needs their file (bipartite matching over resolved paths).
+
+    A file names one artifact, not several: a single stand-in whose name and text
+    satisfy five slots would otherwise turn five missing lenses green, and a
+    symlink alias of a file is the same file. Slots are placed in list order, so
+    callers list the required slots first."""
+    holder: Dict[Path, int] = {}
+    assigned: Dict[int, Path] = {}
+
+    def place(slot: int, tried: Set[Path]) -> bool:
+        for path in candidates[slot]:
+            key = real[path]
+            if key in tried:
+                continue
+            tried.add(key)
+            if key not in holder or place(holder[key], tried):
+                holder[key] = slot
+                assigned[slot] = path
+                return True
+        return False
+
+    for slot in range(len(candidates)):
+        place(slot, set())
+    return [assigned.get(slot) for slot in range(len(candidates))]
+
+
+def _near_misses(root: Path, lacking: Dict[Path, List[str]],
+                 taken: List[Tuple[Path, str]]) -> str:
+    """Name-matching files that did not fill a slot, and why, so a REVISE can say
+    what to fix and not only what is absent."""
+    notes = [f"{_rel(path, root)} lacks {' and '.join(gaps)}"
+             for path, gaps in lacking.items()]
+    notes += [f"{_rel(path, root)} is already the {label}" for path, label in taken]
+    if not notes:
+        return ""
+    more = f" (+{len(notes) - 3} more)" if len(notes) > 3 else ""
+    return "; near misses: " + "; ".join(notes[:3]) + more
+
+
+def check_package_links(root: Path, report: Report) -> None:
+    """A link out of the package lets a file elsewhere stand in for a member, so
+    it is a defect in itself and is never read."""
+    report.checks_run.append("package_links")
+    for link in find_escaping_links(root):
+        rel = _rel(link, root)
+        report.add(Finding(
+            code="LINK_ESCAPES_PACKAGE", severity="major", status=FAIL,
+            message=(f"{rel} is a link to {link.readlink()}, which leaves the "
+                     f"package. It is not read; ship the file itself."),
+            location=rel,
+        ))
+
 
 def check_required_artifacts(root: Path, manifest: Manifest,
                              report: Report) -> None:
     report.checks_run.append("required_artifacts")
+    specs = list(manifest.artifacts)
     files = iter_all_files(root)
-    rels = [_rel(f, root) for f in files]
-    for spec in manifest.artifacts:
-        match = _find_artifact(files, rels, spec)
-        if match is not None:
+    real = {f: f.resolve() for f in files}
+    contracts = _contracts_for(manifest, report)
+    why = [_optional_because(spec, manifest, contracts) for spec in specs]
+    optional = [spec.requirement == "conditional" or bool(reason)
+                for spec, reason in zip(specs, why, strict=True)]
+
+    texts: Dict[Path, str] = {}
+    candidates: List[List[Path]] = []
+    lacking: List[Dict[Path, List[str]]] = []
+    for spec in specs:
+        named = [f for f in files if _named(f, spec.patterns)]
+        gaps = {f: _structure_gaps(texts, f, spec) for f in named}
+        candidates.append([f for f in named if not gaps[f]])
+        lacking.append({f: g for f, g in gaps.items() if g})
+
+    order = sorted(range(len(specs)), key=lambda i: optional[i])
+    placed = _assign([candidates[i] for i in order], real)
+    chosen = {i: placed[n] for n, i in enumerate(order)}
+    holder = {real[p]: i for i, p in chosen.items() if p is not None}
+
+    for i, spec in enumerate(specs):
+        if chosen[i] is not None:
             report.add(Finding(
                 code="ARTIFACT_PRESENT", severity="info", status=PASS,
-                message=f"{spec.label} present.", location=match,
+                message=f"{spec.label} present.", location=_rel(chosen[i], root),
             ))
-        elif spec.requirement == "conditional":
+            continue
+        near = _near_misses(root, lacking[i], [
+            (f, specs[holder[real[f]]].label) for f in candidates[i]])
+        if optional[i]:
+            when = (f"{why[i]}. Confirm that condition was false for this "
+                    f"submission, or that a valid _skip-record.md or the "
+                    f"sanctioned waiver covers it" if why[i] else
+                    "This artifact is required only when in scope — confirm "
+                    "whether this submission needs it")
             report.add(Finding(
                 code="ARTIFACT_CONDITIONAL", severity="info", status=UNCHECKED,
-                message=(f"{spec.label} not found. This artifact is required only "
-                         f"when in scope — confirm whether this submission needs it."),
+                message=f"{spec.label} not found. {when}{near}.",
                 location="package",
             ))
         else:
             report.add(Finding(
                 code="ARTIFACT_MISSING", severity="major", status=FAIL,
                 message=(f"Required artifact missing: {spec.label} "
-                         f"(expected one of: {', '.join(spec.patterns)})."),
+                         f"(expected one of: {', '.join(spec.patterns)}{near})."),
                 location="package",
             ))
 
 
-def _find_artifact(files: List[Path], rels: List[str],
-                   spec: ArtifactSpec) -> Optional[str]:
-    marker = re.compile(spec.content_marker, re.IGNORECASE) if spec.content_marker else None
-    for path, rel in zip(files, rels):
-        name = path.name
-        if not any(_glob_match(name, pat) or _glob_match(rel, pat)
-                   for pat in spec.patterns):
-            continue
-        if marker is None:
-            return rel
-        if marker.search(_read(path)):
-            return rel
+def _revision_token(value: object) -> Optional[str]:
+    """A revision as a comparable token. Both ``3`` (handoff templates) and ``r3``
+    (gate manifests) are in use, so a bare number and a label count alike and
+    neither is coerced into the other."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
     return None
 
 
-def _glob_match(value: str, pattern: str) -> bool:
-    import fnmatch
-    return fnmatch.fnmatch(value.lower(), pattern.lower())
+def _submission_token(value: object) -> Optional[str]:
+    if isinstance(value, str) and value.strip() and value.strip().upper() != "PENDING":
+        return value.strip()
+    return None
 
 
 def check_lineage(root: Path, report: Report) -> None:
@@ -393,16 +745,16 @@ def check_lineage(root: Path, report: Report) -> None:
     mechanical signature of a contaminated, mixed-revision submission.
     """
     report.checks_run.append("lineage")
-    revisions: Dict[int, List[str]] = {}
+    revisions: Dict[str, List[str]] = {}
     submission_ids: Dict[str, List[str]] = {}
     for path in iter_package_files(root):
         fm = parse_frontmatter(_read(path))
         rel = _rel(path, root)
-        rev = fm.get("revision")
-        if isinstance(rev, int):
+        rev = _revision_token(fm.get("revision"))
+        if rev is not None:
             revisions.setdefault(rev, []).append(rel)
-        sid = fm.get("submission_id")
-        if isinstance(sid, str) and sid and sid.upper() != "PENDING":
+        sid = _submission_token(fm.get("submission_id"))
+        if sid is not None:
             submission_ids.setdefault(sid, []).append(rel)
 
     if len(revisions) > 1:
@@ -483,16 +835,7 @@ def scan_blocked_phrases(root: Path, report: Report,
     phrase inside the package is a blocking defect (harness-doctrine note).
     """
     report.checks_run.append("blocked_phrases")
-    literals: List[str] = []
-    regexes: List[re.Pattern] = []
-    for entry in phrases:
-        if entry.startswith("re:"):
-            try:
-                regexes.append(re.compile(entry[3:]))
-            except re.error:
-                continue
-        else:
-            literals.append(entry.lower())
+    literals, regexes = compile_blocked_phrases(phrases)
 
     hits = 0
     for path in iter_package_files(root):
@@ -524,11 +867,46 @@ def scan_blocked_phrases(root: Path, report: Report,
         ))
 
 
+def _read_record(path: Path) -> dict:
+    """A record as a mapping: Markdown frontmatter, or a JSON object such as the
+    verdict ``harness/gatekeeper/check.py --verdict-out`` writes."""
+    text = _read(path)
+    record = parse_frontmatter(text)
+    if record:
+        return record
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _declared_identity(root: Path) -> Tuple[Set[str], Set[str]]:
+    """The submission ids and revisions the package declares: in the frontmatter
+    of its Markdown and in its own manifest.json, where a package that ships
+    evidence records its identity."""
+    sids: Set[str] = set()
+    revs: Set[str] = set()
+    for path in iter_all_files(root):
+        if path.suffix.lower() not in _TEXT_SUFFIXES and path != root / "manifest.json":
+            continue
+        record = _read_record(path)
+        sid = _submission_token(record.get("submission_id"))
+        rev = _revision_token(record.get("revision"))
+        if sid is not None:
+            sids.add(sid)
+        if rev is not None:
+            revs.add(rev)
+    return sids, revs
+
+
 def check_idempotency(root: Path, report: Report,
                       prior_path: Optional[Path]) -> None:
     """Compare the current submission against a prior verdict record so the same
     package is not re-gated under conflicting rationale, and so a reused
-    submission id with changed contents is flagged as silent drift.
+    submission id with changed contents is flagged as silent drift. Two packages
+    are called different only when both declare an identity; a side that declares
+    none leaves the comparison undetermined, never a pass.
     """
     report.checks_run.append("idempotency")
     if prior_path is None:
@@ -547,21 +925,18 @@ def check_idempotency(root: Path, report: Report,
         ))
         return
 
-    prior = parse_frontmatter(_read(prior_path))
-    prior_sid = prior.get("submission_id")
-    prior_rev = prior.get("revision")
+    prior = _read_record(prior_path)
+    prior_sid = _submission_token(prior.get("submission_id"))
+    prior_rev = _revision_token(prior.get("revision"))
     prior_verdict = prior.get("verdict")
+    if prior_verdict is None and isinstance(prior.get("pass"), bool):
+        prior_verdict = "mechanical pass" if prior["pass"] else "mechanical fail"
 
-    cur_sids, cur_revs = set(), set()
-    for path in iter_package_files(root):
-        fm = parse_frontmatter(_read(path))
-        if isinstance(fm.get("submission_id"), str):
-            cur_sids.add(fm["submission_id"])
-        if isinstance(fm.get("revision"), int):
-            cur_revs.add(fm["revision"])
-
-    same_sid = prior_sid in cur_sids if prior_sid else False
-    same_rev = prior_rev in cur_revs if isinstance(prior_rev, int) else False
+    cur_sids, cur_revs = _declared_identity(root)
+    known_sid = prior_sid is not None and bool(cur_sids)
+    known_rev = prior_rev is not None and bool(cur_revs)
+    same_sid = known_sid and prior_sid in cur_sids
+    same_rev = known_rev and prior_rev in cur_revs
 
     if same_sid and same_rev:
         report.add(Finding(
@@ -571,7 +946,7 @@ def check_idempotency(root: Path, report: Report,
                      f"not re-gate under new rationale."),
             location=str(prior_path),
         ))
-    elif same_sid and not same_rev:
+    elif same_sid and known_rev:
         report.add(Finding(
             code="SILENT_DRIFT", severity="major", status=FAIL,
             message=(f"Submission id '{prior_sid}' is reused but the revision "
@@ -579,11 +954,23 @@ def check_idempotency(root: Path, report: Report,
                      f"Prior verdict is non-transferable; require a fresh delta."),
             location=str(prior_path),
         ))
-    else:
+    elif known_sid and not same_sid:
         report.add(Finding(
             code="NEW_SUBMISSION", severity="info", status=PASS,
             message=("Submission id/revision differ from the prior verdict; "
                      "evaluating as a fresh submission."),
+            location=str(prior_path),
+        ))
+    else:
+        report.add(Finding(
+            code="IDEMPOTENCY_UNDETERMINED", severity="minor", status=UNCHECKED,
+            message=(f"Cannot confirm idempotency: the prior verdict and the package "
+                     f"do not both declare a readable submission_id and revision "
+                     f"(Markdown frontmatter, a JSON record, or the package's "
+                     f"manifest.json). Prior: submission_id={prior_sid!r} "
+                     f"revision={prior_rev!r}. Package: submission_ids="
+                     f"{sorted(cur_sids)} revisions={sorted(cur_revs)}. Verify "
+                     f"manually."),
             location=str(prior_path),
         ))
 
@@ -649,7 +1036,11 @@ def check_harness_doctrine(root: Path, report: Report) -> None:
 
 def load_blocked_phrases(extra_path: Optional[Path]) -> List[str]:
     phrases = list(DEFAULT_BLOCKED_PHRASES)
-    if extra_path and extra_path.exists():
+    if extra_path is not None:
+        # A mistyped path used to be ignored, which left the extra rules off and
+        # the report clean.
+        if not extra_path.is_file():
+            raise ValueError(f"blocked-phrases file not found: {extra_path}")
         for line in _read(extra_path).splitlines():
             s = line.strip()
             if s and not s.startswith("#"):
@@ -668,6 +1059,7 @@ def run_gate(root: Path, manifest: Manifest,
             location=str(root),
         ))
         return report
+    check_package_links(root, report)
     if not iter_all_files(root):
         report.add(Finding(
             code="PACKAGE_EMPTY", severity="critical", status=FAIL,
@@ -709,10 +1101,13 @@ def render_markdown(report: Report) -> str:
 
 def build_arg_parser(description: str) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=description)
-    p.add_argument("package", help="Path to the package directory to validate.")
+    p.add_argument("package", help="Path to the package directory to validate; it "
+                                   "must sit inside the project (see "
+                                   "resolve_package_dir).")
     p.add_argument("--prior", default=None,
-                   help="Path to a prior gatekeeper verdict / handoff file for "
-                        "idempotency comparison.")
+                   help="Path to a prior gatekeeper verdict for idempotency "
+                        "comparison: Markdown frontmatter or the JSON record "
+                        "check.py --verdict-out writes.")
     p.add_argument("--blocked-phrases", default=None,
                    help="Path to an extra blocked-phrases list (one per line; "
                         "lines beginning 're:' are regexes).")
@@ -721,17 +1116,33 @@ def build_arg_parser(description: str) -> argparse.ArgumentParser:
     return p
 
 
-def main_with_manifest(manifest: Manifest, argv: Optional[List[str]] = None) -> int:
-    """Entry point each gate's check.py calls with its boundary manifest."""
+def main_with_manifest(manifest: Manifest, argv: Optional[List[str]] = None,
+                       extra_checks: Sequence[Callable[[Path, Report], None]] = ()) -> int:
+    """Entry point each gate's check.py calls with its boundary manifest.
+
+    ``extra_checks`` are gate-specific checks run, after the shared ones, on a
+    package that could be read (check_redesign.py's mock-first layout). Exit 2
+    always means the gate could not run: a refused package directory, bad
+    arguments, or an internal error; it is never a verdict."""
     parser = build_arg_parser(f"Deterministic gate check for {manifest.boundary}.")
     args = parser.parse_args(argv)
     try:
+        package = resolve_package_dir(args.package)
+    except PackageRefused as exc:
+        sys.stderr.write(f"ERROR: {exc}\n")
+        return 2
+    try:
         report = run_gate(
-            Path(args.package),
+            package,
             manifest,
             prior_path=Path(args.prior) if args.prior else None,
             blocked_phrases_path=Path(args.blocked_phrases) if args.blocked_phrases else None,
         )
+        # An empty or missing package has already failed critically and a
+        # layout check would only repeat it.
+        if not any(f.code in ("PACKAGE_NOT_FOUND", "PACKAGE_EMPTY") for f in report.findings):
+            for check in extra_checks:
+                check(package, report)
     except Exception as exc:  # fail loud — never a silent pass
         err = {
             "boundary": manifest.boundary,

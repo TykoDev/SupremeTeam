@@ -104,7 +104,7 @@ destination  python skills/scripts/output_paths.py --run-id 2026-04-19-notify \
 sha256       5c322d7d4428e465c252d20c95f9f926e3742f16e7446bc99cd7f93474ee481f
 
 register     python skills/harness/hooks/save_run.py checkpoint \
-               --run-id 2026-04-19-notify --owner cross-check-build-confirm \
+               --run-id 2026-04-19-notify --owner admiral \
                --evidence skillset-saves/runs/2026-04-19-notify/build/reports/report_completeness.md
 ```
 

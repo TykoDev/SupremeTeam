@@ -1,0 +1,78 @@
+# Supreme Team installer item list: the one list install.sh and install.ps1 both
+# read. scripts/test_install.py ties it to skills/ and to both installers, so a
+# skill added to the tree cannot be left out of an install without a test failing.
+#
+# One record per line, fields separated by spaces. Names are single path
+# components under skills/.
+#
+#   core <name>            copied on every install
+#   seed <name>            a core file created when it is missing and never
+#                          replaced, because the copy on disk belongs to the user
+#   supersedes <seed> <file>...
+#                          copies of <seed> that earlier releases shipped, kept in
+#                          scripts/superseded/. A seed that is byte for byte one of
+#                          them was never edited, so it is replaced like any file
+#                          the installer owns; any other copy stays the user's
+#   team <team> <name>...  copied when the team is selected (default: all teams)
+#   legacy <dir> <name>... a directory an older layout created; it is recognised
+#                          only while it holds nothing but these entries, and is
+#                          then moved to the backup folder, never deleted
+
+# Core components are always installed: the Admiral pipeline spine, the runtime
+# harness (hooks, save lifecycle, gate validators), the orchestration contracts
+# (gates, pipelines, ownership, manifests, canonical contracts, tech-stack
+# registry, shared scripts, validation suites), the root doctrine files, and the
+# licence. An install carries only skills/, so the notice the MIT licence asks to
+# travel with copies is skills/LICENSE, a byte-for-byte copy of the repository's
+# LICENSE that scripts/test_install.py keeps identical.
+core admiral
+core gatekeeper-admiral
+core session-memory
+core investigate
+core skill-maker
+core audit-improve
+core taste
+core harness
+core contracts
+core scripts
+core validation
+core tech-stacks
+core gates.yaml
+core pipelines.yaml
+core ownership.yaml
+core save-ownership.yaml
+core team-manifest.yaml
+core runtime-manifest.yaml
+core package-manifest.yaml
+core execution-contract.md
+core design-doctrine.md
+core grill-me-doctrine.md
+core harness-doctrine.md
+core performance-doctrine.md
+core routing-doctrine.md
+core save-protocol.md
+core taste-doctrine.md
+core LICENSE
+
+# The MCP registry ships as a blank template that admiral fills in on first use.
+# Releases before the blank template shipped a snapshot of one machine's tools, and
+# an install that still holds one untouched gets the template. When the template
+# changes, keep the text it replaces in scripts/superseded/ and name it here.
+seed mcp-tools.md
+supersedes mcp-tools.md mcp-tools.2026-06-08.md mcp-tools.2026-06-30.md mcp-tools.2026-09-08.md
+
+# Friendly team name -> paths under skills/.
+team design design
+team build build
+team review review
+team browser browse open-browser setup-browser-cookies pair-agent
+team release ship land-and-deploy setup-deploy document-release
+team safety guard careful freeze unfreeze
+team testing qa qa-only benchmark
+
+# Directories from older Supreme Team layouts that are no longer shipped.
+legacy browser-automation browse open-browser pair-agent setup-browser-cookies
+legacy release-and-deployment ship land-and-deploy setup-deploy document-release
+legacy safety-guardrails guard careful freeze unfreeze
+legacy testing-and-qa qa qa-only benchmark
+legacy references evidence-standards.md handoff-templates.md universal-frameworks.md

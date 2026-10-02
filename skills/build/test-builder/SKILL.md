@@ -7,7 +7,7 @@ description: >-
   `build/build-management`, not directly, even when the request is only "add
   some tests". Defers feature code to `build/bob-the-builder`, failure diagnosis
   to `build/debugger`, and startup and runtime health to `build/health-check`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 

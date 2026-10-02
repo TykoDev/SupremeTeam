@@ -208,6 +208,15 @@ for each configuration (mean ± stddev, delta). To generate
 `benchmark.json` manually, see `schemas.md` for the exact schema the viewer expects.
 Put each with_skill entry *before* its baseline counterpart in the output.
 
+It reads the layout in section 2 as it is: each `eval-<ID>-<name>/<config>/` directory that holds
+a `grading.json` is one run. Repeated runs of a configuration go in `run-<N>/` subdirectories
+of it instead (`with_skill/run-1/grading.json`, `run-2/...`), and `runs_per_configuration` is
+counted from what it finds. Tokens come from `timing.json`, the only place they are captured. A
+duration or token count nobody recorded is `null` and is never averaged in as zero, and a
+configuration with no graded run shows as `n/a` and has no delta. When it finds no graded run
+at all it prints an error, writes nothing and exits 1, so an empty benchmark cannot pass for a
+real one.
+
 ---
 
 ## 7. Launching the viewer
@@ -232,6 +241,14 @@ The "Benchmark" tab shows pass rates, timing, token usage for each configuration
 
 Navigation: prev/next buttons or arrow keys. When done, "Submit All Reviews" saves
 feedback to `feedback.json`.
+
+The workspace is untrusted input, because an output is whatever the skill under test
+wrote. The viewer never follows a symlink or junction (a link shows as "Symlink not
+followed"), embeds the data so that no string in it, `</script>` included, can end the page's
+script, and its server answers only `localhost` and `127.0.0.1` names, refuses a write from
+another origin or that is not `application/json`, and caps the size of a feedback body. If
+the port asked for is busy it serves on a free one and prints the URL; it never stops
+whatever holds the busy port.
 
 ### In Cowork specifically
 

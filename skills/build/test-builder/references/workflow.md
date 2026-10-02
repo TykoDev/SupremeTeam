@@ -85,8 +85,8 @@ Procedure:
    failing run captures its own error text:
    `python -m unittest discover -s tests -p "test_*.py" > <log> 2>&1`.
 3. Register the hash through a `session-memory` checkpoint —
-   `python skills/harness/hooks/save_run.py checkpoint --run-id <run-id> --owner test-builder --evidence <path>`
-   — so the same writer that owns the run record owns the digest.
+   `python skills/harness/hooks/save_run.py checkpoint --run-id <run-id> --owner admiral --evidence <path>`
+   (`--owner` names the run's lock holder, admiral, not the caller; any other owner is refused with `lock is owned by 'admiral'`) — so the same writer that owns the run record owns the digest.
 4. Build the probe record: `artifacts` naming the manifest-relative log path,
    `result.status: pass`, `tool`, `command`, `observed_at`, and `inputs` binding
    `{path, sha256}` for each implementation file the suite exercised.

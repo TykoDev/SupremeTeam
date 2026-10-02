@@ -38,8 +38,25 @@ gate spec. Typed records are mostly independent of each other; the ``selection``
 kind is the exception, because what it decides changes what four other keys are
 allowed to carry (see ``check_selection_dependencies``).
 
-Output: a JSON report on stdout. On engine error a JSON object carrying
-"engine_error" is written to stderr instead.
+A manifest inside a run must declare schema 2: an absent or schema-1 version
+fails, and the package is checked as schema 2 anyway so the submitter gets
+every failure at once. A flat package at schema 1 still passes, and the result
+says in ``warnings`` that no typed check ran.
+
+What is verified and what is attested: a typed record is the submitter's own
+statement. The gate checks its shape, that each artifact it names exists and
+matches its digest, that each ``inputs`` entry still hashes to what the record
+says, and that a pass does not sit beside a non-zero exit code. It does not compare
+an artifact's content with the record or re-run anything (``.md`` and ``.txt`` artifacts
+are read for blocked phrases and local links only), and a probe record that binds no inputs is
+listed in ``warnings`` as attested rather than tied to the source it describes.
+
+Output: a JSON report on stdout. On engine error, including any fault inside the
+engine itself, a JSON object carrying "engine_error" is written to stderr and
+nothing is printed to stdout. The report names every input that was not the
+shipped one (``gate_spec_is_shipped``, ``registry_is_shipped``, ``prior_record``);
+its digests are unkeyed, so a stored verdict is not authority by itself and the
+reader re-runs this script against the shipped spec.
 
 Exit codes: 0 = facts pass, 1 = defects found, 2 = engine error.
 """
@@ -51,26 +68,34 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 SKILLS_ROOT = Path(__file__).resolve().parents[2]
 GATE_SPEC_PATH = SKILLS_ROOT / "gates.yaml"
 REGISTRY_PATH = SKILLS_ROOT / "tech-stacks" / "registry.yaml"
-if str(SKILLS_ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(SKILLS_ROOT / "scripts"))
+for _path in (SKILLS_ROOT / "scripts", Path(__file__).resolve().parent):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
+from _gatecheck import DEFAULT_BLOCKED_PHRASES, compile_blocked_phrases  # noqa: E402
 from data_formats import DataFormatError, content_sha256, load_data  # noqa: E402
 
 SUPPORTED_MANIFEST_SCHEMAS = {1, 2}
-BLOCKED = re.compile(r"\b(TODO|FIXME|XXX|HACK)\b|\btrust me\b|\b100% complete\b|\blorem ipsum\b", re.IGNORECASE)
+#: The schema a manifest inside skillset-saves/runs/<run>/<phase>/ must declare.
+RUN_MANIFEST_SCHEMA = 2
+#: The blocked-phrase rule is _gatecheck.py's, so both validators agree on what
+#: a hollow claim is and on which markers are case-sensitive.
+BLOCKED_LITERALS, BLOCKED_MARKERS = compile_blocked_phrases(DEFAULT_BLOCKED_PHRASES)
 MD_LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 FENCED = re.compile(r"```.*?```|~~~.*?~~~", re.DOTALL)
 INLINE_CODE = re.compile(r"`[^`\n]*`")
-HEX64 = re.compile(r"^[0-9a-f]{64}$")
-# A string counts as an artifact reference when it is shaped like a relative
-# file path: no whitespace, an extension, optional directory segments.
-PATH_LIKE = re.compile(r"^(?:\.\.?[/\\])*(?:[\w.\-]+[/\\])*[\w.\-]+\.[A-Za-z0-9]{1,8}$")
+HEX64 = re.compile(r"[0-9a-f]{64}")
+# A string counts as an artifact reference when it is shaped like a file path:
+# no whitespace, an extension, optional directory segments. An absolute, drive
+# or UNC root still counts, because such a path can never be a hashed artifact
+# and must be refused rather than read as prose.
+PATH_LIKE = re.compile(r"^(?:[A-Za-z]:)?(?:[/\\]{1,2}|(?:\.\.?[/\\])*)(?:[\w.\-]+[/\\])*[\w.\-]+\.[A-Za-z0-9]{1,8}$")
 SCANNED_TEXT_SUFFIXES = {".md", ".txt"}
 VERDICTS = {"APPROVED", "REVISE", "ESCALATE"}
 RESULT_STATUSES = {"pass", "fail", "error", "not-run", "unavailable", "inferred"}
@@ -78,6 +103,13 @@ FINDING_SEVERITIES = {"Critical", "Major", "Minor", "Info"}
 FINDING_STATUSES = {"open", "in-progress", "resolved", "verified", "deferred", "not-applicable"}
 #: Default file fields of a variant_set record when the gate spec names none.
 VARIANT_FILES = ("spec", "tokens", "components", "app")
+#: Every evidence type check_typed dispatches. A spec that names another kind is
+#: an engine error: an unknown kind would switch its key's typed validation off
+#: and still print a pass.
+EVIDENCE_KINDS = frozenset({
+    "scan", "render", "probe", "findings", "verdict", "stack_lock", "revision_ref",
+    "preference_diff", "confirmation", "conflict_analysis", "persistence_result", "effective_profile",
+    "consumer_handoff", "variant_set", "selection"})
 
 
 class Engine(ValueError):
@@ -155,6 +187,9 @@ def load_gate_spec(path: Path) -> dict:
     types = spec.get("evidence_types", {})
     if not isinstance(types, dict) or not all(isinstance(v, str) for v in types.values()):
         raise Engine("gate spec evidence_types must map evidence keys to type names")
+    unknown_kinds = sorted({v for v in types.values() if v not in EVIDENCE_KINDS})
+    if unknown_kinds:
+        raise Engine(f"gate spec evidence_types names unknown kinds {unknown_kinds} (known: {sorted(EVIDENCE_KINDS)})")
     policy = spec.get("finding_policy", {})
     if not isinstance(policy, dict):
         raise Engine("gate spec finding_policy must be a JSON object")
@@ -177,6 +212,43 @@ def evidence_strings(value: object) -> list[str]:
 
 def is_path_like(text: str) -> bool:
     return bool(PATH_LIKE.match(text.strip()))
+
+
+def has_blocked_phrase(prose: str) -> bool:
+    """True when prose holds a blocked phrase: literals fold case, ``re:`` markers do not."""
+    folded = prose.lower()
+    return any(literal in folded for literal in BLOCKED_LITERALS) or any(rx.search(prose) for rx in BLOCKED_MARKERS)
+
+
+def filled(value: object) -> bool:
+    """True for a real, non-blank string; null, numbers, lists and mappings are not filled.
+
+    ``str(x.get(f, ""))`` turns an explicit JSON null into the truthy word "None",
+    so every field that means "someone named this" is read through here.
+    """
+    return isinstance(value, str) and bool(value.strip())
+
+
+def utc_today() -> date:
+    """Today in UTC, read once per check; a seam so the freshness tests fix the date instead of racing midnight."""
+    return datetime.now(timezone.utc).date()
+
+
+def parse_date(value: object) -> date | None:
+    """A YYYY-MM-DD string (or the date PyYAML makes of an unquoted one), else None."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(value) if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) else None
+    except ValueError:
+        return None
+
+
+def is_sha256(value: object) -> bool:
+    """True for a lowercase-foldable 64-digit hex string with nothing before or after it."""
+    return isinstance(value, str) and HEX64.fullmatch(value.lower()) is not None
 
 
 def fingerprint(data: dict) -> str:
@@ -205,7 +277,21 @@ class Package:
         self.spec = spec
         self.boundary = spec["boundaries"][boundary_name]
         self.failures: list[str] = []
+        #: Facts about what this pass did not verify; they never fail a package.
+        self.warnings: list[str] = []
         self.schema = self._schema_version()
+        if self._run_layout_dir() is not None and self.schema < RUN_MANIFEST_SCHEMA:
+            # Read as the schema it must be, so the typed checks still run and the
+            # submitter gets every failure in one pass instead of a silent downgrade.
+            declared = data.get("schema_version", "absent")
+            self.failures.append(
+                f"manifest inside a run must declare schema_version {RUN_MANIFEST_SCHEMA} (declared: {declared}); "
+                f"checked as schema {RUN_MANIFEST_SCHEMA}")
+            self.schema = RUN_MANIFEST_SCHEMA
+        elif self.schema < 2:
+            self.warnings.append(
+                "schema 1 manifest: typed records, applicability records, the finding policy, boundary and owner "
+                "were not checked; declare schema_version 2")
         self.root, self.root_kind, self.run_dir, self.project_root = self._evidence_root()
         self.artifact_hashes: dict[str, str] = {}
         self.hashed_ok: set[str] = set()
@@ -217,18 +303,23 @@ class Package:
             raise Engine(f"unsupported manifest schema_version: {raw!r} (supported: {sorted(SUPPORTED_MANIFEST_SCHEMAS)})")
         return raw
 
-    def _evidence_root(self) -> tuple[Path, str, Path | None, Path]:
-        """Resolve the authorised evidence root (see module docstring)."""
-        run_dir = None
+    def _run_layout_dir(self) -> Path | None:
+        """The run directory when the manifest sits anywhere below skillset-saves/runs/<run-id>/, else None.
+
+        Every ancestor is searched. A bounded walk let a manifest three directories below a phase directory read as a
+        detached package, where schema 1 is still accepted and the run's rules (schema 2, ``run_id``, the run as the
+        evidence root) do not apply; such a package with an open Critical finding passed ``review-to-delivery``."""
         node = self.base
-        for _ in range(4):
+        while node.parent != node:
             parent = node.parent
             if parent.name == "runs" and parent.parent.name == "skillset-saves":
-                run_dir = node
-                break
-            if parent == node:
-                break
+                return node
             node = parent
+        return None
+
+    def _evidence_root(self) -> tuple[Path, str, Path | None, Path]:
+        """Resolve the authorised evidence root (see module docstring)."""
+        run_dir = self._run_layout_dir()
         declared = self.data.get("run_id")
         if run_dir is None:
             if self.schema >= 2 and declared is not None and not isinstance(declared, str):
@@ -328,7 +419,7 @@ class Package:
             if not candidate.is_file():
                 self.failures.append(f"missing artifact: {relative}")
                 continue
-            if not HEX64.match(expected.lower()):
+            if not is_sha256(expected):
                 self.failures.append(f"invalid artifact digest: {relative}")
             elif digest(candidate) != expected.lower():
                 self.failures.append(f"artifact hash mismatch: {relative}")
@@ -350,8 +441,15 @@ class Package:
             self.failures.append(f"evidence not waivable: {key}")
             return True
         for field in ("reason", "scope", "decided_by"):
-            if not isinstance(value.get(field), str) or not value.get(field).strip():
+            if not filled(value.get(field)):
                 self.failures.append(f"applicability record incomplete: {key} requires {field}")
+        # The sanctioned wording is the whole waiver; any other reason would let
+        # a submitter waive a scan or a stack lock in its own words.
+        reason = value.get("reason")
+        allowed = self.sanctioned_values(key)
+        if filled(reason) and reason not in allowed:
+            self.failures.append(
+                f"applicability reason not sanctioned: {key} reason {reason!r} is not one of {sorted(allowed)}")
         return True
 
     def sanctioned_values(self, key: str) -> list[str]:
@@ -385,8 +483,8 @@ class Package:
         if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str):
             return value[0] if value[0] in allowed else None
         if isinstance(value, dict) and value.get("applicable") is False:
-            reason = str(value.get("reason", ""))
-            return reason if reason in allowed else None
+            reason = value.get("reason")
+            return reason if isinstance(reason, str) and reason in allowed else None
         return None
 
     def check_evidence(self) -> list[str]:
@@ -410,6 +508,11 @@ class Package:
                     self.failures.append(f"bare fallback string not accepted at schema 2: {key} (use an applicability record)")
                 continue
             refs = evidence_strings(value)
+            # A bare string or list is a file reference only where the key is
+            # artifact-backed; elsewhere it is prose, and a version number or a
+            # hostname is path-shaped without being a file.
+            if key not in artifact_keys and not isinstance(value, dict):
+                refs = []
             path_refs = [item for item in refs if is_path_like(item)]
             # Every declared path reference must be a correctly hashed artifact.
             enforce_refs = key in artifact_keys or self.schema >= 2
@@ -431,7 +534,7 @@ class Package:
 
     # ---------------------------------------------------------------- typed
     def check_typed(self, key: str, kind: str, value: object) -> None:
-        if kind in {"scan", "render", "probe", "audit"}:
+        if kind in {"scan", "render", "probe"}:
             self.check_result_record(key, kind, value)
         elif kind == "findings":
             self.check_findings(key, value)
@@ -451,6 +554,8 @@ class Package:
             self.check_variant_set(key, value)
         elif kind == "selection":
             self.check_selection(key, value)
+        else:
+            raise Engine(f"evidence type {kind!r} for {key} has no validator")
 
     def type_params(self, key: str, kind: str) -> dict:
         """Typed-record parameters, read by evidence key first and kind second.
@@ -475,7 +580,7 @@ class Package:
         entries = value.get(str(params.get("list_field") or "variants")) if isinstance(value, dict) else None
         if not isinstance(entries, list):
             return None
-        return {str(item.get("id", "")).strip() for item in entries if isinstance(item, dict)}
+        return {item["id"].strip() for item in entries if isinstance(item, dict) and filled(item.get("id"))}
 
     def check_variant_set(self, key: str, value: object) -> None:
         """Exactly N entries, unique ids, every declared file a hashed artifact.
@@ -502,17 +607,19 @@ class Package:
             if not isinstance(entry, dict):
                 self.failures.append(f"{label} must be a mapping")
                 continue
-            ident = str(entry.get("id", "")).strip()
-            if not ident:
+            if not filled(entry.get("id")):
                 self.failures.append(f"{label} requires id")
-            elif ident in seen:
-                self.failures.append(f"{label} duplicate id {ident}")
-            seen.add(ident)
+            else:
+                ident = entry["id"].strip()
+                if ident in seen:
+                    self.failures.append(f"{label} duplicate id {ident}")
+                seen.add(ident)
             for field in file_fields:
-                path = str(entry.get(field, "")).strip()
-                if not path:
+                if not filled(entry.get(field)):
                     self.failures.append(f"{label} requires {field}")
-                elif path not in self.artifact_hashes:
+                    continue
+                path = entry[field].strip()
+                if path not in self.artifact_hashes:
                     self.failures.append(f"{label} {field} is not a hashed artifact: {path}")
                 elif path not in self.hashed_ok:
                     self.failures.append(f"{label} {field} references a defective artifact: {path}")
@@ -529,11 +636,11 @@ class Package:
         if decision not in decisions:
             self.failures.append(f"{key} decision must be one of {sorted(decisions)}")
         for field in ("recommended", "decided_by", "decided_at", "basis"):
-            if not isinstance(value.get(field), str) or not value.get(field).strip():
+            if not filled(value.get(field)):
                 self.failures.append(f"{key} record requires {field}")
         chosen = value.get("chosen")
         if decision == variant_decision:
-            if not isinstance(chosen, str) or not chosen.strip():
+            if not filled(chosen):
                 self.failures.append(f"{key} decision {variant_decision!r} requires a chosen id")
         elif decision in decisions and chosen is not None:
             self.failures.append(f"{key} decision {decision!r} requires chosen: null")
@@ -542,7 +649,7 @@ class Package:
         if option_ids:
             for field in ("recommended", "chosen"):
                 ident = value.get(field)
-                if isinstance(ident, str) and ident.strip() and ident not in option_ids:
+                if filled(ident) and ident not in option_ids:
                     self.failures.append(
                         f"{key} {field} {ident!r} is not one of the {option_key} ids {sorted(option_ids)}")
 
@@ -550,9 +657,10 @@ class Package:
         """The cross-key half of the decision: what the four dependent keys carry.
 
         A decision that names a variant means that variant was built, so the
-        keys that describe a built prototype must hold real evidence and the
-        built variant must be the one that was chosen. Any other decision means
-        no prototype exists, so each of them must stand down on the exact
+        keys that describe a built prototype must hold real evidence - standing
+        down in any wording, sanctioned or not, is refused - and the built
+        variant must be the one that was chosen. Any other decision means no
+        prototype exists, so each of them must stand down on the exact
         sanctioned wording for that decision - not a different one, and not
         silence.
         """
@@ -569,11 +677,16 @@ class Package:
         variant_decision = str(params.get("variant_decision") or "variant")
         if decision == variant_decision:
             for dep in dependent:
-                waived = self.waived_as(dep, evidence.get(dep))
-                if waived is not None:
-                    self.failures.append(
-                        f"{dep} stands down on {waived!r} but {key} decision is {variant_decision!r}: "
-                        f"a selected variant was built, so this key carries real evidence")
+                value = evidence.get(dep)
+                if isinstance(value, dict) and value.get("applicable") is False:
+                    wording = value.get("reason")
+                elif self.fallback_match(dep, value):
+                    wording = value if isinstance(value, str) else value[0]
+                else:
+                    continue
+                self.failures.append(
+                    f"{dep} stands down on {wording!r} but {key} decision is {variant_decision!r}: "
+                    f"a selected variant was built, so this key carries real evidence")
             built_key = str(params.get("built_key") or "")
             built_ids = self.set_ids(built_key) if built_key else None
             chosen = record.get("chosen")
@@ -581,13 +694,13 @@ class Package:
             list_field = str(self.type_params(built_key, "variant_set").get("list_field") or "variants")
             entries = built.get(list_field) if isinstance(built, dict) else None
             first = entries[0] if isinstance(entries, list) and entries and isinstance(entries[0], dict) else None
-            if first is not None and isinstance(chosen, str) and chosen.strip():
-                ident = str(first.get("id", "")).strip()
+            if first is not None and filled(chosen):
+                ident = first["id"].strip() if filled(first.get("id")) else ""
                 if ident != chosen.strip():
                     self.failures.append(
                         f"{built_key} was built for {ident!r} but {key} chose {chosen.strip()!r}: "
                         f"the built variant must be the selected one")
-            elif built_ids is None and isinstance(chosen, str) and chosen.strip():
+            elif built_ids is None and filled(chosen):
                 self.failures.append(
                     f"{built_key} declares no {list_field} to compare against the {key} decision")
         elif decision in decisions:
@@ -629,8 +742,7 @@ class Package:
         for field in scalar_fields:
             if field == "hashes":
                 continue
-            item = value.get(field)
-            if not isinstance(item, str) or not item.strip():
+            if not filled(value.get(field)):
                 self.failures.append(f"{key} record requires {field}")
         id_fields = {
             "preference_diff": list_fields,
@@ -639,8 +751,7 @@ class Package:
         }.get(kind, ())
         for field in id_fields:
             items = value.get(field)
-            if isinstance(items, list) and any(not isinstance(item, str) or not item.strip()
-                                               for item in items):
+            if isinstance(items, list) and any(not filled(item) for item in items):
                 self.failures.append(f"{key} record requires string ids in {field}")
         digest_fields = {
             "preference_diff": ("before_digest", "after_digest"),
@@ -648,17 +759,27 @@ class Package:
             "consumer_handoff": ("effective_profile_digest",),
         }.get(kind, ())
         for field in digest_fields:
-            if not HEX64.match(str(value.get(field, "")).lower()):
+            if not is_sha256(value.get(field)):
                 self.failures.append(f"{key} record requires sha256 {field}")
+        if kind == "consumer_handoff":
+            # gates.yaml calls this "the immutable effective-profile sha256", and
+            # both records sit in the same manifest, so the comparison is mechanical.
+            profile_key = next((k for k, t in self.spec.get("evidence_types", {}).items() if t == "effective_profile"), "")
+            evidence = self.data.get("evidence")
+            profile = evidence.get(profile_key) if isinstance(evidence, dict) else None
+            handed = value.get("effective_profile_digest")
+            if isinstance(profile, dict) and is_sha256(profile.get("digest")) and is_sha256(handed):
+                if handed.lower() != profile["digest"].lower():
+                    self.failures.append(f"{key} effective_profile_digest does not match the {profile_key} digest")
         if kind == "persistence_result":
             hashes = value.get("hashes")
             if not isinstance(hashes, dict) or not hashes or any(
-                    not HEX64.match(str(item).lower()) for item in hashes.values()):
+                    not is_sha256(item) for item in hashes.values()):
                 self.failures.append(f"{key} record requires a non-empty hashes map of sha256 values")
         if kind == "effective_profile" and isinstance(value.get("entries"), list):
             for index, entry in enumerate(value["entries"]):
                 if not isinstance(entry, dict) or any(
-                        not str(entry.get(field, "")).strip()
+                        not filled(entry.get(field))
                         for field in ("id", "source_scope", "source_id")):
                     self.failures.append(
                         f"{key}.entries[{index}] requires id, source_scope, and source_id")
@@ -678,12 +799,21 @@ class Package:
             self.failures.append(f"{key} result not passing: {status}")
         if kind == "scan":
             for field in ("tool", "command", "observed_at"):
-                if not str(value.get(field, "")).strip():
+                if not filled(value.get(field)):
                     self.failures.append(f"{key} scan record requires {field}")
             if "exit_code" not in value:
                 self.failures.append(f"{key} scan record requires exit_code")
+        # The record is self-asserted, so the one contradiction it can show
+        # against itself is refused: a pass beside a non-zero exit code.
+        exit_code = value.get("exit_code")
+        if isinstance(exit_code, bool) or not (exit_code is None or isinstance(exit_code, int)):
+            self.failures.append(f"{key} exit_code must be an integer")
+        elif status == "pass" and exit_code not in (None, 0):
+            self.failures.append(f"{key} result pass contradicts exit_code {exit_code}")
+        elif status == "pass" and exit_code is None and kind == "scan":
+            self.failures.append(f"{key} scan record with result pass requires exit_code 0")
         if kind == "render":
-            if status == "inferred" and not str(value.get("limitation", "")).strip():
+            if status == "inferred" and not filled(value.get("limitation")):
                 self.failures.append(f"{key} inferred render requires a limitation statement")
             for field in ("breakpoints", "themes"):
                 if not isinstance(value.get(field), list) or not value.get(field):
@@ -699,16 +829,18 @@ class Package:
             self.failures.append(f"{key} inputs must be a list")
             inputs = []
         for entry in inputs:
-            if not isinstance(entry, dict) or not str(entry.get("path", "")).strip() or not HEX64.match(str(entry.get("sha256", "")).lower()):
+            if not isinstance(entry, dict) or not filled(entry.get("path")) or not is_sha256(entry.get("sha256")):
                 self.failures.append(f"{key} input entry requires path and sha256")
                 continue
-            target = self.project_path(str(entry["path"]), key)
+            target = self.project_path(entry["path"], key)
             if target is None:
                 continue
             if not target.is_file():
                 self.failures.append(f"{key} input missing: {entry['path']}")
-            elif digest(target) != str(entry["sha256"]).lower():
+            elif digest(target) != entry["sha256"].lower():
                 self.failures.append(f"{key} input hash drift (stale evidence): {entry['path']}")
+        if not inputs and kind not in {"scan", "render"}:
+            self.warnings.append(f"{key} binds no inputs: attested, not tied to the source it describes")
         input_revision = value.get("input_revision")
         if input_revision is not None and str(input_revision) != str(self.data.get("revision")):
             self.failures.append(f"{key} input_revision {input_revision!r} does not match package revision")
@@ -726,13 +858,13 @@ class Package:
                 continue
             severity = item.get("severity")
             status = item.get("status")
-            if severity not in FINDING_SEVERITIES:
+            if not isinstance(severity, str) or severity not in FINDING_SEVERITIES:
                 self.failures.append(f"{label} severity must be one of {sorted(FINDING_SEVERITIES)}")
                 continue
-            if status not in FINDING_STATUSES:
+            if not isinstance(status, str) or status not in FINDING_STATUSES:
                 self.failures.append(f"{label} status must be one of {sorted(FINDING_STATUSES)}")
                 continue
-            if status == "not-applicable" and not str(item.get("reason", "")).strip():
+            if status == "not-applicable" and not filled(item.get("reason")):
                 self.failures.append(f"{label} not-applicable requires a reason")
             if severity == "Critical" and status != "verified" and status != "not-applicable":
                 self.failures.append(f"{label} open Critical finding blocks the gate (status {status})")
@@ -741,32 +873,34 @@ class Package:
                 deferred_ok = (
                     status == "deferred"
                     and policy.get("major_deferral", "owner-and-reopen-trigger") == "owner-and-reopen-trigger"
-                    and str(item.get("owner", "")).strip()
-                    and str(item.get("reopen_trigger", "")).strip()
+                    and filled(item.get("owner"))
+                    and filled(item.get("reopen_trigger"))
                 )
                 if not closed and not deferred_ok:
                     self.failures.append(f"{label} unresolved Major finding blocks the gate (status {status})")
 
     def check_verdict(self, key: str, value: object) -> None:
         recommendation = value.get("recommendation") if isinstance(value, dict) else value
-        if recommendation not in VERDICTS:
+        if not isinstance(recommendation, str) or recommendation not in VERDICTS:
             self.failures.append(f"{key} must carry a recommendation in {sorted(VERDICTS)}")
             return
         if recommendation != "APPROVED":
             challenge = value.get("challenge") if isinstance(value, dict) else None
-            if not isinstance(challenge, dict) or not str(challenge.get("by", "")).strip() or not str(challenge.get("reason", "")).strip():
+            if not isinstance(challenge, dict) or not filled(challenge.get("by")) or not filled(challenge.get("reason")):
                 self.failures.append(f"{key} recommendation {recommendation} without a challenge record")
 
     def check_stack_lock(self, key: str, value: object) -> None:
         if not isinstance(value, dict):
             self.failures.append(f"{key} must be a stack-lock record or applicability record at schema 2")
             return
-        slug = str(value.get("slug", "")).strip()
-        overlay = str(value.get("overlay_sha256", "")).lower().strip()
+        slug = value.get("slug")
+        overlay = value.get("overlay_sha256")
+        overlay = overlay.strip() if isinstance(overlay, str) else overlay
         versions = value.get("versions")
-        if not slug or not HEX64.match(overlay) or not isinstance(versions, list) or not versions:
+        if not filled(slug) or not is_sha256(overlay) or not isinstance(versions, list) or not versions:
             self.failures.append(f"{key} record requires slug, versions, and overlay_sha256")
             return
+        slug, overlay = slug.strip(), overlay.lower()
         registry_path = Path(str(self.spec.get("_registry_path") or REGISTRY_PATH))
         try:
             registry = load_data(registry_path)
@@ -780,11 +914,52 @@ class Package:
         if str(entry.get("sha256", "")).lower() != overlay:
             self.failures.append(f"{key} overlay_sha256 does not match registry entry for {slug}")
         overlay_file = registry_path.parent.parent / str(entry.get("path", ""))
-        if overlay_file.is_file() and overlay_digest(overlay_file) != overlay:
+        if not overlay_file.is_file():
+            # Without the file only the registry's own string was compared, which
+            # verifies one side of "matches registry and file".
+            self.failures.append(f"{key} overlay file for {slug} is missing: {entry.get('path')}")
+        elif overlay_digest(overlay_file) != overlay:
             self.failures.append(f"{key} overlay file digest does not match declared overlay_sha256")
-        registry_versions = {str(v) for v in (entry.get("versions") or [])}
-        if registry_versions and not ({str(v) for v in versions} & registry_versions):
-            self.failures.append(f"{key} versions {versions} not offered by registry entry {slug}")
+        offered = {str(v) for v in (entry.get("versions") or [])}
+        unoffered = [v for v in versions if str(v) not in offered]
+        if unoffered:
+            self.failures.append(f"{key} versions {unoffered} not offered by registry entry {slug}")
+        self.warn_registry_freshness(key, slug, registry)
+
+    def warn_registry_freshness(self, key: str, slug: str, registry: object) -> None:
+        """Say when a lock rests on pins the registry itself marks as past their date.
+
+        A lock on an overlay whose ``support_ends`` has passed, or against a
+        registry not re-read within its own ``verification_ttl_days``, still
+        passes: choosing a supported version is the owner's decision and the
+        gate makes none. The reader of the result is told, because the lock is
+        then a statement about versions nobody has confirmed are current.
+        """
+        if not isinstance(registry, dict):
+            return
+        today = utc_today()
+        support_ends = registry.get("support_ends")
+        ended = support_ends.get(slug) if isinstance(support_ends, dict) else None
+        if ended is not None:
+            last_day = parse_date(ended)
+            if last_day is None:
+                self.warnings.append(f"{key}: support_ends for {slug} is not a YYYY-MM-DD date: {ended!r}")
+            elif last_day < today:
+                self.warnings.append(
+                    f"{key}: support for the {slug} stack ended on {last_day.isoformat()}; the lock passes, "
+                    "but its pinned versions are past their end of life")
+        ttl = registry.get("verification_ttl_days")
+        if ttl is None:
+            return
+        verified = parse_date(registry.get("verified_at"))
+        if isinstance(ttl, bool) or not isinstance(ttl, int) or ttl < 1 or verified is None:
+            self.warnings.append(
+                f"{key}: the tech-stack registry's verified_at and verification_ttl_days are not a date and a positive "
+                "whole number of days, so its freshness was not checked")
+        elif (today - verified).days > ttl:
+            self.warnings.append(
+                f"{key}: the tech-stack registry was last verified on {verified.isoformat()}, more than {ttl} days ago; "
+                "its pins are not known to be current")
 
     # ------------------------------------------------------------- lineage
     def check_identity(self) -> tuple[bool, set[str]]:
@@ -826,7 +1001,7 @@ class Package:
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
             prose = strip_code(text)
-            if BLOCKED.search(prose):
+            if has_blocked_phrase(prose):
                 self.failures.append(f"blocked phrase: {path.name}")
             if suffix != ".md":
                 continue
@@ -907,9 +1082,18 @@ def revise_packet(failures: list[str], required: list[str], owners: dict, submit
     }
 
 
+def same_content(path: Path, other: Path) -> bool:
+    """True when both files exist and hold the same content, line endings folded."""
+    try:
+        return digest(path) == digest(other)
+    except OSError:
+        return False
+
+
 def prior_check(prior_path: Path, data: dict, current_fingerprint: str, spec_digest: str,
-                current_digests: dict[str, str] | None = None) -> tuple[bool, bool | None, list[str] | None, list[str] | None]:
-    """Return (drift, prior_reusable, changed_evidence, unchanged_evidence)."""
+                current_digests: dict[str, str] | None = None
+                ) -> tuple[bool, bool | None, list[str] | None, list[str] | None, object]:
+    """Return (drift, prior_reusable, changed_evidence, unchanged_evidence, prior gate_spec_digest)."""
     prior = load_mapping(prior_path, "prior record")
     # Delta review works across revisions: a resubmission is a new revision, and
     # the gatekeeper still wants to know which evidence keys actually changed.
@@ -919,15 +1103,15 @@ def prior_check(prior_path: Path, data: dict, current_fingerprint: str, spec_dig
     if isinstance(prior_digests, dict) and current_digests is not None:
         changed = sorted(k for k, v in current_digests.items() if prior_digests.get(k) != v)
         unchanged = sorted(k for k, v in current_digests.items() if prior_digests.get(k) == v)
+    prior_spec = prior.get("gate_spec_digest")
     same = prior.get("submission_id") == data.get("submission_id") and prior.get("revision") == data.get("revision")
     if not same:
-        return False, None, changed, unchanged
+        return False, None, changed, unchanged, prior_spec
     prior_fingerprint = prior.get("package_fingerprint") or fingerprint(prior)
     drift = prior_fingerprint != current_fingerprint
-    prior_spec = prior.get("gate_spec_digest")
     prior_boundary = prior.get("boundary")
     reusable = (not drift) and prior_spec == spec_digest and (prior_boundary in (None, data.get("boundary")) )
-    return drift, reusable, changed, unchanged
+    return drift, reusable, changed, unchanged, prior_spec
 
 
 def main() -> int:
@@ -959,9 +1143,24 @@ def main() -> int:
         current_fingerprint = fingerprint(data)
         digests = evidence_digests(data, package.artifact_hashes)
         drift, prior_reusable, changed_evidence, unchanged_evidence = False, None, None, None
+        # The digests are unkeyed, so a verdict is only as canonical as the spec
+        # it names; say when any input to this pass was not the shipped one.
+        shipped_digest = digest(GATE_SPEC_PATH) if GATE_SPEC_PATH.is_file() else None
+        spec_shipped = spec_digest == shipped_digest
+        registry_shipped = not args.registry or same_content(Path(args.registry), REGISTRY_PATH)
+        warnings = list(package.warnings)
+        if not spec_shipped:
+            warnings.append(f"gate spec is not the shipped skills/gates.yaml: {spec_path}")
+        if not registry_shipped:
+            warnings.append(f"tech-stack registry is not the shipped one: {args.registry}")
+        prior_record = None
         if args.prior:
-            drift, prior_reusable, changed_evidence, unchanged_evidence = prior_check(
+            drift, prior_reusable, changed_evidence, unchanged_evidence, prior_spec = prior_check(
                 Path(args.prior).resolve(), data, current_fingerprint, spec_digest, digests)
+            prior_record = {"path": str(Path(args.prior).resolve()), "gate_spec_digest": prior_spec,
+                            "gate_spec_is_shipped": prior_spec is not None and prior_spec == shipped_digest}
+            if not prior_record["gate_spec_is_shipped"]:
+                warnings.append("prior record was not produced against the shipped gate spec")
             if drift:
                 package.failures.append("idempotency drift on unchanged revision")
         failures = sorted(set(package.failures))
@@ -978,9 +1177,13 @@ def main() -> int:
             "submission_id": data.get("submission_id"), "revision": data.get("revision"),
             "run_id": data.get("run_id"), "owner": data.get("owner", data.get("submitter")),
             "manifest_schema_version": package.schema,
+            "declared_schema_version": data.get("schema_version"),
             "evidence_root": str(package.root), "evidence_root_kind": package.root_kind,
             "package_fingerprint": current_fingerprint, "gate_spec_digest": spec_digest,
+            "gate_spec_is_shipped": spec_shipped, "registry_is_shipped": registry_shipped,
+            "prior_record": prior_record,
             "verdict_id": verdict_id,
+            "warnings": sorted(set(warnings)),
             "evidence_digests": digests,
             "changed_evidence": changed_evidence, "unchanged_evidence": unchanged_evidence,
             "revise_packet": packet,
@@ -995,8 +1198,9 @@ def main() -> int:
             os.replace(tmp, out)
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0 if not failures else 1
-    except (OSError, ValueError) as exc:
-        print(json.dumps({"boundary": args.boundary, "engine_error": str(exc)}, indent=2), file=sys.stderr)
+    except Exception as exc:  # fail loud: an engine fault is exit 2, never a bare traceback or a hidden pass
+        message = str(exc) if isinstance(exc, (OSError, ValueError)) else f"internal error: {type(exc).__name__}: {exc}"
+        print(json.dumps({"boundary": args.boundary, "engine_error": message}, indent=2), file=sys.stderr)
         return 2
 
 

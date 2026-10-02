@@ -8,7 +8,7 @@ description: >-
   owner, not directly, even when the request is only "build it". Defers test
   authoring to `build/test-builder`, hardening to `build/security-builder`, and
   failure diagnosis to `build/debugger`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 

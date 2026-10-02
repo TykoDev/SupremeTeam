@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host-observed hook firing and save-writer roll-forward (second remediation pass, 2026-09-05)."""
+"""Host observation and interrupted save recovery tests."""
 from __future__ import annotations
 
 import json
@@ -22,6 +22,8 @@ def env_for(project: Path) -> dict:
 def fire(script: str, payload: dict, project: Path) -> str:
     proc = subprocess.run([sys.executable, str(HOOK_DIR / script)], input=json.dumps(payload), text=True, capture_output=True,
                           env=env_for(project), check=False)
+    if proc.returncode:
+        raise AssertionError(f"{script} exited {proc.returncode}: {proc.stderr}")
     return proc.stdout
 
 
@@ -59,8 +61,11 @@ class RollForwardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             (project / "README.md").write_text("x", encoding="utf-8")
-            save = lambda *a: subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), *a, "--project-root", str(project), "--run-id", "r1"],
-                                             text=True, capture_output=True, check=False)
+
+            def save(*a):
+                return subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), *a, "--project-root", str(project), "--run-id", "r1"],
+                                      text=True, capture_output=True, check=False)
+
             save("create", "--evidence", "README.md")
             save("checkpoint")
             run_dir = project / "skillset-saves" / "runs" / "r1"

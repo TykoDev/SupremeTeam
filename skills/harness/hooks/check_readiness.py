@@ -7,33 +7,48 @@ before delegation and reports them as *independent capabilities*:
 
 1. Python is new enough for the runtime helpers.
 2. Harness hooks are registered for the selected host (configured, resolvable,
-   executable) and whether the host has actually fired them: each hook records
+   executable, matchers covering the tools each hook needs, interpreter found and
+   new enough) and whether the host has actually fired them: each hook records
    real host invocations (payload with a session id) under
    ``.harness-state/observations/``; readiness reports ``observed``, ``partial``,
-   ``simulated`` (synthetic payloads only), or ``unverified``.
+   ``simulated`` (synthetic payloads only), or ``unverified``, and how many
+   internal faults a hook that fires has recorded.
 3. ``skillset-saves`` exists and, when requested, contains an active pinned run.
 
+``Ready`` covers the core: Python, a hook check that reached a definite answer,
+and, when requested, an active run. Hooks are optional, so "not registered" does
+not make the project not ready; ``--require-hooks`` makes it so, and then also
+rejects a partial matcher and an interpreter that is missing or too old.
+Anything the hook check can only call ``unknown`` (no readable host
+configuration) is not a definite answer and does block.
+
 This script is stdlib-only and diagnostic-only. It never registers hooks, creates
-save state, installs Python, or mutates host configuration. When hooks are
-missing it names the explicit, previewable repair command instead.
+save state or ``.harness-state/``, installs Python, or mutates host
+configuration. When hooks are missing it names the explicit, previewable repair
+command instead.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-from _saves import classify_saves
+from _saves import inspect_saves, next_step
 import _state
+from verify_registration import HOSTS, MATCHERS, REQUIRED, declared_minimum, interpreter_warning, repair_command
 
 
-def run_hook_verifier(host: str) -> tuple[str, int, str, dict]:
+def run_hook_verifier(host: str, project_root: Path) -> tuple[str, int, str, dict]:
     verifier = Path(__file__).resolve().with_name("verify_registration.py")
     command = [sys.executable, str(verifier), "--host", host, "--json"]
-    result = subprocess.run(command, text=True, capture_output=True, check=False)
+    # The verifier resolves the project from its environment, so it is handed the
+    # root readiness was asked about, and its output is read as UTF-8 on any platform.
+    env = {**os.environ, "SUPREMETEAM_PROJECT_DIR": str(project_root), "PYTHONUTF8": "1"}
+    result = subprocess.run(command, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False, env=env)
     if result.returncode == 0:
         status = "registered"
     elif result.returncode == 1:
@@ -57,58 +72,70 @@ def run_hook_verifier(host: str) -> tuple[str, int, str, dict]:
 _EVENT_FOR_KEY = {"pre": "PreToolUse", "post": "PostToolUse", "prompt": "UserPromptSubmit"}
 
 
+def _observation_records(project_root: Path) -> dict:
+    """The per-event records the hooks wrote, read without creating anything."""
+    directory = _state.existing_state_dir(project_root)
+    records = {}
+    for path in (directory / "observations").glob("*.json") if directory else ():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict):
+            records[path.stem] = data
+    return records
+
+
+def _fault_count(value) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _observations_for(project_root: Path, hook_states: dict) -> dict:
     """Host-observed firing, read from .harness-state/observations written by the hooks.
 
     ``observed`` means a payload carrying a host session id reached the hook;
     ``simulated`` means only synthetic invocations were seen; ``unverified``
     means no record exists. The summary is ``observed`` only when every core
-    event has a real observation.
+    event has a real observation. A record may also carry ``faults`` and
+    ``last_fault`` (the hook failed open that many times); both are optional.
     """
-    import os
-    previous = os.environ.get("SUPREMETEAM_PROJECT_DIR")
-    os.environ["SUPREMETEAM_PROJECT_DIR"] = str(project_root)
-    try:
-        records = _state.load_observations()
-    finally:
-        if previous is None:
-            os.environ.pop("SUPREMETEAM_PROJECT_DIR", None)
-        else:
-            os.environ["SUPREMETEAM_PROJECT_DIR"] = previous
+    records = _observation_records(project_root)
     events = {}
     for key, event in _EVENT_FOR_KEY.items():
         record = records.get(event, {})
-        if record.get("observed"):
+        if isinstance(record.get("observed"), dict) and record["observed"]:
             events[event] = {"state": "observed", **record["observed"]}
-        elif record.get("simulated"):
+        elif isinstance(record.get("simulated"), dict) and record["simulated"]:
             events[event] = {"state": "simulated", **record["simulated"]}
         else:
             events[event] = {"state": "unverified"}
+        faults = _fault_count(record.get("faults"))
+        if faults:
+            events[event]["faults"] = faults
+            last = record.get("last_fault")
+            if isinstance(last, dict):
+                events[event]["last_fault"] = {"type": str(last.get("type", "")), "at": str(last.get("at", ""))}
         for name, state in hook_states.items():
             if name.endswith(":" + key):
                 state["observed"] = events[event]["state"]
     states = {e["state"] for e in events.values()}
     summary = "observed" if states == {"observed"} else "simulated" if "observed" not in states and "simulated" in states else "partial" if "observed" in states else "unverified"
-    return {"summary": summary, "events": events}
+    return {"summary": summary, "events": events, "faults": sum(e.get("faults", 0) for e in events.values())}
 
 
-def declared_minimum(default: str = "3.13") -> str:
-    """Read the Python floor from runtime-manifest.yaml, the runtime contract.
-
-    A hardcoded second opinion here would let readiness report "too old" on a
-    version the manifest declares supported, so the manifest wins and this
-    fallback only covers a manifest that is missing or unreadable.
-    """
-    manifest = Path(__file__).resolve().parents[2] / "runtime-manifest.yaml"
-    try:
-        import json
-
-        data = json.loads(manifest.read_text(encoding="utf-8"))
-        value = data["runtime"]["python"]["minimum"]
-        major, minor = (int(part) for part in str(value).split(".", 1))
-        return f"{major}.{minor}"
-    except Exception:
-        return default
+def _firing_lines(events: dict) -> list[str]:
+    lines = []
+    for event, entry in events.items():
+        faults = entry.get("faults", 0)
+        if not faults:
+            continue
+        last = entry.get("last_fault") or {}
+        lasted = f" (last: {last.get('type') or 'unknown'} at {last.get('at') or 'unknown time'})"
+        lines.append(f"{event}: firing with {faults} fault{'s' if faults != 1 else ''}{lasted}")
+    return lines
 
 
 def python_status(min_major: int, min_minor: int) -> tuple[str, str]:
@@ -120,14 +147,42 @@ def python_status(min_major: int, min_minor: int) -> tuple[str, str]:
     return "too_old", f"Python {label} is older than required >= {min_major}.{min_minor}"
 
 
+def _hook_warnings(hook_states: dict, hash_record: "str | None") -> list[str]:
+    """What is wrong with hooks that are registered, without making them unregistered."""
+    warnings: list[str] = []
+    changed = sorted({f"{name.split(':', 1)[0]}:{file}" for name, state in hook_states.items()
+                      if state["registered"] and state["integrity"] == "changed" and state["script"]
+                      for file in state["changed_files"] or [Path(state["script"]).name]})
+    for name, state in hook_states.items():
+        if not state["registered"]:
+            continue
+        warning = interpreter_warning(state["interpreter"])
+        if warning and warning not in warnings:
+            warnings.append(warning)
+        if state["coverage"] == "partial":
+            warnings.append(f"{name}: the registered matcher misses {', '.join(state['missing_tools'])}")
+    if changed:
+        warnings.append(f"hook files changed since registration ({', '.join(changed)}; by the record in {hash_record}); expected after a "
+                        "deliberate edit or an upgrade, restore them if you made neither; re-record with "
+                        "repair_registration.py --host <host> --record-hashes")
+    for host in sorted({name.split(":", 1)[0] for name, state in hook_states.items()
+                        if state["registered"] and state["integrity"] == "unrecorded"}):
+        warnings.append(f"{host}: the hook files have no record in {hash_record}, so an edit of them is not noticed from "
+                        f"this project (a registration records them in the project it ran from); record them here with "
+                        f"{repair_command(host, '--record-hashes')}")
+    return warnings
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check Supreme Team runtime readiness.")
-    parser.add_argument("--host", choices=["auto", "all", "codex", "claude", "copilot"], default="auto")
+    parser.add_argument("--host", choices=["auto", "all", *HOSTS], default="auto")
     parser.add_argument("--project-root", default=None,
-                        help="Workspace root containing skillset-saves (default: the nearest project root above the working directory).")
+                        help="Workspace root containing skillset-saves and the host config to inspect (default: the nearest project root above the working directory).")
     parser.add_argument("--min-python", default=None,
                         help="Minimum Python major.minor version (default: runtime-manifest.yaml).")
     parser.add_argument("--require-active-run", action="store_true", help="Fail when skillset-saves has no active pinned run.")
+    parser.add_argument("--require-hooks", action="store_true",
+                        help="Fail unless the hooks are registered with full matcher coverage and a usable interpreter (default: hooks are optional).")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     args = parser.parse_args()
 
@@ -139,8 +194,13 @@ def main() -> int:
 
     project_root = (Path(args.project_root).expanduser() if args.project_root else _state.project_root()).resolve()
     py_status, py_detail = python_status(min_major, min_minor)
-    hook_status, hook_code, hook_output, hook_report = run_hook_verifier(args.host)
-    saves_status, saves_detail = classify_saves(project_root)
+    hook_status, hook_code, hook_output, hook_report = run_hook_verifier(args.host, project_root)
+    saves = inspect_saves(project_root)
+    saves_status, saves_detail = str(saves["status"]), str(saves["detail"])
+    # A record this account cannot read is classified corrupt but is not damage: it is named, and may hold the pin.
+    access_denied = list(saves.get("access_denied") or [])
+    # An active run needs no instruction; every other classification has a next step, the one `save_run.py status` prints.
+    saves_next = "" if saves_status == "active" else next_step(saves)
 
     # Independent capabilities: a missing hook degrades deterministic
     # enforcement; it does not remove the ability to read saves or run the
@@ -153,45 +213,110 @@ def main() -> int:
                 "configured": bool(state.get("configured")),
                 "resolvable": bool(state.get("resolvable")),
                 "executable": bool(state.get("executable")),
+                "registered": bool(state.get("registered")),
+                "coverage": state.get("coverage"),
+                "missing_tools": state.get("missing_tools") or [],
+                "script": state.get("script"),
+                "integrity": state.get("integrity"),
+                "changed_files": state.get("changed_files") or [],
+                "interpreter": state.get("interpreter"),
                 "observed": state.get("observed", "unverified"),
             }
+    # One record per project, so every host's report names the same file.
+    hash_record = next((host_report["hash_record"] for host_report in hook_report.values() if host_report.get("hash_record")), None)
     observations = _observations_for(project_root, hook_states)
+    registered = [s for s in hook_states.values() if s["registered"]]
+    interpreters = [s["interpreter"] for s in registered if s["interpreter"]]
+    # Coverage is the tool surface the hooks that need tools reach. The prompt hook has no matcher, so counting it as
+    # "full" would hide tool hooks that are missing altogether.
+    tool_keys = {key for key, script in REQUIRED if MATCHERS.get(script)}
+    tool_hooks = [s for name, s in hook_states.items() if name.rsplit(":", 1)[1] in tool_keys]
+    if not any(s["registered"] for s in tool_hooks):
+        coverage = "unverified"
+    elif all(s["registered"] and s["coverage"] == "full" for s in tool_hooks):
+        coverage = "full"
+    else:
+        coverage = "partial"
+    if any(i["meets_floor"] is False for i in interpreters):
+        interpreter = "too_old"
+    elif any(not i["on_path"] for i in interpreters):
+        interpreter = "not_found"
+    else:
+        interpreter = "ok" if interpreters and all(i["meets_floor"] for i in interpreters) else "unverified"
     capabilities = {
         "python_runtime": py_status == "ok",
         "hooks_configured": bool(hook_states) and all(s["configured"] for s in hook_states.values()),
         "hooks_executable": hook_status == "registered",
+        "hooks_coverage": coverage,
+        "hooks_interpreter": interpreter,
         "hooks_observed": observations["summary"],
-        "saves_readable": saves_status not in {"missing", "unreadable"},
+        "hooks_faults": observations["faults"],
+        "saves_readable": saves_status not in {"missing", "unreadable"} and not access_denied,
         "active_run": saves_status == "active",
         "deterministic_validators": True,
     }
 
+    warnings = _hook_warnings(hook_states, hash_record) + _firing_lines(observations["events"])
+    repair_host = args.host if args.host in HOSTS else next(iter(hook_report)) if len(hook_report) == 1 else "<host>"
+    needs_repair = hook_status != "registered" or coverage == "partial"
+    repair_hint = (f"{repair_command(repair_host, '--scope', 'project')} "
+                   "(dry run; add --apply only with owner authorization)") if needs_repair else None
+
+    blockers = []
+    if py_status != "ok":
+        blockers.append(py_detail)
+    if hook_status == "unknown":
+        blockers.append("hook registration could not be determined (no readable host configuration for the selected host); "
+                        "a check with no answer is not a pass")
+    elif args.require_hooks:
+        if hook_status != "registered":
+            blockers.append("hooks are not registered (--require-hooks)")
+        elif coverage == "partial":
+            blockers.append("a registered matcher does not cover every tool the hook needs (--require-hooks)")
+        elif interpreter in {"too_old", "not_found"}:
+            blockers.append(f"the registered interpreter is {interpreter.replace('_', ' ')} (--require-hooks)")
+    if args.require_active_run and saves_status != "active":
+        blockers.append(f"no active pinned run (saves are {saves_status}{f': {saves_detail}' if access_denied else ''}; --require-active-run)")
+    ready = not blockers
+
     report = {
         "python": {"status": py_status, "detail": py_detail},
-        "hooks": {"status": hook_status, "exit_code": hook_code, "detail": hook_output, "states": hook_states, "observations": observations["events"]},
-        "saves": {"status": saves_status, "detail": saves_detail, "project_root": str(project_root)},
+        "hooks": {"status": hook_status, "exit_code": hook_code, "detail": hook_output, "required": args.require_hooks,
+                  "selected_hosts": list(hook_report), "states": hook_states, "observations": observations["events"],
+                  "hash_record": hash_record},
+        "saves": {"status": saves_status, "detail": saves_detail, "next_step": saves_next, "project_root": str(project_root),
+                  "access_denied": access_denied},
         "capabilities": capabilities,
-        "repair_hint": None if hook_status == "registered" else
-            "python skills/harness/hooks/repair_registration.py --host <host> --scope project (dry run; add --apply only with owner authorization)",
+        "warnings": warnings,
+        "blockers": blockers,
+        "repair_hint": repair_hint,
+        "ready": ready,
     }
-
-    ready = py_status == "ok" and hook_status == "registered"
-    if args.require_active_run:
-        ready = ready and saves_status == "active"
-    report["ready"] = ready
 
     if args.json:
         print(json.dumps(report, indent=2))
     else:
+        hosts = ", ".join(hook_report) or "no host selected"
         print("Supreme Team runtime readiness check")
         print(f"Python: {py_status} - {py_detail}")
-        print(f"Hooks: {hook_status} - verifier exit {hook_code}")
+        print(f"Hooks: {hook_status} - verifier exit {hook_code} (hosts: {hosts}; {'required' if args.require_hooks else 'optional'})")
         print(f"Saves: {saves_status} - {saves_detail}")
+        if saves_next:
+            print(f"  next: {saves_next}")
         print("Capabilities: " + ", ".join(f"{key}={value}" for key, value in capabilities.items()))
         if hook_status != "registered":
             print("\nHook verifier output:")
             print(hook_output)
-            print(f"\nRepair (read-only preview): {report['repair_hint']}")
+        if warnings:
+            print("\nWarnings:")
+            for warning in warnings:
+                print(f"  - {warning}")
+        if repair_hint:
+            print(f"\nRepair (read-only preview): {repair_hint}")
+        if blockers:
+            print("\nNot ready because:")
+            for blocker in blockers:
+                print(f"  - {blocker}")
         print(f"\nReady: {'yes' if ready else 'no'}")
 
     return 0 if ready else 1

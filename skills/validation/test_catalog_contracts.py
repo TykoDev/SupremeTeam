@@ -12,96 +12,25 @@ so the specs stay the single source of truth and the assertions cannot rot
 independently of them.
 """
 
+import ast
 import re
 import unittest
 from pathlib import Path
+from unittest import mock
 
-try:
-    import yaml
-except ImportError:  # PyYAML is optional; fall back to the bundled parser.
-    yaml = None
+import _catalog
+from _catalog import SKILLS, corpus, mentions, mentions_key, skill_front
+from data_formats import parse_yaml
 
-SKILLS = Path(__file__).resolve().parents[1]
-
-if yaml is None:  # pragma: no cover - exercised only on a host without PyYAML
-    import sys
-    sys.path.insert(0, str(SKILLS / "scripts"))
-    from data_formats import parse_yaml as _parse
-
-    def _load(path):
-        return _parse(path.read_text(encoding="utf-8"))
-else:
-    def _load(path):
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
-
-
-GATES = _load(SKILLS / "gates.yaml")
-PIPELINES = _load(SKILLS / "pipelines.yaml")
-OWNERSHIP = _load(SKILLS / "ownership.yaml")
-TEAM = _load(SKILLS / "team-manifest.yaml")
+GATES = _catalog.load_spec("gates.yaml")
+PIPELINES = _catalog.load_spec("pipelines.yaml")
+OWNERSHIP = _catalog.load_spec("ownership.yaml")
+TEAM = _catalog.load_spec("team-manifest.yaml")
+SAVE_OWNERSHIP = _catalog.load_spec("save-ownership.yaml")
 CONTRACT = (SKILLS / "execution-contract.md").read_text(encoding="utf-8")
 
-_FM = re.compile(r"^---\r?\n(.*?)\r?\n---", re.S)
-
-
-def _skill_dirs():
-    """Map skill name -> directory, from the frontmatter each SKILL.md declares."""
-    found = {}
-    for md in sorted(SKILLS.rglob("SKILL.md")):
-        match = _FM.match(md.read_text(encoding="utf-8"))
-        if not match:
-            continue
-        front = _load_text(match.group(1))
-        if isinstance(front, dict) and front.get("name"):
-            found[front["name"]] = md.parent
-    return found
-
-
-def _load_text(text):
-    if yaml is None:  # pragma: no cover
-        from data_formats import parse_yaml
-        return parse_yaml(text)
-    return yaml.safe_load(text)
-
-
-SKILL_DIRS = _skill_dirs()
-
-
-def _front(skill_md: Path) -> dict:
-    """Parsed frontmatter of a SKILL.md, or an empty dict."""
-    match = _FM.match(skill_md.read_text(encoding="utf-8"))
-    if not match:
-        return {}
-    parsed = _load_text(match.group(1))
-    return parsed if isinstance(parsed, dict) else {}
-
-
-
-def _corpus(directory: Path) -> str:
-    """Every document a skill owns, excluding any nested skill's subtree."""
-    parts = []
-    for path in sorted(directory.rglob("*")):
-        if not path.is_file() or path.suffix not in {".md", ".yaml", ".yml"}:
-            continue
-        if "__pycache__" in path.parts:
-            continue
-        nested = False
-        for parent in path.parents:
-            if parent == directory:
-                break
-            if (parent / "SKILL.md").is_file():
-                nested = True
-                break
-        if not nested:
-            parts.append(path.read_text(encoding="utf-8", errors="replace"))
-    return "\n".join(parts)
-
-
-CORPUS = {name: _corpus(path) for name, path in SKILL_DIRS.items()}
-
-
-def _names(text: str, token: str) -> bool:
-    return re.search(r"\b" + re.escape(token) + r"\b", text) is not None
+SKILL_DIRS = _catalog.skill_dirs()
+CORPUS = {name: corpus(path) for name, path in SKILL_DIRS.items()}
 
 
 # The set the execution contract binds: every pipeline owner, the entry
@@ -137,7 +66,7 @@ class EvidenceOwnershipTests(unittest.TestCase):
             for key, owner in sorted(owners.items()):
                 directory = SKILL_DIRS.get(owner)
                 self.assertIsNotNone(directory, f"{boundary}.{key} owner '{owner}' is not a skill")
-                if not _names(CORPUS[owner], key):
+                if not mentions_key(CORPUS[owner], key):
                     missing.append(f"{owner} never names '{key}' (required at {boundary})")
         self.assertEqual(missing, [], "evidence owners must document the keys they produce:\n  "
                                       + "\n  ".join(missing))
@@ -149,7 +78,7 @@ class EvidenceOwnershipTests(unittest.TestCase):
             directory = SKILL_DIRS.get(submitter)
             if directory is None:
                 continue
-            if not _names(CORPUS[submitter], boundary):
+            if not mentions(CORPUS[submitter], boundary):
                 missing.append(f"{submitter} never names the boundary it submits at ({boundary})")
         self.assertEqual(missing, [], "\n  ".join(missing))
 
@@ -167,7 +96,7 @@ class StageDelegationTests(unittest.TestCase):
                 stage_owner = stage.get("owner")
                 if not stage_owner or stage_owner == owner:
                     continue
-                if not _names(CORPUS[owner], stage_owner):
+                if not mentions(CORPUS[owner], stage_owner):
                     missing.append(
                         f"{owner} ({name} pipeline) never names stage owner '{stage_owner}' "
                         f"for stage '{stage.get('step')}'")
@@ -418,8 +347,7 @@ class ToolSurfaceTests(unittest.TestCase):
         cross = TEAM.get("cross_stage_gatekeeper")
         if cross:
             no_edit.add(cross)
-        save_ownership = _load(SKILLS / "save-ownership.yaml")
-        for entry in save_ownership.get("classes", []):
+        for entry in SAVE_OWNERSHIP.get("classes", []):
             writer, tool = entry.get("writer"), entry.get("tool")
             if tool and writer in SKILL_DIRS:
                 no_edit.add(writer)
@@ -427,14 +355,14 @@ class ToolSurfaceTests(unittest.TestCase):
 
     def test_every_skill_declares_a_tool_surface(self):
         missing = [name for name, d in SKILL_DIRS.items()
-                   if "allowed-tools" not in (_front(d / "SKILL.md") or {})]
+                   if "allowed-tools" not in (skill_front(d / "SKILL.md") or {})]
         self.assertEqual(missing, [], "every skill declares allowed-tools: " + ", ".join(missing))
 
     def test_tools_are_drawn_from_the_documented_vocabulary(self):
         known = {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite"}
         bad = []
         for name, d in SKILL_DIRS.items():
-            front = _front(d / "SKILL.md") or {}
+            front = skill_front(d / "SKILL.md") or {}
             for tool in str(front.get("allowed-tools", "")).split(","):
                 tool = tool.strip()
                 if tool and tool not in known:
@@ -447,7 +375,7 @@ class ToolSurfaceTests(unittest.TestCase):
                                 "the manifests should name at least the gatekeepers here")
         violations = []
         for name in sorted(expected):
-            front = _front(SKILL_DIRS[name] / "SKILL.md") or {}
+            front = skill_front(SKILL_DIRS[name] / "SKILL.md") or {}
             tools = {t.strip() for t in str(front.get("allowed-tools", "")).split(",")}
             if "Edit" in tools:
                 violations.append(
@@ -482,7 +410,7 @@ class PerDocumentConsistencyTests(unittest.TestCase):
         self.assertIsInstance(cap, int, "gates.yaml must declare revise_policy.cycle_cap")
         pattern = re.compile(r"[Mm]aximum revisions? per (?:phase|stage|boundary)[^\n]*?(\d+)")
         violations = []
-        for name, directory in SKILL_DIRS.items():
+        for directory in SKILL_DIRS.values():
             for path in [directory / "SKILL.md", *self._supporting_docs(directory)]:
                 for match in pattern.finditer(path.read_text(encoding="utf-8", errors="replace")):
                     if int(match.group(1)) != cap:
@@ -556,7 +484,7 @@ class PerDocumentConsistencyTests(unittest.TestCase):
                     resolved = (directory / target).resolve()
                     if resolved.is_file() and resolved.suffix == ".md":
                         reachable += resolved.read_text(encoding="utf-8", errors="replace")
-                if not _names(reachable, key):
+                if not mentions_key(reachable, key):
                     violations.append(
                         f"{owner} states '{key}' ({boundary}) only in a file SKILL.md does not link")
         self.assertEqual(violations, [],
@@ -587,8 +515,7 @@ class DeclaredCoverageTests(unittest.TestCase):
         Global and per-user destinations live outside the project-relative glob
         policy by design, so they are exempt; everything else must be covered.
         """
-        save_ownership = _load(SKILLS / "save-ownership.yaml")
-        classes = save_ownership.get("classes") or []
+        classes = SAVE_OWNERSHIP.get("classes") or []
         self.assertTrue(classes, "save-ownership.yaml declares no classes")
         # Match against class ids as well as patterns: `guards` is covered by the
         # class `harness-guards`, `trajectory` by `.harness-state/trajectories/`.
@@ -627,17 +554,16 @@ class DeclaredCoverageTests(unittest.TestCase):
                          "the Specialists section must name every manifest specialist:\n  "
                          + "\n  ".join(missing))
 
-        stated = re.search(r"\b(twenty-one|\d+)\s+specialists\b", block, re.I)
-        if stated:
-            words = {"twenty-one": 21, "twenty": 20, "twenty-two": 22}
-            value = words.get(stated.group(1).lower())
-            if value is None and stated.group(1).isdigit():
-                value = int(stated.group(1))
-            if value is not None:
-                self.assertEqual(
-                    value, len(declared),
-                    f"the matrix says {stated.group(1)} specialists; the manifest declares "
-                    f"{len(declared)}")
+        ones = ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+        words = {"twenty": 20, **{f"twenty-{word}": 20 + n for n, word in enumerate(ones, 1)}}
+        spelled = "|".join(sorted(words, key=len, reverse=True))
+        stated = re.search(rf"\b({spelled}|\d+)\s+specialists\b", block, re.I)
+        self.assertIsNotNone(stated, "the Specialists section states no count the comparator can read")
+        value = int(stated.group(1)) if stated.group(1).isdigit() else words[stated.group(1).lower()]
+        self.assertEqual(
+            value, len(declared),
+            f"the matrix says {stated.group(1)} specialists; the manifest declares "
+            f"{len(declared)}")
 
     def test_release_layer_owner_matches_the_pipeline_and_the_gate(self):
         """The RELEASE row named the stage writer, not the pipeline owner."""
@@ -657,8 +583,7 @@ class GuardWriterTests(unittest.TestCase):
     """The guard boundary record has a single writer, like every other durable class."""
 
     def test_guard_state_writer_is_declared_and_present(self):
-        save_ownership = _load(SKILLS / "save-ownership.yaml")
-        classes = {c.get("id"): c for c in save_ownership.get("classes", [])}
+        classes = {c.get("id"): c for c in SAVE_OWNERSHIP.get("classes", [])}
         guards = classes.get("harness-guards")
         self.assertIsNotNone(guards, "save-ownership.yaml must declare the harness-guards class")
         self.assertIn("guard_state.py", str(guards.get("tool", "")),
@@ -666,14 +591,14 @@ class GuardWriterTests(unittest.TestCase):
         self.assertTrue((SKILLS / "harness" / "hooks" / "guard_state.py").is_file())
 
     def test_pre_tool_hook_protects_the_guard_record(self):
-        hook = (SKILLS / "harness" / "hooks" / "pre_tool_use.py").read_text(encoding="utf-8")
-        self.assertIn("guard-state.json", hook)
-        self.assertIn("guard_state.py", hook,
-                      "the hook must route writes to the sanctioned writer")
-
-
-if __name__ == "__main__":
-    unittest.main()
+        hooks = SKILLS / "harness" / "hooks"
+        entry = (hooks / "pre_tool_use.py").read_text(encoding="utf-8")
+        guard = (hooks / "guard_hook.py").read_text(encoding="utf-8")
+        self.assertIn("import guard_hook", entry)
+        self.assertIn("guard_hook.main()", entry)
+        self.assertIn("guard-state.json", guard)
+        self.assertIn("guard_state.py", guard,
+                      "the guard hook must route writes to the sanctioned writer")
 
 
 class ClaimedEnforcementTests(unittest.TestCase):
@@ -751,8 +676,7 @@ class EvidenceVocabularyTests(unittest.TestCase):
 
     @staticmethod
     def _gate_keys():
-        spec = yaml.safe_load((SKILLS / "gates.yaml").read_text(encoding="utf-8"))
-        return {k for b in spec["boundaries"].values() for k in b.get("required_evidence", [])}
+        return {k for b in GATES["boundaries"].values() for k in b.get("required_evidence", [])}
 
     def test_evidence_owner_prose_uses_the_gate_key_spelling(self):
         hyphenated = {k.replace("_", "-"): k for k in self._gate_keys() if "_" in k}
@@ -783,7 +707,7 @@ class EvidenceVocabularyTests(unittest.TestCase):
         that prints the wording without ever naming that shape teaches a package
         the gate rejects.
         """
-        spec = yaml.safe_load((SKILLS / "gates.yaml").read_text(encoding="utf-8"))
+        spec = GATES
         values = {}
         for key, allowed in (spec.get("fallback_values") or {}).items():
             values[allowed[0]] = key
@@ -826,6 +750,8 @@ class FrontmatterBudgetTests(unittest.TestCase):
 
     #: Anthropic's published ceiling for the frontmatter description field.
     MAX_DESCRIPTION = 600
+    MAX_SKILL_LINES = 500
+    NAVIGATION_THRESHOLD = 400
 
     @staticmethod
     def _frontmatter(text):
@@ -835,8 +761,8 @@ class FrontmatterBudgetTests(unittest.TestCase):
         if end == -1:
             return None
         try:
-            return yaml.safe_load(text[3:end]) or {}
-        except yaml.YAMLError:
+            return parse_yaml(text[3:end]) or {}
+        except Exception:
             return None
 
     def test_every_skill_has_parseable_frontmatter(self):
@@ -865,6 +791,22 @@ class FrontmatterBudgetTests(unittest.TestCase):
             if not meta.get("allowed-tools"):
                 missing.append(skill.relative_to(SKILLS).as_posix())
         self.assertEqual([], missing, "\n".join(missing))
+
+    def test_large_skills_stay_bounded_and_expose_a_navigation_index(self):
+        violations = []
+        for skill in sorted(SKILLS.rglob("SKILL.md")):
+            text = skill.read_text(encoding="utf-8", errors="replace")
+            lines = len(text.splitlines())
+            relative = skill.relative_to(SKILLS).as_posix()
+            if lines > self.MAX_SKILL_LINES:
+                violations.append(f"{relative} is {lines} lines (budget {self.MAX_SKILL_LINES})")
+            if lines > self.NAVIGATION_THRESHOLD and not any(
+                heading in text for heading in ("## Contents", "## Operator index")
+            ):
+                violations.append(
+                    f"{relative} is {lines} lines but has no Contents or Operator index section"
+                )
+        self.assertEqual([], violations, "\n".join(violations))
 
 
 class LineEndingTests(unittest.TestCase):
@@ -908,3 +850,166 @@ class LineEndingTests(unittest.TestCase):
                     f"{path.relative_to(SKILLS).as_posix()} mixes {crlf} CRLF with {bare} bare LF"
                 )
         self.assertEqual([], mixed, "\n".join(mixed))
+
+
+class EvidenceKeyMatchTests(unittest.TestCase):
+    """An evidence key counts as documented only when it is named as a key.
+
+    Nineteen of the gate's keys are ordinary English words. A word-boundary search
+    accepted `scope` or `tests` anywhere in an owner's tree, so deleting the
+    documentation of those keys left the suite green.
+    """
+
+    def test_a_bare_word_is_not_a_mention_of_the_key(self):
+        for key in ("plan", "scope", "tests", "findings", "runtime", "architecture"):
+            with self.subTest(key=key):
+                self.assertFalse(mentions_key(f"The {key} is reviewed and the {key}s are listed.", key))
+
+    def test_a_backticked_key_is_a_mention(self):
+        self.assertTrue(mentions_key("Returns the `scope` record.", "scope"))
+        self.assertTrue(mentions_key("| `tests` | the runner log |", "tests"))
+
+    def test_a_longer_key_does_not_satisfy_a_shorter_one(self):
+        self.assertFalse(mentions_key("Returns `scope_note`.", "scope"))
+
+    def test_every_owner_documents_each_key_it_owns_as_a_key(self):
+        """The strict form holds on the real catalog, so the check above is not decorative."""
+        for boundary, owners in GATES["evidence_owners"].items():
+            for key, owner in owners.items():
+                with self.subTest(boundary=boundary, key=key):
+                    self.assertTrue(mentions_key(CORPUS[owner], key), f"{owner} never names `{key}` as a key")
+
+
+class ParserParityTests(unittest.TestCase):
+    """Production parses with ``data_formats``; PyYAML must read the same catalog the same way.
+
+    The tests of this suite parse with ``data_formats`` for exactly that reason,
+    which leaves one way for the two to part: a document written for PyYAML that
+    the shipped parser reads differently. This is the comparison that would show it.
+    """
+
+    #: Documents no code reads. They use list items that are folded block scalars
+    #: (`- >-`), which the stdlib subset does not support, so only PyYAML parses them.
+    HUMAN_READ_ONLY = {"intake-brief.yaml"}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.yaml = _catalog.require_pyyaml()
+
+    @classmethod
+    def _trimmed(cls, value):
+        """The stdlib reader always trims trailing whitespace from a block scalar."""
+        if isinstance(value, str):
+            return value.rstrip()
+        if isinstance(value, dict):
+            return {str(k): cls._trimmed(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [cls._trimmed(v) for v in value]
+        return value
+
+    def test_every_yaml_file_reads_the_same_with_both_parsers(self):
+        files = [p for p in sorted(SKILLS.rglob("*.yaml")) if "__pycache__" not in p.parts
+                 and p.name not in self.HUMAN_READ_ONLY]
+        self.assertGreater(len(files), 10, "the catalog yielded almost no YAML files")
+        for path in files:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.relative_to(SKILLS).as_posix()):
+                self.assertEqual(self._trimmed(self.yaml.safe_load(text)), self._trimmed(parse_yaml(text)))
+
+    def test_every_skill_frontmatter_reads_the_same_with_both_parsers(self):
+        skills = sorted(SKILLS.rglob("SKILL.md"))
+        self.assertGreater(len(skills), 40, "the catalog yielded almost no skills")
+        for path in skills:
+            match = _catalog.FRONTMATTER.match(path.read_text(encoding="utf-8"))
+            with self.subTest(path=path.relative_to(SKILLS).as_posix()):
+                self.assertIsNotNone(match, "no frontmatter")
+                self.assertEqual(self._trimmed(self.yaml.safe_load(match.group(1))),
+                                 self._trimmed(parse_yaml(match.group(1))))
+
+    def test_the_documents_the_shipped_parser_cannot_read_are_the_ones_listed(self):
+        """The exemption above is exactly the set that fails, so it cannot quietly grow."""
+        unreadable = set()
+        for path in sorted(SKILLS.rglob("*.yaml")):
+            try:
+                parse_yaml(path.read_text(encoding="utf-8"))
+            except ValueError:
+                unreadable.add(path.name)
+        self.assertEqual(self.HUMAN_READ_ONLY, unreadable)
+
+
+class PyYamlVariantTests(unittest.TestCase):
+    """A CI leg that names a PyYAML variant really has it."""
+
+    def _variant(self, value):
+        saved = _catalog.PYYAML_VARIANT
+        self.addCleanup(setattr, _catalog, "PYYAML_VARIANT", saved)
+        _catalog.PYYAML_VARIANT = value
+
+    def test_the_interpreter_matches_the_leg(self):
+        if not _catalog.PYYAML_VARIANT:
+            self.skipTest("no CI leg declared a PyYAML variant (SUPREMETEAM_PYYAML is unset)")
+        _catalog.pyyaml()  # raises when the leg's promise and the interpreter disagree
+
+    def test_a_leg_that_promises_pyyaml_fails_when_it_is_missing(self):
+        self._variant("with")
+        with mock.patch.dict("sys.modules", {"yaml": None}):
+            with self.assertRaises(AssertionError):
+                _catalog.pyyaml()
+
+    def test_a_leg_that_promises_no_pyyaml_fails_when_it_is_present(self):
+        self._variant("without")
+        with mock.patch.dict("sys.modules", {"yaml": object()}):
+            with self.assertRaises(AssertionError):
+                _catalog.pyyaml()
+
+    def test_an_unset_variant_accepts_either(self):
+        self._variant("")
+        with mock.patch.dict("sys.modules", {"yaml": None}):
+            self.assertIsNone(_catalog.pyyaml())
+
+    def test_a_skip_names_the_legs_that_run_the_test(self):
+        self._variant("")
+        with mock.patch.dict("sys.modules", {"yaml": None}):
+            with self.assertRaises(unittest.SkipTest) as raised:
+                _catalog.require_pyyaml()
+        self.assertIn("with PyYAML", str(raised.exception))
+
+
+class TestModuleShapeTests(unittest.TestCase):
+    """Running a test file directly must run every test in it.
+
+    ``if __name__ == "__main__": unittest.main()`` loads only the classes defined
+    above it, so a guard in the middle of a file silently drops every class below.
+    Discovery is unaffected, which is why it went unnoticed.
+    """
+
+    @staticmethod
+    def _is_main_guard(node) -> bool:
+        return (isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
+                and isinstance(node.test.left, ast.Name) and node.test.left.id == "__name__")
+
+    @staticmethod
+    def _modules():
+        found = [p for p in sorted(SKILLS.rglob("test_*.py")) if "__pycache__" not in p.parts]
+        return found + sorted((SKILLS.parent / "scripts").glob("test_*.py"))
+
+    def test_the_main_guard_is_the_last_statement_of_every_test_module(self):
+        modules = self._modules()
+        self.assertGreater(len(modules), 30, "the scan found almost no test modules")
+        offenders = []
+        for path in modules:
+            body = ast.parse(path.read_text(encoding="utf-8")).body
+            guards = [i for i, node in enumerate(body) if self._is_main_guard(node)]
+            if guards and guards != [len(body) - 1]:
+                below = sum(isinstance(node, ast.ClassDef) for node in body[guards[0] + 1:])
+                offenders.append(f"{path.relative_to(SKILLS.parent).as_posix()}: the guard is not last "
+                                 f"({below} test classes defined below it)")
+        self.assertEqual([], offenders, "\n".join(offenders))
+
+    def test_the_scan_recognises_a_guard_in_the_middle_of_a_file(self):
+        body = ast.parse('import unittest\nif __name__ == "__main__":\n    unittest.main()\nclass T:\n    pass\n').body
+        self.assertEqual([1], [i for i, node in enumerate(body) if self._is_main_guard(node)])
+
+
+if __name__ == "__main__":
+    unittest.main()

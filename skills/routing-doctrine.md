@@ -90,7 +90,7 @@ through an opt-out.
 **Host registration.** Claude Code discovers skills at
 `.claude/skills/<name>/SKILL.md`, one level deep, so where a skill sits decides
 whether the user can name it. The catalog's layout follows its routing classes:
-of its 52 skills, the 21 a user may reach directly sit at the catalog root, and
+of its 53 skills, the 22 a user may reach directly sit at the catalog root, and
 the 31 internal specialists stay nested one level below, where the loader does
 not offer them. That is the intended reading of "reached only through the owning
 sub-orchestrator" expressed in the filesystem rather than only in prose.
@@ -154,7 +154,7 @@ disambiguates. Every skill in the catalog falls in exactly one row.
 | Gatekeepers (must defer) | `gatekeeper-admiral` (`cross_stage_gatekeeper`); `gatekeeper-design`, `gatekeeper-build`, `gatekeeper-code` (`phase_gatekeepers`) | Reached only by a submitting owner presenting a package at the boundary they validate. Never a front door. |
 | Session memory | `session-memory` | A component of the Admiral pipeline, engaged by `admiral` at its declared checkpoints; it hands off to `admiral` when reached cold. |
 | Internal specialists | every skill under `design/`, `build/`, `review/` not named in a row above; `taste/taste-review`; `skill-maker/skill-creator` and `skill-maker/skill-reviewer` | Reached only through the owning sub-orchestrator. |
-| Standalone tools | `careful`, `freeze`, `guard`, `unfreeze`, `browse`, `open-browser`, `setup-browser-cookies`, `pair-agent`, `benchmark`, and `setup-deploy`, `land-and-deploy`, `document-release` | Out of routing scope, and invokable directly: each sits at the catalog root, so the host registers it by name. |
+| Standalone tools | `audit-improve` (`specialists`); `careful`, `freeze`, `guard`, `unfreeze`, `browse`, `open-browser`, `setup-browser-cookies`, `pair-agent`, `benchmark`, and `setup-deploy`, `land-and-deploy`, `document-release` | Direct read-only auditing or out-of-routing tools. An audit-improve proposal enters Admiral and skill-maker after evidence is collected. |
 
 Two rows deliberately overlap a directory glob, and the named row wins:
 `review/cso` owns the security pipeline and belongs to the pipeline-owner row,
@@ -301,7 +301,7 @@ skill carries it, not because a validator enforces it.
 
 Set `session_pin: true` while a coherent run is active or gate-pending. Release
 it on `RUN_COMPLETE`, the explicit command `release admiral` or `/exit-admiral`,
-or verified lock staleness. Append every release to the audit trail.
+or verified lock staleness. The `complete`, `block` or `release` call records it.
 
 The pin lives in the run lock, whose only writer is
 `harness/hooks/save_run.py`. Whether a lock is held, fresh, coherent, and
@@ -345,11 +345,11 @@ enforcement table exists to prevent.
   rule 2 cannot be evaluated, so it does not apply. Do not infer a pin from a
   damaged lock and do not start a second run on top of an ambiguous one: treat
   the state as unresolved, report it, and let `admiral` classify it
-  (active / inactive / orphaned / missing / unreadable / conflict) before any
+  (active / inactive / orphaned / missing / unreadable / conflicting) before any
   new work.
 - **A lock exists but is stale.** Staleness must be verified, not assumed from
   age alone where a heartbeat is available. A verified-stale lock may be
-  released, and the release is appended to the audit trail.
+  released, and the `complete`, `block` or `release` call records it in the audit trail.
 - **Two precedence rules both match.** Apply the tie-break in
   [Precedence](#precedence). If the tie-break's three conditions cannot all be
   met, the turn is not a standalone-tool request and belongs to the active run.

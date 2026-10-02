@@ -11,20 +11,20 @@ from __future__ import annotations
 import json
 import sys
 import unittest
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+import _catalog
+
+ROOT = _catalog.SKILLS
 SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import validate_manifests  # noqa: E402
-from data_formats import load_data  # noqa: E402
 
 
 def team_members() -> set[str]:
     """The roster, read through the same helper validate_manifests.py uses."""
-    return validate_manifests.team_members(load_data(ROOT / "team-manifest.yaml"))
+    return validate_manifests.team_members(_catalog.load_spec("team-manifest.yaml"))
 
 
 class PipelineContractTests(unittest.TestCase):
@@ -32,7 +32,7 @@ class PipelineContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.spec = json.loads((ROOT / "pipelines.yaml").read_text(encoding="utf-8"))
         cls.gates = json.loads((ROOT / "gates.yaml").read_text(encoding="utf-8"))
-        cls.ownership = load_data(ROOT / "ownership.yaml")
+        cls.ownership = _catalog.load_spec("ownership.yaml")
         cls.members = team_members()
         cls.artifact_ids = {str(item.get("id")) for item in cls.ownership.get("artifacts", [])}
 
@@ -81,6 +81,32 @@ class PipelineContractTests(unittest.TestCase):
                     self.assertTrue(script.startswith("skills/"), script)
                     self.assertTrue((ROOT.parent / script).is_file(), script)
 
+    def test_stage_dependencies_are_available_in_declared_order(self):
+        """A stage cannot consume an artifact that only a later stage produces."""
+        checked = 0
+        for name, pipeline in self.spec["pipelines"].items():
+            available = set(pipeline.get("external_inputs", []))
+            for stage in pipeline["stages"]:
+                required = set(stage.get("requires", []))
+                with self.subTest(pipeline=name, step=stage.get("step")):
+                    self.assertLessEqual(required, available)
+                    self.assertTrue(set(stage.get("produces", [])).isdisjoint(available))
+                checked += len(required)
+                available.update(stage.get("produces", []))
+        self.assertGreater(checked, 0, "expected at least one machine-readable stage dependency")
+
+    def test_validator_rejects_a_forward_dependency(self):
+        pipeline = {
+            "external_inputs": ["request"],
+            "stages": [
+                {"step": "spec", "requires": ["stack-lock"], "produces": ["implementation-spec"]},
+                {"step": "lock", "requires": ["implementation-spec"], "produces": ["stack-lock"]},
+            ],
+        }
+        errors = validate_manifests.pipeline_dependency_errors("design", pipeline)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("design/spec requires unavailable inputs ['stack-lock']", errors[0])
+
     def test_gate_spec_submitters_are_team_members(self):
         for name, boundary in self.gates["boundaries"].items():
             with self.subTest(boundary=name):
@@ -111,8 +137,8 @@ class StageArtifactOwnershipTests(unittest.TestCase):
     """
 
     def test_every_artifact_bearing_stage_is_owned_by_the_artifact_owner(self):
-        ownership = load_data(ROOT / "ownership.yaml")
-        pipelines = load_data(ROOT / "pipelines.yaml")
+        ownership = _catalog.load_spec("ownership.yaml")
+        pipelines = _catalog.load_spec("pipelines.yaml")
         owners = {a["id"]: a.get("owner") for a in ownership["artifacts"]}
         checked = 0
         for name, pipeline in pipelines["pipelines"].items():

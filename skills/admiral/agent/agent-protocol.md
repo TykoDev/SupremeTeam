@@ -115,7 +115,7 @@ Hosts without continuous turns ignore the pin and rely on explicit invocation ea
 5. Write the normalized intake artifact to the active run directory when persistence is active; otherwise keep the artifact inline.
 6. Update the run-state and lock records programmatically when writable, including `save_directory_status`, `persistence_activation_result`, and `resume_source`.
 7. Present the intake summary to the user and request the single mandatory confirmation checkpoint.
-8. After confirmation and before any Stage 1 delegation, engage `session-memory` to checkpoint the normalized intake. This engagement is **mandatory and unconditional** (it does not wait for context tier 3+ or the first gate). Append `session-memory` to the run-state `skills_engaged` list and append `DELEGATION_STARTED` / `DELEGATION_COMPLETED` (target: `session-memory`) to `_audit-trail.md`. This guarantees every run — including a single-stage or early-ending one — engages at least two catalog skills before delivery.
+8. After confirmation and before any Stage 1 delegation, engage `session-memory` to checkpoint the normalized intake. This engagement is **mandatory and unconditional** (it does not wait for context tier 3+ or the first gate). Add `session-memory` to the run-state `skills_engaged` list and record `DELEGATION_STARTED` / `DELEGATION_COMPLETED` (target: `session-memory`) as state fields with `--set` on the checkpoint, not as trail lines (the trail is `save_run.py`'s alone; see the vocabulary below). This guarantees every run — including a single-stage or early-ending one — engages at least two catalog skills before delivery.
 
 ### Stage 1-4: Pipeline Execution
 
@@ -271,14 +271,18 @@ agent that tries produces a denial rather than a record:
 - `_audit-trail.md`, `_state.md`, `_lock.md`, `_latest.md`, `_journal.json` and
   `_history/*` have exactly one writer, `save_run.py`
   (`../../save-ownership.yaml` class `core-run-record`). `pre_tool_use.py`
-  Rule C denies every edit-tool write to them and every mutating shell command
-  that names one without invoking `save_run.py`.
+  Rule C denies every edit-tool write to them and every shell command whose write
+  targets include one. A script's arguments are data and not write targets, so
+  `save_run.py` itself is never stopped, while a redirect from its command line
+  into a core file is. The hook is a text guard, not a lock
+  (`../../harness/hooks/README.md` § What the guard cannot see).
 - `save_run.py` emits its own fixed event vocabulary and has **no annotation
   operation**: nothing in `create | checkpoint | heartbeat | complete | block |
-  release | recover | status` takes an arbitrary event name. The trail can only
-  ever contain `create`, `checkpoint`, `reopen`, `resume`, `complete`,
-  `blocked`, `released`, `recover`, `rollforward`, `rollback`, and
-  `pointer-degraded`.
+  release | recover | status` takes an arbitrary event name. The trail holds
+  thirteen events and no others: `create`, `checkpoint`, `reopen`, `resume`,
+  `complete`, `blocked`, `released`, `recover`, `rollforward`, `rollback`,
+  `pointer-degraded`, and, for an operation that did not happen, `refused` and
+  `degraded` (`../../save-protocol.md` §4 is the list this one repeats).
 
 So the events below are **run-state fields, not trail lines**. Record each one
 the only way the harness allows — as a `--set key=value` on the next
@@ -301,7 +305,7 @@ recordable agent-mode fact:
 
 ```
 - AGENT_MODE_DETECTED — execution_mode set to agent, platform: {platform}
-- SAVE_STATUS_CHECK — status: {active|inactive|complete|stale|orphaned|conflicting|corrupt|interrupted|missing|unreadable}, action: {resume|recover|activate|transient|stop}
+- SAVE_STATUS_CHECK — status: {active|inactive|complete|stale|orphaned|conflicting|corrupt|interrupted|uninitialized|missing|unreadable}, action: {resume|recover|activate|transient|stop}
 - PERSISTENCE_ACTIVATION — result: {activated|failed|skipped}, reason: {message}
 - MODE_RECHECK — cached: {old_mode}, detected: {new_mode}, action: {upgrade|downgrade|cache-hit}
 - PERSISTENCE_PROBE — result: {ok|failed|skipped}, persistence_active: {true|false}

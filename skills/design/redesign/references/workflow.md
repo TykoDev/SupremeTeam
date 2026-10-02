@@ -151,7 +151,7 @@ pointer and the two rules that decide path resolution. When persistence is activ
 `../../../save-ownership.yaml` grants a phase lead: `manifest.json`, `reports/`,
 `artifacts/`, `evidence/`, and `packages/`:
 
-1. **Before delegating** a specialist: checkpoint through `session-memory` (`save_run.py checkpoint --run-id {run-id} --expect-revision <n> --owner redesign --set phase_state=REDESIGN_ACTIVE`; the active owner follows `--owner`, which `--set` refuses as a reserved field) and include the canonical `### Save Context` block naming the specialist as `Owner` and its `reports/`, `artifacts/`, or `evidence/` destination as `Expected artifact`. Do not create per-specialist directories or phase-state files.
+1. **Before delegating** a specialist: checkpoint through `session-memory` (`save_run.py checkpoint --run-id {run-id} --expect-revision <n> --owner admiral --set phase_state=REDESIGN_ACTIVE --set delegated_to=redesign`; `--owner` is the run's lock holder, which is admiral in every Admiral run: `save_run.py` refuses any other owner with `lock is owned by 'admiral'`, so the phase lead records itself through `--set delegated_to=` and never through `--owner`) and include the canonical `### Save Context` block naming the specialist as `Owner` and its `reports/`, `artifacts/`, or `evidence/` destination as `Expected artifact`. Do not create per-specialist directories or phase-state files.
 2. **After specialist returns**: verify the named artifact exists at its destination (for example `artifacts/inventory/design-inventory.json`, `artifacts/mocks/v2/mock.html`, or `artifacts/variants/v2/app.html`), then checkpoint with `--evidence <path>` so its sha256 is registered.
 3. **At the selection stage**: write `redesign/reports/selection.md` with the user's answer recorded verbatim, register its sha256 through a checkpoint, and build the typed `selection` record from it. Do not commission `selected-build` before both exist.
 4. **After gatekeeper-design verdict**: the gatekeeper has written `redesign/verdict_redesign-review.json`; record the semantic verdict and next action in the next checkpoint (`--set phase_state=REDESIGN_GATE_PENDING`, `REDESIGN_GATE_REVISE`, or the next active state). Never edit the verdict record.
@@ -193,7 +193,7 @@ and return the deliverable inline.
 
 | Trigger | What Redesign Writes |
 |---------|----------------------|
-| Phase start | Nothing on disk: the phase state is published through `session-memory` (`save_run.py checkpoint --run-id {run-id} --expect-revision <n> --owner redesign --set phase_state=REDESIGN_ACTIVE`) before the first specialist delegation |
+| Phase start | Nothing on disk: the phase state is published through `session-memory` (`save_run.py checkpoint --run-id {run-id} --expect-revision <n> --owner admiral --set phase_state=REDESIGN_ACTIVE --set delegated_to=redesign`; `--owner` is the lock holder, never `redesign`) before the first specialist delegation |
 | Specialist delegation | The delegation block above, naming the specialist as `Owner`, the exact `reports/`, `artifacts/`, or `evidence/` destination as `Expected artifact`, and `redesign-review` as `Return boundary` |
 | Specialist return | Verify the named artifact exists at its destination, then register its sha256 through a `session-memory` checkpoint (`--evidence <path>`) |
 | Mock set complete | Nothing new on disk: the four mock directories are the specialists' writes; redesign registers their hashes and assembles the `mock_set` record for the manifest |

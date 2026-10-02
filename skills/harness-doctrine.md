@@ -1,10 +1,11 @@
 # Runtime Harness Doctrine
 
 Binding rules for how every skill adapts the interface between the model and its
-environment, not the model itself. The harness adds five layers without changing
-the pipeline: entry routing, persistent context, phase trajectory, evidence
-gates, and action guardrails. Skills and gates cite this doctrine by section
-number.
+environment, not the model itself. The harness adds four lifecycle layers without
+changing the pipeline (§1): the environment contract, procedural skill, action
+realization, and trajectory regulation. Entry routing, persistent context and the
+evidence gates reach those layers through the hooks and the gate engines. Skills
+and gates cite this doctrine by section number.
 
 This file is canonical for the four-layer model, the failure taxonomy and its
 priority order, the engineering non-negotiables every intervention must satisfy,
@@ -229,7 +230,7 @@ inspection alone. Registration requires explicit user approval.
 
 All three lifecycle hooks — `pre_tool_use.py`, `post_tool_use.py`, and
 `user_prompt_submit.py` — call `_state.record_observation()` and then
-`_state.refresh_run_heartbeat()`, so both the observation record and the
+`run_heartbeat.refresh()`, so both the observation record and the
 heartbeat refresh come from every hook and neither is post-tool only.
 `harness/hooks/README.md` § Heartbeat refresh is canonical for the refresh
 conditions and states the same set: a payload carrying a host session id,
@@ -298,7 +299,9 @@ failing open costs the guarantee.
   leaves the block in force, because a guard that cannot read its own grant
   stays closed.
 - **The gate engine cannot load or parse its spec.** That is an engine error,
-  exit code 2, never a pass and never a verdict. Treat it as `ESCALATE` (§0).
+  exit code 2, never a pass and never a verdict. Treat it as `ESCALATE` (§0). The exit codes
+  of every tool are tabulated under "Exit codes and streams" in the repository's `docs/harness.md`,
+  a checkout file that an installed copy does not carry.
 - **A required evidence check is unavailable.** An unavailable or errored typed
   record is a data gap, not a clean result. The verdict is `REVISE` or
   `ESCALATE` with the gap named.

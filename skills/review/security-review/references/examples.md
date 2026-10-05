@@ -33,7 +33,7 @@ what `../../../gates.yaml` `evidence_types.findings` requires of the items
 - Open risks: the object store's bucket policy is not in the supplied artifacts, so the blast radius of a written payload stays unconfirmed.
 - Next action: `build/security-builder` adds signature validation; the re-review is a delta over the handler alone.
 - Revision: r3.
-- Handoff to `review/code-chief`: both items enter `findings` as `{id, severity, status}`, and `SEC-01` blocks the review package at `Critical` until it is verified. `code-chief` issues the verdict; this lens does not.
+- Handoff to `review/code-chief`: both items enter `findings` as `{id, severity, status}`, and `SEC-01` blocks the review package at `Critical` until it is verified. `code-chief` carries them into its `review_verdict` recommendation and `review/gatekeeper-code` issues the verdict; this lens does neither.
 
 ## Example 2 — review pipeline: admin export
 

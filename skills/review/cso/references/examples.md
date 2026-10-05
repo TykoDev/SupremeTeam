@@ -29,7 +29,7 @@ other severity vocabulary is admissible in a package this skill submits.
 
 **Output:**
 - Finding SEC-010 — **Major**, status `verified`: the product posture depends on one third-party identity provider, and the package documents no token revocation, outage fallback, or emergency lockout procedure. The business cannot state how privileged access is contained during a provider disruption.
-- Finding SEC-011 — **Info**: the provider's own status history shows two multi-hour outages in the last year; recorded as context for the resilience decision, not as a defect.
+- Finding SEC-011 — **Info**, status `open`: the provider's own status history shows two multi-hour outages in the last year; recorded as context for the resilience decision, not as a defect.
 - Remediation plan: identity-provider resilience is assigned to `build/security-builder` as a control gap with a named fix path, not left as an implementation detail.
 - Evidence gap: `vulnerability_scan` carries the sanctioned applicability record `no dependency or source scan surface - scanner not engaged`, decided by the engagement owner, because the identity flow is entirely managed.
 
@@ -40,15 +40,21 @@ other severity vocabulary is admissible in a package this skill submits.
 **Output:**
 - Finding SEC-020 — **Critical**, status `not-applicable`, reason `the reported cross-tenant path is unreachable in this deployment; the filter runs inside the database role, not the application`: recorded with its reason so the Critical is closed on evidence rather than on assertion.
 - Finding SEC-021 — **Major**, status `verified`: encryption at rest is present, but tenant isolation still depends on application-layer filters with no database-level guardrail, so a single query-path mistake becomes a cross-tenant incident rather than a local bug.
-- Finding SEC-022 — **Minor**, status `recorded`: the isolation test suite covers two of the five tenant-scoped tables.
+- Finding SEC-022 — **Minor**, status `open`: the isolation test suite covers two of the five tenant-scoped tables.
 - Next move: require the database-level isolation boundary, or record the accepted risk with a named owner and a reopen trigger in `residual_risk`.
 
 ## Example 4 — the submission artifact
 
-The package this skill delivers is `security/manifest.json`. Schema 2 requires
-`boundary`, `owner`, `run_id` inside a run, one `revision`, typed records for the
-keys in `evidence_types`, and an applicability record — never a bare string — for
-a waived key. This is the manifest for the Example 1 engagement after
+The package this skill delivers is `security/manifest.json`. `check.py` requires a
+`submission_id`, a `revision`, and a `revisions` list holding that one value; schema 2
+adds `boundary`, `owner`, `run_id` inside a run, typed records for the keys in
+`evidence_types`, and an applicability record — never a bare string — for a waived
+key. Artifact paths are relative to the manifest's own directory, so a file at
+`security/reports/threat-model.md` in the run is named `reports/threat-model.md`
+here; `security/reports/…` would resolve to `security/security/reports/…` and fail
+as missing. The scan record's `artifacts` are the names `scan_record.py` wrote, which
+are relative to the same directory, and are carried unchanged. Neither raw-output
+file may be empty: `check.py` refuses an empty artifact. This is the manifest for the Example 1 engagement after
 remediation, abridged in two ways: to one finding and one `artifact_hashes` entry
 per key, and at the hash level — every sha256 below is shown truncated with an
 ellipsis for legibility. A real manifest carries the full 64-character digest for
@@ -61,20 +67,22 @@ these values or their shape:
   "boundary": "security-review",
   "owner": "cso",
   "run_id": "2026-05-02_admin-audit_b41d",
+  "submission_id": "2026-05-02_admin-audit_b41d/security-review/r3",
   "revision": 3,
+  "revisions": [3],
   "artifact_hashes": {
-    "security/reports/threat-model.md": "31ca9f0b…",
-    "security/evidence/scan-pip-audit.json": "9b2e4417…",
-    "security/evidence/scan-pip-audit.stdout.txt": "4d8a1c60…",
-    "security/evidence/scan-pip-audit.stderr.txt": "e91f3b72…",
-    "security/evidence/probe-admin-denial.log": "c07d1a55…"
+    "reports/threat-model.md": "31ca9f0b…",
+    "evidence/scan-pip-audit.json": "9b2e4417…",
+    "evidence/scan-pip-audit.stdout.txt": "4d8a1c60…",
+    "evidence/scan-pip-audit.stderr.txt": "e91f3b72…",
+    "evidence/probe-admin-denial.log": "c07d1a55…"
   },
   "evidence": {
     "scope": "Authenticated admin surface, its session store, and the two destructive account actions. Excluded: the marketing site, which shares no session. Active probing authorized by the engagement owner; remediation authorized.",
-    "threat_model": "security/reports/threat-model.md",
+    "threat_model": "reports/threat-model.md",
     "vulnerability_scan": {
-      "artifacts": ["security/evidence/scan-pip-audit.stdout.txt",
-                    "security/evidence/scan-pip-audit.stderr.txt"],
+      "artifacts": ["evidence/scan-pip-audit.stdout.txt",
+                    "evidence/scan-pip-audit.stderr.txt"],
       "tool": "pip-audit",
       "command": "pip-audit -r requirements.txt --strict",
       "exit_code": 0,
@@ -83,7 +91,7 @@ these values or their shape:
       "result": {"status": "pass"}
     },
     "denial_path_evidence": {
-      "artifacts": ["security/evidence/probe-admin-denial.log"],
+      "artifacts": ["evidence/probe-admin-denial.log"],
       "result": {"status": "pass"}
     },
     "findings": {
@@ -99,7 +107,9 @@ these values or their shape:
 }
 ```
 
-Self-check before submitting, and fix every mechanical failure first:
+Self-check from the project root before submitting, and fix every mechanical
+failure first. With the full digests filled in, this manifest passes; the one
+warning is that `denial_path_evidence` binds no `inputs`, which a probe may omit:
 
 ```bash
 python skills/harness/gatekeeper/check.py --boundary security-review --package skillset-saves/runs/2026-05-02_admin-audit_b41d/security/manifest.json
@@ -119,13 +129,14 @@ two owners.
 
 **Response:**
 - Treated as one packet: both owners delegated in parallel in the same turn, every failing item for one owner batched into a single revision delegation rather than sent one at a time.
-- `security-review` re-ran the scan with the observed exit code classified, returning `result.status: fail` with the findings it had printed, plus a `--limitation` for the transitive tree it could not resolve.
-- `cso` re-triaged SEC-014 itself, assigning `build/security-builder` as owner and `the next change to the export authorization path` as the reopen trigger.
+- `security-review` re-ran the scan with the observed exit code classified. The record now reads `result.status: fail` with the two advisories the scanner printed, plus a `--limitation` for the transitive tree it could not resolve. A `fail` record is honest evidence, but only `pass` satisfies `vulnerability_scan`, so it is not resubmitted as it stands.
+- `cso` re-triaged SEC-014 itself, assigning `build/security-builder` as owner and `the next change to the export authorization path` as the reopen trigger, and triaged the two advisories as SEC-015 (Major) and SEC-016 (Minor).
+- Remediation was authorized in this engagement's scope, so `build/security-builder` pinned the two patched versions and `security-review` re-ran the scan against the updated lockfile: `result.status: pass`, with `inputs` bound to the new lockfile digest. SEC-015 and SEC-016 are `verified`. Without that authorization, nothing closes the key: the sanctioned waiver asserts there is no scan surface, which is false here. cso would then return `ESCALATE` with the `fail` record rather than resubmit.
 - Resubmitted **once**, at revision 3, with `--prior` so the gate re-judges only `changed_evidence`:
 
 ```bash
 python skills/harness/gatekeeper/check.py --boundary security-review --package skillset-saves/runs/2026-05-02_admin-audit_b41d/security/manifest.json --prior skillset-saves/runs/2026-05-02_admin-audit_b41d/security/verdict_security-review.json
 ```
 
-- `scope`, `threat_model`, `denial_path_evidence`, and `residual_risk` came back as `unchanged_evidence` and carried their prior judgment; only the two repaired keys were re-judged.
+- `scope`, `threat_model`, `denial_path_evidence`, and `residual_risk` came back as `unchanged_evidence` and carried their prior judgment; `vulnerability_scan`, `findings`, and `remediation_plan` came back as `changed_evidence` and were re-judged.
 - Cycle count: 1 of `revise_policy.cycle_cap` 2. A third cycle escalates instead of resubmitting.

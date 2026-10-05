@@ -46,8 +46,10 @@ delegates_to:
     skill_path: review/quality-review
   - name: security-review
     skill_path: review/security-review
+    optional: true
   - name: mr-robot
     skill_path: review/mr-robot
+    optional: true
   - name: frontier
     skill_path: review/frontier
     optional: true

@@ -111,7 +111,7 @@ At `schema_version: 2` that string is not written as the key's value: `../../gat
 
 ## Packet Shape
 
-Every pass returns the same fields in this order, so `review/code-chief` merges lenses instead of reformatting them (`../../execution-contract.md`, clause 6; this lens owns no gate, so it returns no verdict — `cso` issues the `security-review` verdict):
+Every pass returns the same fields in this order, so `review/code-chief` merges lenses instead of reformatting them (`../../execution-contract.md`, clause 6; this lens owns no gate, so it returns no verdict — `review/gatekeeper-code` issues the `review-to-delivery` verdict on `code-chief`'s package, and `gatekeeper-admiral` the `security-review` verdict on the package `cso` submits):
 
 ```text
 Outcome:     mr-robot, <stage>, <revision reviewed>, <n> findings: <c> Critical, <m> Major, <k> Minor, <i> Info
@@ -160,7 +160,7 @@ At the cycle cap, an unresolved Critical or Major returns unchanged with its blo
 
 ## Required Contracts
 
-- **Read-only over the reviewed surface**: This lens reports and never edits the code, configuration, or dependencies it attacks. `allowed-tools` withholds `Edit` so the posture is enforced rather than promised, and `Write` covers the packet, the probe log, and its record under the save path only. Hardening that would break a chain is written into the finding as containment direction and routed through the owning orchestrator to the skill that owns the fix; a lens that both finds the hole and patches it leaves no one to check either half, and it destroys the surface the next probe round must re-test.
+- **Read-only over the reviewed surface**: This lens reports and never edits the code, configuration, or dependencies it attacks. `allowed-tools` does not enforce that: it grants `Write` and `Bash`, and either can change any file. The enforcement is the guard hook's Rule D (`../../harness/hooks/guard_hook.py`), and only while the run carries a `read_only` record (`guard_state.py read-only --run-id <run> --owner <owner> --allow "skillset-saves/runs/<run>/**"`): every write outside that record's allow globs and `.harness-state/` is then denied, a package install included. With no record, or with the hooks unregistered, nothing mechanical stops an edit and the posture is this lens's own rule, so the packet's Evidence says which held. `Write` is for the packet, the probe log, and its record under the save path only. Hardening that would break a chain is written into the finding as containment direction and routed through the owning orchestrator to the skill that owns the fix; a lens that both finds the hole and patches it leaves no one to check either half, and it destroys the surface the next probe round must re-test.
 - **Before/After Evidence**: Capture observable state before and after each intervention so improvements can be verified instead of asserted.
 - **Shared severity**: Grade every finding Critical | Major | Minor | Info, the four-tier model clause 3 of `../../execution-contract.md` defines, so upstream and downstream packages interpret risk consistently.
 - **Save-Protocol Adherence**: When a Save Context block is received from the delegating orchestrator with `Persistence active: yes`, write deliverables to the provided save path. Saving is mandatory when persistence is active.
@@ -170,7 +170,7 @@ At the cycle cap, an unresolved Critical or Major returns unchanged with its blo
 - review/code-chief
 - review/gatekeeper-code
 - review/security-review
-- `review/cso`, which owns the `security` pipeline, authorizes the engagement scope, and submits it at `security-review`
+- `review/cso`, which owns the `security` pipeline, sets the engagement scope (the target's owner authorizes active probing), and submits it at `security-review`
 
 ## Review Expectations
 

@@ -103,10 +103,12 @@ substitutes for the other: a package can pass the shape check and still fail the
 evidence contract.
 
 **1. The package-shape validator** checks which files the package directory
-holds:
+holds. Both commands below run from the project root (the directory that holds
+`skillset-saves/`), so every path in them resolves from the same directory; in an
+installed copy read the leading `skills/` as the skill set root:
 
 ```bash
-python scripts/check.py <package-dir> [--prior <prior-verdict-file>] [--json]
+python skills/review/gatekeeper-code/scripts/check.py skillset-saves/runs/<run>/review [--prior <prior-verdict-file>] [--json]
 ```
 
 It declares this boundary's required-artifact manifest — the three lenses that
@@ -124,6 +126,15 @@ shared engine at `../../harness/gatekeeper/_gatecheck.py`, which also mechanizes
 A file fills at most one lens: one stand-in that names several lenses fills one,
 and a file whose name fits but that lacks the packet fields is named in the
 failure as a near miss.
+
+A `PASS` on a lens says that some file with a fitting name and both fields filled
+the slot, not that the lens ran. Read the `location` of each `ARTIFACT_PRESENT`
+finding. `lens_code` is the slot to watch: `*code*.md` also matches a
+`code-chief` summary such as `code-chief-summary.md`, and a summary that carries
+`Outcome:` and `Findings:` lines fills the slot when no code-review packet is
+present. A slot filled by anything other than that lens's own packet, which for
+code-review is `deliverable_code-review.md`, is a missing lens and a `REVISE` to
+`code-chief`, whatever the script reported.
 
 It returns `PASS` / `FAIL` / `UNCHECKED` findings plus a `gate_status`, **never
 a verdict**, and never adjudicates conflicting specialist findings. It fails
@@ -152,7 +163,7 @@ carry no frontmatter); when either side declares none the check reports
 `../../gates.yaml`:
 
 ```bash
-python ../../harness/gatekeeper/check.py --boundary review-to-delivery --package <phase>/manifest.json [--prior <prior-verdict-file>] --verdict-out <phase>/verdict_review-to-delivery.json
+python skills/harness/gatekeeper/check.py --boundary review-to-delivery --package skillset-saves/runs/<run>/review/manifest.json [--prior <prior-verdict-file>] --verdict-out skillset-saves/runs/<run>/review/verdict_review-to-delivery.json
 ```
 
 It confirms the six required keys are present and non-falsy, that
@@ -222,7 +233,7 @@ the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 ## Required Contracts
 
 - **Shared severity**: Grade every finding Critical | Major | Minor | Info, the four-tier model clause 3 of `../../execution-contract.md` defines, so upstream and downstream packages interpret risk consistently.
-- **CSO lens coverage**: When a review package claims security leadership signoff, accepted-risk readiness, release security posture, regulated-data governance, or operating-model control review, require a `review/cso` packet or an explicit scoped skip reason.
+- **CSO lens coverage**: When a review package claims security leadership signoff, accepted-risk readiness, release security posture, regulated-data governance, or operating-model control review, require a `review/cso` packet or an explicit scoped skip reason. The `review` pipeline in `../../pipelines.yaml` has no cso stage, so that packet can only come from the separate `security` pipeline, which `code-chief` reaches by escalating to `admiral`; it is never a lens `code-chief` runs.
 - **Harness-doctrine citation**: When the package adds or changes a cross-cutting runtime intervention, check it against `../../harness-doctrine.md` §5 and cite the violated section by number in the verdict.
 - **Batched REVISE** (`../../gates.yaml` `revise_policy`): A `REVISE` carries every mechanical failure and every judgment finding from the pass, grouped by owner exactly as `check.py` reports them in `revise_packet.by_owner`; never return the first defect alone. On a resubmission run with `--prior`, re-judge only `changed_evidence` and carry the prior judgment on `unchanged_evidence`; the mechanical pass always covers the whole package. A package that fails mechanically was never eligible for submission (the submitter self-checks) and is returned without judgment.
 
@@ -248,9 +259,10 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | --- | --- |
 | The result reports `manifest_schema_version: 1`, so no typed record, waiver wording or finding policy was checked | Return `REVISE` to `code-chief` for a schema-2 manifest carrying `boundary` and `owner`. Exit 0 on a flat schema-1 package means the keys are present and the hashes hold, not that `executed_probes` was ever read as a passing probe or that `review_verdict` carries its challenge record. |
 | A mandatory specialist report is missing or older than the package revision under review | Reject the submission, name the missing or stale report, and require the owning orchestrator to resubmit a coherent package set. |
-| The package claims security leadership signoff, accepted-risk readiness, or release security posture without `review/cso` evidence or an explicit skip reason | Return REVISE and require `review/code-chief` to run the CSO lens or remove the unsupported leadership claim. |
+| The package claims security leadership signoff, accepted-risk readiness, or release security posture without `review/cso` evidence or an explicit skip reason | Return REVISE to `review/code-chief`: remove the unsupported leadership claim, or escalate to `admiral` to open the `security` pipeline under `cso` and carry that engagement's packet into the package. The review pipeline has no cso stage, so there is no CSO lens for `code-chief` to run. |
 | Specialist findings conflict on severity, exploitability, or scope | Preserve the contradiction in the verdict record and return REVISE unless the conflict requires external judgment, in which case return ESCALATE. |
 | The package claims a skip without recording the reason or evidence boundary | Mark the package incomplete and require a skip justification before re-evaluating readiness. |
+| A lens slot reports `ARTIFACT_PRESENT`, but its `location` is not that lens's packet — typically a `code-chief` summary filling `lens_code` through `*code*.md` | Treat the lens as missing and return `REVISE` to `review/code-chief`: the slot was filled by name, not by the lens, so the script's `PASS` proves nothing about the review that should have produced it. |
 | `scripts/check.py` fails a lens as `ARTIFACT_MISSING` and names a near miss — a file that lacks the `Outcome:` and `Findings:` fields, or one already counted for another lens — or reports `LINK_ESCAPES_PACKAGE` | Return `REVISE` to `review/code-chief`: each lens files its own packet in the shape its skill fixes, a file that covers several lenses fills one, and a link out of the package directory is replaced by the file itself. |
 | The package is resubmitted without a clear delta from the previous verdict | Reuse the prior reasoning where possible and reject silent re-gating until the revision summary explains what changed. |
 | `rendered_verification` carries a bare explanatory string — "UI unchanged", "no screenshots needed" — instead of a `render` record or the sanctioned waiver | Return REVISE to `design-qa`. The only admissible waiver is the typed applicability record naming reason, scope, and decided_by for "no visible surface changed - rendered verification not applicable"; any other string fails the artifact-backing check before judgment begins. |
@@ -266,13 +278,13 @@ A gatekeeper writes exactly one path class: the durable verdict record at
 validator against `../../gates.yaml`:
 
 ```bash
-python ../../harness/gatekeeper/check.py --boundary review-to-delivery --package skillset-saves/runs/{run-id}/review/manifest.json --verdict-out skillset-saves/runs/{run-id}/review/verdict_review-to-delivery.json
+python skills/harness/gatekeeper/check.py --boundary review-to-delivery --package skillset-saves/runs/{run-id}/review/manifest.json --verdict-out skillset-saves/runs/{run-id}/review/verdict_review-to-delivery.json
 ```
 
 It never modifies the submission, its evidence, or the run record;
 `review/code-chief` records the semantic verdict in its next checkpoint.
 `gatekeeper-admiral` later re-validates the same boundary with
-`--prior review/verdict_review-to-delivery.json` and writes its own record beside
+`--prior skillset-saves/runs/{run-id}/review/verdict_review-to-delivery.json` and writes its own record beside
 it as `verdict_review-to-delivery.cross-stage.json`. When persistence is
 inactive, return the verdict inline and preserve the run and revision.
 

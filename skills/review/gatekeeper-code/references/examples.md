@@ -33,7 +33,7 @@ Context: run `r-5140`, phase `review`, submission `r-5140-v1`, revision 1, owner
 - Boundary: `review-to-delivery`, submitted by `code-chief`, revision 1.
 - Evidence, batched and grouped by `../../../gates.yaml` `evidence_owners`:
   - `design-qa` — `rendered_verification` is a bare explanatory string, not a `render` record and not the sanctioned waiver. Two things fail at once: it names no path in `artifact_hashes`, and "UI unchanged in this round" is not the admissible reason. The only accepted waiver is the typed applicability record naming reason, scope, and decided_by for "no visible surface changed - rendered verification not applicable" — and the diff changes the settings panel, so that statement is not true here either.
-  - `code-chief` — the `UNCHECKED` CSO lens is unresolved. The package's delivery-readiness claim says the release is "cleared for production", which is a release-posture claim, so `review/cso` is in scope and a skip record is not available for it.
+  - `code-chief` — the `UNCHECKED` CSO lens is unresolved. The package's delivery-readiness claim says the release is "cleared for production", which is a release-posture claim, so `review/cso` is in scope and a skip record is not available for it. The review pipeline has no cso stage, so the fix is not a lens run: `code-chief` drops the claim, or escalates to `admiral` for a `security` pipeline engagement whose packet then joins this package.
 - **Routing note.** The first group goes to `design-qa`, not to `code-chief`, even though `code-chief` assembled and submitted the package. The submitter cannot capture a render, so a `REVISE` addressed to them parks the defect with an owner who cannot clear it. This is the one key at this boundary whose owner is not the submitter, and it is the one most often mis-routed.
 - Next action: both owners fix in parallel; `code-chief` resubmits once at revision 2.
 - Revision: 1.
@@ -45,7 +45,7 @@ Context: run `r-5140`, phase `review`, submission `r-5140-v1`, revision 1, owner
 `--prior review/verdict_review-to-delivery.json`.
 
 **Validators:**
-- `../scripts/check.py`: `STRUCTURE_OK`. The CSO lens is now present.
+- `../scripts/check.py`: `NEEDS_JUDGMENT`, as at revision 1. `lens_cso` is still `UNCHECKED`, and this time it resolves: `code-chief` removed the "cleared for production" claim, so no security-governance claim puts `review/cso` in scope.
 - Boundary validator: exit 1. `executed_probes` names a hashed log, but its `inputs` entry for `src/api/session.py` carries a sha256 that no longer matches the file on disk.
 
 **Output:**

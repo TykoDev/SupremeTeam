@@ -121,7 +121,8 @@ procedure for the three that need one.
 - `design/gatekeeper-design` (judges the package at `design-to-build` and returns any `REVISE`)
 - `design/researcher` (supplies the `requirements-brief`; a defective brief goes back here)
 - `design/redesign` (delegates the `design-directions` stage and receives the four directions)
-- `design/design-mapper` (supplies the inventory and the taste grilling log the directions are derived from)
+- `design/design-mapper` (supplies the design inventory the directions are derived from)
+- `taste` (owns and supplies the taste grilling log, through `design/redesign`)
 
 ## Review Expectations
 

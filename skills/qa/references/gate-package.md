@@ -65,8 +65,10 @@ reopen trigger (`../../gates.yaml` `finding_policy`).
 rather than a bare string — `{"applicable": false, "reason": "report-only run - no fixes
 applied", "scope": "<the surface>", "decided_by": "<named owner>"}` — and the checker rejects
 the bare string with `bare fallback string not accepted at schema 2`. A run that applied fixes
-states them instead; a run that applied none belongs to `qa-only`, which owns
-that fallback.
+states them instead. `qa` owns the key and its fallback either way
+(`../../gates.yaml` `evidence_owners`): on a report-only run `qa-only` may be the
+delegate that records the defects (`../../pipelines.yaml` `defect-record`), but `qa`
+writes the waiver and remains the only `qa-review` submitter.
 
 ## 2. Evidence Path Rules
 
@@ -112,7 +114,7 @@ repaired in the same cycle instead of one per round trip.
 Resubmit once, with the prior verdict record:
 
 ```bash
-python skills/harness/gatekeeper/check.py --boundary qa-review --package <manifest.json> --prior <verdict.json>
+python skills/harness/gatekeeper/check.py --boundary qa-review --package <manifest.json> --prior qa/verdict_qa-review.cross-stage.json
 ```
 
 `--prior` reports `changed_evidence` and `unchanged_evidence` from per-key digests, so the

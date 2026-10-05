@@ -17,9 +17,17 @@ package.
 
 ## Read-Only Boundary
 
-This pass observes the package; it does not change it. Two facts fix that:
-`../../../ownership.yaml` lists `implementation` under this skill's
-`does_not_write`, and the declared tool surface grants no edit capability.
+This pass observes the package; it does not change it. `../../../ownership.yaml`
+lists `implementation` under this skill's `does_not_write`. The declared tool
+surface withholds `Edit` but grants `Write` and `Bash`, either of which can change
+any file, so `allowed-tools` does not enforce the boundary. The guard hook's Rule D
+(`../../../harness/hooks/guard_hook.py`) does, and only while the run carries a
+`read_only` record written by `guard_state.py read-only --run-id <run> --owner
+<owner> --allow "skillset-saves/runs/<run>/**"`: every write outside the allow
+globs and `.harness-state/` is then denied. With no record, or with the hooks
+unregistered, nothing mechanical stops an edit; the boundary is this contract
+alone, and the report's Evidence says which held. `Write` is for the completeness
+report under the save path; `Bash` runs the gate self-check and hashing commands.
 
 A gap discovered here is routed to `build/build-management`, which re-delegates
 it to the specialist that owns the missing evidence — `build/bob-the-builder`

@@ -9,7 +9,7 @@ that contradicts itself.
 ## Contents
 
 1. Debug this failure
-2. Find the root cause
+2. Explain a reproduced timeout
 3. Repair the broken path
 4. Full pass returned as a hashed debug report
 5. Unreproducible failure
@@ -24,9 +24,13 @@ that contradicts itself.
 - Root cause: the new parser assumes at least one event before checking payload shape.
 - Next move: add the guard as a candidate fix, reproduce against the real failing payload, and rerun the adjacent worker tests — enough to prove the mechanism. The fix path returns to `build/build-management`, which routes the landing to `build/bob-the-builder`; `implementation` is under this skill's `does_not_write`.
 
-## Example 2 — Find the root cause
+## Example 2 — Explain a reproduced timeout
 
-**User request:** find the root cause
+**User request:** the load test times out every time on staging since the last deploy — debug why
+
+An open-ended "find the root cause" with no reproduction goes to `investigate`;
+this request arrives with a failure that already reproduces on every run, which
+is where this skill starts.
 
 **Output:**
 - Evidence: staging failures started immediately after a connection-pool setting changed, and the same timeout reproduces locally only when that config is enabled.
@@ -63,9 +67,14 @@ the tree. Ledger and diff agree.
 
 **Before/after, same command and same revision:**
 
+The scratch driver `scripts/_repro_empty.py` was torn down with the other
+probes, so the comparison is recorded with a command that needs nothing the
+returned tree lacks:
+
 ```text
-before  python scripts/_repro_empty.py            -> KeyError: 'events' (worker exits 1)
-after   python scripts/_repro_empty.py            -> handled, 1 no-op logged, exit 0
+repro   python -c "from notifications.dispatcher import route; route({'events': []})"
+before  repro                                     -> KeyError: 'events' (exit 1)
+after   repro                                     -> handled, 1 no-op logged, exit 0
 revert  guard removed, same command               -> KeyError: 'events' again
 ```
 
@@ -92,7 +101,7 @@ register     python skills/harness/hooks/save_run.py checkpoint \
 
 | Line | Content |
 | --- | --- |
-| Reproduction steps | `python scripts/_repro_empty.py` on revision 3 with the attached fixture; fixture quoted by field name only, signing header shown as `<signature:redacted>` and the recipient as `<email:redacted>` |
+| Reproduction steps | `python -c "from notifications.dispatcher import route; route({'events': []})"` on revision 3 — the payload reduced to its one load-bearing field, so it runs without the torn-down scratch driver; the full failing fixture is attached, quoted by field name only, signing header shown as `<signature:redacted>` and the recipient as `<email:redacted>` |
 | Isolated cause | `dispatcher.route()` indexes `payload["events"][0]` before the shape check, so an empty array raises before validation reports it; the timeout probe falsified the competing pool-timeout theory |
 | Bounded fix path | Move the shape check ahead of the index in `notifications/dispatcher.py`, one function, no interface change. Landed by `build/bob-the-builder` — `implementation` is not written here |
 

@@ -58,6 +58,8 @@ Route elsewhere to launch the workspace (`open-browser`), drive page interaction
 
    `icacls /inheritance:r` drops inherited ACLs so no broader group retains access; `/grant:r` replaces any existing grant for the user rather than adding to it.
 5. Load the cookies or session state into the isolated profile using a concrete mechanism — Playwright's `context.addCookies()`, a HAR import, or a scoped-profile copy. Never log or echo raw cookie values, and redact them in any evidence, screenshots, or saved output. Acquire the browser through `open-browser`'s Browser Acquisition ladder — reuse an installed or cached browser before installing the Playwright browser (attaching to the user's running browser is opt-in) — and prefer a clean, named profile so imported state is not mixed with a reused live profile.
+
+   **The profile that receives the cookies is a credential store too, with the bundle's location rule and its own teardown.** Prefer a non-persistent Playwright context (`browser.new_context()` plus `context.add_cookies()`), which keeps the cookies in memory and disposes of them at `context.close()`. When a persistent profile is required, create its directory with `mkdtemp` in the user's private temporary directory — never under `skillset-saves/`, the repository, or a synced directory, and never the user's own browser profile — restrict it as in step 4, and never write a `storage_state()` export to a tracked path. Tear it down when the session it serves ends: close the browser, then delete the profile directory and confirm it is gone, failing loudly as step 6 does for the bundle. A profile handed to a later task is handed over with its path, owner, and the condition that ends it, and step 8 reports it; one with no named end is deleted at the end of this pass.
 6. **Delete the bundle unconditionally when the import attempt ends — success or failure.** A failed import leaves the credential on disk exactly as a successful one does, so deletion is not conditioned on the outcome:
 
    ```bash
@@ -77,7 +79,7 @@ Route elsewhere to launch the workspace (`open-browser`), drive page interaction
    trap 'shred -u "$BUNDLE" 2>/dev/null || rm -f "$BUNDLE"; [ -e "$BUNDLE" ] && echo "CREDENTIAL NOT DELETED: $BUNDLE" >&2' EXIT
    ```
 7. Verify the authenticated landing state by checking redirects, visible account identity, tenant context, and whether the protected page is actually reachable.
-8. Return a session bootstrap record with the loaded state boundary, verification result, expiry caveats, and the next browser task that can safely reuse the session — confirming the bundle was deleted and no raw cookie value reached any saved output.
+8. Return a session bootstrap record with the loaded state boundary, verification result, expiry caveats, and the next browser task that can safely reuse the session — confirming the bundle was deleted, stating whether the profile was disposed of or handed over (path, owner, end condition), and that no raw cookie value reached any saved output.
 
 ## Required Contracts
 

@@ -215,10 +215,10 @@ with what its record claims and never re-runs a command (it reads `.md` and `.tx
 ### The two key spaces collide by name
 
 The shape keys are declared by the two scripts; the evidence keys are declared by
-`../../gates.yaml`. Nine names appear in both spaces meaning different things,
+`../../gates.yaml`. Ten names appear in both spaces meaning different things,
 and reading a `PASS` on the left as satisfaction of the right is how a package
 advances with a file present and its evidence key empty. Several evidence keys
-have no shape counterpart, and four shape keys have no evidence counterpart;
+have no shape counterpart, and six shape keys have no evidence counterpart;
 neither absence is a defect, and it is why both validators run.
 
 `references/key-spaces.md` carries the full name-by-name table and the
@@ -226,7 +226,7 @@ capture-key requirement discrepancy behind it. Two rules decide the cases that
 actually arise, and both are there in full:
 
 - **A shape `PASS` is never evidence satisfaction.** Read the boundary validator for that.
-- **`UNCHECKED` on a capture key is unresolved, never a waiver.** On `mock_rendering` the boundary validator fails the key outright; on `rendered_verification` the `selection` decision resolves it.
+- **`UNCHECKED` on the capture key is unresolved, never a waiver.** `check_redesign.py` has one capture key, `rendered_verification`, and none for `mock_rendering`; on `mock_rendering` the boundary validator fails the key outright; on `rendered_verification` the `selection` decision resolves it.
 
 ## Execution Contract
 

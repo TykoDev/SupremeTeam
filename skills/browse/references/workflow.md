@@ -80,10 +80,16 @@ with sync_playwright() as p:
 - `page.accessibility.snapshot()` is the structural read on older Playwright
   builds; `locator.aria_snapshot()` is the current equivalent. Use whichever the
   installed version exposes and name it in the record.
-- For a full HAR of the flow, open the context with
-  `browser.new_context(record_har_path="flow.har")` and close it before reading
-  the file — a HAR captures request and response headers in full, which makes
-  redaction mandatory rather than advisable.
+- For a full HAR of the flow, record it into a private scratch directory outside
+  the project and the save path —
+  `scratch = tempfile.mkdtemp(prefix="browse-har-")`, then
+  `browser.new_context(record_har_path=os.path.join(scratch, "flow.har"))` —
+  and close the context before reading the file. A HAR captures request and
+  response headers in full, so it is raw credential material: write only the
+  redacted summary (§ Capture Redaction) to the save path, then delete the
+  scratch directory (`shutil.rmtree(scratch)`) in a `finally` block, so a failed
+  run leaves no raw HAR behind either. Never record to a relative path: it lands
+  in the working directory, which is usually the tracked checkout.
 - Acquisition of the browser itself is never decided here:
   `open-browser` owns the ladder (reuse an installed or cached
   browser before installing the Playwright browser; CDP attachment is opt-in).

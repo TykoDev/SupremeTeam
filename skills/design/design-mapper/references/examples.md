@@ -131,7 +131,9 @@ scored, so `v3` goes back to `design/prototyper` with those two ids and stays ou
 of the comparison until it comes back.
 
 The aggregate, once all four pass, is one probe record of the same shape whose
-`artifacts` list names the four per-mock records:
+`artifacts` list names the four per-mock records and whose `inputs` repeat the
+digests those records bound — without them nothing ties the aggregate to the
+inventory, and the design gate returns it as unbound (digests abridged):
 
 ```json
 {
@@ -143,6 +145,17 @@ The aggregate, once all four pass, is one probe record of the same shape whose
     "redesign/evidence/mock-parity-v2.json",
     "redesign/evidence/mock-parity-v3.json",
     "redesign/evidence/mock-parity-v4.json"
+  ],
+  "inputs": [
+    {"path": "redesign/artifacts/inventory/design-inventory.json", "sha256": "9f2c…"},
+    {"path": "redesign/artifacts/mocks/v1/mock.html", "sha256": "b104…"},
+    {"path": "redesign/artifacts/mocks/v1/components.html", "sha256": "55de…"},
+    {"path": "redesign/artifacts/mocks/v2/mock.html", "sha256": "0c7a…"},
+    {"path": "redesign/artifacts/mocks/v2/components.html", "sha256": "e31b…"},
+    {"path": "redesign/artifacts/mocks/v3/mock.html", "sha256": "7d40…"},
+    {"path": "redesign/artifacts/mocks/v3/components.html", "sha256": "a9f6…"},
+    {"path": "redesign/artifacts/mocks/v4/mock.html", "sha256": "41e8…"},
+    {"path": "redesign/artifacts/mocks/v4/components.html", "sha256": "c25d…"}
   ],
   "min_coverage": 1.0,
   "coverage": 1.0,

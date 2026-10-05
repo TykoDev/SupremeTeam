@@ -75,11 +75,12 @@ Redirect combined streams so a failing probe captures its own error text, and
 scrub each capture as it is written.
 
 Two things the matrix creates are neither a log nor a product side effect, so the
-side-effect ledger — which is data-only by `../SKILL.md`'s scope — does not cover
-them. Both are this workflow's to close:
+side-effect record — which `contracts.md` limits to the product data the smoke
+flow creates, for the owner to reverse — does not cover them. Both are this
+workflow's to close:
 
 - **The response body.** `curl -o` writes the readiness and liveness bodies somewhere. Resolve that somewhere under the run (`output_paths.py --kind evidence --name runtime-readiness-body.json`), scrub it on the same pass as the log, and evaluate the predicate against it. Once the predicate is decided, either hash it into the package as evidence — a body reporting a degraded dependency is exactly what a later reader needs — or delete it. What it must never be is a stray file at the project root, unscrubbed and unhashed, holding whatever the service chose to return.
-- **The started process.** Step 1 deliberately leaves it running so the poll has something to poll. Step 8 stops it: terminate the process the startup probe started, confirm it is gone, and record the teardown in the pass. A probe run that leaves a service listening has changed the machine's state after returning, which is the thing the ledger exists to make visible even though this particular residue is not data.
+- **The started process.** The startup probe deliberately leaves it running so the poll has something to poll. Sequence step 6 (teardown) stops it: terminate the process the startup probe started, confirm it is gone, and record the teardown in the pass. A probe run that leaves a service listening has changed the machine's state after returning, which is the thing the side-effect record exists to make visible even though this particular residue is not data.
 
 | Probe | What it proves | Log |
 | --- | --- | --- |
@@ -95,7 +96,7 @@ them. Both are this workflow's to close:
 Command shapes, in the same order:
 
 ```bash
-# Startup — leave the process running for the readiness poll; step 8 tears it down.
+# Startup — leave the process running for the readiness poll; sequence step 6 tears it down.
 <discovered start command> > evidence/runtime-startup.log 2>&1
 
 # Readiness poll, and liveness against its own path. Repeat at the poll interval

@@ -63,10 +63,15 @@ No test is quarantined without both of these:
 | `reopen_trigger` | The condition that ends the quarantine, e.g. `the session-expiry clock is injected rather than read from the host` |
 | `coverage_lost` | The delivery slices and failure paths that become unverified |
 
-The first five fields are deliberately the shape `../../../gates.yaml`
-`finding_policy.major_deferral` requires of a deferred Major finding — owner and
-reopen trigger — so the quarantine can travel into the package's findings record
-unchanged instead of being restated in a weaker form.
+The record carries what `../../../gates.yaml` `finding_policy.major_deferral`
+requires of a deferred Major — an `owner` and a `reopen_trigger` — but it is not
+yet a findings item. The `findings` shape (`evidence_type_rules.findings`) also
+requires `id`, `severity`, and `status` on every item, so when the quarantine
+enters a findings record it becomes one item: `id` (the `test_id`), `severity:
+Major`, `status: deferred`, and `owner`, `reopen_trigger`, and `reason` copied
+verbatim. `observed` and `coverage_lost` stay in the quarantine record, which the
+item cites. Copying, not restating, keeps the deferral from arriving in a weaker
+form.
 
 A quarantine with no reopen trigger is a deletion with extra steps: nothing will
 ever cause the test to return, and effective coverage has dropped with nobody

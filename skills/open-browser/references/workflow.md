@@ -94,9 +94,14 @@ If a Playwright browser was downloaded previously, reuse it without a network ca
   - Windows: `%USERPROFILE%\AppData\Local\ms-playwright`
 - Confirm what is required vs. present without downloading:
   ```bash
-  npx playwright install --dry-run    # lists target browsers and install state
   ls "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}" 2>/dev/null
+  npx --no -- playwright install --dry-run   # lists target browsers and install state
   ```
+  The listing makes no network call. The `npx` line makes none only because of
+  `--no`: without it, `npx` fetches the `playwright` package from the registry
+  when no local copy is installed, which is a download at the rung that exists to
+  avoid one. With `--no` and no local Playwright, it exits non-zero instead — read
+  that as "no cached Playwright tooling", not as a reason to drop the flag.
 
 If the needed browser directory exists, launch against it directly.
 

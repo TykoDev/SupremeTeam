@@ -59,17 +59,19 @@ authorised.
 ## 3. Sanctioned waivers, verbatim
 
 A waiver is a typed applicability record — `{applicable: false, reason, scope,
-decided_by}`. The validator checks three things about it: that `applicable` is
-`false`, that the key is waivable at this boundary, and that `reason`, `scope`,
-and `decided_by` are each a non-empty string. A waiver on a key not listed below
-fails mechanically with `evidence not waivable: <key>`.
+decided_by}`. The validator checks four things about it: that `applicable` is
+`false`, that the key is waivable at this boundary, that `reason`, `scope`, and
+`decided_by` are each a non-empty string, and that `reason` equals one of the
+wordings sanctioned for that key at that boundary. A waiver on a key not listed
+below fails mechanically with `evidence not waivable: <key>`.
 
-The reason *text* is not mechanically checked. `applicability_record()` never
-compares `reason` against `fallback_values`, so an invented reason on a waivable
-key passes the validator untouched. The strings below are still the only reasons
-the gate accepts — but enforcing that is judgment at the gate, not a machine
-failure, so a waiver carrying any other reason is a judgment finding the verdict
-has to name itself.
+The reason *text* is mechanically checked. `applicability_record()` compares
+`reason` against `sanctioned_values(key)` — the boundary's own `fallback_values`
+for the key when it declares any, otherwise the global list — and a record
+carrying any other wording fails with `applicability reason not sanctioned`.
+What stays judgment is whether the sanctioned statement is true of this package:
+a waiver that says "no user-facing surface" on a design that ships screens passes
+the machine and is a finding the verdict has to name itself.
 
 | Key | Boundary | The only sanctioned reason |
 | --- | --- | --- |
@@ -97,7 +99,7 @@ boundary refuses.
 Two consequences at the gate:
 
 - An attempted waiver is a `REVISE` routed to `design-qa`, asking for hashed captures across the required breakpoints and themes, bound by `inputs` to the rendered mocks.
-- The `UNCHECKED` that `../scripts/check_redesign.py` reports when no capture file is found is an unresolved question, not permission. `../SKILL.md` records why the script keeps the capture keys conditional while the spec refuses every waiver on this one.
+- The `UNCHECKED` that `../scripts/check_redesign.py` reports when no capture file is found is an unresolved question, not permission. `key-spaces.md` records why the script keeps its one capture key conditional while the spec refuses every waiver on this one.
 
 `rendered_verification` is deliberately *not* under `no_fallback` here. It covers
 the selected variant, and a merge or a deferral leaves no variant to render — the

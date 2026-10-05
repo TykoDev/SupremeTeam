@@ -48,7 +48,7 @@ Use this orchestrator to **run the authoring loop** — draft, score, fix, re-sc
 - "harden this skill" / "take this skill to 100" — iterate the loop until the rubric stops moving
 - "optimize the description" / "fix triggering" — tune the trigger surface through the eval-and-fix cycle
 
-Route elsewhere for the score itself (`skill-maker/skill-reviewer`, which owns "score this skill" and "audit my skill") or the file edits (`skill-maker/skill-creator`); both are reached through this orchestrator and neither is entered directly. Review-only here means running the review stage of the pipeline and returning its findings, which is why "review this skill" and "audit this" enter at Stage 2 while a request for the score alone goes straight to the reviewer. A cold lifecycle request enters `admiral` first, which owns the bare "create a skill" phrasing and delegates here.
+Route elsewhere for the score itself (`skill-maker/skill-reviewer`, which owns "score this skill" and "audit my skill") or the file edits (`skill-maker/skill-creator`); both are reached through this orchestrator and neither is entered directly. Review-only here means running the review stage of the pipeline and returning its findings, which is why "review this skill", "audit this", and a request for the score alone all enter at Stage 2: the score alone is that stage returning only the number and its findings, with `skill-maker/skill-reviewer` still delegated from here, never entered directly. A cold lifecycle request enters `admiral` first, which owns the bare "create a skill" phrasing and delegates here.
 
 ## Entry Routing
 

@@ -103,7 +103,7 @@ key's bare value: `check.py` requires the applicability record
   differently, choose a merge, or defer; each is recorded verbatim in
   `reports/selection.md`.
 - A merge choice produces a merge brief (which mock supplies palette, type,
-  density, layout, components, motion) that `architect` implements as a fifth
+  density, layout, components, motion) that `architect` specifies as a fifth
   direction in the design pipeline; the redesign package builds no prototype for
   it, and the four dependent keys carry the merge fallback string.
 - A deferral records owner and reopen trigger, builds nothing, and hands nothing

@@ -65,13 +65,13 @@ python skills/harness/hooks/save_run.py checkpoint --run-id 2026-04-23_dashboard
 
 **Command:** `save_run.py status --run-id 2026-04-23_dashboard-redesign_a3f9k2` (read-only; no revision published).
 
-**Result:** `result: ok`, classification `corrupt` (`missing evidence path 'review/reports/review-packet.md'`), lock held and pinned, revision 7. A held run is not coherent while evidence registered against it is missing, so it is not `active` however fresh its lock.
+**Result:** `result: ok`, classification `corrupt` (`missing evidence path 'skillset-saves/runs/2026-04-23_dashboard-redesign_a3f9k2/review/reports/review-packet.md'`), lock held and pinned, revision 7. A held run is not coherent while evidence registered against it is missing, so it is not `active` however fresh its lock.
 
 **Output:**
 - Restored and verified: `design/artifacts/tokens.css` rev 3 and `build/packages/app.zip` rev 5, both matching their registered digests.
 - Drift: `review/reports/review-packet.md` is registered at revision 7 but absent on disk, so the boundary it backs cannot be re-judged from evidence.
 - Resume path narrowed to the last fully verified checkpoint, revision 6, with the review boundary reopened.
-- Recommendation: regenerate the missing packet before the downstream stage advances. If it was deliberately moved or pruned instead, record that with `checkpoint --drop-evidence review/reports/review-packet.md --reason "<why>"` and register its new location in the same call. Nothing was rewritten, because the record is the evidence of what broke.
+- Recommendation: regenerate the missing packet before the downstream stage advances. If it was deliberately moved or pruned instead, record that with `save_run.py checkpoint --run-id 2026-04-23_dashboard-redesign_a3f9k2 --owner admiral --expect-revision 7 --drop-evidence skillset-saves/runs/2026-04-23_dashboard-redesign_a3f9k2/review/reports/review-packet.md --evidence <its new project-relative path> --reason "<why>"` — the dropped path spelled exactly as it was registered, since `save_run.py` refuses a `--drop-evidence` path that is not registered, and the new location in the same call. Evidence paths are project-relative, never phase-relative. Nothing was rewritten, because the record is the evidence of what broke.
 
 ## Example 4 — lookup against prior learnings
 
@@ -97,7 +97,7 @@ python skills/harness/hooks/save_run.py checkpoint --run-id 2026-04-23_dashboard
 
 **User request:** save where we are
 
-**Command:** `save_run.py checkpoint --run-id 2026-05-02_invoice-import_77c1b4 --expect-revision 2 --evidence design/reports/report_plan.md`
+**Command:** `save_run.py checkpoint --run-id 2026-05-02_invoice-import_77c1b4 --owner admiral --expect-revision 2 --evidence skillset-saves/runs/2026-05-02_invoice-import_77c1b4/design/reports/report_plan.md` (the path project-relative and present on disk; a phase-relative `design/reports/report_plan.md` would be refused as missing evidence before any write began, exit 1 rather than 2)
 
 **Result:** `result: degraded` (exit 2) — the publish failed and revision 2 is intact.
 

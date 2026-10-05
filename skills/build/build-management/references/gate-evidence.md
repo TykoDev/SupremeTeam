@@ -24,7 +24,7 @@ columns below state what each key must contain and what may stand in for it.
 | `tests` | `build/test-builder` | The executed test-runner log as a hashed file under `build/evidence/`, with a result status. A bare count, or a claim that the suite passed, is not evidence | Yes | `probe` | None |
 | `runtime` | `build/health-check` | The executed startup and entry-point smoke log as a hashed file under `build/evidence/`, with a result status | Yes | `probe` | None |
 | `traceability` | build-management | The `build-traceability` artifact `../../../ownership.yaml` assigns to build-management: a design-decision-to-changed-artifact mapping with proven or unproven status stated per row, so a reviewer can walk every approved decision to the code that carries it | No | None. `evidence_types` assigns this key no shape, so a plain statement satisfies the mechanical check and every unproven row states why it is unproven | None. Every submission carries the mapping |
-| `security_evidence` | `build/security-builder` | The graded finding set for the hardening pass, with a status and an owner on every deferred Major | No | `findings` | `no trust-boundary change - security-builder not engaged` |
+| `security_evidence` | `build/security-builder` | The graded finding set for the hardening pass: every item carries `id`, `severity`, and `status`, and every deferred Major names an `owner` and a `reopen_trigger` (`finding_policy.major_deferral`) | No | `findings` | `no trust-boundary change - security-builder not engaged` |
 
 ## Why `runtime` Is The One That Breaks Builds
 

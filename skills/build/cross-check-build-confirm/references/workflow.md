@@ -54,7 +54,7 @@ names for the `build-traceability` deliverable build-management authors from thi
 matrix: "proven and unproven status per row". `gates.yaml` checks `traceability`
 for presence only — the key has no `evidence_types` entry — so the vocabulary is an
 ownership contract, not a machine check. What keeps it true is the same mechanism
-the gate-evidence table below cites: `build/gatekeeper-build` reads the matrix as
+`../../build-management/references/gate-evidence.md` cites for `traceability`: `build/gatekeeper-build` reads the matrix as
 judgment rather than as a validated record, and an `unproven` row that should read
 `proven`, or a third invented status, surfaces there as a `REVISE` to
 `build/build-management`. Nothing downstream re-derives it, which is exactly why
@@ -84,9 +84,13 @@ The package is complete when **every row is `proven`**. There is no percentage.
 This is not strictness for its own sake: `../../../gates.yaml`
 `evidence_rules.required_evidence` requires every key at `build-to-review` to be
 present and non-falsy, and `artifact_evidence` requires `tests` and `runtime` to
-reference hashed paths. A package with one `unproven` row on a required key
-fails the machine before a gatekeeper reads a word of it, so reporting it as
-"95% complete" costs a REVISE cycle and tells the build owner nothing actionable.
+reference hashed paths. The machine checks that every key is present and that
+those two resolve; it does not read the matrix rows. An `unproven` row on
+`tests` or `runtime` therefore usually fails the machine, because its cell names
+no hashed log; an `unproven` row on any other key passes it untouched and is
+caught only by `build/gatekeeper-build`'s judgment. Either way the package does
+not advance, so reporting it as "95% complete" costs a REVISE cycle and tells the
+build owner nothing actionable.
 
 Rows proven by waiver count toward completeness. Only `security_evidence` is
 waivable at this boundary; `tests`, `runtime`, `implementation`,

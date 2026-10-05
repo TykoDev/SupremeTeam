@@ -45,8 +45,8 @@
 - Form forced by the tool: a CDP endpoint, which is whole-browser control across every origin's cookies and storage — so it is not issued against the user's own browser.
 - Issue: a dedicated browser is launched for the pairing with an empty isolated profile and a loopback-bound debug port, capturing both handles the teardown will need —
   `USER_DATA_DIR="$(mktemp -d)"`, then
-  `chrome --user-data-dir="$USER_DATA_DIR" --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 about:blank &` and `BROWSER_PID=$!` —
-  and the `webSocketDebuggerUrl` from `http://127.0.0.1:9222/json/version` is what the collaborator receives.
+  `chrome --user-data-dir="$USER_DATA_DIR" --remote-debugging-port=0 --remote-debugging-address=127.0.0.1 about:blank &` and `BROWSER_PID=$!` —
+  then the port and browser-target path are read from `$USER_DATA_DIR/DevToolsActivePort`, which only this browser writes, and the `webSocketDebuggerUrl` from `http://127.0.0.1:$PORT/json/version` is confirmed to end in that path before it is what the collaborator receives. A fixed 9222 could answer from some other browser already holding the port.
 - **What is shared is not consumed.** That URL is *not* single-use: `/json/version` answers it again on every request, and `/json/list` keeps exposing every target's full URL for as long as the port is reachable. Treating it as spent after the collaborator's first connection is the error this example exists to rule out, because a run that believes the handle is already consumed skips the process termination below and leaves whole-browser control live. The tunnel bounds *who* can reach it; only teardown ends it (`../SKILL.md` § Credential Forms, `workflow.md` § CDP / session handle).
 - Delivery: the endpoint URL goes over an SSH port-forward bound to the collaborator's identity, out-of-band; it is never pasted into chat or the record, and the debug port is never bound to `0.0.0.0`.
 - Scope check: because the profile is empty and dedicated, the whole-browser reach of CDP exposes only this pairing's state — the user's real cookies and storage are in a different browser entirely.

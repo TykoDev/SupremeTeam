@@ -124,8 +124,11 @@ python skills/scripts/check_parity.py --level mock --inventory <design-inventory
 python skills/scripts/check_parity.py --level full --inventory <design-inventory.json> --app <variant>/app.html --components <variant>/components.html --out redesign/evidence/parity-<variant>.json --project-root .
 ```
 
-The four mock-level records are then summarised into one aggregated probe record
-of the same shape, whose `artifacts` list names them; that aggregate is what the
+Once all four exit 0, the mock-level records are summarised into one aggregated
+probe record of the same shape, whose `artifacts` list names them and whose
+`inputs` carry the inventory and each mock's files with the digests those records
+bound; it is the only record assembled by hand, and its coverage is copied from
+the four, never re-derived; that aggregate is what the
 package carries as `mock_parity`. The full-level record stands alone as
 `parity_evidence`.
 

@@ -58,7 +58,7 @@ over at all.
 ## Inputs
 
 - Admiral-normalized design request with product goals, users, constraints, technology preferences, explicit non-goals, and YAGNI deferrals from intake.
-- Active design save context, prior phase verdicts, and revision lineage when resuming an interrupted design run.
+- Active design save context, the prior `design-to-build` verdict, and revision lineage when resuming an interrupted design run.
 - Intake decisions, escalations, or skip requests that affect research, architecture, API/UI handoff, the security seed, planning, or implementation guidance.
 - An effective-profile snapshot requested from Admiral/Taste whenever project or global Taste storage exists. It must carry the canonical digest, project and global source revisions, resolved entries, shadowed entries, unresolved conflicts, and applicability decision.
 
@@ -149,7 +149,7 @@ document paraphrases the other.
 - Record each boundary before requesting a verdict.
 - Reuse prior verdicts only when the package revision is unchanged.
 - Push remediation back to the owning sub-surface instead of editing its package locally.
-- Self-check before submitting: run `python skills/harness/gatekeeper/check.py --boundary design-to-build --package design/manifest.json` (no `--verdict-out`) and fix every mechanical failure first; a package that fails the machine is never submitted (`../../gates.yaml` `revise_policy.self_check`).
+- Self-check before submitting: run `python skills/harness/gatekeeper/check.py --boundary design-to-build --package skillset-saves/runs/<run>/design/manifest.json` (no `--verdict-out`) from the project root (the directory that holds `skillset-saves/`), so the script path and `--package` resolve from the same directory and fix every mechanical failure first; a package that fails the machine is never submitted (`../../gates.yaml` `revise_policy.self_check`).
 - Treat a `REVISE` as one packet: delegate each owner group in `revise_packet.by_owner` in parallel, batching every finding for a specialist into a single revision delegation, and resubmit once with `--prior` so the gate re-judges only `changed_evidence`.
 
 ## Skip Rule

@@ -41,7 +41,7 @@ gc = _engine()
 # `diff` as a part of a file name, not the start of "different".
 _DIFF_NAMES = ("diff.md", "diff[-_.]*.md", "*[-_.]diff.md", "*[-_.]diff[-_.]*.md")
 
-# Required build-to-review evidence set (SKILL.md workflow step 1), matched by
+# Required build-to-review evidence set (SKILL.md workflow step 2), matched by
 # file name and proved by a whole-word marker in the file. The security outcome is
 # not declared optional here: gates.yaml lets a submitter waive security_evidence
 # and pipelines.yaml runs security-checkpoint only on a trust-boundary change, so

@@ -26,6 +26,8 @@ python skills/harness/hooks/guard_state.py status --json
 
 ```json
 {
+  "absolute_entries": [],
+  "absolute_reasons": {},
   "allow_dangerous": false,
   "blocked_globs": [],
   "exists": true,
@@ -35,11 +37,13 @@ python skills/harness/hooks/guard_state.py status --json
   ],
   "path": "D:\\proj\\.harness-state\\guard-state.json",
   "read_only_runs": [],
+  "unmatchable_entries": [],
+  "unmatchable_reasons": {},
   "unowned_entries": []
 }
 ```
 
-Seven keys, key-sorted, exactly as `guard_state.py status --json` prints them —
+Eleven keys, key-sorted, exactly as `guard_state.py status --json` prints them —
 `path` and `exists` name the record this reading came from, so a status block
 pasted without them cannot be tied to a file.
 

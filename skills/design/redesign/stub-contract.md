@@ -11,7 +11,7 @@ design pipeline.
 The canonical stage numbering is the fourteen-row table in
 `references/workflow.md` §Stage Order, which mirrors `../../pipelines.yaml`.
 **This list is not a second numbering.** It is the same fourteen stages grouped
-into the eight delegations Admiral actually issues, with the canonical stage
+into the ten delegations D1 to D10 below, with the canonical stage
 numbers in brackets so the two can always be reconciled. Where they appear to
 disagree, the workflow table is right.
 
@@ -64,6 +64,6 @@ through 12 are conditional: they run only when a variant was selected.
 
 ## Downstream Expectations
 
-- `design/commander` reads the selected variant's `variant.md`, `tokens.css`, and `components.html` — from the living build, not the mock — as the design-system input; `design/architect` implements it in the project's real stack and locks it at `design-to-build`.
-- A merge choice is a brief for a fifth direction implemented in the design pipeline, not a fifth mock and not a second prototype.
+- `design/commander` reads the selected variant's `variant.md`, `tokens.css`, and `components.html` — from the living build, not the mock — as the design-system input; `design/architect` specifies the production design system from it, `design/commander` locks the stack at `design-to-build`, and `build/bob-the-builder` implements it in the real stack.
+- A merge choice is a brief for a fifth direction that `design/architect` specifies in the design pipeline, not a fifth mock and not a second prototype.
 - A deferral hands nothing downstream; the four mocks stay on disk as the record of what was compared.

@@ -27,10 +27,14 @@ STDLIB = load("quick_validate_stdlib_parser", hide_yaml=True)
 FULL = load("quick_validate_pyyaml_parser", hide_yaml=False) if HAVE_YAML else None
 
 
-def verdict(module, frontmatter: str) -> tuple[bool, str]:
+def verdict(module, frontmatter: str, folder: str = "sample") -> tuple[bool, str]:
+    """Validate a SKILL.md written into a directory named ``folder``; the frontmatter
+    cases name their skill ``sample``, so the default folder matches it."""
     with tempfile.TemporaryDirectory() as tmp:
-        (Path(tmp) / "SKILL.md").write_text(f"---\n{frontmatter}\n---\nbody\n", encoding="utf-8")
-        return module.validate_skill(tmp)
+        skill = Path(tmp) / folder
+        skill.mkdir()
+        (skill / "SKILL.md").write_text(f"---\n{frontmatter}\n---\nbody\n", encoding="utf-8")
+        return module.validate_skill(skill)
 
 
 REJECTED = {
@@ -100,6 +104,37 @@ class AllowedKeyTests(unittest.TestCase):
             with self.subTest(skill=skill.parent.name):
                 ok, message = STDLIB.validate_skill(skill.parent)
                 self.assertTrue(ok, message)
+
+
+class NameRuleTests(unittest.TestCase):
+    """SC-23: skill-guide.md section 1.1 forbids reserved words in `name` and requires it
+    to match the skill directory, and the validator enforces both."""
+
+    def test_a_name_that_differs_from_its_directory_is_rejected(self):
+        for module in filter(None, (STDLIB, FULL)):
+            with self.subTest(parser=module.__name__):
+                ok, message = verdict(module, "name: sample\ndescription: ok", folder="other-skill")
+                self.assertFalse(ok, message)
+                self.assertIn("does not match the skill directory name 'other-skill'", message)
+
+    def test_a_reserved_word_in_the_name_is_rejected(self):
+        for name in ("claude-helper", "my-anthropic-tool", "claude", "anthropic"):
+            with self.subTest(name=name):
+                ok, message = verdict(STDLIB, f"name: {name}\ndescription: ok", folder=name)
+                self.assertFalse(ok, message)
+                self.assertIn("reserved word", message)
+
+    def test_a_matching_name_without_a_reserved_word_is_accepted(self):
+        ok, message = verdict(STDLIB, "name: flaky-test-fixer\ndescription: ok", folder="flaky-test-fixer")
+        self.assertTrue(ok, message)
+
+    def test_the_directory_is_resolved_before_it_is_compared(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = Path(tmp) / "sample"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text("---\nname: sample\ndescription: ok\n---\nbody\n", encoding="utf-8")
+            ok, message = STDLIB.validate_skill(skill / ".")
+            self.assertTrue(ok, message)
 
 
 @unittest.skipUnless(HAVE_YAML, "PyYAML is not installed; there is no second parser to compare against")

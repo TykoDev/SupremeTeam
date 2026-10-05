@@ -151,8 +151,11 @@ merged project-over-global profile. `diff` compares the two stores by `state` an
 (not `updated_at`) and takes only `--scope both`. `set` creates or supersedes a user-authored
 entry, and every mutating subcommand (`set`, `confirm`, `deprecate`, `import`, `promote`,
 `propose`, `reset`, `revoke`, `specialize`) writes only through the module's atomic
-replacement — an edit tool never touches the canonical files, and `pre_tool_use.py` denies a
-direct write to them.
+replacement — an edit tool never touches the canonical files. `pre_tool_use.py` (Rule C,
+single writers) denies a direct write to the project store under
+`skillset-saves/preferences/` by an edit tool or by a shell command, a redirect included.
+The global store lives outside the checkout, where the guard reads no record, so a direct
+write to it is not denied: there the single-writer rule is this skill's own discipline.
 
 `propose` refuses a value that is not an object carrying `category`, `normalized_rule`,
 `strength`, and `source` from `../taste-doctrine.md` §3 and §4. `set` and `import` accept any
@@ -186,7 +189,7 @@ operation; repeated single-entry calls are not a way to evade that rule.
 
 - `references/workflow.md` — the record model, mutation sequence, per-operation-to-subcommand mapping, id and value rules, lock recovery, the error-code table, and gate-package fields.
 - `references/examples.md` — routing, confirmation, promotion, and accessibility-conflict examples.
-- `taste_prefs.py` — the sole sanctioned writer for durable Taste records (standard-library only); every documented command invokes it, and `../harness/hooks/pre_tool_use.py` routes edit-tool writes of the canonical files here (the shell branch tests only the core-run-record and guard-state tokens, so a shell redirect into the store is not denied).
+- `taste_prefs.py` — the sole sanctioned writer for durable Taste records (standard-library only); every documented command invokes it, and `../harness/hooks/pre_tool_use.py` Rule C denies any other write to the project store — an edit-tool write or a shell redirect alike — while a write to the global store, outside the checkout, is not seen and so not denied.
 - `test_taste_prefs.py` — the command-surface tests for `taste_prefs.py`: every subcommand and its refusals, scope and revision handling, the record's digest chain, history, journal, and rendered view, corrupt-record refusal, lock reclaim, and commit rollback.
 - `test_taste_store.py` — the engine and safety unit tests: process probing and lock staleness, lock races, the commit helpers, global root resolution, owner identity, the secret and field-name validators, proposal validation, and the checks that keep the writer equal to `../taste-doctrine.md`. Run both suites (`python -m unittest discover -s skills/taste -p "test_*.py"`) after any change to the writer or its documented commands.
 - `intake-brief.yaml` — the intake contract (scopes, inputs, confirmation triggers, outputs, acceptance).

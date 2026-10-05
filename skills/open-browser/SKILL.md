@@ -55,7 +55,7 @@ Route elsewhere to drive the page once it is open (`browse`), load authenticated
 
 - **Rung 1 — Running browser over CDP (opt-in only).** Never probe or attach without explicit user confirmation; sharing the live profile and auth is never the automatic default.
 - **Rung 2 — Installed system browser.** Launch via Playwright `channel` or a detected executable path. Prefer a clean, named profile for isolation.
-- **Rung 3 — Cached Playwright browser.** Use a previously downloaded browser from the local cache — no network call needed.
+- **Rung 3 — Cached Playwright browser.** Use a previously downloaded browser from the local cache. Probe it by listing the cache directory, or with `npx --no -- playwright install --dry-run`: a bare `npx playwright` downloads the Playwright package when no local copy exists, so only the `--no` form keeps the probe off the network.
 - **Rung 4 — Install Playwright browser (last resort).** Only when rungs 1–3 all fail. Announce the install; escalate instead of forcing it in offline, locked, or frozen environments.
 
 Record the rung used (`reused-cdp`, `system-channel`, `cached-playwright`, or `installed`) in the session record. Full cross-platform probe commands: see `references/workflow.md`.

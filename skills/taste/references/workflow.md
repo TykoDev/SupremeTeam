@@ -1,5 +1,15 @@
 # Taste workflow reference
 
+## Contents
+
+1. Record model
+2. Mutation sequence
+3. Operations
+4. Ids and values
+5. Lock and recovery
+6. Error codes
+7. Gate package and handoff
+
 ## Record model
 
 Taste maintains a global record and a project record. Each is schema-versioned,
@@ -81,10 +91,13 @@ and need no confirmation.
 - **reset:** `reset` — tombstone every entry in a scope, replacing it with an empty
   revision. Global reset always requires confirmation.
 - **import:** `import` (`--input <file>`) — validate and merge external entries;
-  always a confirmed bulk action. A file that declares a `schema` must name
+  always a confirmed bulk action. A file that declares a `schema` or a
+  `schema_version` — as an envelope or as a flat map — must name
   `supremeteam-taste-preferences` or `supremeteam-taste-export` at
-  `schema_version` 1, or it is rejected as `invalid_schema` rather than coerced;
-  an invalid id is `invalid_id`. Every imported entry becomes `active`.
+  `schema_version` 1, or it is rejected as `invalid_schema` rather than coerced,
+  and must carry its preferences under `entries`, or it is `invalid_import`; only
+  a map that declares neither is read as bare `id: value` pairs. An invalid id is
+  `invalid_id`. Every imported entry becomes `active`.
 - **export:** `export` (`--output <file>`) — serialize a source or effective
   record without mutation. **Redaction is always on.** The command replaces
   secret-shaped values, drops fields named for a credential or personal datum,
@@ -175,7 +188,7 @@ table names them all.
 | `write_failed` | the atomic write failed and was rolled back; `reason` says why, and `unrestored` lists any file that could not be restored with the backup that keeps its prior bytes |
 | `corrupt_record` | a store is unreadable, or parses but fails validation; a validation failure adds `reason` (`invalid_schema`, `invalid_record`, or `digest_mismatch`) and `detail`, and the original bytes are preserved |
 | `unsafe_global_path` | the global root resolves inside the checkout |
-| `invalid_import` | the import file is unreadable, is not a map of entries, or holds more than 1000 |
+| `invalid_import` | the import file is unreadable, is not a map of entries, holds more than 1000, or declares a schema without an `entries` map |
 | `invalid_schema` | an import declares a schema or version the writer does not recognise |
 
 ## Gate package and handoff

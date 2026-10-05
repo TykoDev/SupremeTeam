@@ -169,7 +169,7 @@ the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 `../../gates.yaml`:
 
 ```bash
-python ../../harness/gatekeeper/check.py --boundary build-to-review --package <phase>/manifest.json [--prior <prior-verdict-file>] --verdict-out <phase>/verdict_build-to-review.json
+python skills/harness/gatekeeper/check.py --boundary build-to-review --package skillset-saves/runs/<run>/<phase>/manifest.json [--prior <prior-verdict-file>] --verdict-out skillset-saves/runs/<run>/<phase>/verdict_build-to-review.json
 ```
 
 At every schema version it confirms that the six required keys are present and
@@ -298,7 +298,7 @@ A gatekeeper writes exactly one path class: the durable verdict record at
 validator against `../../gates.yaml`:
 
 ```bash
-python ../../harness/gatekeeper/check.py --boundary build-to-review --package skillset-saves/runs/{run-id}/build/manifest.json --verdict-out skillset-saves/runs/{run-id}/build/verdict_build-to-review.json
+python skills/harness/gatekeeper/check.py --boundary build-to-review --package skillset-saves/runs/{run-id}/build/manifest.json --verdict-out skillset-saves/runs/{run-id}/build/verdict_build-to-review.json
 ```
 
 It never modifies the submission, its evidence, or the run record;

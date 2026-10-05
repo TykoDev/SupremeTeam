@@ -32,7 +32,7 @@ The phase-by-phase procedure for the `build` pipeline: how the approved design b
 - Mandatory build phases have current outputs for the submitted revision, including the `runtime-health` smoke log, which no test result substitutes for.
 - Non-first-party surfaces are identified against the mechanical detection rule and justified with source, version, owner, and scan note.
 - `traceability` walks every approved design decision to the changed artifact that carries it, with unproven rows stating why.
-- `python skills/harness/gatekeeper/check.py --boundary build-to-review --package build/manifest.json` passes mechanically before submission.
+- `python skills/harness/gatekeeper/check.py --boundary build-to-review --package skillset-saves/runs/<run>/build/manifest.json` passes mechanically before submission.
 - The package is coherent enough for downstream review consumers to trust directly.
 
 ## Contract Notes

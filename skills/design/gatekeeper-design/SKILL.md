@@ -194,7 +194,7 @@ sanctioned applicability record the boundary validator checks.
 `../../gates.yaml`:
 
 ```bash
-python ../../harness/gatekeeper/check.py --boundary <design-to-build|redesign-review> --package <phase>/manifest.json [--prior <prior-verdict-file>] --verdict-out <phase>/verdict_<boundary>.json
+python skills/harness/gatekeeper/check.py --boundary <design-to-build|redesign-review> --package skillset-saves/runs/<run>/<phase>/manifest.json [--prior <prior-verdict-file>] --verdict-out skillset-saves/runs/<run>/<phase>/verdict_<boundary>.json
 ```
 
 At `redesign-review` it mechanizes the four-mock `mock_set` record and the
@@ -341,9 +341,9 @@ same class; a single boundary never produces two:
 Each record is produced by the boundary validator against `../../gates.yaml`:
 
 ```bash
-python ../../harness/gatekeeper/check.py --boundary design-to-build --package skillset-saves/runs/{run-id}/design/manifest.json --verdict-out skillset-saves/runs/{run-id}/design/verdict_design-to-build.json
+python skills/harness/gatekeeper/check.py --boundary design-to-build --package skillset-saves/runs/{run-id}/design/manifest.json --verdict-out skillset-saves/runs/{run-id}/design/verdict_design-to-build.json
 
-python ../../harness/gatekeeper/check.py --boundary redesign-review --package skillset-saves/runs/{run-id}/redesign/manifest.json --verdict-out skillset-saves/runs/{run-id}/redesign/verdict_redesign-review.json
+python skills/harness/gatekeeper/check.py --boundary redesign-review --package skillset-saves/runs/{run-id}/redesign/manifest.json --verdict-out skillset-saves/runs/{run-id}/redesign/verdict_redesign-review.json
 ```
 
 It never modifies the submission, its evidence, or the run record. The boundary's

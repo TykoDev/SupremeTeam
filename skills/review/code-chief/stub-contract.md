@@ -44,7 +44,7 @@ pipeline under `cso`, gated at `security-review`.
 - Core phases are always executed, though depth may vary by scope.
 - Every conditional phase that did not run records the condition that was false in the execution manifest; every condition answered yes has its phase in the package.
 - Required evidence: `review_verdict`, `findings`, `executed_probes`, `rendered_verification`, `residual_risk`, `revision_lineage`. Only `rendered_verification` is waivable, through `no visible surface changed - rendered verification not applicable` as the `reason` of an applicability record `{applicable: false, reason, scope, decided_by}`; at schema 2 the bare string is refused.
-- Self-check before submitting: `python skills/harness/gatekeeper/check.py --boundary review-to-delivery --package review/manifest.json`, without `--verdict-out`.
+- Self-check before submitting: `python skills/harness/gatekeeper/check.py --boundary review-to-delivery --package skillset-saves/runs/<run>/review/manifest.json`, without `--verdict-out`.
 - Maximum revisions per boundary: 2 (`gates.yaml` `revise_policy.cycle_cap`); a third cycle escalates to admiral instead of resubmitting.
 
 ## Package Shape

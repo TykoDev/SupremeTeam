@@ -49,7 +49,7 @@ first.
 - Verification: `python skills/scripts/check_parity.py --level full` failed the variant on three missing states. The builder received the exact ids in one batched revision delegation and the second run reported full coverage.
 - Whose record counts: the prototyper self-checks, but the `design/design-mapper` record is the `parity_evidence` the gate reads, bound by `inputs` to the inventory and prototype hashes.
 - Delivery: four static mocks that open offline, one living single-page prototype that does the same with no build step and no network access, rendered captures at six tiers in both themes, and a recommendation.
-- Before submitting: `python skills/harness/gatekeeper/check.py --boundary redesign-review --package redesign/manifest.json`, no `--verdict-out`; every mechanical failure is fixed first.
+- Before submitting: `python skills/harness/gatekeeper/check.py --boundary redesign-review --package skillset-saves/runs/<run>/redesign/manifest.json`, no `--verdict-out`; every mechanical failure is fixed first.
 
 ## Example 4 — Browserless host
 

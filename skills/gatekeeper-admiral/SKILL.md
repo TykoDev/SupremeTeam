@@ -149,7 +149,7 @@ canonical gate spec `../gates.yaml` and checks the submission's evidence
 contract:
 
 ```bash
-python ../harness/gatekeeper/check.py --boundary <design-to-build|redesign-review|build-to-review|review-to-delivery|security-review|investigation-review|qa-review|taste-review|skill-maker-to-delivery|deploy-readiness> --package <phase>/manifest.json [--prior <phase>/verdict_<boundary>.json] --verdict-out <phase>/verdict_<boundary>.cross-stage.json
+python skills/harness/gatekeeper/check.py --boundary <design-to-build|redesign-review|build-to-review|review-to-delivery|security-review|investigation-review|qa-review|taste-review|skill-maker-to-delivery|deploy-readiness> --package skillset-saves/runs/<run>/<phase>/manifest.json [--prior skillset-saves/runs/<run>/<phase>/verdict_<boundary>.json] --verdict-out skillset-saves/runs/<run>/<phase>/verdict_<boundary>.cross-stage.json
 ```
 
 It verifies, for the named boundary only:

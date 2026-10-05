@@ -232,7 +232,7 @@ revision.
 | Field values in any block here | Judgement. No comparator reads a filled value, so a block with a wrong phase or a stale revision passes every test and fails only at the gate, or not at all. |
 | The request and response field sets | Judgement. Nothing compares them to anything, and no skill is required to carry them. |
 | The schema-2 sketch in Gate submission | Judgement as written here; the real contract is `gates.yaml`. |
-| The Taste package example | Judgement. Its twelve keys match `taste-review` as of this revision and no test keeps them matched. |
+| The Taste package example | Machine-checked. `validation/test_pipeline_workflows.py` `WorkedExampleTests` runs it through `check.py` with digests filled. |
 | Delegate obligations | Judgement, except the one-writer consequence, which is enforced in `../ownership.yaml` by `../scripts/validate_manifests.py`. |
 
 ## Failure paths

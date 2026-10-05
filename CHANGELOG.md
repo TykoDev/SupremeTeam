@@ -62,26 +62,14 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ### Changed
 
-- BENCHMARK.md is re-measured as round 3 (2026-10-05, commit `8eae856`, 53 skills).
-  - **Skills:** 53 scored, mean 97.5 and lowest 94 (09-18: 99.4 over 52 skills),
-    with a new ledger of 121 cited deductions.
-  - **Spec, harness and doctrine:** 21 artifacts at mean 94.0 (09-18: 97.5);
-    `mcp-tools.md` is scored for the first time, at 81.
-  - **Routing:** 89.4% (278/311) on a paid, paraphrased run (round 9: 94.8%).
-  - **Host registration:** 22 of 22 root skills.
-
-  The re-check of the 09-18 deduction ledger finds 20 of its 26 deductions still
-  present, which the file had described as fixed. The full report is in
-  `docs/quality-audit.md`, which also re-runs every round-2 reproduction:
-  - O-1, H-1 to H-4 and G-1 hold.
-  - Every other open Critical or Major is still present.
-  - Four new Major guard bypasses lift a freeze in one command (N-1 to N-4). One
-    more Major, N-5, lets a root `unzip` outside an Admiral run write the hook
-    registration or a blocked path. N-1 and N-5 are regressions from `8eae856`.
-
-  `docs/quality-audit.md` consolidates all three audit rounds into one findings
-  register, with each finding's current status, and replaces the dated reports
-  `docs/quality-audit-2026-10-01.md` and `docs/quality-audit-2026-10-01-r2.md`.
+- BENCHMARK.md and `docs/quality-audit.md` rewritten to current state only.
+  Fresh re-score: skills 98.6, spec 95.0.
+- Fixed audit findings: H-5, H-6, H-8, H-11, N-4, N-7, N-10, G-2, G-4, G-5, G-6,
+  G-12, O-2, O-5, O-7, O-10, O-11, O-12, D-3, D-8, D-10, D-12, D-13, D-15, D-18.
+- Fixed the open skill-ledger deductions; the re-score lists what remains.
+- `test_stdlib_only.py` enforces the stdlib-only claim of hooks, gates and scripts.
+- `quick_validate.py` rejects a mismatched or reserved skill name.
+- Standalone `qa-only` returns evidence inline instead of writing files.
 - Deeply nested PowerShell blocks no longer trigger repeated near-identical
   command-scanner passes after the brace-depth safety bound; dormant pyenv shims
   are excluded from older-interpreter compatibility checks; and skills over 400

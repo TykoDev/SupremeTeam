@@ -125,8 +125,8 @@ directory. The phase must be one of `../save-ownership.yaml`
 ## Learning Taxonomy
 
 A recurring failure is worth making durable only when it converts into a reusable
-interface intervention — the SupremeTeam analog of the LIFE-HARNESS Procedural
-Skill layer. Tag each failure-derived learning with the harness layer that can
+interface intervention — the Procedural Skill layer (layer 2) of the four
+lifecycle layers in `../harness-doctrine.md` §1. Tag each failure-derived learning with the harness layer that can
 enforce the fix and the failure category that routes it there. Both enumerations,
 and the earliest-match rule that orders the categories, are defined once in
 `../harness-doctrine.md` §1–§2 and are deliberately not restated here, so the

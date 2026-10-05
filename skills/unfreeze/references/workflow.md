@@ -26,7 +26,7 @@
 ## Acceptance Checklist
 
 - Governing protection record is identified.
-- Owner authority is explicit, and matches the `owner` or `approvers` the writer checks against — with the exception of an `allow_dangerous` grant, which carries no approvers and is revocable only by its own owner.
+- Owner authority is explicit, and matches the `owner` or `approvers` the writer checks against — with the exception of a read-only record and an `allow_dangerous` grant, which carry no approvers and are releasable only by their own owner.
 - Release conditions are checked against current evidence.
 - Every lift shows `released_at` and `released_by` on the surviving record; nothing was deleted.
 - Reopened and still-protected boundaries are both named clearly, across all four keys.

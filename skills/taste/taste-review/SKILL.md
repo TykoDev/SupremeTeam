@@ -97,7 +97,7 @@ steps add is *when each reason is admissible*, which differs per key.
 Two properties of that table decide most findings:
 
 - **`confirmation` appears in no fallback list at all.** A waiver on it fails as *evidence not waivable* rather than as a bad reason, which is why a missing confirmation is a Critical finding and never a negotiation.
-- **`policy_check` has no fallback either**, so a package that omits it or fills it with an explanatory string cannot reach APPROVED, however clean the rest of the set looks.
+- **`policy_check` has no fallback either**, but it is an untyped claim: `check.py` fails it only when it is absent (*missing evidence*) or waived (*evidence not waivable*). An explanatory string in place of a screen result passes `check.py`, so rejecting it is this review's judgement (step 4), not the engine's.
 
 ## Workflow
 

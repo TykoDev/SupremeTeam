@@ -10,9 +10,9 @@ and the save rules; this file holds the sequence and the judgment calls inside i
 2. The six tiers, and what to capture at each
 3. Deriving a budget when the handoff supplies none
 4. Decision rules
-3. Acceptance checklist
-4. Contract notes
-5. Collaboration notes
+5. Acceptance checklist
+6. Contract notes
+7. Collaboration notes
 
 ## Frontend Review Sequence
 

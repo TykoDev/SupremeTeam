@@ -47,6 +47,7 @@ tools. Load a reference file only when the selected phase names it.
 - "skill-maker delegates drafting" — write the SKILL.md and its supporting files in Create mode
 - "fix reviewer findings" / "fix these findings" — apply a scorecard's findings in Improve mode
 - "run behavioral evals" — exercise the draft against real queries in Eval mode
+- "skill-maker delegates a description optimization" — tune the trigger surface in Optimize mode
 - "skill-maker delegates packaging" — produce the `.skill` bundle in Package mode
 
 Route elsewhere for the rubric score (`skill-maker/skill-reviewer`) and for the loop that decides which mode runs (`skill-maker`), which also owns description optimization as a stage rather than an edit.

@@ -12,6 +12,14 @@ grade. Every finding carries a stable `SEC-NN` id and a status, because that is
 what `../../../gates.yaml` `evidence_types.findings` requires of the items
 `code-chief` and `cso` merge into `findings`.
 
+## Contents
+
+1. Example 1 — review pipeline: file-upload surface
+2. Example 2 — review pipeline: admin export
+3. Example 3 — review pipeline: dependency risk
+4. Example 4 — security pipeline: posture assessment for `cso`
+5. Example 5 — a REVISE delta: re-running the scan and re-binding its inputs
+
 ## Example 1 — review pipeline: file-upload surface
 
 **User request:** review security of the file-upload pipeline

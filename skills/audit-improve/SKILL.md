@@ -3,7 +3,12 @@ name: audit-improve
 description: >-
   Audits SupremeTeam harness and saved-run failures, then routes observed skill
   defects through skill-maker to develop, verify, and propose self-improvements.
-  Use for an explicit /audit-improve trigger or a harness failure advisory.
+  Use for an explicit /audit-improve trigger, a harness failure advisory, an
+  audit of harness or skill reliability, or improving skills from runtime
+  failures — even when the request is only "why does the harness keep failing?".
+  Reads runtime evidence and never edits saved state; defers a harness code
+  defect to its owning build or investigation phase and skill edits to
+  `skill-maker`.
 version: 1.0.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
@@ -29,16 +34,19 @@ definitive defect list. An explicit `--run` is read-only.
 
 - User invokes `/audit-improve`, asks to audit harness or skill reliability, or
   requests self-improvements based on runtime failures.
-- The `PostToolUse` hook emits an `audit-improve` advisory after repeated
-  failures and the audit cooldown allows a new report.
+- The `PostToolUse` hook emits an `audit-improve` advisory after the same
+  input fails three times in a row, the six-hour audit cooldown allows a new
+  report, and that report holds a Major finding, three or more failed steps, a
+  failing gate verdict, or incomplete coverage.
 - Do not start an improvement loop from a lone failed tool call or a generic
   informational count.
 
 ## Procedure
 
 1. **Collect.** Run `python skills/harness/hooks/audit_improve.py --run` from the
-   project root. Keep its JSON output in the active run's appropriate report or
-   evidence class through the phase owner; outside a run, retain it in the
+   project root. Keep its JSON output in the active run's `phase-reports` or
+   `phase-evidence` class (`skills/save-ownership.yaml`), written by the phase
+   lead or the specialist it delegates; outside a run, retain it in the
    current task context. Never write a new file under a generated root without
    a declared writer and destination. Record the audit time and the run
    revision inspected. If the command exits unsuccessfully or emits no valid
@@ -48,8 +56,9 @@ definitive defect list. An explicit `--run` is read-only.
    mean no run has started.
 2. **Classify coverage.** Check `coverage.runs_truncated`,
    `coverage.phase_files_truncated`, `coverage.trajectories_truncated`,
-   `coverage.time_truncated`, `coverage.audit_tails_truncated`, and any
-   `unreadable_records`. If coverage is
+   `coverage.time_truncated`, `coverage.audit_tails_truncated`,
+   `coverage.record_errors_truncated` (more than 240 record errors, so some
+   are unlisted), and any `unreadable_records` finding. If coverage is
    incomplete, narrow the run or source evidence before drawing a conclusion.
    The 24-run, 80-phase-file-per-run, 80-trajectory, 256 KiB record, and two
    second time limits are deliberate. Do not enlarge them just to make an
@@ -59,11 +68,13 @@ definitive defect list. An explicit `--run` is read-only.
    identifiers and excludes raw errors, so use authorized local files to
    correlate a finding with the actual run. Match `run_history[].run` and
    `trajectory_history[].run` to the SHA-256 prefix of local run directory
-   names; match `trajectory_history[].trajectory` to the hashed file name.
+   names; a trajectory written with no active run hashes `no-run` instead.
+   Match `trajectory_history[].trajectory` to the hashed file name.
    Use `record_errors[].run` and `record_errors[].trajectory` to locate
    unreadable records without exposing their content in the report.
-   Read `_audit-trail.md` and `_state.md`
-   without editing them. Use `save_run.py status` for authoritative run status.
+   Read `_audit-trail.md` and `_state.md` without editing them. Use
+   `python skills/harness/hooks/save_run.py status --run-id <run-id>` for
+   authoritative run status.
    Distinguish malformed state, a test fixture, a transient environment error,
    and a reproducible skill or harness defect. Record exact source paths,
    revisions, and a minimal reproduction, with credentials redacted.
@@ -84,7 +95,9 @@ definitive defect list. An explicit `--run` is read-only.
 5. **Develop and verify.** Produce a concrete diff under the owning phase's
    write boundary, focused tests for the reproduced failure, a baseline versus
    changed result, and the skill-maker scorecard or validation report when a
-   skill changes. Run the appropriate gate self-check; report a failed or
+   skill changes. Confirm the boundary's submitter ran its `check.py`
+   self-check (`revise_policy.self_check` in `skills/gates.yaml`); for a skill
+   change that is `skill-maker` at `skill-maker-to-delivery`. Report a failed or
    unavailable check as such. Use the designated writers and recovery procedures
    for save, guard, and preference records.
 6. **Propose.** Give the user the source-linked finding, proposed diff, tests,
@@ -112,7 +125,8 @@ validation records before claiming an improvement is ready.
 ## Worked handoff example
 
 An audit reports `record_errors: [{record: "state", reason: "too_large",
-run: "<hash>"}]` and a matching `run_history` entry with `degraded: 2`.
+run: "<hash>"}]` and a matching `run_history` entry with
+`audit_events: {degraded: 2}`.
 After matching the hash to a local run, read its canonical audit trail and
 reproduce the same failure in a disposable fixture. A suitable handoff reads:
 

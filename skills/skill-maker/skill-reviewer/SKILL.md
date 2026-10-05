@@ -59,8 +59,8 @@ Route elsewhere to apply findings (`skill-maker/skill-creator`), to run the whol
 
 Skill-reviewer is an internal specialist, not an entry point.
 `../../routing-doctrine.md` names it in the internal-specialist row, reached
-only through `skill-maker`, which owns the `review` stage of the
-`skill-creation` pipeline. The iteration number and the previous scorecard
+only through `skill-maker`, which owns the `skill-creation` pipeline;
+`../../pipelines.yaml` assigns its `review` stage to this skill. The iteration number and the previous scorecard
 arrive with the handoff, and both are what make a score comparable: a review
 that cannot see the prior deductions cannot report a delta or detect a plateau.
 

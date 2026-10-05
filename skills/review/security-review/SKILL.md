@@ -173,6 +173,7 @@ At the cycle cap, an unresolved Critical or Major returns unchanged with its blo
 
 ## Required Contracts
 
+- **Read-only over the reviewed surface**: This lens reports and never edits the code, configuration, lockfiles, or dependencies it reviews. `allowed-tools` withholds `Edit` so the posture is enforced rather than promised, and `Write` covers the packet, the scan record, and its retained output under the save path only; `Bash` runs the scanner through `skills/scripts/scan_record.py` and never the reviewed program, its build, or a script the reviewed tree ships. A pin, a patch, or a hardening step this lens can see is written into the finding as the narrowest viable fix and routed through the owning orchestrator to the build skill that owns it; a dependency bumped here would change the inputs the scan record is bound to and leave nothing reviewed behind the record.
 - **Vendoring detection**: Detect generated, vendored, or third-party imported content and treat it with tighter review rules than first-party changes.
 - **Before/After Evidence**: Capture observable state before and after each intervention so improvements can be verified instead of asserted.
 - **Shared severity**: Grade every finding Critical | Major | Minor | Info, the four-tier model clause 3 of `../../execution-contract.md` defines, so upstream and downstream packages interpret risk consistently.

@@ -48,11 +48,14 @@ gate:
     - ui_evidence
   not_waivable: decisions, architecture, interfaces, plan, acceptance, security_seed
 severity_model: shared 4-tier (Critical | Major | Minor | Info)
+# Mirrors the five contracts in SKILL.md "Required Contracts", in order.
+# Any change to that section must be reflected here in the same order.
 required_contracts:
-  - Execution-contract clauses stated verbatim in SKILL.md
-  - Stack-lock continuity
-  - Pipeline-owned gate routing
-  - Read-only Taste consumption and candidate feedback routing
+  - Grill-Me Intake
+  - Save-Protocol Adherence
+  - Taste read boundary
+  - Taste revision and drift
+  - Taste traceability
 authoring_rules:
   - First-principles wording only
   - No provenance or comparison language

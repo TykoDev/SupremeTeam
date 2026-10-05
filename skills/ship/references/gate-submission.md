@@ -53,9 +53,10 @@ reference, the exact revision, and the timestamp. `../../gates.yaml` sanctions *
 value for any of the five, so no applicability record waives any of them — this boundary has no
 waivable key at all, which is why a missing value is always a repair and never a note.
 
-`schema_version: 2` also requires `submission_id` alongside `boundary`, `owner`, `run_id` inside
-a run, and a `revision` matching the single `revisions` value; the checker reports a missing one
-as `missing submission_id`. Advance both `submission_id` and `revision` on every resubmission.
+Every manifest, at any schema, needs `submission_id` and a `revision` matching the single
+`revisions` value; the checker reports a missing one as `missing submission_id` or
+`missing revision`. `schema_version: 2` adds `boundary`, `owner`, and `run_id` inside a run.
+Advance both `submission_id` and `revision` on every resubmission.
 
 ## 2. Which Keys `ship` May Fill, and Which It May Not
 

@@ -199,7 +199,7 @@ evidence:
   effective_profile: {artifacts: [evidence/effective-profile.json], entries: [{id: pref-new, source_scope: project, source_id: taste-42}], digest: "<sha256>"}
   consumer_handoff: {consuming_pipeline: design, effective_profile_digest: "<sha256>", applicability_summary: applies to UI design decisions}
   taste_review_record: {artifacts: [evidence/taste-review-record.md], findings: [], recommendation: APPROVED}
-  residual_uncertainty: none observed
+  residual_uncertainty: pref-new is untested against dark-mode contrast
 artifact_hashes:
   evidence/preference-diff.json: "<sha256>"
   evidence/confirmation.json: "<sha256>"

@@ -55,11 +55,16 @@ import _fsutil  # noqa: E402
 # The hooks scope a run by the grammar `save_run.py create` and `output_paths.py` share, matched with
 # fullmatch (the pattern is unanchored): an id that reaches a directory name or a message the model
 # reads is plain and bounded. A copy of the hooks without skills/scripts must still guard, so a missing
-# taxonomy leaves the scope at "no-run" instead of stopping every hook at import.
+# taxonomy leaves the scope at "no-run" instead of stopping every hook at import. So does one that fails or ends its
+# own import (an edit that appends `raise SystemExit(0)`): the guard keeps enforcing with the narrower scope.
+# A missing module is that supported layout; anything else is kept in ``TAXONOMY_FAULT`` for the guard to count.
+TAXONOMY_FAULT = None
 try:
     from save_taxonomy import RUN_ID
 except ImportError:
     RUN_ID = None
+except (Exception, SystemExit) as _exc:
+    RUN_ID, TAXONOMY_FAULT = None, _exc
 
 # Maximum trajectory signatures retained per identity (bounded memory).
 _MAX_TRAJ = 40

@@ -84,7 +84,7 @@ capture      evidence/debug-before-after.log
 sha256       0a71f8341e0430b4beb688dae9a8154371b8c5196669f6965d1ae354dcee7d88
 
 register     python skills/harness/hooks/save_run.py checkpoint \
-               --run-id 2026-04-19-notify --owner debugger \
+               --run-id 2026-04-19-notify --owner admiral \
                --evidence skillset-saves/runs/2026-04-19-notify/build/reports/report_debug-empty-events.md
 ```
 

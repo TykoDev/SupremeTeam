@@ -62,6 +62,26 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ### Changed
 
+- BENCHMARK.md is re-measured as round 3 (2026-10-05, commit `8eae856`, 53 skills).
+  - **Skills:** 53 scored, mean 97.5 and lowest 94 (09-18: 99.4 over 52 skills),
+    with a new ledger of 121 cited deductions.
+  - **Spec, harness and doctrine:** 21 artifacts at mean 94.0 (09-18: 97.5);
+    `mcp-tools.md` is scored for the first time, at 81.
+  - **Routing:** 89.4% (278/311) on a paid, paraphrased run (round 9: 94.8%).
+  - **Host registration:** 22 of 22 root skills.
+
+  The re-check of the 09-18 deduction ledger finds 20 of its 26 deductions still
+  present, which the file had described as fixed. The full report is in
+  `docs/quality-audit.md`, which also re-runs every round-2 reproduction:
+  - O-1, H-1 to H-4 and G-1 hold.
+  - Every other open Critical or Major is still present.
+  - Four new Major guard bypasses lift a freeze in one command (N-1 to N-4). One
+    more Major, N-5, lets a root `unzip` outside an Admiral run write the hook
+    registration or a blocked path. N-1 and N-5 are regressions from `8eae856`.
+
+  `docs/quality-audit.md` consolidates all three audit rounds into one findings
+  register, with each finding's current status, and replaces the dated reports
+  `docs/quality-audit-2026-10-01.md` and `docs/quality-audit-2026-10-01-r2.md`.
 - Deeply nested PowerShell blocks no longer trigger repeated near-identical
   command-scanner passes after the brace-depth safety bound; dormant pyenv shims
   are excluded from older-interpreter compatibility checks; and skills over 400
@@ -293,6 +313,51 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ### Security
 
+- Round-2 audit (`docs/quality-audit.md`), H-1: a copy, link, install, sync
+  or extract into `.harness-state/` replaced the guard record and lifted every freeze and
+  read-only run in one allowed command (`cp /tmp/guard-state.json .harness-state/`, with
+  `install`, `ln -sf`, `rsync`, `tar -C`, `cp -t` and a `cd` first too), and the same
+  reached the run records and the registration files. The analyser now names the file a
+  copy, link or install lands as in a directory (`dir/<source name>`), and Rule C reads a
+  sync, an extract, a recursive or contents copy, `git clean` and the in-place editors
+  `find -exec` runs as writes into everything under the directory they name. A file that
+  is no record (`cp notes.md .harness-state/`) still passes.
+- H-3: under a freeze, `find src -exec sed -i ...`, `find src -exec truncate ...`,
+  `rsync --delete ... src/`, `tar -xf a.tar -C src` and `cp -r x/. src` rewrote a frozen tree
+  from the directory above it. Rule B counts them as tree writes, as it counts `rm -r` and
+  `mv`; a plain copy beside the boundary (`cp a.py src/`) is judged by the file it lands as.
+  `rsync` no longer reads its `-t` (`--times`) as a target directory.
+- H-2: a target spelled through `$PWD` or `$CLAUDE_PROJECT_DIR` got past a freeze, a block
+  and Rule F (`echo x > "$PWD/src/payments/a"`, `rm -rf "$CLAUDE_PROJECT_DIR/src"`, a write
+  of `disableAllHooks` to `"$CLAUDE_PROJECT_DIR/.claude/settings.local.json"`). `$PWD` is
+  now the shell's own directory, the project-directory variables `_state.PROJECT_ENV` names
+  are the paths the host gave them, and a path led by a variable the analysis cannot resolve
+  (`$OUT/src/payments/a`) is also judged without it. Rule F reads a launcher's commands and
+  a write the analyser cannot place as Rule B does.
+- H-4: an edit to `skills/scripts/save_taxonomy.py` or `data_formats.py`, which the hooks
+  import, was allowed, and appending `raise SystemExit(0)` to either switched the guard off
+  with no fault counted. Rule F now covers both, a rule that ends that way is counted and
+  skipped so the others still run, a run-id grammar that fails its import is counted and
+  leaves the run scope at `no-run`, and the entry treats a `SystemExit` the guard did not
+  take after printing its decision as a fault.
+- Records at the project root: Rule C read a sync, an extract, a contents copy or `git
+  clean` as reaching the records only when it was aimed at `.harness-state/` or
+  `skillset-saves/` themselves, so `git clean -fdx`, `rsync -a --delete x/ ./`, an
+  archive carrying `.harness-state/guard-state.json` unpacked at the root, or `cp -r
+  backup/. .` replaced or removed them. A command aimed at the root, or above it, is now
+  read for what it would remove or land there while a record exists: `git clean -d` by
+  `-x`/`-X`, the project's ignore files and `-e`; `rsync --delete` by `--exclude`; an
+  extract by the members of the tar or zip archive on disk (one it cannot read is
+  refused); a contents copy by what its source holds on disk.
+- An archive unpacked at the project root (`unzip fixtures.zip`, `tar -xzf vendor.tgz`)
+  is no longer refused by a freeze or a block, and Rule F refuses it only while an Admiral
+  run is active; an extract into a named directory above a boundary (`tar -C src`) is
+  still refused.
+- G-1: a gate manifest three or more directories below a run's phase directory was read
+  as a detached package, where schema 1 is accepted and the run's rules do not apply, so
+  a `review-to-delivery` package with an open Critical finding passed. `check.py` now finds
+  the run from any depth.
+
 - The pre-tool guard reads shell commands and canonicalises paths before it
   matches. It follows quoting, `cd`, redirects, wrappers (`sudo`, `env`, `xargs`,
   `sh -c`, `find -exec`, `powershell -Command`, `cmd /c`) and the write targets of
@@ -392,6 +457,16 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ### Fixed
 
+- Round-2 audit O-1: twelve skills told their agent to checkpoint with `save_run.py
+  checkpoint --owner <self>` (commander, redesign, build-management, code-chief, cso,
+  investigate, bob-the-builder, test-builder, health-check, debugger,
+  cross-check-build-confirm, session-memory; fifteen commands). `save_run.py` refuses
+  every owner but the lock holder and admiral holds the lock for the whole run, so each
+  failed with `lock is owned by 'admiral'` at the first checkpoint of every delegated
+  phase. They pass `--owner admiral` and record the delegate with `--set delegated_to=`,
+  and `validation/test_save_prose.py` refuses a documented save command whose `--owner` is
+  not the writer's lock holder.
+
 - Registered evidence under a directory the account may not search is reported as
   `evidence_unverifiable` beside the classification the run's own records give, where it turned
   the owner's run `corrupt` with the other-account step; the writer refuses such a path naming it
@@ -445,8 +520,8 @@ recorded here, or a record the skill does not carry, fails it.
 - `design/architect` 1.0.1: works from the stack the project already fixes, not a lock
   that comes later in the pipeline.
 - `design/engineer` 1.0.1: works from the detected stack, not a lock that comes later.
-- `design/commander` 1.0.1: states the stack-lock rule the engine enforces (every
-  declared version is one the registry offers).
+- `design/commander` 1.0.2: states the stack-lock rule the engine enforces (every
+  declared version is one the registry offers), and its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
 - `design/design-mapper` 1.0.1: states what `check_parity.py` now refuses in an inventory.
 - `careful` 1.0.1: describes the guard as it is (it reads the command, and counts faults).
 - `freeze` 1.3.0: one record per boundary whatever the spelling, a refused glob that can
@@ -454,11 +529,13 @@ recorded here, or a record the skill does not carry, fails it.
   lacks), a warning for a leading-slash glob outside the project that names a directory that
   exists, relative globs anchored at the project root, a writer lock, and what an
   unreadable record means.
-- `guard` 1.3.0: a grant is capped at 8 hours, the hook scripts are protected (Rule F,
+- `guard` 1.5.0: a grant is capped at 8 hours, the hook scripts are protected (Rule F,
   advisory, whole registration file), a write after an unfollowable directory chain is
   denied (Rule G, with its own failure-mode row), a read-only run denies writes with no
   named target (pipes, launchers, PowerShell blocks, diffs), an unreadable record is counted
-  and announced, and writers serialise on a lock.
+  and announced, writers serialise on a lock, Rule F covers the `skills/scripts`
+  modules the hooks import, and Rule C reads a command aimed at the project root by what
+  it would put into or remove from the record directories.
 - `unfreeze` 1.1.0: releases by the normalised glob and records the cap on a grant.
 - `gatekeeper-admiral` 1.1.0: a REVISE row for a schema-1 result, the typed-record
   roster and what a typed record leaves unchecked.
@@ -468,8 +545,9 @@ recorded here, or a record the skill does not carry, fails it.
   optional slots.
 - `review/gatekeeper-code` 1.1.0: as `gatekeeper-admiral`, with its package guard and
   optional slots.
-- `session-memory` 1.1.0: the writer lock, `checkpoint --drop-evidence`, the
-  `uninitialized` class, the refusal reasons and the `access_denied` mark.
+- `session-memory` 1.1.1: the writer lock, `checkpoint --drop-evidence`, the
+  `uninitialized` class, the refusal reasons and the `access_denied` mark; its checkpoint
+  example names the lock holder as `--owner` and a project-relative evidence path.
 - `taste` 1.1.0: `propose` validation, redaction by shape, lock reclaim and the error codes.
 - `skill-maker` 1.0.1: the Stage 5 hand-off names the output directory as an absolute path, the
   parent of the `path` that `output_paths.py` prints, and leaves it out outside a run.
@@ -477,8 +555,17 @@ recorded here, or a record the skill does not carry, fails it.
   refuses symlinks, secrets and run state; failed eval runs are not scored.
 - `review/security-review` 1.1.0: `scan_record.py` names its output relative to the
   manifest and gains `--fail-on-output` and `--manifest-root`.
-- `review/cso` 1.0.1: the waiver reason must be the sanctioned wording, and scan output
-  paths follow the manifest.
+- `review/cso` 1.0.2: the waiver reason must be the sanctioned wording, scan output
+  paths follow the manifest, and its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `design/redesign` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `build/build-management` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `review/code-chief` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `investigate` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `build/bob-the-builder` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `build/test-builder` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `build/debugger` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `build/health-check` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `build/cross-check-build-confirm` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
 - `qa-only` 1.0.3: the read-only boundary reference states what the hook now denies,
   including index-only git commands, package-manager installs and writes with no named
   target.

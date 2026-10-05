@@ -588,9 +588,11 @@ class _Lexer:
 # --- words to arguments ------------------------------------------------------
 
 class _Ctx:
-    def __init__(self, out: Analysis, ps: bool) -> None:
+    def __init__(self, out: Analysis, ps: bool, env: "dict | None" = None) -> None:
         self.out = out
         self.ps = ps
+        # Variables the host exports to the commands it runs (the project directory), keyed as ``vars`` is.
+        self.env: dict = {(name.lower() if ps else name): value for name, value in (env or {}).items() if value}
         self.vars: dict = {}
         self.cwds: list = []
         self.stack: tuple = ()
@@ -611,6 +613,11 @@ def _lookup(name: str, ctx: _Ctx) -> "str | None":
         return ctx.vars[key]
     if key == "HOME" or (ctx.ps and key in ("home", "userprofile")):
         return _home()
+    if key in ctx.env:
+        return ctx.env[key]
+    # The shell's own directory: `.` in the analysis, whose paths are relative to the directory the `cd` chain left.
+    if key == "PWD" or (ctx.ps and key == "pwd"):
+        return "."
     return None
 
 
@@ -784,13 +791,37 @@ def _t_skip_first(rest, ctx):
     return operands if any(f.startswith("--reference") for f in flags) else operands[1:]
 
 
-def _t_last(with_arg=frozenset(), short=frozenset()):
+def _deposits(verb: str, sources: list, dest: "_Arg", recursive: bool) -> list:
+    """What a copy, link or install into ``dest`` writes: ``dest`` itself, and ``dest/<name>`` for each source whose
+    name is known, since ``dest`` may be a directory. A recursive copy writes the tree under each ``dest/<name>``, and
+    a source whose name the command does not fix (``x/.``, a glob, a variable) lands names the guard cannot list: those
+    carry the label ``<verb> -r`` (``dest`` itself, for an unknown name), which the guard reads as a write into
+    everything under it, as it reads ``mv`` or ``rm``."""
+    items: list = [dest]
+    unknown = False
+    for source in sources:
+        name = posixpath.basename(source.text.replace("\\", "/").rstrip("/").rpartition(":")[2] or source.text)
+        if source.glob or source.unresolved or name in ("", ".", ".."):
+            unknown = True
+            continue
+        derived = _Arg(posixpath.join(dest.text, name), dest.glob, dest.unresolved)
+        items.append((derived, (), f"{verb} -r") if recursive else derived)
+    if unknown:
+        items.append((dest, (), f"{verb} -r"))
+    return items
+
+
+def _t_copy(verb: str, with_arg=frozenset(), short=frozenset(), recursive=frozenset(), recursive_short=""):
+    """``cp``, ``ln`` and ``scp``: the destination, read from ``-t`` or the last operand, and what lands inside it."""
     def handler(rest, ctx):
         flags, operands, values = _split(rest, with_arg | {"-t", "--target-directory"}, short | {"t"})
+        tree = any(f in recursive for f in flags) or any(_has_short(flags, letter) for letter in recursive_short)
         for name in ("-t", "--target-directory"):
             if name in values:
-                return [values[name]]
-        return operands[-1:]
+                return _deposits(verb, operands, values[name], tree)
+        if not operands:
+            return []
+        return _deposits(verb, operands[:-1], operands[-1], tree)
     return handler
 
 
@@ -801,7 +832,18 @@ def _t_install(rest, ctx):
         return operands
     for name in ("-t", "--target-directory"):
         if name in values:
-            return [values[name]]
+            return _deposits("install", operands, values[name], False)
+    return _deposits("install", operands[:-1], operands[-1], False) if operands else []
+
+
+_RSYNC_ARG = frozenset({"-e", "--rsh", "--exclude", "--include", "--exclude-from", "--include-from", "-f", "--filter",
+                        "--port", "--bwlimit", "--rsync-path", "--log-file", "-B", "-T"})
+
+
+def _t_rsync(rest, ctx):
+    """The destination of ``rsync``. What lands inside depends on the source's trailing slash and on ``--delete``, which
+    removes what the source lacks, so the destination is always a tree write (label ``rsync``)."""
+    flags, operands, values = _split(rest, _RSYNC_ARG, frozenset("efBT"))
     return operands[-1:]
 
 
@@ -932,7 +974,9 @@ def _t_wget(rest, ctx):
     return named
 
 
-def _t_tar(rest, ctx):
+def _tar_parts(rest) -> tuple:
+    """``(mode, archive, directory)`` of a tar command line: ``mode`` is ``x`` (extract), ``c`` (create, append or
+    update) or ``""`` (list, compare); ``archive`` and ``directory`` are words or None."""
     words = list(rest)
     cluster = ""
     if words and not words[0].text.startswith("-") and re.fullmatch(r"[A-Za-z]+", words[0].text):
@@ -949,10 +993,17 @@ def _t_tar(rest, ctx):
             directory = queue.pop(0)
     letters = cluster + "".join(f[1:] for f in flags if not f.startswith("--"))
     if "x" in letters or "--extract" in flags or "--get" in flags:
+        return "x", archive, directory
+    if any(c in letters for c in "cru") or any(f in flags for f in ("--create", "--append", "--update")):
+        return "c", archive, directory
+    return "", archive, directory
+
+
+def _t_tar(rest, ctx):
+    mode, archive, directory = _tar_parts(rest)
+    if mode == "x":
         return [directory or _Arg(".")]
-    if (any(c in letters for c in "cru") or any(f in flags for f in ("--create", "--append", "--update"))) and archive:
-        return [archive]
-    return []
+    return [archive] if mode == "c" and archive is not None else []
 
 
 def _t_unzip(rest, ctx):
@@ -960,6 +1011,47 @@ def _t_unzip(rest, ctx):
     if any(f in ("-l", "-t", "-v", "-p", "-Z", "-z") for f in flags):
         return []
     return [values["-d"]] if "-d" in values else [_Arg(".")]
+
+
+def extract_parts(verb: str, argv) -> "tuple | None":
+    """``(archive, destination)`` of an archive extract (``tar -x``, ``unzip``, ``7z x``/``e``), or None for any other
+    command. ``archive`` is None when the archive arrives on standard input (``tar -x`` without ``-f``, ``-f -``)."""
+    args = [a if isinstance(a, _Arg) else _Arg(a) for a in argv]
+    if verb == "tar":
+        mode, archive, directory = _tar_parts(args)
+        if mode != "x":
+            return None
+        return (None if archive is None or archive.text == "-" else archive.text), (directory.text if directory else ".")
+    if verb == "unzip":
+        flags, operands, values = _split(args, frozenset({"-d", "-x", "-P"}), frozenset("dxP"))
+        if any(f in ("-l", "-t", "-v", "-p", "-Z", "-z") for f in flags):
+            return None
+        return (operands[0].text if operands else None), (values["-d"].text if "-d" in values else ".")
+    if verb in ("7z", "7za", "7zr"):
+        flags, operands, _ = _split(args)
+        if not operands or operands[0].text not in ("x", "e"):
+            return None
+        out = [f[2:] for f in flags if f.startswith("-o") and len(f) > 2]
+        return (operands[1].text if len(operands) > 1 else None), (out[0] if out else ".")
+    return None
+
+
+def copy_parts(verb: str, argv) -> "tuple | None":
+    """``(sources, destination, flags, excludes)`` of ``cp``, ``ln``, ``install``, ``scp`` or ``rsync``, or None."""
+    args = [a if isinstance(a, _Arg) else _Arg(a) for a in argv]
+    if verb == "rsync":
+        flags, operands, _ = _split(args, _RSYNC_ARG, frozenset("efBT"))
+        excludes = _values(args, frozenset({"--exclude", "--filter"}), "f")
+        return ([a.text for a in operands[:-1]], operands[-1].text, flags, excludes) if operands else None
+    if verb not in ("cp", "ln", "install", "scp"):
+        return None
+    flags, operands, values = _split(args, frozenset({"-t", "--target-directory", "-S", "--suffix", "-m", "-o", "-g",
+                                                      "--mode", "--owner", "--group", "-i", "-P", "-F", "-l", "-c", "-J"}),
+                                     frozenset("tSmogiPFlcJ" if verb in ("install", "scp") else "tS"))
+    for name in ("-t", "--target-directory"):
+        if name in values:
+            return [a.text for a in operands], values[name].text, flags, []
+    return ([a.text for a in operands[:-1]], operands[-1].text, flags, []) if operands else None
 
 
 def _t_zip(rest, ctx):
@@ -990,9 +1082,8 @@ _GIT_COMMIT_ARG = frozenset({"-m", "-F", "-C", "-c", "--message", "--file", "--a
                              "--reedit-message", "--fixup", "--squash", "--cleanup", "-S", "--gpg-sign"})
 
 
-def git_parts(argv) -> tuple:
-    """``(subcommand, operands, directories, flags)`` of a git command line: global options skipped, ``-C`` kept."""
-    args = [a if isinstance(a, _Arg) else _Arg(a) for a in argv]
+def _git_head(args: list) -> tuple:
+    """``(index of the subcommand, -C directories)`` of a git command line, global options skipped."""
     directories: list = []
     i = 0
     while i < len(args):
@@ -1006,11 +1097,54 @@ def git_parts(argv) -> tuple:
             i += 2
         else:
             i += 1
+    return i, directories
+
+
+def git_parts(argv) -> tuple:
+    """``(subcommand, operands, directories, flags)`` of a git command line: global options skipped, ``-C`` kept."""
+    args = [a if isinstance(a, _Arg) else _Arg(a) for a in argv]
+    i, directories = _git_head(args)
     if i >= len(args):
         return "", [], directories, []
     sub = args[i].text
     flags, operands, _ = _split(args[i + 1:], _GIT_COMMIT_ARG if sub == "commit" else frozenset())
     return sub, operands, directories, flags
+
+
+def _values(args: list, names: frozenset, short: str = "") -> list:
+    """Every value of the options in ``names`` (``--name v``, ``--name=v``, ``-x v``, ``-xv`` for a letter in ``short``)."""
+    found: list = []
+    i = 0
+    while i < len(args):
+        text = args[i].text
+        name, equals, value = text.partition("=")
+        if text.startswith("--") and name in names:
+            if equals:
+                found.append(value)
+            elif i + 1 < len(args):
+                found.append(args[i + 1].text)
+                i += 1
+        elif not text.startswith("--") and len(text) > 1 and text[0] == "-" and text[1] in short:
+            if len(text) > 2:
+                found.append(text[2:])
+            elif i + 1 < len(args):
+                found.append(args[i + 1].text)
+                i += 1
+        i += 1
+    return found
+
+
+def git_clean_parts(argv) -> "tuple | None":
+    """``(pathspecs, directories, flags, excludes)`` of a ``git clean``, or None for any other git command.
+
+    ``-e``/``--exclude`` take a pattern, which is no pathspec: ``git clean -fdx -e keep`` cleans everything but ``keep``."""
+    args = [a if isinstance(a, _Arg) else _Arg(a) for a in argv]
+    i, directories = _git_head(args)
+    if i >= len(args) or args[i].text != "clean":
+        return None
+    rest = args[i + 1:]
+    flags, operands, _ = _split(rest, frozenset({"-e", "--exclude"}), frozenset("e"))
+    return [a.text for a in operands], directories, flags, _values(rest, frozenset({"--exclude"}), "e")
 
 
 def git_index_only(sub: str, flags) -> bool:
@@ -1036,6 +1170,8 @@ def _t_git(rest, ctx):
     sub, operands, directories, flags = git_parts(rest)
     if sub not in _GIT_PATHSPEC or git_index_only(sub, flags):
         return []
+    if sub == "clean":
+        operands = [_Arg(text) for text in git_clean_parts(rest)[0]]
     return [(operand, tuple(directories), "git " + sub) for operand in operands]
 
 
@@ -1083,11 +1219,12 @@ _TARGETS = {
     "mkfifo": _t_all(frozenset({"-m", "--mode"}), frozenset("m")),
     "truncate": _t_all(frozenset({"-s", "-r", "--size", "--reference"}), frozenset("sr")),
     "mv": _t_mv, "chmod": _t_skip_first, "chown": _t_skip_first, "chgrp": _t_skip_first,
-    "cp": _t_last(), "ln": _t_last(), "install": _t_install,
-    "rsync": _t_last(frozenset({"-e", "--rsh", "--exclude", "--include", "--exclude-from", "--include-from", "-f",
-                                "--filter", "--port", "--bwlimit", "--rsync-path", "--log-file", "-B", "-T"}),
-                     frozenset("efBT")),
-    "scp": _t_last(frozenset({"-i", "-P", "-F", "-o", "-l", "-S", "-c", "-J"}), frozenset("iPFolScJ")),
+    "cp": _t_copy("cp", frozenset({"-S", "--suffix"}), frozenset("S"), frozenset({"--recursive", "--archive"}), "rRa"),
+    "ln": _t_copy("ln", frozenset({"-S", "--suffix"}), frozenset("S")),
+    "install": _t_install,
+    "rsync": _t_rsync,
+    "scp": _t_copy("scp", frozenset({"-i", "-P", "-F", "-o", "-l", "-S", "-c", "-J"}), frozenset("iPFolScJ"),
+                   frozenset(), "r"),
     "dd": _t_dd, "gzip": _t_compress, "gunzip": _t_compress, "bzip2": _t_compress, "bunzip2": _t_compress,
     "xz": _t_compress, "unxz": _t_compress, "zstd": _t_compress, "lzma": _t_compress,
     "sort": _t_sort, "patch": _t_patch, "sed": _t_sed, "perl": _t_perl, "awk": _t_awk, "gawk": _t_awk,
@@ -1434,6 +1571,7 @@ def _scratch(ctx: _Ctx) -> _Ctx:
     """A context for the commands a launcher runs: it starts where ``ctx`` is, shares nothing it changes, and what it
     finds goes to ``Analysis.hidden``."""
     sub = _Ctx(Analysis(), ctx.ps)
+    sub.env = ctx.env
     sub.vars, sub.cwds, sub.stack = collections.ChainMap({}, ctx.vars), ctx.cwds[-3:], ctx.stack
     sub.depth, sub.text = ctx.depth, ctx.text
     return sub
@@ -2034,8 +2172,11 @@ def _process(text: str, ctx: _Ctx, ps: bool, scoped: bool = True) -> None:
             ctx.stack = stack
 
 
-def analyse(text: str, *, powershell: bool = False) -> Analysis:
-    """Analyse one command line (Bash by default, PowerShell when ``powershell``); never raises on odd input."""
+def analyse(text: str, *, powershell: bool = False, env: "dict | None" = None) -> Analysis:
+    """Analyse one command line (Bash by default, PowerShell when ``powershell``); never raises on odd input.
+
+    ``env`` names variables the host sets for every command it runs (the project directory), so a path spelled
+    through one (``"$CLAUDE_PROJECT_DIR/src"``) is placed like the path it stands for."""
     out = Analysis()
-    _process(text, _Ctx(out, powershell), powershell)
+    _process(text, _Ctx(out, powershell, env), powershell)
     return out

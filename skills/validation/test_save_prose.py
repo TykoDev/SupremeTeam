@@ -96,6 +96,29 @@ class ProseMatchesTheWriterTests(unittest.TestCase):
         patterns = next(entry for entry in policy["classes"] if entry["id"] == "core-run-record")["patterns"]
         self.assertEqual(quoted, sorted(patterns))
 
+    def test_every_documented_save_command_names_the_lock_holder_as_owner(self):
+        """Twelve skills told their agent to checkpoint with `--owner <self>`. `save_run.py` refuses every owner but the
+        lock holder, and admiral takes the lock at `create` and keeps it, so each of those commands failed with
+        `lock is owned by 'admiral'` at the first checkpoint of every delegated phase. A delegate records itself with
+        `--set delegated_to=`; `--owner` is always the lock holder, which is the writer's default."""
+        writer = (SKILLS / "harness" / "hooks" / "save_run.py").read_text(encoding="utf-8")
+        holder = re.search(r'add_argument\("--owner",\s*default="([a-z-]+)"\)', writer).group(1)
+        command = re.compile(r"save_run\.py\s+(?:create|checkpoint|heartbeat|complete|block|release|recover)\b[^`\n]*")
+        roots = [SKILLS, SKILLS.parent / "docs"]
+        files = [path for root in roots if root.is_dir() for path in sorted(root.rglob("*.md"))]
+        files += [path for path in (SKILLS.parent / name for name in ("README.md", "QUICK-START.md", "AGENTS.md")) if path.is_file()]
+        offenders = []
+        for path in files:
+            text = path.read_text(encoding="utf-8").replace("\\\n", " ")
+            for match in command.finditer(text):
+                owner = re.search(r"--owner\s+([a-z][a-z-]*)\b", match.group(0))
+                if owner and owner.group(1) != holder:
+                    line = text.count("\n", 0, match.start()) + 1
+                    offenders.append(f"{path.relative_to(SKILLS.parent).as_posix()}:{line} --owner {owner.group(1)}")
+        self.assertGreater(len(files), 100)
+        self.assertEqual(offenders, [], f"save_run.py refuses an owner that is not the lock holder ({holder!r}); record "
+                                        "the delegate with `--set delegated_to=<skill>`:\n  " + "\n  ".join(offenders))
+
 
 if __name__ == "__main__":
     unittest.main()

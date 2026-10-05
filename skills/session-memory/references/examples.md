@@ -40,7 +40,7 @@ python skills/harness/hooks/save_run.py checkpoint --run-id 2026-04-23_dashboard
 
 **User request:** checkpoint this run and record what we learned
 
-**Command:** `save_run.py checkpoint --run-id 2026-04-19_workflow-engine_b8d3 --owner session-memory --expect-revision 11 --evidence build/reports/report_learnings.md` against the destination `output_paths.py --run-id 2026-04-19_workflow-engine_b8d3 --phase build --kind reports --name report_learnings.md` resolved.
+**Command:** `save_run.py checkpoint --run-id 2026-04-19_workflow-engine_b8d3 --owner admiral --expect-revision 11 --evidence skillset-saves/runs/2026-04-19_workflow-engine_b8d3/build/reports/report_learnings.md` (`--owner` is the lock holder admiral took at `create`; `--owner session-memory` would be refused, and evidence paths are project-relative) against the destination `output_paths.py --run-id 2026-04-19_workflow-engine_b8d3 --phase build --kind reports --name report_learnings.md` resolved.
 
 **Result:** `result: ok`, revision 12 published.
 

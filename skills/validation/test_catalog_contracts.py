@@ -594,7 +594,8 @@ class GuardWriterTests(unittest.TestCase):
         hooks = SKILLS / "harness" / "hooks"
         entry = (hooks / "pre_tool_use.py").read_text(encoding="utf-8")
         guard = (hooks / "guard_hook.py").read_text(encoding="utf-8")
-        self.assertIn("from guard_hook import main", entry)
+        self.assertIn("import guard_hook", entry)
+        self.assertIn("guard_hook.main()", entry)
         self.assertIn("guard-state.json", guard)
         self.assertIn("guard_state.py", guard,
                       "the guard hook must route writes to the sanctioned writer")

@@ -304,14 +304,16 @@ class Package:
         return raw
 
     def _run_layout_dir(self) -> Path | None:
-        """The run directory when the manifest sits in skillset-saves/runs/<run-id>/<phase>/, else None."""
+        """The run directory when the manifest sits anywhere below skillset-saves/runs/<run-id>/, else None.
+
+        Every ancestor is searched. A bounded walk let a manifest three directories below a phase directory read as a
+        detached package, where schema 1 is still accepted and the run's rules (schema 2, ``run_id``, the run as the
+        evidence root) do not apply; such a package with an open Critical finding passed ``review-to-delivery``."""
         node = self.base
-        for _ in range(4):
+        while node.parent != node:
             parent = node.parent
             if parent.name == "runs" and parent.parent.name == "skillset-saves":
                 return node
-            if parent == node:
-                break
             node = parent
         return None
 

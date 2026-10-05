@@ -106,6 +106,15 @@ class EntryPointTests(unittest.TestCase):
         self.assertIn("RuntimeError", record)
         self.assertNotIn("secret detail", record)
 
+    def test_an_exit_the_guard_did_not_take_is_a_fault_not_a_decision(self):
+        """`SystemExit` is how the guard ends after printing a decision, so the entry let every one through: a module on
+        the guard's path that raised one switched the guard off with nothing counted."""
+        with mock.patch("guard_hook.main", side_effect=SystemExit(0)):
+            self.assertEqual(self.run_entry(), "")
+        record = (self.root / ".harness-state" / "observations" / "PreToolUse.json").read_text(encoding="utf-8")
+        self.assertIn('"faults": 1', record)
+        self.assertIn("SystemExit", record)
+
     def test_an_import_time_fault_fails_open_with_exit_zero(self):
         """The old entry imported the guard outside its try, so this was a traceback and exit 1."""
         proc = subprocess.run([sys.executable, "-c", _BROKEN_GUARD], input=b"{}", capture_output=True,
@@ -167,6 +176,50 @@ class PartialCopyTests(unittest.TestCase):
         code = "import sys; sys.path.insert(0, %r); import _state; print(_state.RUN_ID, _state.active_run_id(%r))" % (str(self.hooks), str(self.project))
         proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
         self.assertEqual((proc.returncode, proc.stdout.strip()), (0, "None no-run"), proc.stderr)
+
+
+class PoisonedHelperTests(unittest.TestCase):
+    """A helper on the guard's import path that ends the process (`raise SystemExit(0)` appended to it) switched the
+    guard off with no fault counted: `_state` and the rule loop caught only `Exception`. The guard now keeps enforcing
+    and counts the fault; Rule F refuses the edit while the guard is in use (`HarnessFileTests`)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        skills = Path(tmp.name).resolve() / "skills"
+        ignore = shutil.ignore_patterns("test_*.py", "__pycache__")
+        shutil.copytree(HOOK_DIR, skills / "harness" / "hooks", ignore=ignore)
+        shutil.copytree(_bootstrap.SCRIPTS, skills / "scripts", ignore=ignore)
+        self.skills, self.hooks = skills, skills / "harness" / "hooks"
+        self.project = Path(tmp.name).resolve() / "project"
+        (self.project / ".git").mkdir(parents=True)
+        (self.project / "src" / "payments").mkdir(parents=True)
+        kit.write_guard(self.project, {"frozen_globs": [{"glob": "src/payments/**", "owner": "ops"}]})
+
+    def poison(self, name: str) -> None:
+        with open(self.skills / "scripts" / name, "a", encoding="utf-8") as handle:
+            handle.write("\nraise SystemExit(0)\n")
+
+    def decide(self, command: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, str(self.hooks / "pre_tool_use.py")], input=json.dumps(kit.bash(command)).encode("utf-8"),
+                              capture_output=True, env=kit.clean_env(self.project), check=False)
+
+    def test_the_guard_keeps_enforcing_and_counts_the_fault(self):
+        for name in _bootstrap.SCRIPT_FILES:
+            with self.subTest(module=name):
+                self.setUp()
+                self.poison(name)
+                for command in ("echo x > src/payments/a.py", "rm -rf /"):
+                    proc = self.decide(command)
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+                    self.assertTrue(kit.denied(proc.stdout.decode("utf-8")), (command, proc.stdout, proc.stderr))
+                self.assertEqual(self.decide("ls").stdout, b"")
+
+    def test_a_taxonomy_that_ends_its_import_is_counted(self):
+        self.poison("save_taxonomy.py")
+        self.decide("ls")
+        record = (self.project / ".harness-state" / "observations" / "PreToolUse.json").read_text(encoding="utf-8")
+        self.assertIn("SystemExit", record)
 
 
 class ImportabilityTests(unittest.TestCase):

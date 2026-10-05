@@ -71,17 +71,17 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   - **Host registration:** 22 of 22 root skills.
 
   The re-check of the 09-18 deduction ledger finds 20 of its 26 deductions still
-  present, which the file had described as fixed. The full report is
-  `docs/quality-audit-2026-10-05.md`, which also re-runs every round-2
-  reproduction:
+  present, which the file had described as fixed. The full report is in
+  `docs/quality-audit.md`, which also re-runs every round-2 reproduction:
   - O-1, H-1 to H-4 and G-1 hold.
   - Every other open Critical or Major is still present.
   - Four new Major guard bypasses lift a freeze in one command (N-1 to N-4). One
     more Major, N-5, lets a root `unzip` outside an Admiral run write the hook
     registration or a blocked path. N-1 and N-5 are regressions from `8eae856`.
 
-  The round-2 report's note that the root-level gap "is now closed" carries a
-  pointer to these findings.
+  `docs/quality-audit.md` consolidates all three audit rounds into one findings
+  register, with each finding's current status, and replaces the dated reports
+  `docs/quality-audit-2026-10-01.md` and `docs/quality-audit-2026-10-01-r2.md`.
 - Deeply nested PowerShell blocks no longer trigger repeated near-identical
   command-scanner passes after the brace-depth safety bound; dormant pyenv shims
   are excluded from older-interpreter compatibility checks; and skills over 400
@@ -313,7 +313,7 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ### Security
 
-- Round-2 audit (`docs/quality-audit-2026-10-01-r2.md`), H-1: a copy, link, install, sync
+- Round-2 audit (`docs/quality-audit.md`), H-1: a copy, link, install, sync
   or extract into `.harness-state/` replaced the guard record and lifted every freeze and
   read-only run in one allowed command (`cp /tmp/guard-state.json .harness-state/`, with
   `install`, `ln -sf`, `rsync`, `tar -C`, `cp -t` and a `cd` first too), and the same

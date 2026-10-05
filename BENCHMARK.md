@@ -8,7 +8,9 @@ inferring one.
 **When these were measured.** On 2026-10-05, at commit `8eae856`, on the 53-skill
 catalog. This is round 3, and it re-measured every skill, artefact and paid figure
 on this page. The full report, including the adversarial findings behind the
-scores, is [docs/quality-audit-2026-10-05.md](docs/quality-audit-2026-10-05.md).
+scores, is in [docs/quality-audit.md](docs/quality-audit.md). That file
+consolidates all three audit rounds and gives the current status of every
+finding.
 
 The two kinds of number need different handling:
 
@@ -249,7 +251,7 @@ largest drops are where an executed defect contradicts a document:
   is piped into a shell. It does not.
 - **`handoff-templates.md`.** The Taste worked example fails the checker.
 
-Each is cited in the [round-3 report](docs/quality-audit-2026-10-05.md).
+Each is cited in the [findings register](docs/quality-audit.md#findings-register).
 
 ## Routing
 
@@ -354,7 +356,7 @@ reaches one. The adversarial rounds found two paths that cannot pass:
 - a design run that records `security_seed` as a typed applicability record (P-2).
 
 They also found that edits weakening the spec pass every test (G-3). See the
-[round-3 report](docs/quality-audit-2026-10-05.md).
+[findings register](docs/quality-audit.md#findings-register).
 
 ## Orchestration
 
@@ -378,8 +380,8 @@ the skills and gate parameters they depend on.
 No test count is recorded in this file. A count copied into a document is stale
 with the next test added, and nothing here would say so. The counts are produced by
 running the suites: each command below ends with a `Ran N tests` line and an `OK` or
-`FAILED` verdict, and CI runs every one of them on every change. A dated
-observation of every count and wall time is in each audit report.
+`FAILED` verdict, and CI runs every one of them on every change. Dated observations of every count and wall time, round by
+round, are in [docs/quality-audit.md](docs/quality-audit.md#benchmark-results).
 
 | Suite | Command |
 |---|---|

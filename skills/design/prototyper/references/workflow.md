@@ -138,14 +138,14 @@ Two commands, in this order, in both modes. The first resolves a governed scratc
 destination; the second runs the check against it at the level the mode requires.
 
 ```bash
-python skills/scripts/output_paths.py --kind test_work --name parity-selfcheck-v2.json
-# -> {"ok": true, "kind": "test_work", "path": "...", "relative": ".harness-state/test-work/parity-selfcheck-v2.json"}
+python skills/scripts/output_paths.py --run-id {run-id} --phase redesign --kind reports --name parity-selfcheck-v2.json
+# -> {"ok": true, "kind": "reports", "path": "...", "relative": "skillset-saves/runs/{run-id}/redesign/reports/parity-selfcheck-v2.json"}
 
 # mock build
-python skills/scripts/check_parity.py --level mock --inventory redesign/artifacts/inventory/design-inventory.json --app redesign/artifacts/mocks/v2/mock.html --components redesign/artifacts/mocks/v2/components.html --out .harness-state/test-work/parity-selfcheck-v2.json --project-root .
+python skills/scripts/check_parity.py --level mock --inventory redesign/artifacts/inventory/design-inventory.json --app redesign/artifacts/mocks/v2/mock.html --components redesign/artifacts/mocks/v2/components.html --out skillset-saves/runs/{run-id}/redesign/reports/parity-selfcheck-v2.json --project-root .
 
 # selected build
-python skills/scripts/check_parity.py --level full --inventory redesign/artifacts/inventory/design-inventory.json --app redesign/artifacts/variants/v2/app.html --components redesign/artifacts/variants/v2/components.html --out .harness-state/test-work/parity-selfcheck-v2.json --project-root .
+python skills/scripts/check_parity.py --level full --inventory redesign/artifacts/inventory/design-inventory.json --app redesign/artifacts/variants/v2/app.html --components redesign/artifacts/variants/v2/components.html --out skillset-saves/runs/{run-id}/redesign/reports/parity-selfcheck-v2.json --project-root .
 ```
 
 - Pass the resolver's `relative` value to `--out`. The resolver rejects an
@@ -205,7 +205,7 @@ python skills/scripts/check_parity.py --level full --inventory redesign/artifact
 - `design/design-mapper` runs the authoritative parity check — `--level mock` per mock, `--level full` on the selected variant — and returns missing ids in one batch.
 - `review/design-qa` captures the four mocks across the six tiers and two themes, and the selected variant the same way once it exists.
 - `review/frontier` grades accessibility and interaction resilience on the selected variant.
-- `design/architect` implements the chosen variant in the production stack after the redesign gate.
+- `design/architect` carries the chosen variant into the production design system after the redesign gate; the production code is `build/bob-the-builder`'s `implementation`.
 
 ## Gate Evidence
 

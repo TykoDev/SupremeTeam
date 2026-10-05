@@ -92,7 +92,7 @@ mock owes and which belong to the living prototype alone.
 | Inventory list | Marker | Where it must appear | Required in a mock |
 | --- | --- | --- | --- |
 | `routes[].id` | `data-route="<id>"` | on the screen element of that route in `mock.html`, or on the view element in `app.html` | Yes — scored at mock level |
-| `components[].id` | `data-component="<id>"` | at least once in `components.html` (the catalog) and at least once in the screens file | Yes — scored at mock level |
+| `components[].id` | `data-component="<id>"` | at least once in `components.html` (the catalog) and at least once in `app.html`; a mock may place it in either `components.html` or `mock.html` (the checker takes the union at `--level mock`) | Yes — scored at mock level |
 | `routes[].states[]` | `data-state="<state>"` inside that route's view, or `data-route-state="<route id>:<state>"` anywhere | `app.html`; every declared state of every route | No — a mock may draw a state as an extra static screen, and the count is informational |
 | `interactions[].id` | `data-interaction="<id>"` | on the control that triggers it in `app.html` | No — a mock wires nothing |
 | `flows[].id` | `data-flow="<id>"` | on the flow's entry control or container in `app.html` | No — a mock wires nothing |

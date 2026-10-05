@@ -167,7 +167,7 @@ effect, investigate keeps the same stage sequencing but returns artifacts inline
 | Evidence chain | The symptom-to-mechanism trace at the destination `output_paths.py --kind evidence` resolves, registered the same way |
 | Package assembly | The report at the destination `output_paths.py --kind reports --name investigation-package.md` resolves |
 | Gate submission | `investigation/manifest.json` (schema 2: `boundary: investigation-review`, `owner: investigate`) at the destination `output_paths.py --kind manifest` resolves, carrying the hashed reproduction and evidence chain plus the scope, mechanism, fix-path, and residual-uncertainty values |
-| Gate verdict | Nothing: the gatekeeper writes `investigation/verdict_investigation-review.json` through `check.py --verdict-out`; investigate records the semantic verdict in its next checkpoint |
+| Gate verdict | Nothing: `gatekeeper-admiral` writes `investigation/verdict_investigation-review.cross-stage.json` via `check.py --verdict-out`; investigate records it in its next checkpoint |
 
 Save Context block carried on any delegation and echoed on return (the canonical
 field set from `../../contracts/handoff-templates.md`; neither file may drop a field

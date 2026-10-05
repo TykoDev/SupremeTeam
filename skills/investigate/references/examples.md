@@ -7,6 +7,7 @@ it never writes, so every example ends with a handoff rather than a change.
 
 ## Contents
 
+0. Contrast collapse traced to a token layer (DESIGN-owned)
 1. Latency spike after two simultaneous changes
 2. Failing worker pool with a reproducible cause
 3. Two surviving suspects behind an access boundary

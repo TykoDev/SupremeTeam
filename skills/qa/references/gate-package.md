@@ -13,6 +13,7 @@ mechanics, and the record for a probe that could not run.
 4. Responding to a REVISE
 5. Recording a probe that could not run
 6. Standalone mode
+7. Evidence keys
 
 ## 1. Manifest Shape
 

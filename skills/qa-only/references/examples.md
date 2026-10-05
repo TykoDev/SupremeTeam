@@ -6,7 +6,7 @@
 
 **Output:**
 - Mode: standalone — no Save Context block and no run lock, so nothing is persisted and no gate verdict is sought.
-- Boundary: `guard_state.py read-only --run-id qa-only-2026-04-19-signup --owner release-owner --allow ".harness-state/packages/**"` recorded before the first probe. That glob is the standalone report destination `output_paths.py --kind standalone_packages` resolves, and as an allow it grants nothing: Rule D in `skills/harness/hooks/pre_tool_use.py` already allows `.harness-state/**` unconditionally so the record itself stays writable. It is passed to state the destination, not to unlock it — the boundary's effect is that everything outside that directory is denied.
+- Boundary: `guard_state.py read-only --run-id qa-only-2026-04-19-signup --owner release-owner --allow ".harness-state/**"` recorded before the first probe. As an allow it grants nothing: Rule D in `skills/harness/hooks/pre_tool_use.py` already allows `.harness-state/**` unconditionally so the record itself stays writable. It is passed because `--allow` is required, not to unlock a destination — the report and its evidence bundle travel inline, and the boundary's effect is that everything outside that root is denied.
 - Scope: account creation, email verification, and welcome-state transitions.
 - Findings: one blocking defect (verification link expires in 60 seconds, not 24 hours), two moderate regressions, and two environments still untested.
 - Release: `guard_state.py release-read-only --run-id qa-only-2026-04-19-signup --requester release-owner` returned ok, and `status` reports no active read-only run; both lines travel in the report.

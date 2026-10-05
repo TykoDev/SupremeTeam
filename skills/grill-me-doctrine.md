@@ -59,7 +59,8 @@ glob and, optionally, by a `content_marker` regex that must appear inside it,
 and a required spec whose marker never matches fails as a Major defect. The
 design gatekeeper's `MANIFEST` in
 `skills/design/gatekeeper-design/scripts/check.py` already uses that mechanism
-for seven artifacts — `taste_snapshot`, for instance, requires one of
+for six of its eight artifact specs (the two conditional ones, `api_contracts`
+and `ui_handoff`, carry no marker) — `taste_snapshot`, for instance, requires one of
 `canonical digest`, `source revisions`, `resolved entries`, or `applicability`
 to appear in the file. It carries no spec for the grilling log. Adding one, with
 a `*grilling*.md` pattern and a `content_marker` over the four section names

@@ -344,9 +344,11 @@ enforcement table exists to prevent.
 - **`skillset-saves/` is unreadable, or the run lock is malformed.** Precedence
   rule 2 cannot be evaluated, so it does not apply. Do not infer a pin from a
   damaged lock and do not start a second run on top of an ambiguous one: treat
-  the state as unresolved, report it, and let `admiral` classify it
-  (active / inactive / orphaned / missing / unreadable / conflicting) before any
-  new work.
+  the state as unresolved, report it, and let `admiral` classify it into one of
+  the eleven values of [save-protocol.md](save-protocol.md) §2 Startup (active /
+  inactive / complete / stale / orphaned / conflicting / corrupt / interrupted /
+  missing / uninitialized / unreadable, the keys of `_saves.py` `NEXT_STEPS`)
+  before any new work.
 - **A lock exists but is stale.** Staleness must be verified, not assumed from
   age alone where a heartbeat is available. A verified-stale lock may be
   released, and the `complete`, `block` or `release` call records it in the audit trail.

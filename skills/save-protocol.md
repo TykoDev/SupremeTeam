@@ -183,7 +183,8 @@ prompt-submit hook, and the gate checker's run-root verification.
    revision lineage, or missing evidence never reinforces the session pin.
    Rebuild a stale pointer only after proving the target run (`heartbeat`
    rewrites it from the run).
-4. For a new run, `save_run.py create --run-id <id> --evidence <path>` (at least
+4. For a new run, `save_run.py create --run-id <id> --evidence <path>
+   --execution-mode <agent|skill>` (`--execution-mode` defaults to `agent`; at least
    one evidence path: a run stands on the evidence it is created from, so a
    create with none is refused) performs the write/read/delete probe, refuses
    while another run holds the pin (active, orphaned, conflicting, or stale:

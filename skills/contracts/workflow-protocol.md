@@ -28,7 +28,7 @@ behavior when work is rewound, resumed, or unable to proceed.
 | REVIEW | code-chief | A build or changed artifact is submitted | GATE, COMPLETE, REVISE, BLOCKED, ESCALATE, SAFETY |
 | GATE | the boundary's gatekeeper | A phase boundary requests an approval decision | DESIGN, RELEASE, COMPLETE, REVISE, BLOCKED, ESCALATE, SAFETY |
 | RELEASE | land-and-deploy | The gate approved an externally visible delivery | COMPLETE, REVISE, BLOCKED, ESCALATE, SAFETY |
-| SAFETY | guard, freeze, or unfreeze | A guarded, frozen, destructive, or externally visible action is requested | INTAKE, DESIGN, BUILD, REVIEW, GATE, RELEASE, REVISE, BLOCKED, ESCALATE |
+| SAFETY | careful, guard, freeze, or unfreeze | A guarded, frozen, destructive, or externally visible action is requested | INTAKE, DESIGN, BUILD, REVIEW, GATE, RELEASE, REVISE, BLOCKED, ESCALATE |
 | REVISE | current artifact owner | A finding or changed input names a correction boundary | DESIGN, BUILD, REVIEW, GATE, RELEASE, BLOCKED, ESCALATE, SAFETY |
 | ESCALATE | admiral | Evidence, ownership, or approval cannot be resolved safely | INTAKE, REVISE, BLOCKED |
 | BLOCKED | current run owner | A required input, permission, or decision is unavailable | INTAKE, DESIGN, BUILD, REVIEW, GATE, RELEASE, REVISE, ESCALATE, SAFETY |

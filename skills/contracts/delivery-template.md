@@ -16,7 +16,9 @@ connects the requested goal to changed artifacts and proof without replacing the
 underlying evidence. `admiral` writes it at `RUN_COMPLETE` as the
 `delivery-package` artifact it owns in [`../ownership.yaml`](../ownership.yaml),
 and resolves its destination with `python skills/scripts/output_paths.py --kind
-reports --run-id <run> --phase delivery`.
+reports --run-id <run> --phase delivery --name delivery-package.md`, which places
+it at `skillset-saves/runs/<run>/delivery/reports/delivery-package.md`, the path
+[`../admiral/stub-contract.md`](../admiral/stub-contract.md) gives it.
 
 ## Field requirements at RUN_COMPLETE
 

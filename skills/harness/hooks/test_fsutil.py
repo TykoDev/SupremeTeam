@@ -178,7 +178,58 @@ class AtomicWriteTests(unittest.TestCase):
         with mock.patch.object(_fsutil.os, "fsync", lambda fd: (order.append("fsync"), real_fsync(fd))[1]), \
                 mock.patch.object(_fsutil.os, "replace", lambda a, b: (order.append("replace"), real_replace(a, b))[1]):
             _fsutil.atomic_write(self.dir / "a.json", "x")
-        self.assertEqual(order, ["fsync", "replace"])
+        self.assertEqual(order[:2], ["fsync", "replace"])
+
+    @unittest.skipIf(os.name == "nt", "a directory cannot be fsynced on Windows")
+    def test_the_directory_is_flushed_after_the_replace(self):
+        """H-11: the rename was durable only as far as the file system chose; the directory entry is now fsynced too."""
+        import stat
+
+        order = []
+        real_fsync, real_replace = os.fsync, os.replace
+
+        def fsync(fd):
+            order.append("fsync-dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "fsync-file")
+            return real_fsync(fd)
+
+        with mock.patch.object(_fsutil.os, "fsync", fsync), \
+                mock.patch.object(_fsutil.os, "replace", lambda a, b: (order.append("replace"), real_replace(a, b))[1]):
+            _fsutil.atomic_write(self.dir / "a.json", "x")
+        self.assertEqual(order, ["fsync-file", "replace", "fsync-dir"])
+
+    def test_a_directory_that_cannot_be_flushed_does_not_fail_the_write(self):
+        real_open = os.open
+
+        def refuse_directories(path, flags, *args):
+            if Path(path) == self.dir:
+                raise OSError(errno.EACCES, "no")
+            return real_open(path, flags, *args)
+
+        with mock.patch.object(_fsutil.os, "open", refuse_directories):
+            _fsutil.atomic_write(self.dir / "a.json", "x")
+        self.assertEqual((self.dir / "a.json").read_text(encoding="utf-8"), "x")
+
+    def test_the_in_place_fallback_writes_before_it_truncates(self):
+        """H-11: the fallback opened the target with "wb", which empties it before a byte is written, so a write that failed
+        there (a full disk) left an empty record. The old content now survives a failed in-place write."""
+        target = self.dir / "a.json"
+        target.write_text("old content that is longer", encoding="utf-8")
+        with mock.patch.object(_fsutil.os, "replace", side_effect=PermissionError(errno.EACCES, "denied")), \
+                mock.patch.object(_fsutil.time, "sleep"), \
+                mock.patch.object(_fsutil.os, "write", side_effect=OSError(errno.ENOSPC, "disk full")):
+            with self.assertRaises(OSError):
+                _fsutil.atomic_write(target, "new")
+        self.assertEqual(target.read_text(encoding="utf-8"), "old content that is longer")
+        self.assertEqual(self.leftovers(), [])
+
+    def test_the_in_place_fallback_cuts_a_longer_old_file_to_the_new_length(self):
+        target = self.dir / "a.json"
+        target.write_text("old content that is longer", encoding="utf-8")
+        with mock.patch.object(_fsutil.os, "replace", side_effect=PermissionError(errno.EACCES, "denied")), \
+                mock.patch.object(_fsutil.time, "sleep"):
+            _fsutil.atomic_write(target, "new")
+        self.assertEqual(target.read_bytes(), b"new")
+        self.assertEqual(self.leftovers(), [])
 
     def test_an_unsupported_fsync_does_not_fail_the_write(self):
         with mock.patch.object(_fsutil.os, "fsync", side_effect=OSError(errno.EINVAL, "no fsync here")):

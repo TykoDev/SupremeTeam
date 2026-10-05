@@ -140,8 +140,9 @@ active is what it shows.
 `unfreeze` lifts the restriction with `guard_state.py release --glob <g>
 --requester <r> --reason "<why>"`, which sets `released_at`, `released_by`, and
 `release_reason` and never deletes the record, so the freeze stays auditable after
-it is lifted. A record stays effective until its owner records `released_at`; age
-alone never expires a protection.
+it is lifted. A record stays effective until `released_at` is recorded by its
+owner or by one of the `approvers` named on it (`guard_state.py` `_authorized`);
+any other requester is refused. Age alone never expires a protection.
 
 ## Fail-open semantics
 

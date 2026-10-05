@@ -157,7 +157,10 @@ command that writes there, is still denied. A command the analyser cannot tokeni
 `save_run.py` command with a stray quote is denied while a run is read-only, and when
 it names a core run file, until it is issued again with balanced quoting.
 
-A boundary record stays effective until its owner records `released_at`; age
+A boundary record stays effective until `released_at` is recorded by its owner
+or, for a `frozen_globs` or `blocked_globs` record, by one of the `approvers`
+named on it (`guard_state.py` `_authorized`; a `read_only` record stores no
+approvers, so only its owner releases it). Age
 alone never expires a protection, and a release never deletes the record, so who
 locked what and who lifted it stays readable in the file itself. `status`
 reports the effective boundary and warns about any legacy entry with no owner —

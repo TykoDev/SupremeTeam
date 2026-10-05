@@ -11,7 +11,6 @@ from __future__ import annotations
 import ast
 import sys
 import unittest
-from pathlib import Path
 
 from _catalog import SKILLS, load_spec
 

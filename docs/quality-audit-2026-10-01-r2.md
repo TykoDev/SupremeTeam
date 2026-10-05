@@ -489,3 +489,18 @@ only while a record exists:
 refuses an archive unpacked at the project root, and Rule F refuses one only
 while an Admiral run is active. Covered by `test_guard_rules.RootExtractTests`
 and `RootRecordReachTests`, which fail 21 times on the previous commit.
+
+### Re-measured in round 3
+
+[Round 3](quality-audit-2026-10-05.md) re-ran every reproduction above on
+`8eae856`. O-1, H-1 to H-4 and G-1 hold. The root-level follow-up is only partly
+closed: other spellings still reach the records, and two of them are regressions
+from this commit:
+
+- `tar --strip-components`, `--transform` and `-P`, and archive symlink members (N-1);
+- `cp -rT` (N-2);
+- `git clean` pathspecs and `-c clean.requireForce=false` (N-3);
+- `git stash --all` (N-4);
+- a root `unzip` of `.claude/` or of a blocked path outside an Admiral run (N-5).
+
+O-5 is now confirmed. Every other finding listed above as open is still present.

@@ -13,7 +13,7 @@ host.
 | Freeze/read-only overclaim | Remediated to its achievable boundary | The command analyser covers redirects, wrappers, chained commands, interpreter literals, and unnamed writes. Skill documentation calls the hook advisory-grade and directs hard guarantees to filesystem permissions or a sandbox. Hook faults still fail open by design, so this is accident prevention, not an authenticated security boundary. |
 | Concurrent save checkpoints | Remediated | Every mutation holds the project `_write.lock` across read/compare/write, uses per-process atomic temporary files, and records an interrupted publication journal. Concurrency tests cover a single checkpoint winner, revision conflicts, active-pin creation, crash release, and recovery. |
 | Engineer circular prerequisite | Remediated | Engineer explicitly treats stack lock as an output of the later commander stage. The design pipeline now declares `requires`/`produces` dependencies, and both the manifest validator and an independent contract test reject a forward dependency. |
-| Benchmark reproducibility overclaim | Remediated as historical disclosure | `BENCHMARK.md` has one row per member of the measured 52-skill catalog, labels the inferred `skill-maker` row, labels `audit-improve` unscored, dates the run, and separates model-scored document quality from routing and host observations. It does not claim CI regenerates paid/model measurements. |
+| Benchmark reproducibility overclaim | Remediated by re-measurement | `BENCHMARK.md` was re-measured on 2026-10-05, at commit `8eae856`, with one row per skill of the 53-skill catalog. There is no inferred or unscored row. Each deduction is cited, and most were reproduced by running the tool the claim concerns. The page separates model-scored document quality from the paid routing run and the host-registration observation. It does not claim that CI regenerates paid or model measurements. The raw run is recorded in `docs/quality-audit-2026-10-05.md`. |
 
 ## Residual limitations
 
@@ -25,6 +25,6 @@ host.
   prevention is mandatory.
 - Schema-shaped, hashed evidence proves consistency and byte identity, not the
   truth of a semantic claim. Human or controlled-runner review remains required.
-- The published benchmark remains a dated historical measurement. A fresh
-  scored benchmark needs raw model/tool evidence and is not synthesized from
-  the contract suites.
+- The published benchmark is a dated measurement (2026-10-05). It becomes history
+  with the next change to the catalog. A fresh scored benchmark needs raw model and
+  tool evidence and cannot be synthesized from the contract suites.

@@ -62,6 +62,26 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ### Changed
 
+- BENCHMARK.md is re-measured as round 3 (2026-10-05, commit `8eae856`, 53 skills).
+  - **Skills:** 53 scored, mean 97.5 and lowest 94 (09-18: 99.4 over 52 skills),
+    with a new ledger of 121 cited deductions.
+  - **Spec, harness and doctrine:** 21 artifacts at mean 94.0 (09-18: 97.5);
+    `mcp-tools.md` is scored for the first time, at 81.
+  - **Routing:** 89.4% (278/311) on a paid, paraphrased run (round 9: 94.8%).
+  - **Host registration:** 22 of 22 root skills.
+
+  The re-check of the 09-18 deduction ledger finds 20 of its 26 deductions still
+  present, which the file had described as fixed. The full report is
+  `docs/quality-audit-2026-10-05.md`, which also re-runs every round-2
+  reproduction:
+  - O-1, H-1 to H-4 and G-1 hold.
+  - Every other open Critical or Major is still present.
+  - Four new Major guard bypasses lift a freeze in one command (N-1 to N-4). One
+    more Major, N-5, lets a root `unzip` outside an Admiral run write the hook
+    registration or a blocked path. N-1 and N-5 are regressions from `8eae856`.
+
+  The round-2 report's note that the root-level gap "is now closed" carries a
+  pointer to these findings.
 - Deeply nested PowerShell blocks no longer trigger repeated near-identical
   command-scanner passes after the brace-depth safety bound; dormant pyenv shims
   are excluded from older-interpreter compatibility checks; and skills over 400

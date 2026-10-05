@@ -31,6 +31,8 @@ SupremeTeam/
 │   ├── harness.md                        # Hooks, readiness, gate validators
 │   ├── persistent-saves.md               # Save layout, locks, resume
 │   ├── direct-invocation.md              # Calling skills directly
+│   ├── quality-audit-*.md                # Dated audit reports behind BENCHMARK.md
+│   ├── independent-benchmark-remediation.md  # Disposition of an external benchmark's findings
 │   ├── directory-structure.md            # This file
 │   └── assets/                           # Diagrams used across the docs
 └── skills/

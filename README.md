@@ -64,10 +64,12 @@ Measured where it can be, and labelled where it cannot. Every gate boundary is
 proven satisfiable by submitting a real package to the real validator, and CI runs
 the test suites on Windows, macOS and Linux. The skill scores are model judgements
 against a written rubric, not machine output, and the routing accuracy is a paid,
-networked measurement taken on an earlier 52-skill roster. This page gives no
-figures for either, because nothing here would keep them true: every number, its
-date and the roster it was measured on are in [BENCHMARK.md](BENCHMARK.md), with
-what is deliberately *not* measured.
+networked measurement. Both were last taken on 2026-10-05 against the 53-skill
+roster. This page gives no figures for either, because nothing here would keep
+them true. Every number, its date and the roster it was measured on are in
+[BENCHMARK.md](BENCHMARK.md), along with what is deliberately *not* measured. The
+dated audit reports in `docs/quality-audit-*.md` hold the reproduced defects
+behind the scores.
 
 The routing figure is the one worth reading the methodology for: a catalog scores
 100% when queried with its own advertised phrasings, which measures lexical echo,
@@ -130,6 +132,7 @@ python -m unittest discover -s skills/skill-maker/skill-creator -p "test_*.py"
 | [QUICK-START.md](QUICK-START.md) | Install and first run |
 | [Install.md](Install.md) | The full installation procedure |
 | [BENCHMARK.md](BENCHMARK.md) | Scores, routing accuracy, and how each was measured |
+| [docs/quality-audit-2026-10-05.md](docs/quality-audit-2026-10-05.md) | Latest audit: benchmark run, reproduced findings, surface scores |
 | [AGENTS.md](AGENTS.md) | Flat skill index for tool discovery |
 | [docs/architecture.md](docs/architecture.md) | Pipelines, tiers, execution modes |
 | [docs/skills.md](docs/skills.md) | Every skill and what it owns |

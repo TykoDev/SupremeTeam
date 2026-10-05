@@ -324,6 +324,29 @@ class PackageGuardTests(unittest.TestCase):
             self.assertIn("package", bare.stderr)
             self.assertNotIn("Traceback", bare.stderr)
 
+    def test_an_interpreter_below_the_floor_is_told_the_floor(self):
+        """G-12: under Python 3.11 every wrapper crashed on Path.is_junction instead
+        of naming the floor runtime-manifest.yaml declares."""
+        floor = gc.runtime_floor_error((0, 0), self.skills / "runtime-manifest.yaml")
+        self.assertIsNotNone(floor)
+        old = None
+        for minor in range(12, 7, -1):
+            found = shutil.which(f"python3.{minor}")
+            if found and gc.runtime_floor_error((3, minor), self.skills / "runtime-manifest.yaml"):
+                old = found
+                break
+        if old is None:
+            self.skipTest("no interpreter below the runtime floor is installed")
+        for wrapper, script in self._each():
+            package = self._run_dir(wrapper)
+            done = subprocess.run([old, str(script), str(package), "--json"], cwd=str(self.project),
+                                  capture_output=True, text=True, timeout=120)
+            self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+            self.assertIn("below the runtime floor", done.stderr)
+            self.assertNotIn("Traceback", done.stderr)
+            self.assertNotIn("is_junction", done.stderr + done.stdout)
+            self.assertEqual(done.stdout, "")
+
     def test_option_values_are_never_read_as_the_package(self):
         """`--prior <file> <pkg>`, `<pkg> --prior <file>` and an abbreviated flag all name the package."""
         wrapper = WRAPPERS[1]

@@ -770,6 +770,108 @@ class RevisionLabelTests(unittest.TestCase):
         self.assertIn("REVISION_ABSENT", _codes(report))
 
 
+class HiddenLineageTests(unittest.TestCase):
+    """G-2: a byte-order mark before the frontmatter or a quoted key hid a file's
+    revision and submission id, so a mixed package reported REVISION_COHERENT."""
+
+    SPELLINGS = (
+        ("bom", "\ufeff---\nrevision: r2\nsubmission_id: S2\n---\nbody"),
+        ("double-quoted keys", '---\n"revision": r2\n"submission_id": S2\n---\nbody'),
+        ("single-quoted keys", "---\n'revision': r2\n'submission_id': S2\n---\nbody"),
+        ("bom and quoted keys", "\ufeff---\n\"revision\": r2\n'submission_id': S2\n---\nbody"),
+    )
+
+    def test_a_bom_or_a_quoted_key_does_not_hide_a_second_revision(self):
+        for name, body in self.SPELLINGS:
+            with self.subTest(spelling=name), _package() as pkg:
+                _write(pkg, "a.md", "---\nrevision: r1\nsubmission_id: S1\n---\nbody")
+                _write(pkg, "b.md", body)
+                report = gc.run_gate(pkg, _manifest())
+                codes = _codes(report)
+                self.assertIn("MIXED_REVISIONS", codes)
+                self.assertIn("MIXED_SUBMISSION_IDS", codes)
+                self.assertNotIn("REVISION_COHERENT", codes)
+                self.assertTrue(report.has_blocking)
+
+    def test_the_parser_reads_the_key_not_its_quotes(self):
+        self.assertEqual(gc.parse_frontmatter("\ufeff---\nrevision: 3\n---\n"), {"revision": 3})
+        self.assertEqual(gc.parse_frontmatter('---\n"revision": 3\n\'a: b\': c\n---\n'),
+                         {"revision": 3, "a: b": "c"})
+
+    def test_a_bom_does_not_hide_a_json_prior_record(self):
+        with _package() as pkg, _package() as side:
+            _write(pkg, "a.md", "---\nsubmission_id: S3\nrevision: r2\n---\n")
+            prior = side / "prior.json"
+            prior.write_text("\ufeff" + json.dumps({"submission_id": "S3", "revision": "r1"}), encoding="utf-8")
+            report = gc.run_gate(pkg, _manifest(), prior_path=prior)
+        self.assertIn("SILENT_DRIFT", _codes(report))
+
+
+class EmptyEvidenceTests(unittest.TestCase):
+    """G-5: a zero-byte or whitespace-only file filled a slot that asks for no marker."""
+
+    def test_an_empty_or_blank_file_fills_no_slot_and_fails(self):
+        for body in ("", "   \n\t\n", "\ufeff", "\ufeff \r\n"):
+            for requirement in ("required", "conditional"):
+                with self.subTest(body=body, requirement=requirement), _package() as pkg:
+                    _write(pkg, "report_tests.md", body)
+                    _write(pkg, "other.md", "---\nrevision: r1\n---\nbody")
+                    spec = gc.ArtifactSpec(key="tests", label="tests", patterns=("*tests*.md",),
+                                           requirement=requirement)
+                    report = gc.run_gate(pkg, _manifest(spec))
+                    codes = _codes(report)
+                    self.assertIn("ARTIFACT_EMPTY", codes)
+                    self.assertNotIn("ARTIFACT_PRESENT", codes)
+                    self.assertTrue(report.has_blocking)
+                    self.assertEqual(report.exit_code(), 1)
+
+    def test_a_file_with_content_is_unaffected(self):
+        with _package() as pkg:
+            _write(pkg, "report_tests.md", "\ufeff# Tests\n")
+            spec = gc.ArtifactSpec(key="tests", label="tests", patterns=("*tests*.md",))
+            report = gc.run_gate(pkg, _manifest(spec))
+        self.assertIn("ARTIFACT_PRESENT", _codes(report))
+        self.assertNotIn("ARTIFACT_EMPTY", _codes(report))
+
+
+class RuntimeFloorTests(unittest.TestCase):
+    """G-12: below the floor the wrappers named no floor; they crashed on Path.is_junction."""
+
+    def test_the_floor_comes_from_the_runtime_manifest(self):
+        with _scratch() as base:
+            manifest = base / "runtime-manifest.yaml"
+            manifest.write_text(json.dumps({"runtime": {"python": {"minimum": "3.13"}}}), encoding="utf-8")
+            self.assertIsNone(gc.runtime_floor_error((3, 13), manifest))
+            self.assertIsNone(gc.runtime_floor_error((3, 14), manifest))
+            message = gc.runtime_floor_error((3, 11), manifest)
+            self.assertIn("Python 3.11 is below the runtime floor 3.13", message)
+
+    def test_an_unreadable_floor_refuses_to_run(self):
+        with _scratch() as base:
+            manifest = base / "runtime-manifest.yaml"
+            for text in (None, "{broken", json.dumps({"runtime": {}}),
+                         json.dumps({"runtime": {"python": {"minimum": "three"}}})):
+                with self.subTest(text=text):
+                    if text is None:
+                        manifest.unlink(missing_ok=True)
+                    else:
+                        manifest.write_text(text, encoding="utf-8")
+                    self.assertIn("cannot read the Python floor", gc.runtime_floor_error((3, 13), manifest))
+
+    def test_the_shipped_floor_is_read(self):
+        self.assertIsNone(gc.runtime_floor_error(tuple(sys.version_info)))
+        self.assertIn("below the runtime floor", gc.runtime_floor_error((3, 11)))
+
+    def test_a_wrapper_below_the_floor_exits_2_before_reading_the_package(self):
+        with _package() as pkg, mock.patch.object(sys, "version_info", (3, 11, 9, "final", 0)), \
+                mock.patch.object(gc, "run_gate", side_effect=AssertionError("must not run")), \
+                mock.patch("sys.stderr") as err, mock.patch("sys.stdout") as out:
+            self.assertEqual(gc.main_with_manifest(_manifest(), [str(pkg)]), 2)
+        written = "".join(call.args[0] for call in err.write.call_args_list)
+        self.assertIn("below the runtime floor", written)
+        out.write.assert_not_called()
+
+
 class PriorRecordTests(unittest.TestCase):
     """--prior reads Markdown frontmatter and the JSON the boundary validator writes."""
 

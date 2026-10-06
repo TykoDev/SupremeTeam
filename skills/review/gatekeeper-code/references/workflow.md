@@ -48,7 +48,8 @@ the sequence, the verdict rules, and the checklist a verdict is written against.
 ## Contract Notes
 
 - Shared severity: Report findings with the shared four-tier model so upstream and downstream packages interpret risk consistently.
-- CSO lens coverage: A security-leadership, accepted-risk, or release-posture claim in the package puts `review/cso` in scope, and the conditional `UNCHECKED` becomes a `REVISE` unless a validated skip record exists.
+- CSO lens coverage: A security-leadership, accepted-risk, or release-posture claim in the package puts `review/cso` in scope, and the conditional `UNCHECKED` becomes a `REVISE` unless a validated skip record exists. The `REVISE` asks `code-chief` to drop the claim or to escalate to `admiral` for a `security` pipeline engagement; the review pipeline has no cso stage to run.
+- Lens attribution: an `ARTIFACT_PRESENT` lens is checked by its `location`. `*code*.md` also matches a `code-chief` summary, so a `lens_code` slot filled by anything but the code-review packet is a missing lens.
 - Batched REVISE: one packet per pass, grouped by owner, so `design-qa` and `code-chief` never wait on each other.
 
 ## Collaboration Notes

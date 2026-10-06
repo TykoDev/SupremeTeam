@@ -256,8 +256,9 @@ boundary.
 ## State safety
 
 Resolve runtime state in this order, which is what `harness/hooks/_state.py`
-implements — `_PROJECT_ENV` at `:48` for the variables, `_ROOT_MARKERS` at `:47`
-for the markers, `state_dir()` for the fallback:
+implements — `PROJECT_ENV` for the variables, `ROOT_MARKERS` for the markers
+(both read by `project_root()` and `find_project_root()`), `state_dir()` for the
+fallback:
 
 1. `SUPREMETEAM_PROJECT_DIR`, the catalog's own variable.
 2. The host's project-directory variable, tried in order: `CLAUDE_PROJECT_DIR`,

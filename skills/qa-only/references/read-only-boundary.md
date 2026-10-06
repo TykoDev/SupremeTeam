@@ -31,7 +31,7 @@ id and an empty key cannot be released precisely.
 | Mode | Run id | Allow glob |
 |------|--------|------------|
 | Pipeline | The active run id from the `### Save Context` block or the run lock under `skillset-saves/` | `skillset-saves/runs/<run-id>/**` — the run's own phase directories, resolved with `skills/scripts/output_paths.py` |
-| Standalone | A synthetic id in the form `qa-only-<YYYY-MM-DD>-<surface-slug>`, for example `qa-only-2026-04-19-checkout` | `.harness-state/packages/**`, the standalone report destination `python skills/scripts/output_paths.py --kind standalone_packages --name <report>.md` resolves |
+| Standalone | A synthetic id in the form `qa-only-<YYYY-MM-DD>-<surface-slug>`, for example `qa-only-2026-04-19-checkout` | `.harness-state/**`, which Rule D already leaves writable, so the allow grants nothing new; a standalone run persists nothing and returns the report and its evidence bundle inline (`.harness-state/packages/` is `skill-maker`'s `standalone-packages` class in `../../save-ownership.yaml`) |
 
 The synthetic id carries the date and the surface so a stuck record names the run that
 left it, and it stays a single safe path segment, which `output_paths.py` requires and

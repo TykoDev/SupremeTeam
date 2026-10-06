@@ -11,7 +11,7 @@ Claude Code provides tool access natively.
 | Admiral Requirement | Claude Code Tool | Usage |
 |--------------------|-----------------|-------|
 | file-system.read | Read tool | Read save-protocol state, skill files |
-| file-system.write | Write tool | Write state, packages, deliverables |
+| file-system.write | Write tool | Write packages and deliverables (never the run records; see State Management) |
 | file-system.list | Glob tool | Enumerate directories |
 | file-system.search | Grep tool, Glob tool | Find files, text search |
 | terminal.execute | Bash tool | Run scripts, validation |
@@ -43,9 +43,9 @@ the parent's full conversation history. All required inputs must be in the promp
 
 ## State Management
 
-Claude Code has native file access, so save-protocol management is direct:
+Claude Code has native file access, but the run records have one writer:
 
-1. Use Read and Write tools for the run-state, lock, and audit-trail records.
+1. Read the run-state, lock, and audit-trail records with the Read tool, and write them only through Bash running `python skills/harness/hooks/save_run.py <create|checkpoint|heartbeat|complete|block|release|recover> ...`. Never use Write or Edit on `_state.md`, `_lock.md`, `_audit-trail.md`, `_latest.md`, `_journal.json`, or `_history/`: they are the `core-run-record` class of `../../../save-ownership.yaml`, and `pre_tool_use.py` Rule C denies a direct write.
 2. Use Bash for validation scripts and packaging.
 3. Use the file system as the source of truth, exactly as the other platforms do.
 4. At the start of every active turn, inspect `skillset-saves/_latest.md` before creating new state. Resume an active reclaimable run; if activation or probing fails, attempt read-only resume before degrading to transient mode.
@@ -72,7 +72,7 @@ Claude Code's plan mode disables Edit, Write, NotebookEdit, and Bash-write opera
 
 Implication: admiral MUST re-probe execution mode at the start of every turn while a run is active, not only at intake. The cached `execution_mode: skill` from the plan-mode RUN_INIT will be stale immediately after ExitPlanMode. Without the re-probe, the first agent-mode delegation (e.g. an Agent tool call to a sub-orchestrator) will be emitted as instruction text instead of a programmatic call, and the user will see the run "stall" until they retry.
 
-The mode re-probe rule in `../agent-protocol.md` ("Per-Boundary Re-Probe") covers this case: detect the upgrade, write `MODE_RECHECK` with `action: upgrade`, and continue under agent mode in place.
+The mode re-probe rule in `../agent-protocol.md` ("Per-Boundary Re-Probe") covers this case: detect the upgrade, record it as `--set mode_recheck="cached=skill,detected=agent,action=upgrade"` on a `save_run.py checkpoint`, and continue under agent mode in place.
 
 ## Write-Capability Probe
 

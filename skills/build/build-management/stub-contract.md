@@ -31,7 +31,7 @@ on every build.
 - Build management owns the build gate cycle for every phase.
 - Security remediations that change code must re-enter the gate before completeness confirmation, because the earlier `tests` and `runtime` logs describe the pre-remediation revision.
 - Required evidence: `approved_design_revision`, `implementation`, `tests`, `runtime`, `traceability`, `security_evidence`. Only `security_evidence` is waivable, through the sanctioned value `no trust-boundary change - security-builder not engaged` carried as an applicability record.
-- Self-check before submitting: `python skills/harness/gatekeeper/check.py --boundary build-to-review --package build/manifest.json`, without `--verdict-out`.
+- Self-check before submitting: `python skills/harness/gatekeeper/check.py --boundary build-to-review --package skillset-saves/runs/<run>/build/manifest.json`, without `--verdict-out`.
 - Maximum revisions per boundary: 2 (`gates.yaml` `revise_policy.cycle_cap`); a third cycle escalates to admiral instead of resubmitting.
 
 ## Package Shape

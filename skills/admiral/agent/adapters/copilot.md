@@ -40,7 +40,7 @@ Admiral agent mode maps its abstract tool requirements to Copilot's available to
 | Admiral Requirement | Copilot Tool | Usage |
 |--------------------|-------------|-------|
 | file-system.read | `read_file` | Read save-protocol state, skill files |
-| file-system.write | `create_file`, `replace_string_in_file` | Write state, packages, deliverables |
+| file-system.write | `create_file`, `replace_string_in_file` | Write packages and deliverables (never the run records; see State Management) |
 | file-system.list | `list_dir` | Enumerate run directories, skill directories |
 | file-system.search | `file_search` | Find skills by pattern, locate artifacts |
 | terminal.execute | `execution_subagent`, `run_in_terminal` | Run scripts, validation, packaging |
@@ -73,8 +73,8 @@ Copilot agent mode uses the workspace file system for all state:
 
 1. **Save location**: `{workspace}/skillset-saves/runs/{run-id}/`
 2. **State reads**: Use `read_file` to inspect the run-state and lock records.
-3. **State writes**: Use `create_file` or `apply_patch` to update state and package artifacts.
-4. **Heartbeat**: Refresh the lock record whenever a stage transition or long-running delegation completes.
+3. **State writes**: Publish the run-state, lock, pointer, and audit trail only through `run_in_terminal` running `python skills/harness/hooks/save_run.py <create|checkpoint|heartbeat|complete|block|release|recover> ...`. Never use `create_file`, `replace_string_in_file`, or `apply_patch` on `_state.md`, `_lock.md`, `_audit-trail.md`, `_latest.md`, `_journal.json`, or `_history/`: they are the `core-run-record` class of `../../../save-ownership.yaml`, and `pre_tool_use.py` Rule C denies a direct write. `create_file` is for package artifacts only.
+4. **Heartbeat**: Refresh the lock with `python skills/harness/hooks/save_run.py heartbeat --run-id {run-id} --owner admiral` whenever a stage transition or long-running delegation completes.
 5. **Startup status**: Inspect `{workspace}/skillset-saves/_latest.md` before starting a new run; resume an active reclaimable run, stop on a fresh conflicting lock, or activate persistence when no active run exists.
 
 ## Context Management
@@ -92,7 +92,7 @@ If a Copilot session ends mid-pipeline:
 
 1. The lock record remains active with the last heartbeat timestamp.
 2. On the next `/resume`, Admiral reads the run-state record to determine the last completed stage.
-3. If the lock lease has expired, Admiral acquires it and continues.
+3. If the lock lease has expired, Admiral reclaims it with `python skills/harness/hooks/save_run.py recover --run-id {run-id} --owner admiral --reason "<why>"` and continues.
 4. If the lock is still fresh for another session, Admiral warns and waits.
 
 ## Limitations

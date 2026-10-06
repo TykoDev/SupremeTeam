@@ -265,7 +265,13 @@ def parse_frontmatter(text: str) -> dict:
     mapping. Conservative by design: anything it cannot parse is skipped, never
     raised — but an *empty* result on a file that clearly has frontmatter is the
     caller's signal to treat the field as absent, not as a silent pass.
+
+    A leading UTF-8 byte-order mark is not part of the text: an editor that
+    writes one must not hide a file's ``revision:`` or ``submission_id:`` from
+    the lineage checks.
     """
+    if text.startswith("\ufeff"):
+        text = text[1:]
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         return {}
@@ -302,6 +308,25 @@ def _coerce(value: str):
     return v
 
 
+# A quoted mapping key: YAML reads ``"revision": 2`` and ``'revision': 2`` as the
+# key ``revision``, so the parser does too, or a quoted key would hide the value
+# from every check that asks for it by name.
+_QUOTED_KEY = re.compile(r"""^(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)')[ \t]*:(.*)$""")
+
+
+def _split_key(line: str) -> Tuple[str, str]:
+    """``key: rest`` with the key unquoted, both stripped."""
+    quoted = _QUOTED_KEY.match(line)
+    if quoted:
+        if quoted.group(1) is not None:
+            key = re.sub(r"\\(.)", r"\1", quoted.group(1))
+        else:
+            key = quoted.group(2).replace("''", "'")
+        return key.strip(), quoted.group(3).strip()
+    key, _, rest = line.partition(":")
+    return key.strip(), rest.strip()
+
+
 def _parse_yaml_block(block: List[str]) -> dict:
     result: dict = {}
     i = 0
@@ -316,9 +341,7 @@ def _parse_yaml_block(block: List[str]) -> dict:
         if ":" not in line:
             i += 1
             continue
-        key, _, rest = line.partition(":")
-        key = key.strip()
-        rest = rest.strip()
+        key, rest = _split_key(line)
         if rest:
             result[key] = _coerce(rest)
             i += 1
@@ -456,7 +479,29 @@ def iter_package_files(root: Path) -> List[Path]:
 
 
 def _read(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")
+    # utf-8-sig drops a leading byte-order mark, so a BOM can neither hide a
+    # frontmatter block nor make a JSON record unreadable.
+    return path.read_text(encoding="utf-8-sig", errors="replace")
+
+
+_BLANK_BYTES = b" \t\r\n\f\v"
+
+
+def is_blank_file(path: Path) -> bool:
+    """True for a file with no content: zero bytes, or only whitespace after an
+    optional UTF-8 byte-order mark. Read in chunks, so a large file costs one
+    chunk when it opens with content."""
+    with path.open("rb") as handle:
+        first = True
+        while True:
+            chunk = handle.read(65536)
+            if not chunk:
+                return True
+            if first and chunk.startswith(b"\xef\xbb\xbf"):
+                chunk = chunk[3:]
+            first = False
+            if chunk.strip(_BLANK_BYTES):
+                return False
 
 
 def _rel(path: Path, root: Path) -> str:
@@ -676,13 +721,28 @@ def check_required_artifacts(root: Path, manifest: Manifest,
                 for spec, reason in zip(specs, why, strict=True)]
 
     texts: Dict[Path, str] = {}
+    blank: Dict[Path, bool] = {}
     candidates: List[List[Path]] = []
     lacking: List[Dict[Path, List[str]]] = []
     for spec in specs:
         named = [f for f in files if _named(f, spec.patterns)]
-        gaps = {f: _structure_gaps(texts, f, spec) for f in named}
+        for f in named:
+            if f not in blank:
+                blank[f] = is_blank_file(f)
+        # An empty file is no evidence: it never fills a slot, whatever its name.
+        gaps = {f: (["content (the file is empty)"] if blank[f]
+                    else _structure_gaps(texts, f, spec)) for f in named}
         candidates.append([f for f in named if not gaps[f]])
         lacking.append({f: g for f, g in gaps.items() if g})
+
+    for f in sorted(path for path, empty in blank.items() if empty):
+        rel = _rel(f, root)
+        report.add(Finding(
+            code="ARTIFACT_EMPTY", severity="major", status=FAIL,
+            message=(f"{rel} is named as package evidence but is empty or holds only "
+                     f"whitespace; an empty file is not evidence."),
+            location=rel,
+        ))
 
     order = sorted(range(len(specs)), key=lambda i: optional[i])
     placed = _assign([candidates[i] for i in order], real)
@@ -1116,6 +1176,42 @@ def build_arg_parser(description: str) -> argparse.ArgumentParser:
     return p
 
 
+RUNTIME_MANIFEST = Path(__file__).resolve().parents[2] / "runtime-manifest.yaml"
+
+
+def runtime_floor_error(version: Optional[Tuple[int, ...]] = None,
+                        manifest_path: Optional[Path] = None) -> Optional[str]:
+    """Why this interpreter may not run the gate, or None when it may.
+
+    The floor is read from ``runtime-manifest.yaml`` (``runtime.python.minimum``),
+    the one place it is declared, so this engine still states no number of its
+    own. Below the floor the engine would fail on a missing standard-library
+    call partway through a check; the wrapper names the floor instead. A floor
+    that cannot be read is itself a reason not to run: the gate cannot show it
+    is on a supported interpreter."""
+    path = manifest_path or RUNTIME_MANIFEST
+    current = tuple((version or tuple(sys.version_info))[:2])
+    scripts = str(Path(__file__).resolve().parents[2] / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    try:
+        from data_formats import load_data  # stdlib only, ships in scripts/
+        data = load_data(path)
+        minimum = data["runtime"]["python"]["minimum"]
+        floor = tuple(int(part) for part in str(minimum).split("."))
+        if len(floor) != 2:
+            raise ValueError(f"minimum {minimum!r} is not major.minor")
+    except (ImportError, OSError, ValueError, KeyError, TypeError) as exc:
+        return (f"cannot read the Python floor (runtime.python.minimum) from {path}: "
+                f"{type(exc).__name__}: {exc}. Gate cannot run; validate by hand.")
+    if current < floor:
+        return (f"Python {current[0]}.{current[1]} is below the runtime floor "
+                f"{floor[0]}.{floor[1]} declared in {path.name} (runtime.python.minimum). "
+                f"Run the gate with Python {floor[0]}.{floor[1]} or later; "
+                f"`python skills/scripts/check_runtime.py` reports the interpreters found.")
+    return None
+
+
 def main_with_manifest(manifest: Manifest, argv: Optional[List[str]] = None,
                        extra_checks: Sequence[Callable[[Path, Report], None]] = ()) -> int:
     """Entry point each gate's check.py calls with its boundary manifest.
@@ -1126,6 +1222,10 @@ def main_with_manifest(manifest: Manifest, argv: Optional[List[str]] = None,
     arguments, or an internal error; it is never a verdict."""
     parser = build_arg_parser(f"Deterministic gate check for {manifest.boundary}.")
     args = parser.parse_args(argv)
+    floor_error = runtime_floor_error()
+    if floor_error is not None:
+        sys.stderr.write(f"ERROR: {floor_error}\n")
+        return 2
     try:
         package = resolve_package_dir(args.package)
     except PackageRefused as exc:

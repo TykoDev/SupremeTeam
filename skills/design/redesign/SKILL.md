@@ -36,9 +36,10 @@ from prose, before anything is drawn. And parity is read as visual similarity; i
 is mechanical — `check_parity.py` reporting full coverage of the ids its level
 scores — so a prettier mock that drops a route is not a mock at all.
 
-The chosen variant leaves here as an input to `design/commander`, which
-implements it in the project's real stack; the prototype stays reference
-behaviour.
+The chosen variant leaves here as the `design-system` input to `design/commander`'s
+design pipeline, where `design/architect` turns it into the project's design
+system and `build/bob-the-builder` later implements it in the real stack; the
+prototype stays reference behaviour.
 
 ## Entry Routing
 
@@ -157,7 +158,7 @@ paraphrase is drift.
 9. **Build the selected variant.** This stage runs only when a variant was selected. Delegate `design/prototyper` once, for the id `selection.chosen` names, to build `redesign/artifacts/variants/<id>/{variant.md,tokens.css,components.css,components.js,components.html,app.html}` — the living single-page prototype, derived from that mock's tokens and catalog, reproducing every inventory route, state, component, interaction, and flow with `data-*` parity markers.
 10. **Verify the selected variant.** These stages run only when a variant was selected: `design/design-mapper` runs `check_parity.py --level full` against `app.html` for `parity_evidence`, `review/design-qa` captures every route in every declared state at the six tiers in both themes for `rendered_verification`, and `review/frontier` grades accessibility and interaction findings for `accessibility_evidence`. When the decision was a merge or a deferral, no build was commissioned and these four keys carry the matching sanctioned string instead: `selection deferred - no variant built`, or `merge brief recorded - implemented as a fifth direction in the design pipeline`.
 11. **Recommend and package.** Write `redesign/reports/redesign-package.md`: the comparison matrix across the four mocks, the recommendation and its rationale, the recorded decision, the selected variant's parity, rendering, and accessibility results when one was built, and `residual_risk`.
-12. **Gate.** Write `redesign/manifest.json` and submit it to `design/gatekeeper-design` (`../gatekeeper-design/scripts/check_redesign.py` then the boundary validator); Admiral routes the approved package through `gatekeeper-admiral`. The chosen variant then enters the design pipeline as the `design-system` input: `design/commander` and `design/architect` implement it in the project's real stack and lock it at `design-to-build`.
+12. **Gate.** Write `redesign/manifest.json` and submit it to `design/gatekeeper-design` (`../gatekeeper-design/scripts/check_redesign.py` then the boundary validator); Admiral routes the approved package through `gatekeeper-admiral`. The chosen variant then enters the design pipeline as the `design-system` input: `design/architect` specifies the production design system from it, `design/commander` locks the stack and submits at `design-to-build`, and `build/bob-the-builder` implements it in the build pipeline (`../../ownership.yaml` gives `implementation` to bob-the-builder alone).
 
 `references/workflow.md` carries the full fourteen-stage table with each stage's
 owner, artifact, condition, and fan-out.
@@ -195,7 +196,7 @@ The `selection` stage is redesign's own: no specialist owns the user's decision.
 - Record each boundary before requesting a verdict.
 - Reuse prior verdicts only when the package revision is unchanged.
 - Push remediation back to the owning specialist instead of editing its artifact locally; batch every finding for one specialist into a single revision delegation and fan independent owners out in parallel.
-- Self-check before submitting: run `python skills/harness/gatekeeper/check.py --boundary redesign-review --package redesign/manifest.json` (no `--verdict-out`) and fix every mechanical failure first; a package that fails the machine is never submitted (`../../gates.yaml` `revise_policy.self_check`).
+- Self-check before submitting: run `python skills/harness/gatekeeper/check.py --boundary redesign-review --package skillset-saves/runs/<run>/redesign/manifest.json` (no `--verdict-out`) from the project root (the directory that holds `skillset-saves/`), so the script path and `--package` resolve from the same directory and fix every mechanical failure first; a package that fails the machine is never submitted (`../../gates.yaml` `revise_policy.self_check`).
 - Treat a `REVISE` as one packet: delegate each owner group in `revise_packet.by_owner` in parallel, batching every finding for a specialist into a single revision delegation, and resubmit once with `--prior` so the gate re-judges only `changed_evidence` and carries its prior judgment on `unchanged_evidence`.
 
 ## Skip Rule

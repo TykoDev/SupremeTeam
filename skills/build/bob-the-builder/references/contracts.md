@@ -21,9 +21,10 @@ credentials, migrations, or non-first-party surfaces.
 Enumerate the approved change list before the first edit and treat it as the
 complete set of writable destinations. Resolve every write path against the
 repository root and confirm the resolved path still sits inside the working tree
-— the same containment rule `build/gatekeeper-build` already enforces in code,
-where `../../gatekeeper-build/scripts/check.py` `_validate_package_dir` resolves the
-path and refuses anything outside the tree.
+— the same containment rule `build/gatekeeper-build` already enforces in code:
+its `../../gatekeeper-build/scripts/check.py` runs the shared engine, whose
+`resolve_package_dir` in `../../../harness/gatekeeper/_gatecheck.py` resolves the
+path (folding `..` and following links) and refuses anything outside the project.
 
 Refuse each of these outright, before the write rather than after:
 

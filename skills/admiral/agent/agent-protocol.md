@@ -54,12 +54,13 @@ tools_verified: [list of confirmed tool categories]
 Before Admiral creates a new run or accepts a fresh-looking request, inspect `skillset-saves/` per `../../save-protocol.md` §2 Startup:
 
 1. Read `_latest.md` when present, then read the latest run's `_state.md` and `_lock.md`. Treat `_latest.md` as a pointer only — if it is missing or stale, scan `runs/*/_state.md` directly rather than concluding no run exists.
-2. Classify the save directory into one of the ten values `../../save-protocol.md` §2 Startup defines: `active`, `inactive`, `complete`, `stale`, `orphaned`, `conflicting`, `corrupt`, `interrupted`, `missing`, `unreadable`. The classifier is `save_run.py status --run-id <id>`; only `active` and `orphaned` reinforce the session pin. The value is `conflicting`, not `conflict` — that is the spelling `_saves.py` emits and the one the state field below must carry.
+2. Classify the save directory into one of the eleven values `../../save-protocol.md` §2 Startup defines: `active`, `inactive`, `complete`, `stale`, `orphaned`, `conflicting`, `corrupt`, `interrupted`, `missing`, `uninitialized`, `unreadable`. The classifier is `save_run.py status --run-id <id>`; only `active` and `orphaned` reinforce the session pin. The value is `conflicting`, not `conflict` — that is the spelling `_saves.py` emits and the one the state field below must carry.
 3. If the directory is `active`, run the resume protocol and continue from the earliest incomplete boundary.
-4. If the directory is `orphaned` (a non-terminal run exists under `runs/` but `_latest.md` is missing, unreadable, or points at a missing/terminal run), restore `_latest.md` through the sanctioned writer — `save_run.py heartbeat --run-id <run> --owner admiral` while the lock is held and fresh, or `save_run.py recover --run-id <run> --owner admiral --reason "<why>"` (with `--rollback` if an interrupted-checkpoint journal is present) when it is not — then run the resume protocol. The writer's own audit event (`recover` / `rollforward` / `rollback`) is what lands in `_audit-trail.md`; the pointer is never hand-written. `LATEST_POINTER_REBUILT` is an agent-mode state field (see the field list below), recorded with `--set` on the same call — it is not an audit event and cannot be appended to the trail. Never fork a fresh run over a recoverable orphan.
-5. If the directory is `conflict`, stop and warn that another fresh session owns the run unless the lock is stale and reclaimable.
-6. If the directory is `inactive` or `missing`, create `skillset-saves/`, run the write-capability probe, and initialize a new run only after activation succeeds.
-7. If activation fails, warn once, attempt read-only resume from any readable latest artifacts, and continue in transient mode only when no coherent boundary can be proven.
+4. If the directory is `orphaned` (a non-terminal run exists under `runs/` but `_latest.md` is missing, unreadable, or points at a missing/terminal run), restore `_latest.md` through the sanctioned writer — `save_run.py heartbeat --run-id <run> --owner admiral` while the lock is held and fresh, or `save_run.py recover --run-id <run> --owner admiral --reason "<why>"` (with `--rollback` if an interrupted-checkpoint journal is present) when it is not — then run the resume protocol. The writer's own audit event (`recover` / `rollforward` / `rollback`) is what lands in `_audit-trail.md`; the pointer is never hand-written. `LATEST_POINTER_REBUILT` is an agent-mode state field (see the field list below), recorded with `--set` on the next `checkpoint` (`heartbeat` and `recover` publish no `--set` fields) — it is not an audit event and cannot be appended to the trail. Never fork a fresh run over a recoverable orphan.
+5. If the directory is `conflicting`, stop and warn that another fresh session owns the run unless the lock is stale and reclaimable.
+6. If the directory is `uninitialized` (a run directory holding intake's report and no record), run `save_run.py create` for that run id; nothing else needs recovering.
+7. If the directory is `inactive` or `missing`, create `skillset-saves/`, run the write-capability probe, and initialize a new run only after activation succeeds.
+8. If activation fails, warn once, attempt read-only resume from any readable latest artifacts, and continue in transient mode only when no coherent boundary can be proven.
 
 This check runs at initial intake, on explicit resume, and at the start of every turn while `session_pin: true`. It prevents a plan-mode or post-compaction turn from accidentally bypassing an active saved run.
 
@@ -240,7 +241,7 @@ agent_platform: "copilot" | "codex" | "claude" | "other"
 tools_verified: ["file-system", "terminal", "search", "sub-agent", "memory"]
 persistence_active: true | false
 persistence_probe_result: "ok" | "failed" | "skipped"
-save_directory_status: "active" | "inactive" | "complete" | "stale" | "orphaned" | "conflicting" | "corrupt" | "interrupted" | "missing" | "unreadable"
+save_directory_status: "active" | "inactive" | "complete" | "stale" | "orphaned" | "conflicting" | "corrupt" | "interrupted" | "missing" | "uninitialized" | "unreadable"
 persistence_activation_result: "activated" | "resumed" | "failed" | "skipped"
 persistence_activation_checked_at: "{ISO 8601}"
 resume_source: "latest" | "explicit" | "none"

@@ -31,7 +31,7 @@ SupremeTeam/
 │   ├── harness.md                        # Hooks, readiness, gate validators
 │   ├── persistent-saves.md               # Save layout, locks, resume
 │   ├── direct-invocation.md              # Calling skills directly
-│   ├── quality-audit.md                  # Audit rounds and findings register behind BENCHMARK.md
+│   ├── quality-audit.md                  # Open audit findings
 │   ├── independent-benchmark-remediation.md  # Disposition of an external benchmark's findings
 │   ├── directory-structure.md            # This file
 │   └── assets/                           # Diagrams used across the docs
@@ -155,7 +155,7 @@ test, so run the suite and read its last line.
   `test_pipeline_contracts.py`, `test_pipeline_workflows.py`, `test_save_contracts.py`,
   `test_save_prose.py`, `test_save_taxonomy.py`, `test_trigger_routing.py`,
   `test_eval_tools.py`, `test_repository_hygiene.py`, `test_docs_inventory.py`,
-  `test_lint_config.py`
+  `test_lint_config.py`, `test_stdlib_only.py`
 - **Scripts**, `skills/scripts/`: `test_check_runtime_contract.py`,
   `test_check_runtime_detection.py`, `test_check_runtime_layout.py`,
   `test_check_runtime_redaction.py`, `test_check_runtime_scaffold.py`,

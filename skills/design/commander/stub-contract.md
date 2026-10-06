@@ -29,7 +29,7 @@ The order `../../pipelines.yaml` declares for the design pipeline. Architecture 
 - Skip decisions must be explicit and justified.
 - All nine `design-to-build` keys are required: `decisions`, `architecture`, `interfaces`, `plan`, `acceptance`, `security_seed`, `stack_lock`, `taste_snapshot`, `ui_evidence`.
 - Exactly three are waivable, each only through its own sanctioned fallback carried as an applicability record: `stack_lock` (`no new runtime or framework - existing stack unchanged`), `taste_snapshot` (`no saved Taste profile available`), `ui_evidence` (`no user-facing surface - design system not engaged`). `security_seed` has no sanctioned fallback and is never waived.
-- Self-check before submitting: `python skills/harness/gatekeeper/check.py --boundary design-to-build --package design/manifest.json`, without `--verdict-out`.
+- Self-check before submitting: `python skills/harness/gatekeeper/check.py --boundary design-to-build --package skillset-saves/runs/<run>/design/manifest.json`, without `--verdict-out`.
 - Source revisions are rechecked before approval; changed revisions invalidate the snapshot and affected design work.
 
 ## Package Shape

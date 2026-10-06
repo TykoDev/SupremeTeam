@@ -91,7 +91,7 @@ refused: D:\proj\.harness-state\guard-state.json is not valid JSON (Expecting va
 
 **Output:**
 - Risky boundary: a recursive delete across the working tree.
-- Guard state: unreadable. Every boundary in the record is unusable, and the hook falls back to its built-in destructive-pattern guard alone — which itself fails open on a malformed record.
+- Guard state: unreadable. Every frozen, blocked, and read-only boundary in the record is unusable, and the hook falls back to the rules that need no record — the destructive-command, single-writer, and hook-file rules, which still deny on a malformed record (the hook says so in the call's context and counts a `GuardStateUnreadable` fault). That fallback catches only the destructive patterns it knows; whether this particular wipe matches one is not something to lean on, because a worktree wipe can be spelled in ways the pattern list does not cover.
 - Decision: no-go. An unreadable boundary tightens the verdict rather than excusing it; a corrupt record is never evidence that nothing was protected.
 - Next safe action: the record's owner repairs or removes the file directly — `guard_state.py` refuses to overwrite corrupt bytes and the hook denies an agent write to that path, so the repair happens outside the tool loop — then re-records the boundary through the writer and the check re-runs.
 
@@ -111,12 +111,16 @@ python skills/harness/hooks/guard_state.py status --json
 
 ```json
 {
+  "absolute_entries": [],
+  "absolute_reasons": {},
   "allow_dangerous": false,
   "blocked_globs": [],
   "exists": true,
   "frozen_globs": ["db/migrations/**"],
-  "path": ".harness-state/guard-state.json",
+  "path": "D:\\proj\\.harness-state\\guard-state.json",
   "read_only_runs": [],
+  "unmatchable_entries": [],
+  "unmatchable_reasons": {},
   "unowned_entries": []
 }
 ```

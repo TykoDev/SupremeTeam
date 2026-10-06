@@ -21,7 +21,7 @@ example assumes an active Admiral handoff; a cold invocation hands off to
 - Stage path: `design/researcher` → `design/architect` (architecture) → `design/architect` (interfaces and design system, because a user-facing surface exists) → `build/security-builder` (`security-seed`, because tenancy moves a trust boundary) → `design/planner` → `design/engineer` → commander's own stack lock.
 - Evidence assembled: `decisions` backed by the run's `intake/report_grilling.md`, hashed `architecture` and `plan`, `interfaces` as the endpoint inventory, `acceptance` from planner, `security_seed` naming the tenant isolation boundary and the controls the build owes, `ui_evidence` as the shadcn/ui component template plus `design-system.md`, the hashed `taste_snapshot`, and `stack_lock` from `check_runtime.py --detect-project`.
 - Decision that matters: planning waits on the approved architecture rather than running beside it, because milestone ordering is derived from the component boundaries architect fixes.
-- Before submitting: `python skills/harness/gatekeeper/check.py --boundary design-to-build --package design/manifest.json`, no `--verdict-out`; every mechanical failure is fixed first.
+- Before submitting: `python skills/harness/gatekeeper/check.py --boundary design-to-build --package skillset-saves/runs/<run>/design/manifest.json`, no `--verdict-out`; every mechanical failure is fixed first.
 - Open item: one unresolved decision about tenancy boundaries, carried in the escalation packet with a recommended default rather than silently defaulted.
 
 ## Example 2 — Resume at architecture

@@ -134,11 +134,15 @@ string — `check.py` refuses the bare form at schema 2.
 
 **Counts:** 3 rows `proven`, of which 2 are proven by waiver, 0 `unproven`.
 
-**Verdict: complete.** The waived cells are evidence present, not gaps. The gate
-itself exempts a key whose value exactly equals a sanctioned fallback from the
-artifact-backing check (`../../../gates.yaml` `evidence_rules.artifact_evidence`),
-so marking these rows unproven would contradict the machine the package is about
-to face and burn a REVISE cycle on nothing.
+**Verdict: complete.** The waived cells are evidence present, not gaps.
+`security_evidence` is not artifact-backed at `build-to-review` — that boundary's
+`artifact_evidence` lists only `tests` and `runtime` — so no artifact-backing
+exemption is involved. What admits the cell is the waiver rule itself
+(`../../../gates.yaml` `evidence_rules.applicability_records`): the key is listed
+in `fallback_values`, and `check.py` accepts an applicability record whose
+`reason` equals the sanctioned wording and whose `scope` and `decided_by` are
+filled. Marking these rows unproven would contradict the machine the package is
+about to face and burn a REVISE cycle on nothing.
 
 **Two checks that were still performed on the waiver:**
 - **Sanctioned for the key:** the string matches `fallback_values.security_evidence` exactly. A near-miss such as `no trust boundary changed` would be `unproven`, reason `unsanctioned-waiver`.

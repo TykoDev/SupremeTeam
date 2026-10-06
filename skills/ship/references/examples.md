@@ -69,7 +69,7 @@ on the package from Example 1.
 - Resubmission: revision raised to 4, then one resubmission carrying the prior verdict —
 
 ```bash
-python skills/harness/gatekeeper/check.py --boundary deploy-readiness --package release/manifest.json --prior release/verdict_deploy-readiness.json
+python skills/harness/gatekeeper/check.py --boundary deploy-readiness --package skillset-saves/runs/<run>/release/manifest.json --prior skillset-saves/runs/<run>/release/verdict_deploy-readiness.cross-stage.json
 ```
 
   `--prior` reports `changed_evidence` (`rollback_plan`, `verification_plan`) and `unchanged_evidence` (`deploy_config`, `approved_delivery`, `human_go_required`) from per-key digests, so the gatekeeper re-judges only the two keys that moved.

@@ -29,14 +29,14 @@ loopback:
 
 ```bash
 USER_DATA_DIR="$(mktemp -d)"
-chrome --user-data-dir="$USER_DATA_DIR" --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 about:blank &
+chrome --user-data-dir="$USER_DATA_DIR" --remote-debugging-port=0 --remote-debugging-address=127.0.0.1 about:blank &
 BROWSER_PID=$!
 ```
 
 ```powershell
 $UserDataDir = Join-Path $env:TEMP ([guid]::NewGuid().Guid)
 New-Item -ItemType Directory -Path $UserDataDir | Out-Null
-$Browser = Start-Process chrome -PassThru -ArgumentList "--user-data-dir=$UserDataDir", "--remote-debugging-port=9222", "--remote-debugging-address=127.0.0.1", "about:blank"
+$Browser = Start-Process chrome -PassThru -ArgumentList "--user-data-dir=$UserDataDir", "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1", "about:blank"
 $BrowserPid = $Browser.Id
 ```
 
@@ -48,7 +48,30 @@ variable expands to `rm -rf ""`, which **exits 0**. The teardown reports success
 the profile — holding this pairing's cookies and storage — survives on disk. Losing the
 path is losing the ability to revoke.
 
-Read the `webSocketDebuggerUrl` from `http://127.0.0.1:9222/json/version` and hand
+**Prove the endpoint is the browser this step launched before handing anything out.**
+A fixed port such as 9222 proves nothing: another browser, a stale instance, or a
+different user's process may already hold it, and this launch then fails to bind
+while the port still answers. Port `0` makes the browser pick a free port and write
+it, with its browser-target path, to `DevToolsActivePort` inside the profile directory
+this step just created — a file no other process writes:
+
+```bash
+for _ in $(seq 50); do [ -s "$USER_DATA_DIR/DevToolsActivePort" ] && break; sleep 0.1; done
+PORT="$(sed -n 1p "$USER_DATA_DIR/DevToolsActivePort")"
+WS_PATH="$(sed -n 2p "$USER_DATA_DIR/DevToolsActivePort")"
+curl -s "http://127.0.0.1:$PORT/json/version"   # its webSocketDebuggerUrl must end in $WS_PATH
+```
+
+```powershell
+$ActivePort = Join-Path $UserDataDir "DevToolsActivePort"
+for ($i = 0; $i -lt 50 -and -not (Test-Path $ActivePort); $i++) { Start-Sleep -Milliseconds 100 }
+$Port, $WsPath = Get-Content $ActivePort -TotalCount 2
+(Invoke-RestMethod "http://127.0.0.1:$Port/json/version").webSocketDebuggerUrl   # must end in $WsPath
+```
+
+When the file never appears, the browser process has exited, or the
+`webSocketDebuggerUrl` does not end in the recorded path, stop: the endpoint is not
+the one this pairing owns. Otherwise read the `webSocketDebuggerUrl` and hand
 **that** to the collaborator, over an SSH-forwarded port or a tunnel bound to their identity — not
 a broad network-exposed port. Never bind the debug port to `0.0.0.0`.
 

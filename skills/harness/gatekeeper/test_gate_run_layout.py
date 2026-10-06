@@ -559,6 +559,116 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
         out = result(run_cli("review-to-delivery", manifest, "--prior", str(verdict), "--gates", str(spec_copy)))
         self.assertFalse(out["prior_reusable"])
 
+    def test_a_revision_retyped_since_the_prior_record_is_drift(self):
+        """G-4: 1 -> "1" read as a different revision, so the drift check never ran."""
+        for before, after in ((1, "1"), ("1", 1), ("r1", " r1")):
+            with self.subTest(before=before, after=after):
+                data = self.review_manifest(revision=before, revisions=[before])
+                manifest = self.fx.write_manifest("review", data)
+                verdict = self.fx.phase("review") / "verdict_retype.json"
+                self.assertEqual(run_cli("review-to-delivery", manifest, "--verdict-out", str(verdict)).returncode, 0)
+                manifest = self.fx.write_manifest("review", self.review_manifest(revision=after, revisions=[after]))
+                proc = run_cli("review-to-delivery", manifest, "--prior", str(verdict))
+                out = result(proc)
+                self.assertTrue(out["idempotency_drift"], out)
+                self.assertFalse(out["prior_reusable"])
+                self.assertIn("idempotency drift on unchanged revision", out["failures"])
+                self.assertEqual(proc.returncode, 1)
+
+    def test_one_manifest_may_not_mix_integer_and_string_revisions(self):
+        for overrides in ({"revision": 1, "revisions": ["1"]}, {"revision": "1", "revisions": [1]},
+                          {"revision": 1, "revisions": [1], "verdict_revision": "1"}):
+            with self.subTest(**{k: repr(v) for k, v in overrides.items()}):
+                proc, out = self.check(self.review_manifest(**overrides))
+                self.assertEqual(proc.returncode, 1, out)
+                self.assertTrue(any(f.startswith("revision values mix integer and string types")
+                                    for f in out["failures"]), out["failures"])
+        for bad in (True, None, [1], {"r": 1}):
+            with self.subTest(revisions_entry=bad):
+                proc, out = self.check(self.review_manifest(revisions=[bad]))
+                self.assertEqual(proc.returncode, 1, out)
+                self.assertIn(f"revisions value {bad!r} must be a string or an integer", out["failures"])
+        for good in ({"revision": 2, "revisions": [2]}, {"revision": "r1", "revisions": ["r1"]}):
+            with self.subTest(good=good):
+                proc, out = self.check(self.review_manifest(**good))
+                self.assertEqual(proc.returncode, 0, out)
+
+    def test_an_empty_or_blank_artifact_is_no_evidence(self):
+        """G-5: a zero-byte or whitespace-only proof, correctly hashed, passed."""
+        for body in ("", "  \n\t\r\n", "\ufeff\n"):
+            with self.subTest(body=body):
+                data = self.review_manifest()
+                proof = self.fx.phase("review") / "proof.md"
+                proof.write_text(body, encoding="utf-8")
+                data["artifact_hashes"]["proof.md"] = content_sha256(proof)
+                proc, out = self.check(data)
+                self.assertEqual(proc.returncode, 1, out)
+                self.assertIn("empty artifact: executed_probes -> proof.md", out["failures"])
+                self.assertIn("empty artifact: executed_probes -> proof.md",
+                              out["revise_packet"]["by_key"]["executed_probes"])
+        # One blank file beside a real one is still named; a blank file no key names is not evidence at all.
+        data = self.review_manifest()
+        self.fx.proof("review")
+        blank = self.fx.proof("review", "blank.md", "")
+        data["artifact_hashes"]["blank.md"] = content_sha256(blank)
+        proc, out = self.check(data)
+        self.assertEqual(proc.returncode, 0, out)
+        data["evidence"]["executed_probes"]["artifacts"].append("blank.md")
+        proc, out = self.check(data)
+        self.assertEqual(proc.returncode, 1, out)
+        self.assertEqual([f for f in out["failures"] if "empty" in f], ["empty artifact: executed_probes -> blank.md"])
+
+    def test_a_silent_scanners_empty_raw_output_is_no_defect(self):
+        """A scan record carries its command, exit code and inputs; its stdout and stderr may be empty."""
+        threat = self.fx.proof("security", "threat.md", "# Threat model\n\nAssets listed.\n")
+        deny = self.fx.proof("security", "deny.md", "# Deny paths\n\nProbe log attached.\n")
+        out_file = self.fx.proof("security", "scan.stdout.txt", "")
+        err_file = self.fx.proof("security", "scan.stderr.txt", "")
+        (self.root / "requirements.txt").write_text("requests==2.32.0\n", encoding="utf-8")
+        data = {
+            "schema_version": 2, "run_id": self.fx.run_id, "boundary": "security-review", "owner": "cso",
+            "submission_id": "sec-1", "revision": "r1", "revisions": ["r1"],
+            "evidence": {
+                "scope": "api", "threat_model": "threat.md", "findings": {"items": []},
+                "vulnerability_scan": {
+                    "artifacts": ["scan.stdout.txt", "scan.stderr.txt"], "tool": "audit", "command": "audit",
+                    "observed_at": "2026-09-05T00:00:00Z", "exit_code": 0, "result": {"status": "pass"},
+                    "inputs": [{"path": "requirements.txt",
+                                "sha256": content_sha256(self.root / "requirements.txt")}]},
+                "denial_path_evidence": {"artifacts": ["deny.md"], "result": {"status": "pass"}},
+                "remediation_plan": "none needed", "residual_risk": "none"},
+            "artifact_hashes": {p.name: content_sha256(p) for p in (threat, deny, out_file, err_file)},
+        }
+        proc, out = self.check(data, "security-review", "security")
+        self.assertEqual(proc.returncode, 0, out)
+        threat.write_text(" \n", encoding="utf-8")
+        data["artifact_hashes"]["threat.md"] = content_sha256(threat)
+        proc, out = self.check(data, "security-review", "security")
+        self.assertIn("empty artifact: threat_model -> threat.md", out["failures"])
+
+    def test_every_finding_carries_one_unique_id(self):
+        """G-6: gates.yaml says a finding has an id, but none and duplicates both passed."""
+        cases = {
+            "absent": ([{"severity": "Minor", "status": "open"}], "findings[0] requires id"),
+            "blank": ([{"id": "  ", "severity": "Minor", "status": "open"}], "findings[0] requires id"),
+            "number": ([{"id": 7, "severity": "Minor", "status": "open"}], "findings[0] requires id"),
+            "duplicate": ([{"id": "F1", "severity": "Minor", "status": "open"},
+                           {"id": " F1", "severity": "Info", "status": "resolved"}],
+                          "findings[1] duplicate id F1 (first at findings[0])"),
+        }
+        for name, (items, failure) in cases.items():
+            with self.subTest(case=name):
+                data = self.review_manifest()
+                data["evidence"]["findings"] = {"items": items}
+                proc, out = self.check(data)
+                self.assertEqual(proc.returncode, 1, out)
+                self.assertIn(failure, out["failures"])
+        data = self.review_manifest()
+        data["evidence"]["findings"] = {"items": [{"id": "F1", "severity": "Minor", "status": "open"},
+                                                  {"id": "F2", "severity": "Info", "status": "resolved"}]}
+        proc, out = self.check(data)
+        self.assertEqual(proc.returncode, 0, out)
+
     def test_malformed_artifact_map_and_evidence_are_controlled(self):
         data = self.review_manifest(artifact_hashes=["not", "a", "map"])
         proc, out = self.check(data)

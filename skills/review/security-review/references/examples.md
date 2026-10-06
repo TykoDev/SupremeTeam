@@ -12,6 +12,14 @@ grade. Every finding carries a stable `SEC-NN` id and a status, because that is
 what `../../../gates.yaml` `evidence_types.findings` requires of the items
 `code-chief` and `cso` merge into `findings`.
 
+## Contents
+
+1. Example 1 — review pipeline: file-upload surface
+2. Example 2 — review pipeline: admin export
+3. Example 3 — review pipeline: dependency risk
+4. Example 4 — security pipeline: posture assessment for `cso`
+5. Example 5 — a REVISE delta: re-running the scan and re-binding its inputs
+
 ## Example 1 — review pipeline: file-upload surface
 
 **User request:** review security of the file-upload pipeline
@@ -25,7 +33,7 @@ what `../../../gates.yaml` `evidence_types.findings` requires of the items
 - Open risks: the object store's bucket policy is not in the supplied artifacts, so the blast radius of a written payload stays unconfirmed.
 - Next action: `build/security-builder` adds signature validation; the re-review is a delta over the handler alone.
 - Revision: r3.
-- Handoff to `review/code-chief`: both items enter `findings` as `{id, severity, status}`, and `SEC-01` blocks the review package at `Critical` until it is verified. `code-chief` issues the verdict; this lens does not.
+- Handoff to `review/code-chief`: both items enter `findings` as `{id, severity, status}`, and `SEC-01` blocks the review package at `Critical` until it is verified. `code-chief` carries them into its `review_verdict` recommendation and `review/gatekeeper-code` issues the verdict; this lens does neither.
 
 ## Example 2 — review pipeline: admin export
 

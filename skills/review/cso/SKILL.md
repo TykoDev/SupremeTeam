@@ -1,10 +1,10 @@
 ---
 name: cso
 description: >-
-  Owns the `security` pipeline end to end, normally invoked by `admiral`, and issues
-  the verdict at `security-review`: it runs threat modelling, posture assessment,
-  adversarial probing, triage, and authorized remediation as one engagement rather
-  than performing any of them itself. Use when `admiral` delegates a security
+  Owns the `security` pipeline end to end, normally invoked by `admiral`, and submits
+  it at `security-review` for `gatekeeper-admiral`'s verdict: it runs threat
+  modelling, posture assessment, adversarial probing, triage, and authorized
+  remediation as one engagement, performing none of them itself. Use when `admiral` delegates a security
   engagement, or the user wants a whole security oversight pass over a system — an
   audit, a threat model, a hardening round, or a challenge to accepted risk. A single
   dimension goes to the lens that owns it: `review/security-review` scans,
@@ -37,7 +37,7 @@ Use this pipeline for a **whole security engagement** — several lenses run, re
 
 - "audit this system's security" — the unscoped security request, scoped and sequenced here
 - "build the threat model for this surface" — entry points, assets, and adversaries, before any scanning
-- "run the security oversight pass" — own the engagement end to end and issue the `security-review` verdict
+- "run the security oversight pass" — own the engagement end to end and submit the `security-review` package for its verdict
 - "run the hardening and remediation round" — triage what the lenses found, then authorize the fixes
 - "challenge the security posture and the accepted risk" — reopen a risk the team has already accepted
 
@@ -210,6 +210,7 @@ named decider, never silent omissions.
 | Scenario | Response |
 | --- | --- |
 | Fixes are not authorized, so the `remediation` stage's `when: fixes authorized` condition is unmet | Apply nothing. Ship the finding set with a remediation owner and a fix path per item, carry `remediation_plan` as the plan rather than the applied change, and record every unremediated Critical and Major finding in `residual_risk` with a reopen trigger. A deferred Major requires a named owner and a reopen trigger inside the `findings` record. |
+| The scan record reads `result.status: fail` and fixes are not authorized | Return `ESCALATE` with the `fail` record and the triaged findings, naming the decision only the engagement owner can make: authorize remediation, or accept the risk. Only `pass` satisfies `vulnerability_scan`, and its sanctioned waiver asserts there is no scan surface, which a failing scan disproves, so no resubmission closes the boundary. Never re-run the scanner with its finding codes left out of `--fail-exit-codes` to turn the record into a `pass` or an `error`. |
 | The scanner is unavailable, times out, or exits on an unexpected code | Keep the `scan_record.py` record with its real `result.status` (`unavailable`, `error`, or `not-run`) and its `--limitation` entries. A missing scan is a data gap, never a clean scan: either record the sanctioned `vulnerability_scan` applicability record with reason, scope, and decider, or return `ESCALATE` naming the missing coverage. |
 | The gate returns `REVISE` | Treat the packet as one unit: route every failure in `revise_packet.by_owner` to its owner in parallel, batching all findings for one owner into a single revision delegation, then resubmit once with `--prior` so unchanged evidence carries its prior judgment. `revise_policy.cycle_cap` is 2; a third cycle escalates instead of resubmitting. |
 | A critical trust boundary depends on vendored code, managed services, or third-party identity flows that were not in the package | Keep the external dependency in scope, elevate the missing evidence, and refuse to let the first-party code alone define the posture. |

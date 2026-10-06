@@ -44,21 +44,22 @@
 |--------|----------------------|-----------------------|----------------|---------|---------|
 | Dashboard load (ms) | 640 / 910 / 1180 | 668 / 944 / 1205 | +4.4% | ±35 ms (95%) | watchlist — inside the band |
 
-- Sample size: 30 iterations per arm after 5 warm-up discards; coefficient of variation 11%, so 30 was sufficient for a stable median. The derivation, since the rule of thumb is where most benchmarks go wrong:
+- Sample size: 30 iterations per arm after 5 warm-up discards; coefficient of variation 11%. That was enough for a stable median in each arm, and **not** enough to separate a 5% shift between the arms. The derivation, since the rule of thumb is where most benchmarks go wrong:
 
-  The pilot gave a mean of 640 ms and an SD of 70 ms, so CV = 70/640 = 11%. The standard error of the mean is `SD / sqrt(n)`, and the 95% band is roughly `±1.96 × SEM`:
+  The pilot gave a mean of 640 ms and an SD of 70 ms, so CV = 70/640 = 11%. The question is a difference between two arms, so the band that decides it is the band of a *difference*: its standard error is `SD x sqrt(2/n)`, and the 95% band is roughly `±1.96 x` that. The single-arm band (`±1.96 x SD/sqrt(n)`) describes how well one median is pinned down; it is the wrong figure for sizing a comparison.
 
-  | n | SEM = 70/sqrt(n) | 95% band | Band as % of 640 ms |
-  |---|------------------|----------|---------------------|
-  | 10 | 22.1 ms | ±43 ms | ±6.8% |
-  | 30 | 12.8 ms | ±25 ms | ±3.9% |
-  | 60 | 9.0 ms | ±18 ms | ±2.8% |
+  | n per arm | Single-arm band | Two-arm SE = 70 x sqrt(2/n) | Two-arm 95% band | Two-arm band as % of 640 ms |
+  |---|---|---|---|---|
+  | 10 | ±43 ms | 31.3 ms | ±61 ms | ±9.6% |
+  | 30 | ±25 ms | 18.1 ms | ±35 ms | ±5.5% |
+  | 40 | ±22 ms | 15.7 ms | ±31 ms | ±4.8% |
+  | 60 | ±18 ms | 12.8 ms | ±25 ms | ±3.9% |
 
-  The smallest shift worth reporting here was set at 5% (32 ms) before sampling. At n=30 the band is ±25 ms — narrower than 32 ms, so a real 5% shift is distinguishable from noise, and 30 is enough. At n=10 the band (±43 ms) is wider than the effect, so a genuine regression would be indistinguishable from noise. Going to n=60 buys ±18 ms for double the runtime, which buys nothing the 5% threshold needed.
+  The smallest shift worth reporting here was set at 5% (32 ms) before sampling. At n=30 the two-arm band is ±35 ms — wider than 32 ms — so a real 5% shift cannot be told from noise; the single-arm ±25 ms would have suggested otherwise, and reading it would have sized the run wrongly. The two-arm band first drops below 32 ms at n=37, so 40 per arm was the right plan and 60 gives a comfortable ±25 ms. This run is reported as what it is: under-powered for its own threshold.
 
-  Note what the table shows about the cost curve: halving the band costs four times the samples, since the band scales with `1/sqrt(n)`. That is why the sample size is chosen from a stated threshold rather than raised until the answer looks clean — and why the two-arm band below (±35 ms) is wider than this single-arm figure, since both arms carry their own error. The two-arm band follows from the same SD: the standard error of a *difference* is `SD x sqrt(2/n)` = 70 x sqrt(2/30) = 18.1 ms, and 1.96 x 18.1 = 35 ms. It is sqrt(2) times the single-arm +/-25 ms, not double it.
-- Finding: the +28 ms median shift is smaller than the ±35 ms two-arm confidence band, so it stays on the watchlist rather than being labeled a confirmed regression. It is worth noting how narrow that margin is: a shift of 36 ms on the same samples would have cleared the band, which is why the 5% threshold was fixed before sampling rather than after seeing this number.
-- Next action: rerun with tighter environment controls — a dedicated staging node and 60 iterations per arm would narrow the band to roughly ±40 ms — before escalating.
+  Note what the table shows about the cost curve: halving the band costs four times the samples, since every band scales with `1/sqrt(n)`. The two-arm band is sqrt(2) times the single-arm band at the same n (±35 against ±25 at n=30), not double it, because both arms carry their own error. That is why the sample size is chosen from a stated threshold and the right band rather than raised until the answer looks clean.
+- Finding: the +28 ms median shift is smaller than the ±35 ms two-arm confidence band, so it stays on the watchlist rather than being labeled a confirmed regression. The margin is narrow — a shift of 36 ms on the same samples would have cleared the band — and the band itself was wider than the 5% threshold, so a watchlist result here says the run could not decide, not that the change is safe.
+- Next action: rerun with tighter environment controls — a dedicated staging node and 60 iterations per arm, which narrows the two-arm band to ±25 ms by the same formula (1.96 x 70 x sqrt(2/60)) — before escalating.
 
 ## Example 4 — run aborted at the resource ceiling, partial set discarded
 

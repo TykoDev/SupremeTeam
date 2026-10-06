@@ -1078,6 +1078,7 @@ def _t_gpg(rest, ctx):
 
 _GIT_PATHSPEC = frozenset({"add", "checkout", "restore", "reset", "rm", "mv", "clean", "apply", "stash", "commit"})
 _GIT_GLOBAL_ARG = frozenset({"-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix", "--config-env"})
+_GIT_PUSH_ARG = frozenset({"-o", "--push-option", "--repo", "--receive-pack", "--exec"})
 _GIT_COMMIT_ARG = frozenset({"-m", "-F", "-C", "-c", "--message", "--file", "--author", "--date", "--reuse-message",
                              "--reedit-message", "--fixup", "--squash", "--cleanup", "-S", "--gpg-sign"})
 
@@ -1107,7 +1108,7 @@ def git_parts(argv) -> tuple:
     if i >= len(args):
         return "", [], directories, []
     sub = args[i].text
-    flags, operands, _ = _split(args[i + 1:], _GIT_COMMIT_ARG if sub == "commit" else frozenset())
+    flags, operands, _ = _split(args[i + 1:], {"commit": _GIT_COMMIT_ARG, "push": _GIT_PUSH_ARG}.get(sub, frozenset()))
     return sub, operands, directories, flags
 
 
@@ -1423,10 +1424,20 @@ def _skip_options(rest: list, with_arg: frozenset, positional: int, assignments:
     return rest[i + positional:]
 
 
-def _shell(rest: list, ctx: _Ctx, body: "str | None", verb: str, piped: bool) -> "list | None":
+def _piped_program(ctx: _Ctx, upstream: "list | None", ps: bool) -> None:
+    """Read the program a literal ``echo`` or ``printf`` pipes into a shell (``echo 'rm -rf /' | sh``) like a launcher's:
+    its commands go to ``Analysis.hidden`` and are judged like the line's own. Any other pipe is not read."""
+    text = getattr(upstream, "text", None)
+    if text:
+        _hide_text(ctx, text, ps)
+
+
+def _shell(rest: list, ctx: _Ctx, body: "str | None", verb: str, piped: bool,
+           upstream: "list | None" = None) -> "list | None":
     """sh and friends: analyse ``-c`` text or a here-document; a script-file run comes back as a plain command.
 
-    A program that arrives on a pipe is not in the command line, so it is unnamed."""
+    A program that arrives on a pipe is not in the command line, so it is unnamed; when a literal ``echo`` or
+    ``printf`` printed it, it is read as well."""
     i = 0
     while i < len(rest):
         text = rest[i].text
@@ -1444,10 +1455,12 @@ def _shell(rest: list, ctx: _Ctx, body: "str | None", verb: str, piped: bool) ->
         _process(body, ctx, False)
     elif piped and not {"--version", "--help"} & {a.text for a in rest}:
         _note_unnamed(ctx, verb, "stdin", opaque=True)
+        _piped_program(ctx, upstream, False)
     return None
 
 
-def _powershell(rest: list, ctx: _Ctx, body: "str | None", verb: str, piped: bool) -> "list | None":
+def _powershell(rest: list, ctx: _Ctx, body: "str | None", verb: str, piped: bool,
+                upstream: "list | None" = None) -> "list | None":
     i = 0
     while i < len(rest):
         text = rest[i].text
@@ -1456,6 +1469,7 @@ def _powershell(rest: list, ctx: _Ctx, body: "str | None", verb: str, piped: boo
             tail = " ".join(a.text for a in rest[i + 1:])
             if tail.strip() == "-" and body is None and piped:
                 _note_unnamed(ctx, verb, "stdin", opaque=True)
+                _piped_program(ctx, upstream, True)
             _process(body if tail.strip() == "-" and body is not None else tail, ctx, True)
             return None
         if low in ("-encodedcommand", "-ec", "-e", "-enc") and i + 1 < len(rest):
@@ -1476,6 +1490,7 @@ def _powershell(rest: list, ctx: _Ctx, body: "str | None", verb: str, piped: boo
         _process(body, ctx, True)
     elif piped:
         _note_unnamed(ctx, verb, "stdin", opaque=True)
+        _piped_program(ctx, upstream, True)
     return None
 
 
@@ -1808,6 +1823,57 @@ def program_text_writes(text: str) -> bool:
     return bool(_OPEN_FOR_WRITE.search(text) or _FILE_CALL.search(text) or (_RUNS_COMMAND.search(text) and _MUTATING_TEXT.search(text)))
 
 
+# A string literal of a program (double, single or backtick quoted, backslash escapes kept) or a statement break.
+_LITERAL_OR_BREAK = re.compile(r'"((?:[^"\\]|\\.)*)"|\'((?:[^\'\\]|\\.)*)\'|`((?:[^`\\]|\\.)*)`|[;\n]', re.S)
+_LITERAL_ESCAPE = re.compile(r"\\(.)", re.S)
+
+
+def program_commands(text: str) -> list:
+    """The command lines an inline program may hand a shell, for a program that runs commands at all (``system``,
+    ``popen``, ``exec``, ``subprocess``, ``child_process``, backticks, ...): each string literal, and the literals of one
+    statement joined by spaces, which is how an argument list (``subprocess.run(["rm", "-rf", "/"])``) runs.
+
+    A search, not an interpretation: a command built at run time is not seen. Linear in ``text``."""
+    if not _RUNS_COMMAND.search(text):
+        return []
+    found: dict = {}
+    statement: list = []
+
+    def close() -> None:
+        if len(statement) > 1:
+            found[" ".join(statement)] = None
+        statement.clear()
+
+    for match in _LITERAL_OR_BREAK.finditer(text):
+        if match.lastindex is None:
+            close()
+            continue
+        literal = _LITERAL_ESCAPE.sub(lambda m: {"n": "\n", "t": "\t"}.get(m.group(1), m.group(1)), match.group(match.lastindex))
+        if literal.strip():
+            found[literal] = None
+            statement.append(literal)
+    close()
+    return list(found)
+
+
+def git_stash_parts(argv) -> "tuple | None":
+    """``(pathspecs, directories, flags)`` of a ``git stash`` that stashes (``push``, ``save`` or no subcommand), or None.
+
+    ``-m``/``--message`` take a value; the words after ``save`` are its message, so it names no pathspec."""
+    args = [a if isinstance(a, _Arg) else _Arg(a) for a in argv]
+    i, directories = _git_head(args)
+    if i >= len(args) or args[i].text != "stash":
+        return None
+    rest = args[i + 1:]
+    action = "push"
+    if rest and not rest[0].text.startswith("-"):
+        action, rest = rest[0].text, rest[1:]
+    if action not in ("push", "save"):
+        return None
+    flags, operands, _ = _split(rest, frozenset({"-m", "--message", "--pathspec-from-file"}), frozenset("m"))
+    return ([] if action == "save" else [a.text for a in operands]), directories, flags
+
+
 # --- driver ------------------------------------------------------------------------
 
 def _is_null(target: _Arg) -> bool:
@@ -1909,14 +1975,56 @@ def _strip_keywords(args: list) -> list:
     return args[i:]
 
 
+class _Printed(list):
+    """The words a literal ``echo`` or ``printf`` prints, and in ``text`` the text itself, which a shell downstream reads
+    as its program."""
+
+    text = ""
+
+
+_PRINTF_ESCAPE = re.compile(r"\\([nt0\\])")
+_PRINTF_SPEC = re.compile(r"%[-+ #0]*\d*(?:\.\d+)?[sbdiqc%]")
+
+
+def _printed_text(verb: str, words: list) -> str:
+    """What ``echo`` or ``printf`` writes: the words joined (``printf`` fills its format's conversions in order and repeats
+    it for words left over), with ``\\n`` and ``\\t`` as the characters they stand for, as ``sh`` and ``printf`` print them."""
+    def unescape(text: str) -> str:
+        return _PRINTF_ESCAPE.sub(lambda m: {"n": "\n", "t": "\t", "0": "", "\\": "\\"}[m.group(1)], text)
+
+    if verb != "printf" or not words:
+        return unescape(" ".join(words))
+    fmt, args = words[0], words[1:]
+    if not _PRINTF_SPEC.search(fmt):
+        return unescape(fmt)
+    out: list = []
+    used = [0]
+
+    def fill(match) -> str:
+        if match.group() == "%%":
+            return "%"
+        used[0] += 1
+        return args[used[0] - 1] if used[0] <= len(args) else ""
+
+    while True:
+        before = used[0]
+        out.append(_PRINTF_SPEC.sub(fill, fmt))
+        # printf reuses its format while words are left, and stops when a pass consumed none (only `%%`).
+        if used[0] >= len(args) or used[0] == before:
+            break
+    return unescape("".join(out))
+
+
 def _literal_words(verb: str, rest: list) -> "list | None":
-    """The words a literal ``echo`` or ``printf`` prints, which an ``xargs`` downstream receives."""
+    """The words a literal ``echo`` or ``printf`` prints, which an ``xargs`` downstream receives, with the printed text."""
     if any(a.unresolved for a in rest):
         return None
     words = [a.text for a in rest if not (verb == "echo" and re.fullmatch(r"-[neE]+", a.text))]
-    if verb == "printf" and words:
-        words[0] = re.sub(r"\\[nt0]", " ", words[0])
-    return [piece for text in words for piece in text.split()]
+    printed = _Printed(piece for text in ([re.sub(r"\\[nt0]", " ", words[0]), *words[1:]] if verb == "printf" and words else words)
+                       for piece in text.split())
+    if verb in ("echo", "printf"):
+        printed.text = _printed_text(verb, words)
+    return printed
 
 
 def _run_stage(tokens: list, ctx: _Ctx, upstream: "list | None", piped: bool = False) -> "list | None":
@@ -1962,6 +2070,7 @@ def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None", st
         if verb in ("eval", "invoke-expression", "iex"):
             if not rest and piped and verb != "eval":
                 _note_unnamed(ctx, verb, "stdin", opaque=True)
+                _piped_program(ctx, upstream, True)
             _process(" ".join(a.text for a in rest), ctx, ctx.ps or verb != "eval", scoped=False)
             return
         if verb == "trap":
@@ -1971,7 +2080,8 @@ def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None", st
                 _process(actions[0].text, ctx, ctx.ps, scoped=True)
             return
         if verb in _SHELLS or verb in _POWERSHELLS:
-            plain = _shell(rest, ctx, body, verb, piped) if verb in _SHELLS else _powershell(rest, ctx, body, verb, piped)
+            plain = (_shell(rest, ctx, body, verb, piped, upstream) if verb in _SHELLS
+                     else _powershell(rest, ctx, body, verb, piped, upstream))
             if plain is not None:
                 _finish(args, ctx, body)
             return

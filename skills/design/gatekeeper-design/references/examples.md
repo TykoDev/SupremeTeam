@@ -80,8 +80,8 @@ revision 1, owner `commander`.
 return boundary `redesign-review`.
 
 **Validators:**
-- `../scripts/check_redesign.py skillset-saves/runs/r-3210/redesign`: `NEEDS_JUDGMENT`. Inventory, grilling log, directions, three `variant.md` files, the selection record, the redesign package, and the parity output present; the capture keys reported `UNCHECKED`.
-- Boundary validator `--boundary redesign-review`: exit 1 on `mock_set` alone — three mocks against a required count of four. `mock_parity` is a single probe record with no `inputs`, which the validator accepts (`inputs` is required only for `scan` and `render` records), so that one arrives as judgment rather than as a mechanical failure.
+- `../scripts/check_redesign.py skillset-saves/runs/r-3210/redesign`: `NEEDS_JUDGMENT`. Inventory, grilling log, directions, three `variant.md` files, the selection record, the redesign package, and the parity output present; the one capture key, `rendered_verification`, reported `UNCHECKED` because no `*render*` or `*capture*` file exists.
+- Boundary validator `--boundary redesign-review`: exit 1 on two keys — `mock_set`, three mocks against a required count of four, and `mock_rendering`, a required key the manifest does not carry. `mock_parity` is a single probe record with no `inputs`, which the validator accepts (`inputs` is required only for `scan` and `render` records), so that one arrives as judgment rather than as a mechanical failure.
 
 **Output:**
 - Verdict: `REVISE`.
@@ -89,7 +89,7 @@ return boundary `redesign-review`.
 - Evidence, grouped by owner:
   - `prototyper` — `mock_set` holds three mocks. `../../../gates.yaml` `evidence_type_params` fixes the required count at four, and a field of three that already includes the recommendation is a comparison with a predetermined winner.
   - `design-mapper` — the single `mock_parity` probe carries hashed artifacts and a passing status but no `inputs`, so nothing binds it to `design_inventory`. It proves that a probe ran, not that any mock covers the surface it claims parity with. The validator lets this through; the binding is what this verdict requires, added as `inputs` entries on that same record, which stays one mapping covering all four mocks.
-  - `design-qa` — the shape check's `UNCHECKED` on `mock_rendering` is unresolved, and the evidence key is absent. See Example 5 for the case where it is present but waived.
+  - `design-qa` — `mock_rendering` is absent, the mechanical failure above; the shape check's `UNCHECKED` on its capture key says the same thing and is not read as a waiver. See Example 5 for the case where it is present but waived.
 - Judgment recorded separately: the three mocks that were submitted are genuinely static — no router, no store, no `components.js` — so the sequencing is right even though the count is wrong.
 - Next action: three owners fix in parallel; `redesign` resubmits once at revision 2.
 - Revision: 1.
@@ -100,7 +100,7 @@ return boundary `redesign-review`.
 `r-3210`, submission `r-3210-rd2`, owner `redesign`; `--prior redesign/verdict_redesign-review.json`.
 
 **Validators:**
-- `../scripts/check_redesign.py`: `STRUCTURE_OK` on everything except the capture keys, still `UNCHECKED` — no capture file was written.
+- `../scripts/check_redesign.py`: `STRUCTURE_OK` on everything except the capture key `rendered_verification`, still `UNCHECKED` — no capture file was written.
 - Boundary validator: exit 1. `mock_rendering` carries `{applicable: false, reason: "no visible surface changed - rendered verification not applicable", scope: "redesign", decided_by: "redesign"}`.
 
 **Output:**

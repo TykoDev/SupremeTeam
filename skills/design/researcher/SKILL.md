@@ -17,8 +17,9 @@ allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 
 ## Purpose
 
-Own the first stage of the design pipeline, where a request becomes evidence
-somebody can be held to. `../../ownership.yaml` makes `requirements-brief` the
+Own the research stage of the design pipeline, the first specialist stage after
+`admiral`'s `intake-grilling` in `../../pipelines.yaml`, where a request becomes
+evidence somebody can be held to. `../../ownership.yaml` makes `requirements-brief` the
 single artifact this skill writes and `design/architect`'s only required input, so
 every component boundary, interface contract, and milestone downstream rests on
 rows produced here. A requirement with no source is indistinguishable from a
@@ -41,8 +42,8 @@ Researcher is an internal design specialist, not an entry point.
 `../../routing-doctrine.md` places every `design/` skill it does not name
 separately in the internal-specialist row, reached only through the owning
 sub-orchestrator, and `../../pipelines.yaml` names `commander` the owner of the
-`design` pipeline this skill's `research` stage opens. Owning the first stage is
-not the same as being the pipeline's front door. Run the active-handoff check
+`design` pipeline whose first specialist stage, `research`, this skill owns. Owning
+that stage is not the same as being the pipeline's front door. Run the active-handoff check
 before gathering anything: the scope the brief covers, the intake decisions it may
 not reopen, the revision it belongs to, and the save path all arrive with the
 handoff, and none of them can be reconstructed cold.

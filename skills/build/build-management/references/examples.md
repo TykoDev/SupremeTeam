@@ -21,7 +21,7 @@ off to `admiral` first.
 - Stage path: `build/bob-the-builder` (implementation) → `build/test-builder` (test surface) → `build/security-builder` (security checkpoint, because tenant isolation moves a trust boundary) → `build/health-check` (runtime health, unconditional) → `build/cross-check-build-confirm` (completeness) → `build/gatekeeper-build` (phase gate).
 - Evidence assembled: `approved_design_revision` read from the `design-to-build` verdict, `implementation` as the changed artifact set with hashes, `tests` as the hashed runner log under `build/evidence/`, `runtime` as the hashed startup and entry-point smoke log, `security_evidence` as the graded findings record, and `traceability` walking every approved decision to the artifact that carries it.
 - Decision that matters: `runtime` is collected even though the suite is green, because `tests` and `runtime` are separate keys with separate owners and neither substitutes for the other.
-- Before submitting: `python skills/harness/gatekeeper/check.py --boundary build-to-review --package build/manifest.json`, no `--verdict-out`; every mechanical failure is fixed first.
+- Before submitting: `python skills/harness/gatekeeper/check.py --boundary build-to-review --package skillset-saves/runs/<run>/build/manifest.json`, no `--verdict-out`; every mechanical failure is fixed first.
 
 ## Example 2 — Late fix after tests have passed
 

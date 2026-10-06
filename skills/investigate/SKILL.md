@@ -49,8 +49,9 @@ A reproduced build-phase failure with a known mechanism belongs to
 `build/debugger`; this pipeline runs when the mechanism itself is unknown —
 `unknown failure mechanism`, the exact wording `../pipelines.yaml` attaches to
 the build pipeline's `investigation` stage, which is skipped whenever the
-mechanism is already known. `build/debugger` no longer advertises "find the root
-cause": an unexplained failure is scoped and reproduced here first.
+mechanism is already known. `build/debugger` routes "find the root cause" here
+(its Use This Skill When section names this skill as the owner of that phrase):
+an unexplained failure is scoped and reproduced here first.
 
 ## Inputs
 

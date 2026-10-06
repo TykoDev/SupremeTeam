@@ -10,7 +10,7 @@ The agent configuration lives in `.agents/` at the repository root.
 | Admiral Requirement | Codex Tool | Usage |
 |--------------------|-----------|-------|
 | file-system.read | File read | Read save-protocol state, skill files |
-| file-system.write | File write/edit | Write state, packages, deliverables |
+| file-system.write | File write/edit | Write packages and deliverables (never the run records; see State Writes) |
 | file-system.list | File listing | Enumerate directories |
 | file-system.search | File search | Find files by pattern |
 | terminal.execute | Shell execution | Run scripts, validation |
@@ -43,6 +43,10 @@ Codex supports agent dispatch. Sub-orchestrators can be registered as separate a
 - `skill-maker-agent` → skill creation pipeline
 
 Each receives its handoff template as the agent prompt.
+
+## State Writes
+
+The run-state, lock, pointer, and audit-trail records (`_state.md`, `_lock.md`, `_audit-trail.md`, `_latest.md`, `_journal.json`, `_history/`) are the `core-run-record` class of `../../../save-ownership.yaml`. Publish them only through shell execution of `python skills/harness/hooks/save_run.py <create|checkpoint|heartbeat|complete|block|release|recover> ...`, never with file write/edit: `pre_tool_use.py` Rule C denies a direct write.
 
 ## Constraints
 

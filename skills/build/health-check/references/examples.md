@@ -87,13 +87,17 @@ record, with `artifacts` manifest-relative:
 ```
 
 **Response-body disposition (workflow step, the readiness body):** the readiness
-poll wrote `evidence/runtime-readiness-body.json`. It was scrubbed on the same
-pass as the logs, the predicate was evaluated against it, and because the body
-reports a degraded dependency it is **hashed into the package** rather than
-deleted — a later reader needs the reason the dependency was degraded, not just
-the verdict that it was. Had the body been an unremarkable `{"status":"ok"}`, it
-would have been deleted on the same pass instead. Either way it does not survive
-as a stray unhashed file.
+poll wrote `evidence/runtime-readiness-body.json`, and each poll overwrote it, so
+the file holds the last satisfying response: every entry in `dependencies`
+reports `state: "ok"`, which is what the predicate required. It was scrubbed on
+the same pass as the logs and the predicate was evaluated against it. It is
+**hashed into the package** rather than deleted, because it is the one record of
+which dependencies the "no entry with state != ok" clause actually read — a later
+reader checking that the templates service was among them needs the body, not
+just the verdict. Had a dependency reported `degraded`, the predicate would have
+failed, readiness would not have been reached inside the window, and the pass
+would have returned `runtime` as unverified with this body hashed as the reason.
+Either way it does not survive as a stray unhashed file.
 
 **Artifact hashes registered into the manifest's `artifact_hashes` map:**
 `evidence/runtime-smoke.log` →

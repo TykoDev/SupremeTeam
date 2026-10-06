@@ -15,8 +15,8 @@ The phase-by-phase procedure for the `design` pipeline: the order phases run in,
 
 1. Establish the design entry conditions from the request, constraints, upstream approvals, and any saved stack-lock context.
    The stage order is research, architecture, interface and design-system work, the security seed when a trust boundary exists, the delivery plan, the implementation spec, and the stack lock.
-2. Delegate only the earliest incomplete design phase, then wait for the corresponding gatekeeper-design verdict before advancing.
-3. Reopen only the affected phase path when a verdict or drift invalidates downstream design work.
+2. Delegate only the earliest incomplete design phase and check its output against this file's acceptance checklist before advancing. The pipeline has one gate stage, `phase-gate`, after the stack lock: gatekeeper-design issues one `design-to-build` verdict for the whole package, not one per phase.
+3. Reopen only the affected phase path when that verdict or drift invalidates downstream design work.
 4. Assemble the consolidated design package only after all required phase outputs and approval records align on the same revision.
 
 ## Decision Rules

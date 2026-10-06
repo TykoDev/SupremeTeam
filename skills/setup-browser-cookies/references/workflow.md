@@ -17,7 +17,8 @@
 5. Load cookies or browser state into the correct profile using a concrete mechanism (Playwright `context.addCookies()`, HAR import, or scoped-profile copy). Never log or echo raw cookie values, redact them in all evidence and screenshots, and do not widen the session boundary to unrelated tenants or environments.
 6. Delete the bundle unconditionally on every exit path — success, failure, or interruption — wiring the deletion (`trap ... EXIT`, or a `finally` block) before the import begins so no path skips it.
 7. Reopen the protected surface and verify the resulting page, redirect chain, and visible account context.
-8. Package the session state so the next browser task knows exactly what was loaded, how long it will remain valid, and what still limits reuse.
+8. Package a description of the session state — never the state itself — so the next browser task knows exactly what was loaded, how long it will remain valid, and what still limits reuse.
+9. Tear down the profile that received the cookies when the session it serves ends: `context.close()` for a non-persistent context; for a persistent profile, close the browser, delete its `mkdtemp` directory, and confirm the directory is gone. A profile handed to a later task is recorded with its path, owner, and end condition, and that task inherits this step.
 
 ## Credential-Hygiene Contract
 
@@ -30,6 +31,7 @@ as the account holder against the protected service.
 - **Least-privilege permissions before read.** `chmod 600`, or `icacls` with `/inheritance:r /grant:r` so inherited ACLs are dropped and no broader group keeps access.
 - **Never in the clear.** No raw cookie value in a log, an echo, an evidence file, a screenshot, or any saved output. Redact in place; keep only what a later reader needs to debug auth, never the secret.
 - **Unconditional deletion.** Delete on success, on failure, and on interruption. Deletion conditioned on success leaves the credential on disk for exactly the failure paths that most need it gone.
+- **The receiving profile is held to the same rules.** Once imported, the cookies live in the browser profile, so the profile is a second copy of the credential. Prefer a non-persistent context, which holds them in memory only. A persistent profile lives in a `mkdtemp` directory in the user's private temporary directory — never under `skillset-saves/`, the repository, a synced directory, or the user's own browser profile — with owner-only permissions, and no `storage_state()` export reaches a tracked path. It is deleted, and its absence confirmed, when the session ends, unless it is handed over with a path, an owner, and an end condition.
 
 ## Decision Rules
 

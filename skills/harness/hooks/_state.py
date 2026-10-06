@@ -73,6 +73,10 @@ _TRAJ_RETENTION_SECONDS = 7 * 24 * 3600
 # A hook never holds up the host, so an append waits this long (seconds) for a competing writer and then goes on
 # without the lock, which can cost the entry that writer made. Only a test that must see every append raises it.
 TRAJECTORY_LOCK_WAIT = 0.25
+# The same bound for the observation and fault counters: each read-modify-write of ``observations/<Event>.json`` holds
+# one OS advisory lock, so concurrent hooks no longer lose each other's counts. A waiter that times out goes on without
+# it rather than hold up the host.
+OBSERVATION_LOCK_WAIT = 0.25
 
 _SESSION_ENV = ("SUPREMETEAM_SESSION_ID", "CLAUDE_SESSION_ID", "CODEX_SESSION_ID", "COPILOT_SESSION_ID", "GITHUB_RUN_ID")
 
@@ -476,6 +480,22 @@ def _utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z"
 
 
+def _update_observation(event: str, change) -> None:
+    """Read ``observations/<event>.json``, apply ``change`` to it and write it back, all under one advisory lock.
+
+    The counters are read-modify-write: without the lock two hooks that fire together read the same count and one
+    increment is lost (200 concurrent fault writes once recorded 23). The lock is the shared ``_fsutil`` one, held at
+    most ``OBSERVATION_LOCK_WAIT`` seconds before the update goes on without it (fail open)."""
+    path = state_dir() / "observations" / f"{event}.json"
+    # The lock sits beside the directory, not in it, so the directory holds only the records readiness lists.
+    with _fsutil.AdvisoryLock(path.parent.parent / "observations.lock", OBSERVATION_LOCK_WAIT, create_dir=True, fail_open=True):
+        current = read_json(path, {})
+        if not isinstance(current, dict):
+            current = {}
+        change(current)
+        write_json(path, current)
+
+
 def record_observation(event: str, data: dict) -> None:
     """Record that the host actually invoked this hook.
 
@@ -486,18 +506,18 @@ def record_observation(event: str, data: dict) -> None:
     try:
         session = str((data or {}).get("session_id") or "").strip()
         kind = "observed" if session else "simulated"
-        path = state_dir() / "observations" / f"{event}.json"
-        current = read_json(path, {})
-        if not isinstance(current, dict):
-            current = {}
-        entry = {
-            "at": _utc_now(),
-            "session_hash": hashlib.sha256(session.encode("utf-8", "ignore")).hexdigest()[:12] if session else None,
-            "tool_name": str((data or {}).get("tool_name") or "") or None,
-            "count": int((current.get(kind) or {}).get("count", 0)) + 1,
-        }
-        current[kind] = entry
-        write_json(path, current)
+
+        def change(current: dict) -> None:
+            prior = current.get(kind)
+            count = prior.get("count", 0) if isinstance(prior, dict) else 0
+            current[kind] = {
+                "at": _utc_now(),
+                "session_hash": hashlib.sha256(session.encode("utf-8", "ignore")).hexdigest()[:12] if session else None,
+                "tool_name": str((data or {}).get("tool_name") or "") or None,
+                "count": int(count) + 1,
+            }
+
+        _update_observation(event, change)
     except Exception:
         pass
 
@@ -513,14 +533,13 @@ def record_fault(event: str, error: "BaseException | type | str") -> None:
     try:
         kind = error if isinstance(error, str) else (error if isinstance(error, type) else type(error)).__name__
         kind = re.sub(r"[^A-Za-z0-9_.]", "_", kind)[:64] or "Exception"
-        path = state_dir() / "observations" / f"{event}.json"
-        current = read_json(path, {})
-        if not isinstance(current, dict):
-            current = {}
-        prior = current.get("faults")
-        current["faults"] = (prior if isinstance(prior, int) and not isinstance(prior, bool) and prior >= 0 else 0) + 1
-        current["last_fault"] = {"type": kind, "at": _utc_now()}
-        write_json(path, current)
+
+        def change(current: dict) -> None:
+            prior = current.get("faults")
+            current["faults"] = (prior if isinstance(prior, int) and not isinstance(prior, bool) and prior >= 0 else 0) + 1
+            current["last_fault"] = {"type": kind, "at": _utc_now()}
+
+        _update_observation(event, change)
     except Exception:
         pass
 

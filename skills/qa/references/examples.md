@@ -30,7 +30,7 @@
 - Scope: account creation, email verification, and the first-run checklist.
 - First submission: `REVISE`. One packet, two keys — `test_matrix` carried a pass rate instead of a typed probe record, and one Major defect was deferred with no reopen trigger.
 - Repair: the executed matrix was written to `evidence/test-matrix.md`, hashed, and wrapped in a probe record with its command and `result.status: pass`; the deferred Major gained a named owner and a reopen trigger; the revision advanced to 3 and the `submission_id` to `attempt-2`.
-- Resubmission: one cycle, with `--prior skillset-saves/runs/2026-04-19-onboarding/qa/verdict.json`, so `changed_evidence` named exactly those two keys and the gatekeeper carried its prior judgment on the rest. Verdict **APPROVED**.
+- Resubmission: one cycle, with `--prior skillset-saves/runs/2026-04-19-onboarding/qa/verdict_qa-review.cross-stage.json` (the record `gatekeeper-admiral` wrote with `--verdict-out` on the first submission; the qa pipeline has no phase gatekeeper, so there is no `verdict_qa-review.json` beside it), so `changed_evidence` named exactly those two keys and the gatekeeper carried its prior judgment on the rest. Verdict **APPROVED**.
 - Boundary note: a second `REVISE` would have ended the cycle at `cycle_cap: 2` and escalated with both packets rather than opening a third round.
 
 ## Example 4 — browser surface required but unavailable

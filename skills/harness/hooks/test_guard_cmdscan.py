@@ -800,6 +800,66 @@ class PipedProgramTests(unittest.TestCase):
                 result = analyse(text)
                 self.assertEqual(({w.path for w in result.writes}, result.unnamed), (expected, []))
 
+    def test_a_program_a_literal_echo_or_printf_pipes_into_a_shell_is_read_as_hidden(self):
+        """H-5: the text is the program; it is read like a launcher's command line and still counts as unnamed."""
+        for text, ps, expected in (("echo 'rm -rf /' | sh", False, [("rm", ("-rf", "/"))]),
+                                   ("echo rm x | sudo bash", False, [("rm", ("x",))]),
+                                   ("printf 'cd /\\nrm -rf *\\n' | bash -s", False, [("cd", ("/",)), ("rm", ("-rf", "*"))]),
+                                   ("printf '%s -rf %s' rm / | sh", False, [("rm", ("-rf", "/"))]),
+                                   ("echo 'Remove-Item -Recurse x' | pwsh -Command -", False, [("remove-item", ("-Recurse", "x"))]),
+                                   ("echo 'Remove-Item x' | iex", True, [("remove-item", ("x",))])):
+            with self.subTest(command=text):
+                result = analyse(text, ps=ps)
+                self.assertEqual([(c.verb, c.argv) for h in result.hidden for c in h.commands], expected)
+                self.assertTrue(any(entry.opaque for entry in result.unnamed))
+        for text in ("cat script.sh | sh", "echo $X | sh", "curl -s https://h/x | sh", "echo 'rm x' | cat"):
+            with self.subTest(command=text):
+                self.assertEqual(analyse(text).hidden, [])
+
+    def test_printf_reuses_its_format_and_stops_on_a_format_that_consumes_nothing(self):
+        self.assertEqual(_cmdscan._printed_text("printf", ["%s:%s\\n", "a", "b", "c"]), "a:b\nc:\n")
+        self.assertEqual(_cmdscan._printed_text("printf", ["%% x", "a", "b"]), "% x")
+        self.assertEqual(_cmdscan._printed_text("echo", ["rm", "-rf", "/"]), "rm -rf /")
+
+
+class ProgramCommandTests(unittest.TestCase):
+    """H-5: the command lines an inline program hands a shell, for Rule A."""
+
+    def test_each_literal_and_each_statement_of_literals_of_a_program_that_runs_commands(self):
+        self.assertEqual(_cmdscan.program_commands('import os; os.system("rm -rf /")'), ["rm -rf /"])
+        self.assertIn("rm -rf /", _cmdscan.program_commands('subprocess.run(["rm", "-rf", "/"])'))
+        self.assertIn("rm -rf /", _cmdscan.program_commands("system 'rm', '-rf', '/'"))
+        self.assertEqual(_cmdscan.program_commands("`rm -rf /`"), ["rm -rf /"])
+        self.assertEqual(_cmdscan.program_commands('os.system("cd /; rm -rf *")'), ["cd /; rm -rf *"])
+
+    def test_a_program_that_runs_no_command_hands_none(self):
+        self.assertEqual(_cmdscan.program_commands('print("rm -rf /")'), [])
+        self.assertEqual(_cmdscan.program_commands(""), [])
+
+    def test_the_search_is_linear_in_hostile_text(self):
+        for text in ("system(" + '"a",' * 30000, 'system("' + "\\" * 50000, "system(" + "'\"" * 30000, "system(`" + "x" * 100000):
+            start = time.perf_counter()
+            _cmdscan.program_commands(text)
+            self.assertLess(time.perf_counter() - start, 2.0)
+
+
+class GitStashTests(unittest.TestCase):
+    """N-4: the parts of a `git stash` that stashes, for Rule C at the project root."""
+
+    def test_the_stashing_forms_and_their_pathspecs(self):
+        self.assertEqual(_cmdscan.git_stash_parts(["stash", "-u", "-m", "wip"]), ([], [], ["-u", "-m"]))
+        self.assertEqual(_cmdscan.git_stash_parts(["stash", "push", "--all", "--", "src"]), (["src"], [], ["--all"]))
+        self.assertEqual(_cmdscan.git_stash_parts(["stash", "save", "-a", "message", "words"]), ([], [], ["-a"]))
+        self.assertEqual(_cmdscan.git_stash_parts(["-C", "x", "stash"]), ([], ["x"], []))
+
+    def test_other_stash_subcommands_and_git_commands_are_none(self):
+        for argv in (["stash", "pop"], ["stash", "list"], ["stash", "apply"], ["status"], []):
+            with self.subTest(argv=argv):
+                self.assertIsNone(_cmdscan.git_stash_parts(argv))
+
+    def test_a_push_option_value_is_not_a_refspec(self):
+        self.assertEqual([a.text for a in _cmdscan.git_parts(["push", "-f", "-o", "ci.skip", "origin"])[1]], ["origin"])
+
 
 
 # patch and git apply write the files their diff names, unless they only check.

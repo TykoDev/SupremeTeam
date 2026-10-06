@@ -36,7 +36,7 @@ The path policy is `../../save-ownership.yaml`; admiral never writes a core run
 file by hand and never creates a path outside its declared classes.
 
 **On delegation** to any sub-orchestrator:
-1. Checkpoint through `session-memory` (`python skills/harness/hooks/save_run.py checkpoint --run-id {run-id} --owner admiral --expect-revision <n> --set phase_state=<PHASE>_ACTIVE --set delegated_to=<lead>`).
+1. Checkpoint through `session-memory` (`python skills/harness/hooks/save_run.py checkpoint --run-id {run-id} --owner admiral --expect-revision <n> --set phase_state=<PHASE>_ACTIVE --set delegated_to=<lead> --next-action "<lead> returns the <phase> package for <boundary>"`). Pass `--next-action` on every delegation checkpoint: left out, the run keeps the previous stage's next action and a resume reads a stale one.
    **`--owner` is the lock holder, not the delegate.** `save_run.py` refuses any operation whose `--owner` differs from the lock's owner (`lock is owned by 'admiral', not '<lead>'`), and admiral holds the lock from `create` onward — so at the first delegation, and at every later one, `--owner <lead>` is refused every time. Delegation does not transfer the lock: admiral keeps it for the whole run, which is what makes the session pin and the rewind boundary coherent. Record the delegate as ordinary state with `--set` instead. `active_owner` is reserved and always reflects the lock holder, so `--set active_owner=` is refused too.
    The checkpoint publishes `_state.md`, `_lock.md`, and `_latest.md` atomically and appends a `checkpoint` event to `_audit-trail.md`.
 2. Include the canonical `### Save Context` block (below) in the delegation prompt.
@@ -52,7 +52,7 @@ file by hand and never creates a path outside its declared classes.
    - APPROVED: checkpoint into the next active state and advance to the next stage.
    - REVISE: checkpoint into the gate-revise state and forward the findings to the same sub-orchestrator.
    - ESCALATE: `save_run.py checkpoint --run-id {run-id} --owner admiral --expect-revision <n> --set phase_state=DISPUTED_AWAITING_USER --next-action "<dispute>"` and freeze advancement. Checkpoint, not `block`: the dispute is awaiting a user decision, so the run keeps the session pin, where `block` would release the lock and end the run. `block` also takes no `--reason` — that flag belongs to `recover`.
-3. Every checkpoint refreshes `_latest.md` and appends the verdict to `_audit-trail.md`; neither file is written by hand.
+3. Every checkpoint refreshes `_latest.md` and appends its own `checkpoint` event to `_audit-trail.md`; the verdict itself rides in the state as `--set` fields on that checkpoint (for example `--set gate_verdict=<boundary>:<verdict>`), never as a trail line. Neither file is written by hand.
 
 ### Save Context Delegation Template
 

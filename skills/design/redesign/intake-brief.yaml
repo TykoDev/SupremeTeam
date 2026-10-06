@@ -71,7 +71,7 @@ outputs:
   - one living design-system variant for the selected direction, with parity, rendered, and accessibility evidence
   - redesign package with comparison matrix, recommendation, and recorded decision
 severity_model: shared 4-tier (Critical | Major | Minor | Info)
-# Mirrors the eight contracts in SKILL.md "Execution Contract", in order.
+# Mirrors the eight contracts in SKILL.md "Required Contracts", in order.
 # Any change to that section must be reflected here in the same order.
 required_contracts:
   - Grill-Me Intake

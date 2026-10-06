@@ -446,6 +446,36 @@ class StateWriteTests(StateCase):
         self.assertEqual(len(history), 30)
         self.assertEqual(len({entry["sig"] for entry in history}), 30)
 
+    def test_fault_and_observation_counts_from_concurrent_processes_are_all_kept(self):
+        """H-8: the counters were an unlocked read-modify-write, so 200 concurrent fault writes recorded 23. Each update
+        now holds the shared advisory lock; the processes here wait long enough to take their turn, as the trajectory
+        test does, and the production bound is pinned below."""
+        script = (
+            "import sys; sys.path.insert(0, %r); import _state\n"
+            "_state.OBSERVATION_LOCK_WAIT = 120\n"
+            "for i in range(10):\n"
+            "    _state.record_fault('PreToolUse', ValueError())\n"
+            "    _state.record_observation('PreToolUse', {'session_id': 's'})\n" % str(HOOK_DIR)
+        )
+        env = kit.clean_env(self.root)
+        procs = [subprocess.Popen([sys.executable, "-c", script], env=env) for _ in range(8)]
+        for proc in procs:
+            self.assertEqual(proc.wait(timeout=120), 0)
+        record = self.observation("PreToolUse")
+        self.assertEqual(record["faults"], 80)
+        self.assertEqual(record["observed"]["count"], 80)
+
+    def test_a_hook_never_waits_longer_than_a_quarter_of_a_second_for_the_observation_lock(self):
+        self.assertGreater(_state.OBSERVATION_LOCK_WAIT, 0)
+        self.assertLessEqual(_state.OBSERVATION_LOCK_WAIT, 0.25)
+        with _fsutil.AdvisoryLock(self.root / ".harness-state" / "observations.lock", 5, create_dir=True) as other_writer:
+            self.assertTrue(other_writer.held)
+            started = time.monotonic()
+            _state.record_fault("PreToolUse", ValueError())
+            waited = time.monotonic() - started
+        self.assertEqual(self.observation("PreToolUse")["faults"], 1, "without the lock the fault is still counted")
+        self.assertLess(waited, 5, "the count gave up on a lock another writer held, instead of waiting for it")
+
     def test_a_hook_never_waits_longer_than_a_quarter_of_a_second_for_the_trajectory_lock(self):
         """The wait that test raises stays short in production: a hook never holds up the host, and a lock it cannot get is
         not a reason to drop the step it is recording."""

@@ -2,8 +2,8 @@
 
 Five passes, each rendered in the full packet shape `../SKILL.md` mandates:
 Outcome, Evidence, Findings, Open risks, Next action, Revision, in that order and
-with no verdict, because this lens owns no gate — `cso` issues the
-`security-review` verdict (`../../../execution-contract.md`, clause 6). The graded
+with no verdict, because this lens owns no gate — the gatekeeper at the boundary
+issues it (`../../../execution-contract.md`, clause 6). The graded
 passes carry the shape too, not just the clean one: the attacker model and the
 probe envelope live in the Outcome and Evidence lines, and a chain reported
 without them is a claim with no stated reach. Severities are the shared four
@@ -20,12 +20,12 @@ skipped when a fix opens a boundary that was never scoped.
 
 **Output:**
 - Outcome: mr-robot, `penetration-review` stage, r2, 2 findings: 1 Critical, 0 Major, 1 Minor, 0 Info. Attacker model: unauthenticated external, holding a revoked invitation link.
-- Evidence: invitation creation, the acceptance endpoint, and the tenant-assignment step traced from the public route through to the membership write; the token's issuance and revocation paths read against each other. No active probes were run at this stage, so `denial_path_evidence` carries `static analysis only - active probes not authorized` as the `reason` of an applicability record `{applicable: false, reason, scope, decided_by}`, never as a bare string.
+- Evidence: invitation creation, the acceptance endpoint, and the tenant-assignment step traced from the public route through to the membership write; the token's issuance and revocation paths read against each other. No active probes were run at this stage, and the packet says so. It writes no evidence key: at `review-to-delivery` `executed_probes` belongs to `code-chief`, and `denial_path_evidence` exists only at `security-review`, where this lens owns it at the `adversarial-probe` stage.
 - Findings:
   - `MR-01` | Critical | public acceptance endpoint → reused invitation token → missing tenant re-check → tenant membership | confirmed | a holder of a revoked link joins the wrong tenant; blast radius is one tenant's data per stale link | bind the token to tenant and inviter state at acceptance, and invalidate previously issued links on role change.
   - `MR-02` | Minor | acceptance endpoint error path → invite-id enumeration | confirmed | the error distinguishes "unknown invite" from "expired invite", which narrows an enumeration attempt but closes no chain on its own | return one indistinguishable response for both cases.
 - Open risks: whether a revoked link survives a role change is read from the revocation code rather than observed, because no probe window was authorized; one executed denial-path run against the acceptance endpoint would settle it.
-- Next action: `review/cso` decides whether `MR-01` warrants an authorized probe window before the gate.
+- Next action: `review/code-chief` carries `MR-01` into `findings` and routes it to the change owner; whether a probe window opens is the target owner's decision, not this lens's or `code-chief`'s.
 - Revision: r2.
 
 ## Example 2
@@ -60,7 +60,7 @@ skipped when a fix opens a boundary that was never scoped.
 **User request:** think like an attacker about the new webhook receiver
 
 **Output:**
-- Outcome: mr-robot clean — 0 reachable chains across the receiver, signature verification, and the dispatch path, attacker model: unauthenticated external with the published endpoint and no valid signing key.
+- Outcome: mr-robot clean, `adversarial-probe` stage — 0 reachable chains across the receiver, signature verification, and the dispatch path, attacker model: unauthenticated external with the published endpoint and no valid signing key.
 - Evidence: four entry points enumerated and worked — unsigned delivery, replayed delivery, oversized body, and forged source host; signature verification is constant-time and precedes parsing; the dispatch path holds no privileged transition. Active probes were not authorized for this stage, so `denial_path_evidence` carries `static analysis only - active probes not authorized` as the `reason` of an applicability record `{applicable: false, reason, scope, decided_by}`, and no request was sent.
 - Findings: (none).
 - Open risks: the denial behavior is read from code rather than observed, and the assumed attacker model excludes an insider holding a valid signing key.
@@ -77,9 +77,9 @@ Continues Example 2.
 **Output:**
 - Outcome: mr-robot delta, r2 <- r1, 2 findings carried: 1 verified, 1 still conditional, plus one authorization gap recorded. Attacker model unchanged: unauthenticated external.
 - Evidence, and the envelope re-check that came before it: the r1 engagement authorized probing against the reset initiation and verification endpoints on the staging instance. The fix moved rate limiting behind a **new** edge service that was not in scope at r1, so authorization was re-checked before the round's first request rather than assumed to carry over — a boundary the fix introduced is a new target, whatever its purpose. The owner extended authorization to the two original endpoints on the same instance but not to the new edge service, so that boundary was not probed and `denial_path_evidence` records the sanctioned fallback `static analysis only - active probes not authorized` for it, scoped to that service alone.
-- **Re-probed, not re-argued**: the timing-equalization fix was verified by re-running the r1 enumeration probe class against the initiation endpoint and recording the new denial, not by reading the patch. Probe transcript at `security/evidence/probe-reset-enumeration-r2.log`, hashed into the manifest; the r1 transcript stays as lineage.
+- **Re-probed, not re-argued**: the timing-equalization fix was verified by re-running the r1 enumeration probe against the initiation endpoint and recording the new response, not by reading the patch. The re-run is one paired request, one known account and one unknown, the smallest set that can show a difference and all the envelope's one-per-class rate allows (`probe-protocol.md` §2). Probe transcript at `security/evidence/probe-reset-enumeration-r2.log`, hashed into the manifest; the r1 transcript stays as lineage.
 - Findings:
-  - `MR-03` | Major | reset initiation endpoint → response-timing difference → user enumeration | **verified** — the re-run measures no usable timing difference between known and unknown accounts across 500 paired requests; the work is queued behind a uniform response path. Same id, same severity, status `verified`.
+  - `MR-03` | Major | reset initiation endpoint → response-timing difference → user enumeration | **verified** — both requests of the pair return the same status, body, and queued acknowledgement, and the patched path enqueues before any account lookup, so no branch is left for timing to expose. A statistical timing comparison would need the repeated requests the rate rule forbids, so none is claimed; the verification rests on the identical responses and the removed branch. Same id, same severity, status `verified`.
   - `MR-04` | Major | verification endpoint → per-IP-only rate limit → credential stuffing | **conditional, unchanged** — the effective tier now lives in the unprobed edge service, so the missing link moved rather than closed. It returns under its original id and severity: a chain whose evidence became *less* reachable is not a chain that was fixed, and recording it as verified because the probe could not run would invert the meaning of the grade.
 - Open risks: the whole of `MR-04` now depends on a boundary this round was not authorized to probe. Either authorization for the edge service or its deployed limiter configuration settles it; until then the conditional stands with its reason named.
 - Next action: `cso` decides whether to obtain probe authorization for the edge service inside this cycle or carry `MR-04` into the verdict as a conditional with its stated gap. Cycle 1 of a `cycle_cap` of 2 is spent.

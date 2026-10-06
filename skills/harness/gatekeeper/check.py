@@ -78,7 +78,7 @@ for _path in (SKILLS_ROOT / "scripts", Path(__file__).resolve().parent):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from _gatecheck import DEFAULT_BLOCKED_PHRASES, compile_blocked_phrases  # noqa: E402
+from _gatecheck import DEFAULT_BLOCKED_PHRASES, compile_blocked_phrases, is_blank_file  # noqa: E402
 from data_formats import DataFormatError, content_sha256, load_data  # noqa: E402
 
 SUPPORTED_MANIFEST_SCHEMAS = {1, 2}
@@ -295,6 +295,8 @@ class Package:
         self.root, self.root_kind, self.run_dir, self.project_root = self._evidence_root()
         self.artifact_hashes: dict[str, str] = {}
         self.hashed_ok: set[str] = set()
+        #: Hashed artifacts that are zero bytes or whitespace only.
+        self.blank_artifacts: set[str] = set()
 
     # ------------------------------------------------------------- identity
     def _schema_version(self) -> int:
@@ -419,6 +421,8 @@ class Package:
             if not candidate.is_file():
                 self.failures.append(f"missing artifact: {relative}")
                 continue
+            if is_blank_file(candidate):
+                self.blank_artifacts.add(relative)
             if not is_sha256(expected):
                 self.failures.append(f"invalid artifact digest: {relative}")
             elif digest(candidate) != expected.lower():
@@ -524,6 +528,7 @@ class Package:
                         self.failures.append(f"evidence references defective artifact: {key} -> {item}")
             if key in artifact_keys and not any(item in self.artifact_hashes for item in path_refs):
                 self.failures.append(f"evidence not artifact-backed: {key}")
+            self.check_blank_references(key, types.get(key), value)
             if self.schema >= 2 and key in types:
                 self.check_typed(key, types[key], value)
         if self.schema >= 2:
@@ -531,6 +536,18 @@ class Package:
                 if types.get(key) == "selection":
                     self.check_selection_dependencies(key)
         return missing
+
+    def check_blank_references(self, key: str, kind: str | None, value: object) -> None:
+        """An empty or whitespace-only file is no evidence for a key that names it.
+
+        A correct hash of nothing proves nothing. The one exception is a scan
+        record: its artifacts are the scanner's raw stdout and stderr, and a
+        scanner that exits 0 in silence leaves them empty, while the record
+        itself carries the command, the exit code and the inputs it bound."""
+        if kind == "scan" or not self.blank_artifacts:
+            return
+        for ref in sorted({item for item in deep_strings(value) if item in self.blank_artifacts}):
+            self.failures.append(f"empty artifact: {key} -> {ref}")
 
     # ---------------------------------------------------------------- typed
     def check_typed(self, key: str, kind: str, value: object) -> None:
@@ -851,11 +868,23 @@ class Package:
             self.failures.append(f"{key} must be a findings record with an items list at schema 2")
             return
         policy = self.spec.get("finding_policy", {})
+        seen: dict[str, int] = {}
         for index, item in enumerate(items):
             label = f"{key}[{index}]"
             if not isinstance(item, dict):
                 self.failures.append(f"{label} must be a mapping")
                 continue
+            # evidence_type_rules.findings: every item carries an id, and an id
+            # names one finding, so a REVISE and a later delta can point at it.
+            ident = item.get("id")
+            if not filled(ident):
+                self.failures.append(f"{label} requires id")
+            else:
+                ident = ident.strip()
+                if ident in seen:
+                    self.failures.append(f"{label} duplicate id {ident} (first at {key}[{seen[ident]}])")
+                else:
+                    seen[ident] = index
             severity = item.get("severity")
             status = item.get("status")
             if not isinstance(severity, str) or severity not in FINDING_SEVERITIES:
@@ -967,6 +996,7 @@ class Package:
         revisions = data.get("revisions", [])
         if not isinstance(revisions, list):
             raise Engine("revisions must be a JSON array")
+        self.check_revision_types(revisions)
         distinct = set(map(str, revisions))
         mixed = len(distinct) > 1
         if mixed:
@@ -992,6 +1022,27 @@ class Package:
             if owner is None:
                 self.failures.append("missing owner (required at schema 2)")
         return mixed, distinct
+
+    def check_revision_types(self, revisions: list) -> None:
+        """A revision is a string or an integer, and one manifest uses one of them.
+
+        ``str`` folds ``1`` and ``"1"`` into one value, so without this a manifest
+        could mix them, and a resubmission that only retypes its revision would
+        read as the same revision under a different fingerprint."""
+        values = [("revisions", item) for item in revisions]
+        for field in ("revision", "verdict_revision"):
+            if self.data.get(field) is not None:
+                values.append((field, self.data.get(field)))
+        kinds: dict[str, list[str]] = {}
+        for field, value in values:
+            if isinstance(value, bool) or not isinstance(value, (str, int)):
+                self.failures.append(f"{field} value {value!r} must be a string or an integer")
+                continue
+            kinds.setdefault("integer" if isinstance(value, int) else "string", []).append(field)
+        if len(kinds) > 1:
+            self.failures.append(
+                "revision values mix integer and string types: "
+                + "; ".join(f"{kind}: {', '.join(sorted(set(fields)))}" for kind, fields in sorted(kinds.items())))
 
     # -------------------------------------------------------------- scanning
     def scan_text(self, scan_files: list[Path]) -> None:
@@ -1090,6 +1141,19 @@ def same_content(path: Path, other: Path) -> bool:
         return False
 
 
+def identity_token(value: object) -> object:
+    """A submission id or revision as compared across records: an integer and its
+    decimal string are one token, surrounding blanks are ignored, anything else
+    (None, a flag, a list) is compared as itself."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        return value.strip()
+    return value
+
+
 def prior_check(prior_path: Path, data: dict, current_fingerprint: str, spec_digest: str,
                 current_digests: dict[str, str] | None = None
                 ) -> tuple[bool, bool | None, list[str] | None, list[str] | None, object]:
@@ -1104,11 +1168,16 @@ def prior_check(prior_path: Path, data: dict, current_fingerprint: str, spec_dig
         changed = sorted(k for k, v in current_digests.items() if prior_digests.get(k) != v)
         unchanged = sorted(k for k, v in current_digests.items() if prior_digests.get(k) == v)
     prior_spec = prior.get("gate_spec_digest")
-    same = prior.get("submission_id") == data.get("submission_id") and prior.get("revision") == data.get("revision")
+    # Identity is compared as a token, so a revision or submission id that was
+    # only retyped (1 -> "1") or re-spaced still reads as the same submission and
+    # is held to the fingerprint below, never waved through as a new one.
+    same = (identity_token(prior.get("submission_id")) == identity_token(data.get("submission_id"))
+            and identity_token(prior.get("revision")) == identity_token(data.get("revision")))
     if not same:
         return False, None, changed, unchanged, prior_spec
     prior_fingerprint = prior.get("package_fingerprint") or fingerprint(prior)
-    drift = prior_fingerprint != current_fingerprint
+    retyped = any(type(prior.get(field)) is not type(data.get(field)) for field in ("submission_id", "revision"))
+    drift = retyped or prior_fingerprint != current_fingerprint
     prior_boundary = prior.get("boundary")
     reusable = (not drift) and prior_spec == spec_digest and (prior_boundary in (None, data.get("boundary")) )
     return drift, reusable, changed, unchanged, prior_spec

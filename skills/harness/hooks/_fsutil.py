@@ -66,6 +66,45 @@ def _fsync(handle) -> None:
         pass  # a file system without fsync still got the bytes
 
 
+def _fsync_directory(directory: Path) -> None:
+    """Flush the directory entry a replace changed, so the new name survives a power cut as the bytes do.
+
+    POSIX only: Windows cannot open a directory as a file, and a file system that refuses either step still has the
+    replaced file, so every failure here is ignored."""
+    if os.name == "nt":
+        return
+    try:
+        fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def _overwrite_in_place(path: Path, payload: bytes) -> None:
+    """Write ``payload`` over ``path`` without truncating it first: the bytes go in from the start, and only then is the
+    file cut to their length. A write that fails (a full disk, an interrupt) leaves the old content in place instead of an
+    empty or half-written file, so the one non-atomic path never makes a reader see less than the old record. The target
+    is opened without following a link, as the staging file is, so a link planted at the name is not written through."""
+    fd = os.open(path, os.O_WRONLY | _NOFOLLOW | _BINARY)
+    try:
+        view = memoryview(payload)
+        while view:
+            written = os.write(fd, view)
+            view = view[written:]
+        os.ftruncate(fd, len(payload))
+        try:
+            os.fsync(fd)
+        except OSError:
+            pass
+    finally:
+        os.close(fd)
+
+
 def atomic_write(path: Path, data: "str | bytes", *, mode: "int | None" = None, notes: "list[str] | None" = None,
                  in_place: bool = True) -> None:
     """Replace ``path`` with ``data`` in one step, or leave it as it was; raises ``OSError``.
@@ -76,8 +115,12 @@ def atomic_write(path: Path, data: "str | bytes", *, mode: "int | None" = None, 
     removed again on any failure, an interrupt included. A target whose ACL denies
     the rename (a file another sandbox user created) is overwritten in place after
     the retries, and that non-atomic step is appended to ``notes`` so it is visible
-    rather than silent. ``in_place=False`` raises the denial instead and leaves the
-    target untouched, for a file that has to be replaced whole or not at all.
+    rather than silent. That overwrite never truncates before it writes: the new
+    bytes go in over the old ones and only then is the file cut to length, so a
+    failed write leaves the old content rather than an empty file. ``in_place=False``
+    raises the denial instead and leaves the target untouched, for a file that has
+    to be replaced whole or not at all. After a replace the directory is flushed
+    too (POSIX), so the new name is as durable as the bytes behind it.
 
     ``mode`` None leaves the permission bits to the process umask. An explicit mode
     is the one the file ends with, applied again after creation because the umask can
@@ -103,16 +146,15 @@ def atomic_write(path: Path, data: "str | bytes", *, mode: "int | None" = None, 
         except PermissionError as exc:
             if not in_place or not path.exists():
                 raise
-            with open(path, "wb") as handle:
-                handle.write(payload)
-                handle.flush()
-                _fsync(handle)
+            _overwrite_in_place(path, payload)
             try:
                 tmp.unlink()
             except OSError:
                 pass
             if notes is not None:
                 notes.append(f"{path.name}: replaced in place (target ACL denies rename: {exc.__class__.__name__})")
+        else:
+            _fsync_directory(path.parent)
     except BaseException:
         try:
             tmp.unlink()

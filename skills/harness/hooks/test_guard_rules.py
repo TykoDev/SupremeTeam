@@ -113,10 +113,16 @@ RULE_A = (
       ("Bash", "git push origin +HEAD:refs/heads/main"), ("Bash", "git push -uf origin main"),
       ("Bash", "git -C repo push --force origin main"), ("Bash", "git -c k=v push -f origin main"),
       ("Bash", "git --no-pager push -f origin main"), ("Bash", "sh -c \"git push -f origin main\""),
-      ("Bash", "git push \\\n --force origin main"), ("Bash", "xargs git push -f origin main")],
+      ("Bash", "git push \\\n --force origin main"), ("Bash", "xargs git push -f origin main"),
+      # H-6: a forced push that names no branch lands on the current or upstream one, which may be main; --mirror
+      # rewrites or deletes every remote ref.
+      ("Bash", "git push -f"), ("Bash", "git push --force"), ("Bash", "git push --force origin"), ("Bash", "git push -f origin HEAD"),
+      ("Bash", "git push --force-with-lease"), ("Bash", "git push --all -f origin"), ("Bash", "git push --mirror"),
+      ("Bash", "git push --mirror origin"), ("Bash", "git push -f -o ci.skip origin"), ("Bash", "echo 'git push -f' | sh")],
      [("Bash", "git push origin feature"), ("Bash", "git push --force origin feature"), ("Bash", "git push origin main"),
       ("Bash", "git push -f origin main-thing"), ("Bash", "git push origin +feature"), ("Bash", "git status"),
-      ("Bash", "git push -u origin feature/x")]),
+      ("Bash", "git push -u origin feature/x"), ("Bash", "git push"), ("Bash", "git push origin"),
+      ("Bash", "git push -f origin HEAD:feature"), ("Bash", "git push -f -o ci.skip origin feature"), ("Bash", "git push --all origin")]),
 )
 
 # The ordinary spellings of a root or home wipe that passed (SEC-05).
@@ -170,6 +176,29 @@ class DangerousRuleTests(GuardCase):
         self.check(("rm -rf /", "sh -c 'rm -rf ~/'", "git push -f origin main"), deny=False)
         self.guard({"allow_dangerous": dict(grant, expires_at=_in_minutes(10 * 24 * 60))})
         self.check(("rm -rf /",), deny=True)
+
+    def test_a_destructive_command_a_pipe_or_a_launcher_hands_a_shell_is_denied(self):
+        """H-5: Rule A read the line's own commands only, so these passed while `bash -c 'rm -rf /'` was denied."""
+        self.check(("echo 'rm -rf /' | sh", "echo rm -rf / | bash", "printf 'rm -rf ~/\\n' | bash -s", "printf 'cd /\\nrm -rf *' | sh",
+                    "printf '%s -rf %s' rm / | sudo sh", "echo 'mkfs.ext4 /dev/sda1' | zsh", "watch 'rm -rf /'",
+                    "watch -n 5 'rm -rf ~/*'", "echo 'Remove-Item -Recurse -Force C:\\' | pwsh -Command -"),
+                   deny=True, fragment="allow-dangerous")
+
+    def test_a_destructive_command_an_inline_program_runs_is_denied(self):
+        """H-5: the command line handed to system(), popen, exec, subprocess or child_process is read like a shell line."""
+        self.check(("perl -e 'system(\"rm -rf /\")'", "perl -e 'system \"rm\", \"-rf\", \"/\"'", "perl -e '`rm -rf /`'",
+                    "python3 -c 'import os; os.system(\"rm -rf /\")'", "python3 -c 'import subprocess; subprocess.run([\"rm\", \"-rf\", \"/\"])'",
+                    "python -c \"import os; os.popen('rm -rf ~/')\"", "node -e 'require(\"child_process\").execSync(\"rm -rf /\")'",
+                    "ruby -e 'system(\"dd if=/dev/zero of=/dev/sda\")'", "awk 'BEGIN { system(\"rm -rf /\") }'",
+                    "python3 -c 'import os; os.system(\"git push --force origin main\")'",
+                    "bash -c \"python3 -c 'import os; os.system(\\\"rm -rf /\\\")'\""),
+                   deny=True, fragment="allow-dangerous")
+
+    def test_a_mention_or_a_harmless_program_is_not_denied(self):
+        self.check(("echo 'rm -rf /'", "echo \"rm -rf /\" > notes.txt", "echo 'rm -rf build' | sh", "watch 'ls /'",
+                    "perl -e 'print \"rm -rf /\"'", "python3 -c 'import os; os.system(\"ls /\")'",
+                    "python3 -c 'print(\"rm -rf /\")'", "node -e 'console.log(\"rm -rf /\")'",
+                    "python3 -c 'import subprocess; subprocess.run([\"rm\", \"-rf\", \"build\"])'"), deny=False)
 
     def test_the_wipe_rules_read_a_quoted_or_spaced_target_the_way_the_shell_does(self):
         self.check(("rm -rf \"/\"", "rm -rf '/'", "rm -rf \"$HOME\"", "rm -rf ~/ ", "rm\t-rf\t/"), deny=True)
@@ -359,7 +388,7 @@ class FrozenBoundaryTests(GuardCase):
                 self.assertTrue(kit.denied(self.edit(path)))
         patch = "*** Begin Patch\n*** Add File: secrets/token.txt\n+x\n*** End Patch"
         self.assertTrue(kit.denied(kit.decide({"tool_name": "apply_patch", "tool_input": {"patch": patch}}, self.root)))
-        self.check(("echo x > secrets/t", "echo x > app/secrets/t", "cp k secrets/"), deny=True, fragment="frozen boundary")
+        self.check(("echo x > secrets/t", "echo x > app/secrets/t", "cp k secrets/"), deny=True, fragment="blocked boundary")
         self.check(("echo x > mysecrets/t", "cat secrets/token.txt", "grep k secrets/token.txt 2>/dev/null"), deny=False)
         self.assertEqual(self.edit("mysecrets/token.txt"), "")
 
@@ -368,7 +397,7 @@ class FrozenBoundaryTests(GuardCase):
         self.guard({"blocked_globs": [{"glob": "**/*.pem", "owner": "sec"}, {"glob": "*.tf", "owner": "ops"},
                                       {"glob": "**/.env*", "owner": "sec"}]})
         self.check(("cp k.pem certs/x.pem", "echo x > server.pem", "python -c \"open('certs/a.pem','w')\"", "echo x > main.tf",
-                    "echo K=1 > app/.env.local", "tee .env < in"), deny=True, fragment="frozen boundary")
+                    "echo K=1 > app/.env.local", "tee .env < in"), deny=True, fragment="blocked boundary")
         self.check(("cat certs/a.pem", "echo x > a.txt", "echo x > main.py"), deny=False)
 
     def test_a_blocked_path_stays_readable_by_every_tool(self):
@@ -464,8 +493,8 @@ class LaunchedWriterTests(GuardCase):
 
     def test_a_block_refuses_the_same_writers_that_name_a_blocked_path(self):
         self.guard(self.BLOCK)
-        self.each(LAUNCHED_WRITERS, BLOCKED_SPELLINGS, deny=True, fragment="frozen boundary (**/secrets/**)")
-        self.each(LAUNCHED_WRITERS_PS, BLOCKED_SPELLINGS, deny=True, tool="PowerShell", fragment="frozen boundary (**/secrets/**)")
+        self.each(LAUNCHED_WRITERS, BLOCKED_SPELLINGS, deny=True, fragment="blocked boundary (**/secrets/**)")
+        self.each(LAUNCHED_WRITERS_PS, BLOCKED_SPELLINGS, deny=True, tool="PowerShell", fragment="blocked boundary (**/secrets/**)")
 
     def test_the_same_writers_pass_when_they_name_no_protected_path(self):
         for state in (FROZEN, self.BLOCK, {**FROZEN, **self.BLOCK}):
@@ -1513,6 +1542,43 @@ class RootRecordReachTests(GuardCase):
                     "cp -r $SRC/. .", "rsync -a host:/srv/x/ ./", "cp -r missing/. ."), deny=True, fragment="project root")
         self.check(("rsync -a --delete --exclude skillset-saves site/ ./", "rsync -a site/ ./", "cp -r site/. .", "cp -r site .",
                     "rsync -a --delete site/ public/"), deny=False)
+
+    def test_find_at_the_root_reaches_the_records_when_its_tests_can_select_one(self):
+        """N-7: `find . -name guard-state.json -delete` at the root was not read; a `find` aimed above the records is now
+        judged by whether its name and path tests could select a record for a removing action."""
+        kit.write_guard(self.root, {})
+        self.check(("find . -name guard-state.json -delete", "find . -iname GUARD-STATE.JSON -delete", "find . -delete",
+                    "find . -type f -delete", "find . -name '_state.md' -delete", "find . -path './skillset-saves/*' -delete",
+                    "find . -name '*.md' -exec rm {} +", "find . -name '*.json' -exec rm -f {} \\;", "find . -not -name '*.pyc' -delete",
+                    "find . -name '*.pyc' -o -type f -delete", "find . -regex '.*/_state\\.md' -delete", "find .. -name '_state.md' -delete",
+                    "find . \\( -name '*.pyc' -o -name guard-state.json \\) -delete", "find . -name '_*' -exec sh -c 'rm \"$1\"' _ {} \\;",
+                    f"find {self.root} -name guard-state.json -delete", "cd src && find .. -name guard-state.json -delete"),
+                   deny=True, fragment="project root")
+        self.check(("find . -name '*.pyc' -delete", "find . -type d -name __pycache__ -exec rm -rf {} +", "find . -name guard-state.json",
+                    "find . -name '*.json' -exec cat {} +", "find . -name '*.tmp' -print -delete", "find src -delete",
+                    "find . -path ./build -prune -o -name '*.o' -delete"), deny=False)
+
+    def test_find_at_the_root_is_not_refused_where_no_record_exists(self):
+        import shutil
+
+        shutil.rmtree(self.root / "skillset-saves")
+        self.check(("find . -delete", "find . -name '_state.md' -delete"), deny=False)
+
+    def test_git_stash_with_untracked_files_reaches_the_records(self):
+        """N-4: `git stash --all` stashes the ignored record directories away, and `-u` the ones git does not ignore."""
+        kit.write_guard(self.root, {})
+        self.check(("git stash -u", "git stash --include-untracked", "git stash --all", "git stash -a", "git stash push -u -m wip",
+                    "git stash push --all -m 'wip' -- .", "git stash save -u wip", "git -C src stash -u", "cd src && git stash --all",
+                    "git stash push -u -- skillset-saves", "git stash push -u -- ':(glob)**'", "git stash --inc"),
+                   deny=True, fragment="project root")
+        self.check(("git stash", "git stash push -m wip", "git stash pop", "git stash list", "git stash push -u -- src",
+                    "git stash apply", "git stash -k"), deny=False)
+
+    def test_git_stash_u_leaves_an_ignored_record_directory_alone_but_all_does_not(self):
+        (self.root / ".gitignore").write_text(".harness-state/\nskillset-saves/\n", encoding="utf-8")
+        kit.write_guard(self.root, {})
+        self.check(("git stash -u", "git stash push --include-untracked -- .harness-state"), deny=False)
+        self.check(("git stash --all", "git stash -a -- .harness-state"), deny=True, fragment="project root")
 
     def test_nothing_is_refused_where_no_record_exists(self):
         import shutil

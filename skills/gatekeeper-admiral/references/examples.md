@@ -14,7 +14,7 @@ Seven submissions across six of the ten boundaries.
 
 1. `build-to-review` — batched `REVISE` to three owners
 2. `build-to-review` — engine failure, `ESCALATE`
-3. `review-to-delivery` — `APPROVED` with a reusable prior verdict
+3. `review-to-delivery` — `APPROVED`, judged in full over the phase gate's package
 4. `design-to-build` — `APPROVED` on a shadcn/ui design package
 5. `redesign-review` — `REVISE` on a refused waiver
 6. `taste-review` — `REVISE` split between two owners
@@ -60,14 +60,14 @@ an archive step.
 - Next action: restore `../../gates.yaml` from the canonical source, confirm the gate spec digest, and resubmit unchanged. The gate spec is never bypassed to keep a run moving.
 - Revision: 5.
 
-## Example 3 — `review-to-delivery`, `APPROVED` with a reusable prior verdict
+## Example 3 — `review-to-delivery`, `APPROVED`, judged in full over the phase gate's package
 
 **Submission:** `admiral` routes the consolidated review package. Save Context:
 run `r-2214`, phase `review`, submission `r-2214-v2`, revision 7, owner
 `code-chief`. `--prior review/verdict_review-to-delivery.json` from the phase gate.
 
 **Validators:**
-- Boundary validator: exit 0, `prior_reusable: true` — same boundary, submission, revision, package fingerprint, and gate spec digest.
+- Boundary validator: exit 0, `prior_reusable: true` — same boundary, submission, revision, package fingerprint, and gate spec digest. That is the expected result against the phase gate's record, because `gatekeeper-code` judged this same package: it shows nothing drifted since, and nothing more. The prior is `gatekeeper-code`'s verdict, not this gate's, so it is not reused and `changed_evidence` does not limit the pass; all six keys are judged below.
 - Package-shape validator on `delivery/`: `STRUCTURE_OK`.
 
 **Output:**
@@ -76,7 +76,7 @@ run `r-2214`, phase `review`, submission `r-2214-v2`, revision 7, owner
 - Evidence: all six keys resolve. `executed_probes` and `rendered_verification` name hashed artifacts, and `rendered_verification`'s `inputs` bind by sha256 to the rendered source, so no input-hash drift is present. `review_verdict` is APPROVED with no challenge record attached.
 - Open risks: `residual_risk` records one deferred Major with `design-qa` as owner and a reopen trigger, which the finding policy admits.
 - Next action: hand off to delivery; the cross-stage record lands beside the phase record as `review/verdict_review-to-delivery.cross-stage.json`.
-- Revision: 7. Reuse this verdict only while the package fingerprint holds.
+- Revision: 7. This cross-stage record, not the phase gate's, is the one a later pass of this gate may reuse, and only while the package fingerprint holds.
 
 ## Example 4 — `design-to-build`, `APPROVED` on a shadcn/ui design package
 

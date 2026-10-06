@@ -53,9 +53,10 @@ reference, the exact revision, and the timestamp. `../../gates.yaml` sanctions *
 value for any of the five, so no applicability record waives any of them — this boundary has no
 waivable key at all, which is why a missing value is always a repair and never a note.
 
-`schema_version: 2` also requires `submission_id` alongside `boundary`, `owner`, `run_id` inside
-a run, and a `revision` matching the single `revisions` value; the checker reports a missing one
-as `missing submission_id`. Advance both `submission_id` and `revision` on every resubmission.
+Every manifest, at any schema, needs `submission_id` and a `revision` matching the single
+`revisions` value; the checker reports a missing one as `missing submission_id` or
+`missing revision`. `schema_version: 2` adds `boundary`, `owner`, and `run_id` inside a run.
+Advance both `submission_id` and `revision` on every resubmission.
 
 ## 2. Which Keys `ship` May Fill, and Which It May Not
 
@@ -112,7 +113,12 @@ approved slowly.
 
 `../../pipelines.yaml` runs the `setup` stage only `when: first deployment`, so on a repeat
 release no stage produces `deploy_config` or `rollback_plan`, and neither key has a sanctioned
-fallback. The boundary stays satisfiable by construction rather than by accident:
+fallback. **The checker does not yet admit a carry-forward (open finding P-1).** A manifest that
+points either key at the artifact an earlier run persisted fails with `artifact references
+another run` (`evidence_rules.evidence_root`), so until P-1 is resolved a repeat release passes
+only by reopening the `setup` stage under `setup-deploy` for this run, which writes the two
+artifacts into this run's `release/artifacts/`. The intended shape, which the gate does not yet
+accept, is:
 
 1. The artifacts `setup-deploy` persisted on the first deployment are the durable source and
    carry forward unchanged.

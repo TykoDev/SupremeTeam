@@ -67,6 +67,6 @@ lands in the sequence above, so the two documents do not restate each other.
 ## Collaboration Notes
 
 - `review/code-chief` merges the adversarial packet with correctness, security, and merge-readiness findings at the `penetration-review` stage.
-- `review/cso` owns the `security` pipeline: it scopes the engagement, authorizes active probing, consumes `denial-path-evidence`, owns the remediation plan, and submits the package at `security-review`.
+- `review/cso` owns the `security` pipeline: it scopes the engagement and names the target, consumes `denial-path-evidence`, owns the remediation plan, and submits the package at `security-review`. It does not authorize active probing: the target's human owner does (`probe-protocol.md` §2), because the skill that benefits from the evidence cannot be the one that sanctions producing it.
 - `review/security-review` takes standalone defensive flaws handed back from the chain, and supplies the dependency and hardening findings that seed candidate exploit primitives.
 - `review/gatekeeper-code` verifies that exploit-chain evidence survives consolidation without being softened away.

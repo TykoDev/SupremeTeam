@@ -202,13 +202,29 @@ def _ps_recursive(argv) -> bool:
     return False
 
 
+# A push destination that names no branch: the current one, whichever it is.
+_CURRENT_BRANCH = frozenset({"HEAD", "@"})
+
+
 def _git_push_label(argv) -> "str | None":
+    """A push that rewrites or deletes a protected branch, or may: one aimed at ``main``/``master`` with a force flag, a
+    ``+`` refspec or a delete; ``--mirror``, which makes every remote ref match the local ones and deletes the rest; and a
+    forced push that names no branch (``git push -f``, ``git push --force origin``, ``-f origin HEAD``, ``--all -f``),
+    whose destination is the current or upstream branch, which may be ``main``. ``git push --force origin feature`` names
+    its branch and passes."""
     sub, operands, _, flags = _cmdscan.git_parts(argv)
     if sub != "push":
         return None
     force = any(f == "--force" or f.startswith("--force-with-lease") for f in flags) or any(
         not f.startswith("--") and "f" in f[1:] for f in flags)
     deleting = "--delete" in flags or any(not f.startswith("--") and "d" in f[1:] for f in flags)
+    if "--mirror" in flags:
+        return "mirror push (rewrites or deletes every remote ref, protected branches included)"
+    refspecs = operands[1:]
+    unnamed = not refspecs or "--all" in flags or "--branches" in flags or any(
+        operand.text.lstrip("+").split(":", 1)[0] in _CURRENT_BRANCH and ":" not in operand.text for operand in refspecs)
+    if force and unnamed:
+        return "force-push that names no branch (the current or upstream branch may be main/master)"
     for operand in operands:
         text = operand.text
         plus = text.startswith("+")
@@ -259,19 +275,44 @@ def _structural_label(command) -> "str | None":
     return None
 
 
-def _dangerous_label(call: "Call") -> "str | None":
-    text = call.command
-    label = _textual_dangerous(text)
-    if label:
-        return label
-    for command in call.analysis.commands:
-        label = _structural_label(command)
-        if label:
-            return label
-    for write in call.analysis.writes:
-        if _DEVICE.match(write.path):
-            return "redirect over a raw block device"
+# A word that a destructive rule needs, for the command lines an inline program runs: only those are analysed.
+_DESTRUCTIVE_WORD = re.compile(r"(?<![\w.-])(?:rm|find|git|chmod|mkfs[\w.]*|dd|format|remove-item|ri|rd|rmdir|del|erase)"
+                               r"(?![\w-])|/dev/", re.I)
+# How deep a program's command line is read for another program's (``python -c 'os.system("perl -e ...")'``).
+_PROGRAM_DEPTH = 3
+
+
+def _analysis_label(analysis, depth: int = 0) -> "str | None":
+    """The destructive rule a command line's analysis trips: its commands, those a launcher, a script block or a shell
+    fed by a literal ``echo`` runs (``watch 'rm -rf /'``, ``echo 'rm -rf /' | sh``), and the command lines an inline
+    program hands a shell (``perl -e 'system("rm -rf /")'``, ``python3 -c 'os.system("rm -rf /")'``)."""
+    for current in _analyses(analysis):
+        for command in current.commands:
+            label = _structural_label(command)
+            if label:
+                return label
+        for write in current.writes:
+            if _DEVICE.match(write.path):
+                return "redirect over a raw block device"
+        if depth >= _PROGRAM_DEPTH:
+            continue
+        for code in current.code:
+            commands = _cmdscan.program_commands(code)
+            if not commands:
+                continue
+            label = _textual_dangerous("\n".join(commands))
+            if label:
+                return label
+            for line in commands:
+                if _DESTRUCTIVE_WORD.search(line):
+                    label = _analysis_label(_cmdscan.analyse(line), depth + 1)
+                    if label:
+                        return label
     return None
+
+
+def _dangerous_label(call: "Call") -> "str | None":
+    return _textual_dangerous(call.command) or _analysis_label(call.analysis)
 
 
 def _dangerous_lifted(guard: dict) -> bool:
@@ -380,6 +421,9 @@ class Call:
         self._located: dict = {}
         self._shell_targets: dict = {}
         self._resolver = _paths.Resolver()
+        # Rule C's reading of a root-aimed ``find``: the record paths listed once per call, and how many it has tested.
+        self.record_paths: dict = {}
+        self.find_spent = 0
 
     @functools.cached_property
     def command(self) -> str:
@@ -578,6 +622,15 @@ def _frozen_boundaries(call: "Call") -> list:
     return [_paths.Boundary(glob, call.root) for glob in globs if isinstance(glob, str) and glob]
 
 
+def _boundary_kind(call: "Call", boundary) -> tuple:
+    """``(kind, lift)`` for the denial: a glob recorded in ``blocked_globs`` (and not also frozen) is a block."""
+    frozen = call.guard.get("frozen_globs") or []
+    blocked = call.guard.get("blocked_globs") or []
+    if boundary.glob in blocked and boundary.glob not in frozen:
+        return "blocked", "block"
+    return "frozen", "freeze"
+
+
 def rule_frozen(call: "Call") -> "str | None":
     """Rule B: a write into a frozen or blocked boundary is denied; a read never is."""
     boundaries = _frozen_boundaries(call)
@@ -587,8 +640,9 @@ def rule_frozen(call: "Call") -> "str | None":
         for target in call.edit_targets:
             for boundary in boundaries:
                 if boundary.matches(target):
-                    return (f"Blocked by harness Action Realization layer: target is inside a frozen "
-                            f"boundary ({_state.safe_text(boundary.glob)}). Lift the freeze via the unfreeze skill before editing here.")
+                    kind, lift = _boundary_kind(call, boundary)
+                    return (f"Blocked by harness Action Realization layer: target is inside a {kind} "
+                            f"boundary ({_state.safe_text(boundary.glob)}). Lift the {lift} via the unfreeze skill before editing here.")
         return None
     if not call.shell:
         return None
@@ -605,8 +659,9 @@ def rule_frozen(call: "Call") -> "str | None":
     else:
         hit = _mentioned([call.command], call, boundaries) if _textual_mutates(call.command) else None
     if hit:
+        kind, lift = _boundary_kind(call, hit)
         return (f"Blocked by harness Action Realization layer: a mutating command targets a "
-                f"frozen boundary ({_state.safe_text(hit.glob)}). Lift the freeze via the unfreeze skill before proceeding.")
+                f"{kind} boundary ({_state.safe_text(hit.glob)}). Lift the {lift} via the unfreeze skill before proceeding.")
     return None
 
 
@@ -735,16 +790,19 @@ def rule_read_only(call: "Call") -> "str | None":
             return _read_only_reason(records)
         return None
     analyses = list(_analyses(call.analysis))
+    # A command with a write it names no target for says so whichever write is refused first (`echo 'rm x' | sh` is read
+    # for the program the pipe carries, and the shell on the pipe is still a program the command does not hold).
+    reason = _read_only_reason(records) + (_UNNAMED_REASON if any(analysis.unnamed for analysis in analyses) else "")
     for analysis in analyses:
         dry = _dry_vias(analysis)
         for write, targets in call.shell_targets(strict=True, analysis=analysis):
             if write.via in dry:
                 continue
             if write.unresolved or any(not _paths.inside_allowed(target, allow, call.root, fold=fold) for target in targets):
-                return _read_only_reason(records)
+                return reason
         if _unscoped_git(analysis) or _installs_packages(analysis):
-            return _read_only_reason(records)
-    return _read_only_reason(records) + _UNNAMED_REASON if any(analysis.unnamed for analysis in analyses) else None
+            return reason
+    return reason if any(analysis.unnamed for analysis in analyses) else None
 
 
 # --- Rule C: single writers --------------------------------------------------------------------------
@@ -914,6 +972,241 @@ def _git_ignores(root: Path, home: str) -> bool:
     return False
 
 
+# What a record directory holds, below it: the files each single writer owns and the directories above them.
+_RUN_FILES = ("_state.md", "_lock.md", "_audit-trail.md", "_journal.json", "_history")
+_PREFERENCE_FILES = ("taste.json", "taste.md", "taste.journal.jsonl", "taste.lock", "_history")
+_LISTING_LIMIT = 256
+
+
+def _listed(directory: Path) -> list:
+    """Up to ``_LISTING_LIMIT`` entry names of ``directory`` (none when it cannot be read)."""
+    try:
+        return [entry.name for entry in itertools.islice(os.scandir(directory), _LISTING_LIMIT)]
+    except OSError:
+        return []
+
+
+def _record_paths(root: Path, home: str) -> list:
+    """The project-relative paths of ``home`` (a record directory) that a name or path test could single out: the
+    directory, every record file in it, the directories above them, each run (listed, bounded) and its history."""
+    if home == ".harness-state":
+        return [".harness-state", ".harness-state/guard-state.json"]
+    paths = ["skillset-saves", "skillset-saves/_latest.md", "skillset-saves/_write.lock", "skillset-saves/runs",
+             "skillset-saves/preferences", *(f"skillset-saves/preferences/{name}" for name in _PREFERENCE_FILES),
+             *(f"skillset-saves/preferences/_history/{name}" for name in _listed(root / home / "preferences" / "_history"))]
+    runs = root / home / "runs"
+    for run in ["run", *_listed(runs)]:
+        base = f"skillset-saves/runs/{run}"
+        paths += [base, *(f"{base}/{name}" for name in _RUN_FILES),
+                  *(f"{base}/_history/{name}" for name in ["entry", *_listed(runs / run / "_history")])]
+    return paths
+
+
+# ``find`` tests that take one argument, and the ones that take two; any other word starting with ``-`` takes none.
+_FIND_ONE = frozenset({"-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex", "-type", "-xtype",
+                       "-size", "-mtime", "-atime", "-ctime", "-mmin", "-amin", "-cmin", "-newer", "-anewer", "-cnewer",
+                       "-perm", "-user", "-group", "-uid", "-gid", "-links", "-inum", "-samefile", "-lname", "-ilname",
+                       "-fstype", "-used", "-context", "-printf", "-fprint", "-fprint0", "-fls", "-maxdepth", "-mindepth",
+                       "-regextype", "-files0-from"})
+_FIND_TWO = frozenset({"-fprintf"})
+_FIND_EXEC = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+# What ``-exec`` may run that removes or rewrites the file it is given, anywhere in its words (``sh -c 'rm "$1"' _ {}``).
+_FIND_REMOVER = re.compile(r"(?<![\w.-])(?:rm|unlink|shred|rmdir|mv|truncate)(?![\w-])")
+_EMACS_REGEX = re.compile(r"\\[(){}|]")
+_EITHER = frozenset({True, False})
+# How many record paths one call may test against ``find`` expressions. A command past it (thousands of root-aimed
+# ``find -delete`` in one line) is read as reaching the records rather than costing time without bound.
+_FIND_BUDGET = 100_000
+
+
+class _FindExpression:
+    """A ``find`` expression read for one question: may it remove a given path? Each node gives the values it may take
+    for that path and whether a removing action (``-delete``, ``-exec rm``) may run. Name and path tests are decided
+    exactly; every other test may be true or false, so the answer errs toward "may remove"."""
+
+    def __init__(self, words: list) -> None:
+        self.words, self.i = words, 0
+        self.tree = self._or()
+        if self.i < len(self.words):
+            raise ValueError("unbalanced")
+
+    def _peek(self) -> "str | None":
+        return self.words[self.i] if self.i < len(self.words) else None
+
+    def _or(self):
+        node = self._and()
+        while self._peek() in ("-o", "-or", ","):
+            op = "," if self.words[self.i] == "," else "or"
+            self.i += 1
+            node = (op, node, self._and())
+        return node
+
+    def _and(self):
+        node = self._not()
+        while self._peek() not in (None, "-o", "-or", ",", ")"):
+            if self._peek() in ("-a", "-and"):
+                self.i += 1
+            node = ("and", node, self._not())
+        return node
+
+    def _not(self):
+        if self._peek() in ("!", "-not"):
+            self.i += 1
+            return ("not", self._not())
+        if self._peek() == "(":
+            self.i += 1
+            node = self._or()
+            if self._peek() != ")":
+                raise ValueError("unbalanced")
+            self.i += 1
+            return node
+        return self._primary()
+
+    def _primary(self):
+        if self._peek() is None:
+            raise ValueError("missing primary")
+        word = self.words[self.i]
+        self.i += 1
+        if word in _FIND_EXEC:
+            command = []
+            while self._peek() not in (None, ";", "+"):
+                command.append(self.words[self.i])
+                self.i += 1
+            self.i += 1
+            return ("remove",) if _FIND_REMOVER.search(" ".join(command)) else ("unknown",)
+        count = 2 if word in _FIND_TWO else 1 if word in _FIND_ONE else 0
+        args = self.words[self.i:self.i + count]
+        if len(args) < count:
+            raise ValueError("missing argument")
+        self.i += count
+        if word == "-delete":
+            return ("remove",)
+        if word in ("-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex"):
+            return ("test", word, args[0])
+        if word == "-false":
+            return ("const", frozenset({False}))
+        if word in ("-true", "-print", "-print0", "-prune", "-quit", "-ls", "-fprint", "-fprint0", "-fls", "-printf", "-fprintf",
+                    "-maxdepth", "-mindepth", "-depth", "-d", "-xdev", "-mount", "-follow", "-noleaf", "-regextype",
+                    "-ignore_readdir_race", "-noignore_readdir_race", "-daystart", "-warn", "-nowarn", "-files0-from"):
+            return ("const", frozenset({True}))
+        return ("unknown",)
+
+    @staticmethod
+    def _test(name: str, pattern: str, path: str) -> frozenset:
+        import fnmatch
+
+        fold = name.startswith("-i")
+        subject = posixpath.basename(path) if name.endswith("name") and "whole" not in name else path
+        if fold:
+            subject, pattern = subject.lower(), pattern.lower()
+        if name.endswith("regex"):
+            if _EMACS_REGEX.search(pattern):
+                return _EITHER
+            try:
+                return frozenset({re.fullmatch(pattern, subject, re.S) is not None})
+            except re.error:
+                return _EITHER
+        return frozenset({fnmatch.fnmatchcase(subject, pattern)})
+
+    def removes(self, path: str) -> bool:
+        return self._eval(self.tree, path)[1]
+
+    def _eval(self, node, path: str) -> tuple:
+        kind = node[0]
+        if kind == "remove":
+            return frozenset({True}), True
+        if kind == "unknown":
+            return _EITHER, False
+        if kind == "const":
+            return node[1], False
+        if kind == "test":
+            return self._test(node[1], node[2], path), False
+        if kind == "not":
+            values, removes = self._eval(node[1], path)
+            return frozenset(not value for value in values), removes
+        left, left_removes = self._eval(node[1], path)
+        if kind == ",":
+            right, right_removes = self._eval(node[2], path)
+            return right, left_removes or right_removes
+        # `-a` runs its right side when the left is true, `-o` when it is false.
+        go_on = (True if kind == "and" else False) in left
+        right, right_removes = self._eval(node[2], path) if go_on else (frozenset(), False)
+        stop = frozenset({False}) if kind == "and" else frozenset({True})
+        return (left & stop) | right, left_removes or right_removes
+
+
+def _find_reach(call: "Call", command, bases, homes) -> "tuple | None":
+    """``(how, homes)`` for a ``find`` aimed at the project root or above it whose expression may remove a record:
+    ``find . -name guard-state.json -delete``, ``find . -type f -delete``, ``find . -name '*.md' -exec rm {} +``. One
+    whose name and path tests single out none of them (``find . -name '*.pyc' -delete``) passes."""
+    argv = list(command.argv)
+    i = 0
+    while i < len(argv) and (argv[i] in ("-H", "-L", "-P") or argv[i].startswith("-O")):
+        i += 1
+    starts = []
+    while i < len(argv) and not argv[i].startswith(("-", "(", "!")):
+        starts.append(argv[i])
+        i += 1
+    words = argv[i:]
+    if not any(word == "-delete" or word in _FIND_EXEC for word in words):
+        return None
+    try:
+        expression = _FindExpression(words)
+    except ValueError:
+        expression = None
+    records = call.record_paths
+    hit = set()
+    for start in starts or ["."]:
+        prefix = _below_root(call, call.locate(start, bases))
+        if prefix is None:
+            continue
+        lead = start.rstrip("/") or "/"
+        for home in homes:
+            if home in hit:
+                continue
+            if home not in records:
+                records[home] = _record_paths(call.root, home)
+            call.find_spent += len(records[home])
+            if expression is None or call.find_spent > _FIND_BUDGET:
+                hit.add(home)
+                continue
+            for rel in records[home]:
+                if expression.removes((lead if lead == "/" else lead + "/") + prefix + rel):
+                    hit.add(home)
+                    break
+    return ("delete files in", sorted(hit)) if hit else None
+
+
+def _stash_reach(call: "Call", command, bases, homes) -> "tuple | None":
+    """``(how, homes)`` for a ``git stash`` that takes untracked files away with it: ``-u``/``--include-untracked`` removes
+    a record directory git does not ignore, ``-a``/``--all`` one it ignores as well, and both only where their pathspecs
+    reach (none, or one at the project root or above it, or inside the directory)."""
+    parts = _cmdscan.git_stash_parts(command.argv)
+    if parts is None:
+        return None
+    pathspecs, directories, flags = parts
+    letters = "".join(f[1:] for f in flags if not f.startswith("--"))
+    longs = [f for f in flags if f.startswith("--")]
+    everything = "a" in letters or any(len(f) >= 3 and "--all".startswith(f) for f in longs)
+    untracked = everything or "u" in letters or any(len(f) >= 5 and "--include-untracked".startswith(f) for f in longs)
+    if not untracked:
+        return None
+    bases = [posixpath.join(base, d) if not _paths.is_absolute(d) else d for d in directories for base in bases] or bases
+    reached = set()
+    if not pathspecs or "--pathspec-from-file" in flags:
+        reached.update(homes)
+    for spec in pathspecs:
+        if spec.startswith(":") or any(c in spec for c in "*?["):
+            reached.update(homes)  # a magic or wildcard pathspec can match anywhere
+            continue
+        target = call.locate(spec, bases)
+        if _below_root(call, target) is not None:
+            reached.update(homes)
+        reached.update(home for rel in target.rel for home in [_member_home(rel, "", homes)] if home)
+    hit = sorted(home for home in reached if everything or not _git_ignores(call.root, home))
+    return ("stash away (and so delete)", hit) if hit else None
+
+
 def _root_command_reach(call: "Call", command) -> "tuple | None":
     """``(how, homes)`` when ``command`` is aimed at the project root and would remove or replace a record directory."""
     homes = _homes_present(call.root)
@@ -921,6 +1214,10 @@ def _root_command_reach(call: "Call", command) -> "tuple | None":
         return None
     bases = _command_bases(call, command.cwds)
     verb = command.verb
+    if verb == "find":
+        return _find_reach(call, command, bases, homes)
+    if verb == "git" and _cmdscan.git_stash_parts(command.argv) is not None:
+        return _stash_reach(call, command, bases, homes)
     if verb == "git":
         parts = _cmdscan.git_clean_parts(command.argv)
         if parts is None:
@@ -978,7 +1275,7 @@ def _root_command_reach(call: "Call", command) -> "tuple | None":
 def _root_records_reason(call: "Call", analysis) -> "str | None":
     """Rule C for a command aimed at the project root (or above it) instead of at the directory that holds a record."""
     for command in analysis.commands:
-        if command.verb not in ("git", "tar", "unzip", "7z", "7za", "7zr", "cp", "ln", "install", "scp", "rsync"):
+        if command.verb not in ("git", "tar", "unzip", "7z", "7za", "7zr", "cp", "ln", "install", "scp", "rsync", "find"):
             continue
         reach = _root_command_reach(call, command)
         if reach:

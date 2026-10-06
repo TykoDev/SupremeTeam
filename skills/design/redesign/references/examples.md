@@ -13,6 +13,7 @@ first.
 4. Browserless host
 5. Second REVISE on the same keys
 6. A deferral, and the four keys that carry a string instead
+7. A merge, and the brief that goes to the design pipeline
 
 ## Example 1 — Inventory dashboard, decision made
 
@@ -48,7 +49,7 @@ first.
 - Verification: `python skills/scripts/check_parity.py --level full` failed the variant on three missing states. The builder received the exact ids in one batched revision delegation and the second run reported full coverage.
 - Whose record counts: the prototyper self-checks, but the `design/design-mapper` record is the `parity_evidence` the gate reads, bound by `inputs` to the inventory and prototype hashes.
 - Delivery: four static mocks that open offline, one living single-page prototype that does the same with no build step and no network access, rendered captures at six tiers in both themes, and a recommendation.
-- Before submitting: `python skills/harness/gatekeeper/check.py --boundary redesign-review --package redesign/manifest.json`, no `--verdict-out`; every mechanical failure is fixed first.
+- Before submitting: `python skills/harness/gatekeeper/check.py --boundary redesign-review --package skillset-saves/runs/<run>/redesign/manifest.json`, no `--verdict-out`; every mechanical failure is fixed first.
 
 ## Example 4 — Browserless host
 
@@ -80,3 +81,14 @@ first.
 - What the four dependent keys carry: `selected_variant`, `parity_evidence`, `rendered_verification`, and `accessibility_evidence` each carry `selection deferred - no variant built`, the sanctioned wording for this decision, as the `reason` of an applicability record `{applicable: false, reason, scope, decided_by}` — never as a bare string, which `check.py` refuses at schema 2. A built variant beside that wording, or that wording beside a built variant, fails mechanically.
 - What still gates: `mock_set`, `mock_parity`, `mock_rendering`, `selection`, `recommendation`, and `residual_risk` are complete, so the package is gate-eligible as a deferral rather than being held open.
 - `residual_risk` recorded: the decision, owner head of product, reopen trigger the review session in seven days; and the fact that no direction has been proven at full parity, which is what the selected build would have established.
+
+## Example 7 — A merge, and the brief that goes to the design pipeline
+
+**User request:** (continuation) take the palette and type from v1 but the density and table behaviour from v3
+
+**Output:**
+- Selection: `{decision: "merge", chosen: null, recommended: "v1", decided_by: "user", basis: "v1 palette and type with v3 density and tables"}`. `chosen` is `null` because no single mock was picked; `reports/selection.md` holds the answer verbatim and the merge brief naming which mock supplies palette, type, density, layout, components, and motion.
+- What is not delegated: `selected-build`, `parity-verification`, `visual-qa`, and `frontend-review`, exactly as for a deferral. Redesign builds no prototype for a merge.
+- What the four dependent keys carry: `selected_variant`, `parity_evidence`, `rendered_verification`, and `accessibility_evidence` each carry `merge brief recorded - implemented as a fifth direction in the design pipeline` as the `reason` of an applicability record at schema 2. The deferral wording here fails mechanically, because `check.py` matches the wording to the decision.
+- Handoff: the merge brief goes to the design pipeline, where `design/architect` specifies it as a fifth direction and `build/bob-the-builder` later implements the result; nothing from v1 or v3 is handed over as the design-system input.
+- `residual_risk` recorded: the merged direction has never been drawn or verified at any parity level; owner `design/architect`, reopen trigger the merged direction's first rendered verification in the design pipeline.

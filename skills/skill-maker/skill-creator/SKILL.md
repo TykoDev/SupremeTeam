@@ -47,6 +47,7 @@ tools. Load a reference file only when the selected phase names it.
 - "skill-maker delegates drafting" — write the SKILL.md and its supporting files in Create mode
 - "fix reviewer findings" / "fix these findings" — apply a scorecard's findings in Improve mode
 - "run behavioral evals" — exercise the draft against real queries in Eval mode
+- "skill-maker delegates a description optimization" — tune the trigger surface in Optimize mode
 - "skill-maker delegates packaging" — produce the `.skill` bundle in Package mode
 
 Route elsewhere for the rubric score (`skill-maker/skill-reviewer`) and for the loop that decides which mode runs (`skill-maker`), which also owns description optimization as a stage rather than an edit.
@@ -55,8 +56,11 @@ Route elsewhere for the rubric score (`skill-maker/skill-reviewer`) and for the 
 
 Skill-creator is an internal specialist, not an entry point.
 `../../routing-doctrine.md` names it in the internal-specialist row, reached
-only through `skill-maker`, which owns every stage of the `skill-creation`
-pipeline and calls this skill in Create, Improve, Optimize, and Package mode.
+only through `skill-maker`, which owns the `skill-creation` pipeline and calls
+this skill in Create, Improve, Optimize, and Package mode. Stage ownership is
+split in `../../pipelines.yaml`: `skill-maker` owns `intake` and `package` (with
+this skill as the `package` delegate), this skill owns `draft`, and
+`skill-maker/skill-reviewer` owns `review`.
 The mode is the load-bearing part: the same skill writes a first draft, applies
 a reviewer's findings, or packages a finished directory, and only the handoff
 says which.
@@ -119,8 +123,9 @@ drafting — a draft that violates it is rejected by validation rather than revi
 Three of those shape the draft before its first line, and are the expensive ones to
 discover late:
 
-- **`name` matches the directory name**, lowercase and hyphenated. A mismatch means the
-  skill never loads, and nothing downstream says why.
+- **`name` matches the directory name**, lowercase and hyphenated, with no reserved word
+  (`anthropic`, `claude`). A mismatch means the skill never loads; `quick_validate.py`
+  refuses both at Phase 6, but finding it there costs a full draft.
 - **The description states what *and* when**, third-person declarative, leaning pushy. It
   is the only text seen before the decision to load the skill, and skills under-trigger far
   more often than they over-trigger.

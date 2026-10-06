@@ -690,12 +690,20 @@ class ImportTests(WriterCase):
             "schema without version": {"schema": "supremeteam-taste-export", "entries": {"a": "1"}},
             "version without schema": {"schema_version": 1, "entries": {"a": "1"}},
             "unhashable version": {"schema": "supremeteam-taste-export", "schema_version": [1], "entries": {"a": "1"}},
+            "flat map with an unknown schema": {"schema": "someone-elses", "a": "1"},
+            "flat map with only a version": {"schema_version": 7, "a": "1"},
         }
         for name, content in cases.items():
             with self.subTest(name=name):
                 error = self.refused("import", "--scope", "project", "--input", self.import_file(content))
                 self.assertEqual(error["code"], "invalid_schema")
                 self.assertEqual(error["expected"], ["supremeteam-taste-preferences", "supremeteam-taste-export"])
+        self.assertEqual(self.snapshot("project"), {})
+
+    def test_import_refuses_a_recognised_schema_with_no_entries(self):
+        content = {"schema": "supremeteam-taste-export", "schema_version": 1, "a": "1"}
+        error = self.refused("import", "--scope", "project", "--input", self.import_file(content))
+        self.assertEqual(error["code"], "invalid_import")
         self.assertEqual(self.snapshot("project"), {})
 
     def test_import_accepts_a_store_record_the_writer_produced(self):

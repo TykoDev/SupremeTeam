@@ -84,8 +84,11 @@ rotation, and the environment is not called healthy until rotation is confirmed.
 ## Runtime Has No Fallback
 
 `../../../gates.yaml` `fallback_values` lists 9 keys that accept a sanctioned
-applicability record instead of evidence (`taste-review` adds three more of its
-own, admissible only there). `runtime` is not one of them: `fallback_values`
+applicability record instead of evidence. Two boundaries declare their own
+`fallback_values`, admissible only there: `redesign-review` four
+(`selected_variant`, `parity_evidence`, `rendered_verification`, and
+`accessibility_evidence`, its own wordings replacing the global list for
+`rendered_verification`) and `taste-review` three. `runtime` is not one of them: `fallback_values`
 carries no entry for it, and `boundaries.build-to-review` lists it under both
 `required_evidence` and `artifact_evidence`.
 

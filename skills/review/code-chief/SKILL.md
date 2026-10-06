@@ -51,8 +51,13 @@ This skill is a component of the **Admiral** delivery pipeline; `admiral` is the
 - audit this change before merge
 - pressure-test this project
 
-A request for one lens — "check this for bugs", "is this accessible" — goes to
-that specialist reviewer directly. The merge gate itself is
+A request for one lens — "check this for bugs", "is this accessible" — still
+comes here, not to the specialist. The lenses are internal specialists, reached
+only through the owning sub-orchestrator (`../../routing-doctrine.md`, Routing
+classes), and each one sends a cold call back to code-chief. Code-chief bounds the
+surface, schedules only the named lens, and returns its packet. It submits at
+`review-to-delivery` only when the request also claims delivery readiness, because
+that boundary needs the three unconditional lenses. The merge gate itself is
 `review/gatekeeper-code`, and security governance is `review/cso` through
 `admiral`.
 
@@ -139,12 +144,12 @@ the package records when it is present.
 - Record each boundary before requesting a verdict.
 - Reuse prior verdicts only when the package revision is unchanged.
 - Push remediation back to the owning sub-surface instead of editing its package locally.
-- Self-check before submitting: run `python skills/harness/gatekeeper/check.py --boundary review-to-delivery --package review/manifest.json` (no `--verdict-out`) and fix every mechanical failure first; a package that fails the machine is never submitted (`../../gates.yaml` `revise_policy.self_check`).
+- Self-check before submitting: run `python skills/harness/gatekeeper/check.py --boundary review-to-delivery --package skillset-saves/runs/<run>/review/manifest.json` (no `--verdict-out`) from the project root (the directory that holds `skillset-saves/`), so the script path and `--package` resolve from the same directory and fix every mechanical failure first; a package that fails the machine is never submitted (`../../gates.yaml` `revise_policy.self_check`).
 - Treat a `REVISE` as one packet: delegate each owner group in `revise_packet.by_owner` in parallel, batching every finding for a specialist into a single revision delegation, and resubmit once with `--prior` so the gate re-judges only `changed_evidence`.
 
 ## Skip Rule
 
-Skip only when there is no consolidated review to run — a change with no reviewable code surface, or when a single specialist lens has already been requested in isolation.
+Skip only when there is no review to run — a change with no reviewable code surface. A request for a single lens is not a skip: it is a review scheduled with that one lens, as Use This Skill When describes.
 
 ## Failure Modes
 

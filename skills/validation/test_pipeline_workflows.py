@@ -26,6 +26,7 @@ asserts the gate notices.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -34,7 +35,7 @@ from pathlib import Path
 
 import _catalog
 from _catalog import SKILLS
-from data_formats import content_sha256
+from data_formats import content_sha256, parse_yaml
 
 # The specs are read the way the gate reads them, with data_formats, so this module
 # runs on a host without PyYAML instead of skipping the one end-to-end gate test.
@@ -521,6 +522,27 @@ class StageCoverageTests(unittest.TestCase):
             claimed, actual,
             f"gate_model claims {sorted(claimed)} carry a phase-gate stage; "
             f"pipelines.yaml actually gives one to {sorted(actual)}")
+
+
+class WorkedExampleTests(unittest.TestCase):
+    """D-3: the Taste package example in handoff-templates.md passes the real checker."""
+
+    def test_the_taste_package_example_passes_once_digests_are_filled(self):
+        text = (SKILLS / "contracts" / "handoff-templates.md").read_text(encoding="utf-8")
+        block = re.search(r"## Taste package example.*?```yaml\n(.*?)```", text, re.S)
+        self.assertIsNotNone(block, "handoff-templates.md lost its Taste package example")
+        package = parse_yaml(block.group(1))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in package["artifact_hashes"]:
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("{}\n" if rel.endswith(".json") else "# record\n", encoding="utf-8")
+                package["artifact_hashes"][rel] = content_sha256(path)
+            # The example abbreviates every digest as "<sha256>"; a real package carries full values.
+            filled = json.loads(json.dumps(package).replace('"<sha256>"', json.dumps("a" * 64)))
+            verdict = run_gate("taste-review", filled, root)
+        self.assertEqual(verdict["failures"], [])
 
 
 if __name__ == "__main__":

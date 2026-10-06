@@ -108,11 +108,11 @@ source the suite exercised:
 **Output:**
 - **Harness failure, not a test failure.** The aborted run yields no verdict in either direction. Recorded: command `python -m unittest discover -s tests -p "test_*.py"` (discovery rung 4), observed error `runner exited 3221225477 before the summary line`. Returned to `build/build-management` as an infrastructure gap. **No `tests` evidence is produced** — `result.status` accepts only `pass` at this boundary, and an absent failure is not one.
 - **Quarantine requested, not taken unilaterally.** `test_session_expiry_race` and `test_concurrent_refresh` in `tests/session/` fail non-deterministically. Excluding them narrows the scope build-management approved, so the exclusion is requested and the decision recorded before the suite is re-run.
-- **Quarantine record, once approved** — the first five fields are the shape `../../../gates.yaml` `finding_policy.major_deferral` accepts for a deferred Major, so it travels into the findings record unchanged:
+- **Quarantine record, once approved** — it carries the `owner` and `reopen_trigger` `../../../gates.yaml` `finding_policy.major_deferral` requires; in the findings record it becomes one item that adds `id`, `severity: Major`, and `status: deferred`:
 
 | Field | Value |
 | --- | --- |
-| `test_id` | `tests/session/test_expiry.py::test_session_expiry_race` |
+| `test_id` | `tests.session.test_expiry.SessionExpiryTests.test_session_expiry_race` |
 | `observed` | 2 failures in 5 consecutive identical runs; no consistent error message |
 | `reason` | Believed to read the host clock directly, so expiry races the test's own setup |
 | `owner` | build-management (reliability triage) |

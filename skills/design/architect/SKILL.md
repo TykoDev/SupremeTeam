@@ -79,7 +79,7 @@ Route elsewhere when the need is requirement evidence and a grounded problem sta
 - Trust-boundary and threat-model summary for security review, including untrusted inputs, privileged actions, secrets, external services, and model/tool outputs when applicable.
 - For user-facing surfaces: a shadcn/ui component template (mandatory per `../../design-doctrine.md` Section 5), a complete design-token set in the project's Tailwind format, a `design-system.md` UI/UX specification, and an adversarial design-review scorecard (eight dimensions, contrast verified to WCAG AA).
 - Architecture handoff for `design/gatekeeper-design` with unresolved tradeoffs, endpoint/UI contract coverage, and implementation risks.
-- For the redesign pipeline: `design-directions.md` (the `design-directions` artifact) with four directions that diverge in at least three Taste categories, each with a concept, token strategy, component approach, differentiators, and Taste traceability rows derived from the design inventory and the taste grilling log (`../../design-doctrine.md` §9); later, the production implementation of the chosen variant in the project's real stack.
+- For the redesign pipeline: `design-directions.md` (the `design-directions` artifact) with four directions that diverge in at least three Taste categories, each with a concept, token strategy, component approach, differentiators, and Taste traceability rows derived from the design inventory and the taste grilling log (`../../design-doctrine.md` §9); later, the chosen variant carried into the project's real stack as the `design-system` artifact locked at `design-to-build` (the production code itself is `build/bob-the-builder`'s `implementation`, per `../../ownership.yaml`).
 
 ### Gate evidence owned
 
@@ -121,7 +121,8 @@ procedure for the three that need one.
 - `design/gatekeeper-design` (judges the package at `design-to-build` and returns any `REVISE`)
 - `design/researcher` (supplies the `requirements-brief`; a defective brief goes back here)
 - `design/redesign` (delegates the `design-directions` stage and receives the four directions)
-- `design/design-mapper` (supplies the inventory and the taste grilling log the directions are derived from)
+- `design/design-mapper` (supplies the design inventory the directions are derived from)
+- `taste` (owns and supplies the taste grilling log, through `design/redesign`)
 
 ## Review Expectations
 

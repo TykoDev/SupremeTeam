@@ -56,7 +56,7 @@ this table is untyped — required and non-falsy, nothing more.
 | `revision_ref` | `approved_design_revision` `approved_delivery` | a non-empty approved upstream revision identifier |
 | `variant_set` | `mock_set` `selected_variant` | exactly `evidence_type_params.<key>.required_count` entries (4 mocks, 1 selected variant) with unique ids, and the key's `file_fields` (`spec` / `tokens` / `components` / `mock` for a mock, `spec` / `tokens` / `components` / `app` for the built variant) hashed per entry |
 | `selection` | `selection` | `{decision, chosen, recommended, decided_by, decided_at, basis}` with `decision` in `variant` / `merge` / `deferred`; `chosen` names a `mock_set` id only under `variant`, and `selected_variant.variants[0].id` must equal it; under `merge` or `deferred` the four build-dependent keys carry the matching sanctioned applicability record |
-| Taste records | `preference_diff` `confirmation` `conflict_analysis` `persistence_result` `effective_profile` `consumer_handoff` | the field sets in `evidence_type_rules`; `confirmation.candidate_ids` must equal the exact changed id set |
+| Taste records | `preference_diff` `confirmation` `conflict_analysis` `persistence_result` `effective_profile` `consumer_handoff` | the field sets in `evidence_type_rules`; `confirmation.candidate_ids` must be a list of non-blank string ids. `check.py` never compares it with the changed ids in `preference_diff`, so whether it is the exact changed id set `../../gates.yaml` asks for is your judgement |
 
 ## 3. Sanctioned waivers, verbatim
 

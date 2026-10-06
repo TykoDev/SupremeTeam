@@ -29,7 +29,7 @@ the catalog is the only difference between them.
 
 Registration is the only thing measured here: no routing session is run, and what a
 session does with a registered skill is measured nowhere in this repository (see
-BENCHMARK.md, "What is not measured"). ``--registration`` names that measurement and
+BENCHMARK.md, "Not measured"). ``--registration`` names that measurement and
 is accepted so the documented command line keeps working.
 
 Exit codes:

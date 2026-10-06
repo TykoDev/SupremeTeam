@@ -199,7 +199,7 @@ evidence:
   effective_profile: {artifacts: [evidence/effective-profile.json], entries: [{id: pref-new, source_scope: project, source_id: taste-42}], digest: "<sha256>"}
   consumer_handoff: {consuming_pipeline: design, effective_profile_digest: "<sha256>", applicability_summary: applies to UI design decisions}
   taste_review_record: {artifacts: [evidence/taste-review-record.md], findings: [], recommendation: APPROVED}
-  residual_uncertainty: none observed
+  residual_uncertainty: pref-new is untested against dark-mode contrast
 artifact_hashes:
   evidence/preference-diff.json: "<sha256>"
   evidence/confirmation.json: "<sha256>"
@@ -232,7 +232,7 @@ revision.
 | Field values in any block here | Judgement. No comparator reads a filled value, so a block with a wrong phase or a stale revision passes every test and fails only at the gate, or not at all. |
 | The request and response field sets | Judgement. Nothing compares them to anything, and no skill is required to carry them. |
 | The schema-2 sketch in Gate submission | Judgement as written here; the real contract is `gates.yaml`. |
-| The Taste package example | Judgement. Its twelve keys match `taste-review` as of this revision and no test keeps them matched. |
+| The Taste package example | Machine-checked. `validation/test_pipeline_workflows.py` `WorkedExampleTests` runs it through `check.py` with digests filled. |
 | Delegate obligations | Judgement, except the one-writer consequence, which is enforced in `../ownership.yaml` by `../scripts/validate_manifests.py`. |
 
 ## Failure paths

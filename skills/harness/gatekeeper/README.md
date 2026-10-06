@@ -53,7 +53,13 @@ the package unless the value is a sanctioned fallback), submission and revision
 identity, single-revision lineage, artifact existence and SHA-256 hashes, blocked
 phrases, local Markdown links, and idempotency drift against an optional prior
 verdict record. A hash-mismatched artifact is still scanned for blocked phrases
-and broken links.
+and broken links. A zero-byte or whitespace-only artifact that an evidence key
+names fails as `empty artifact`, whatever its hash; a scan record's raw
+stdout and stderr are exempt, since a scanner that passes in silence leaves them
+empty and the record carries its command, exit code and inputs. Revision values are strings or integers and one
+manifest uses one type; a revision or submission id that was only retyped
+(`1` to `"1"`) or re-spaced since `--prior` counts as idempotency drift. Each
+finding in a `findings` record needs an `id`, and ids are unique.
 
 ```text
 python skills/harness/gatekeeper/check.py \
@@ -182,7 +188,12 @@ The shared engine behind each `gatekeeper-*/scripts/check.py`. It scans a phase
 package directory for required artifacts by file pattern, verifies single-value
 `revision:` lineage, checks skip records, scans for blocked phrases, compares
 against a prior verdict for idempotency, and applies the harness-doctrine §5
-structural check. It reports PASS / FAIL / UNCHECKED facts.
+structural check. It reports PASS / FAIL / UNCHECKED facts. Frontmatter is read
+past a leading byte-order mark and with quoted keys (`"revision":`), so neither
+hides a second revision or submission id. A file named as an artifact that is
+empty or holds only whitespace fills no slot and fails as `ARTIFACT_EMPTY`.
+Below the Python floor `runtime-manifest.yaml` declares, a wrapper exits 2 and
+names the floor before reading the package.
 
 ```text
 python skills/design/gatekeeper-design/scripts/check.py <package-dir> [--prior <verdict>] [--blocked-phrases <file>] [--json]

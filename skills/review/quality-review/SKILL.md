@@ -61,7 +61,7 @@ This lens owns no evidence key. `../../gates.yaml` `evidence_owners` assigns eve
 | Path | What must be true |
 | --- | --- |
 | Graded items merge into `findings` | Every item carries an id, one of the four severities, and a status; a deferred Major also carries the owner and reopen trigger that make it tracked debt (`../../gates.yaml` `evidence_types.findings`, `finding_policy.major_deferral`). |
-| The saved packet fills the `lens_quality` slot | `review/gatekeeper-code`'s `scripts/check.py` matches `lens_quality` on `*quality*.md` or `deliverable_*quality*.md`, so the packet is saved as `deliverable_quality-review.md`. Any other name leaves the slot empty and fails the mechanical pass for a lens that actually ran. |
+| The saved packet fills the `lens_quality` slot | `review/gatekeeper-code`'s `scripts/check.py` fills `lens_quality` with a file whose name matches `*quality*.md` (case-insensitive) and that carries an `Outcome:` and a `Findings:` line. The packet is saved as `deliverable_quality-review.md` so the name is unambiguous; a name without `quality` in it, or a packet missing either field, leaves the slot empty and fails the mechanical pass for a lens that actually ran. |
 
 The `maintainability-report` artifact `../../ownership.yaml` assigns to this lens is that same packet, due before finding triage.
 
@@ -93,7 +93,7 @@ Every pass returns the same fields in this order, so `review/code-chief` merges 
 ```text
 Outcome:     quality-review, <revision reviewed>, <n> findings: <c> Critical, <m> Major, <k> Minor, <i> Info
 Evidence:    <modules and boundaries inspected, dependency evidence read, legacy areas excluded by scope>
-Findings:    <id> | Critical|Major|Minor|Info | <module or boundary> | <future cost it imposes> | <remediation direction> | <owner + reopen trigger when deferred>
+Findings:    <id> | Critical|Major|Minor|Info | <module or boundary> | status <status> | <future cost it imposes> | <remediation direction> | <owner + reopen trigger when deferred>
 Open risks:  <drift suspected beyond the visible slice, and the modules that would confirm it>
 Next action: <single next step with its owner>
 Revision:    <revision this packet judges>
@@ -127,7 +127,7 @@ At the cycle cap, an unresolved Critical or Major returns unchanged with its blo
 
 ## Required Contracts
 
-- **Read-only over the reviewed surface**: This lens reports and never edits the modules, configuration, or documentation it assesses. `allowed-tools` withholds `Edit` so the posture is enforced rather than promised, and `Write` covers the packet and its evidence under the save path only. A refactor this lens can see is written into the finding as a remediation direction and routed through `review/code-chief` to the owning build skill; a structural change applied here would be the largest unreviewed edit in the run, made by the one lens with no one checking it.
+- **Read-only over the reviewed surface**: This lens reports and never edits the modules, configuration, or documentation it assesses. `allowed-tools` does not enforce that: it grants `Write` and `Bash`, and either can change any file. The enforcement is the guard hook's Rule D (`../../harness/hooks/guard_hook.py`), and only while the run carries a `read_only` record (`guard_state.py read-only --run-id <run> --owner <owner> --allow "skillset-saves/runs/<run>/**"`): every write outside that record's allow globs and `.harness-state/` is then denied, a package install included. With no record, or with the hooks unregistered, nothing mechanical stops an edit and the posture is this lens's own rule, so the packet's Evidence says which held. `Write` is for the packet and its evidence under the save path only. A refactor this lens can see is written into the finding as a remediation direction and routed through `review/code-chief` to the owning build skill; a structural change applied here would be the largest unreviewed edit in the run, made by the one lens with no one checking it.
 - **Before/After Evidence**: This lens intervenes in nothing, so the contract is a baseline rule: the "before" is the boundary map built at step 1, which is what a later claim of reduced coupling is measured against. `references/workflow.md` states where in the sequence it is taken.
 - **Shared severity**: Grade every finding Critical | Major | Minor | Info, the four-tier model clause 3 of `../../execution-contract.md` defines, so upstream and downstream packages interpret risk consistently.
 - **Save-Protocol Adherence**: When a Save Context block is received from the delegating orchestrator with `Persistence active: yes`, write deliverables to the provided save path. Saving is mandatory when persistence is active.
@@ -166,7 +166,7 @@ Skip only when the surface required by the review lens does not exist, such as a
 When a `### Save Context` block is included in the delegation prompt with `Persistence active: yes`:
 
 1. Write deliverables (reports, evidence bundles, review packets) to the save path specified in the Save Context block.
-2. Name the lens packet `deliverable_quality-review.md`, the filename `review/gatekeeper-code` matches for the `lens_quality` slot. A packet under any other name leaves that slot empty and fails the mechanical pass for a lens that ran.
+2. Name the lens packet `deliverable_quality-review.md`. `review/gatekeeper-code` fills the `lens_quality` slot with any `*quality*.md` file that carries the `Outcome:` and `Findings:` fields; the fixed name keeps a second `quality` file from competing for the slot, and a packet whose name lacks `quality` leaves the slot empty and fails the mechanical pass for a lens that ran.
 3. Never write `_phase-state.md`. No class in the save-ownership policy declares that path, so it is not an orchestrator-owned file either — phase state is published only through `save_run.py checkpoint`, which keeps revision lineage and the audit trail coherent.
 
 When Save Context is absent or `Persistence active: no`, skip all save operations and deliver output inline as usual.

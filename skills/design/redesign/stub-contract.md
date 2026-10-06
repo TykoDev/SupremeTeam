@@ -11,7 +11,7 @@ design pipeline.
 The canonical stage numbering is the fourteen-row table in
 `references/workflow.md` §Stage Order, which mirrors `../../pipelines.yaml`.
 **This list is not a second numbering.** It is the same fourteen stages grouped
-into the eight delegations Admiral actually issues, with the canonical stage
+into the ten delegations D1 to D10 below, with the canonical stage
 numbers in brackets so the two can always be reconciled. Where they appear to
 disagree, the workflow table is right.
 
@@ -48,7 +48,7 @@ through 12 are conditional: they run only when a variant was selected.
 - `mock_rendering` is listed under `no_fallback` at this boundary, so it accepts neither a fallback string nor an applicability record; a browserless host returns an `inferred` render record labelled `INFERRED - no browser available`. `taste_snapshot` accepts only the sanctioned no-profile record.
 - When `selection.decision` is not `variant`, the four selection-dependent keys — `selected_variant`, `parity_evidence`, `rendered_verification`, `accessibility_evidence` — carry the matching sanctioned string, `selection deferred - no variant built` or `merge brief recorded - implemented as a fifth direction in the design pipeline`. When it is `variant`, none of them may carry a string and `selected_variant.variants[0].id` must equal `selection.chosen`.
 - `selection`, `recommendation`, and `residual_risk` are redesign's own: the first records the user's decision verbatim and names who decided and why, the second names the recommended direction and reports the comparison, the third names each open item, who carries it, and what closes it. An empty `residual_risk` is a claim that nothing is open.
-- Self-check before submitting: `python skills/harness/gatekeeper/check.py --boundary redesign-review --package redesign/manifest.json`, without `--verdict-out`; resubmit once with `--prior` so the gate re-judges only `changed_evidence`.
+- Self-check before submitting: `python skills/harness/gatekeeper/check.py --boundary redesign-review --package skillset-saves/runs/<run>/redesign/manifest.json`, without `--verdict-out`; resubmit once with `--prior` so the gate re-judges only `changed_evidence`.
 - A mock below full route or component coverage never enters the comparison; a selected variant below full parity coverage or with an open Critical accessibility finding never reaches the gate.
 
 ## Package Shape
@@ -64,6 +64,6 @@ through 12 are conditional: they run only when a variant was selected.
 
 ## Downstream Expectations
 
-- `design/commander` reads the selected variant's `variant.md`, `tokens.css`, and `components.html` — from the living build, not the mock — as the design-system input; `design/architect` implements it in the project's real stack and locks it at `design-to-build`.
-- A merge choice is a brief for a fifth direction implemented in the design pipeline, not a fifth mock and not a second prototype.
+- `design/commander` reads the selected variant's `variant.md`, `tokens.css`, and `components.html` — from the living build, not the mock — as the design-system input; `design/architect` specifies the production design system from it, `design/commander` locks the stack at `design-to-build`, and `build/bob-the-builder` implements it in the real stack.
+- A merge choice is a brief for a fifth direction that `design/architect` specifies in the design pipeline, not a fifth mock and not a second prototype.
 - A deferral hands nothing downstream; the four mocks stay on disk as the record of what was compared.

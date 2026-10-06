@@ -4,8 +4,9 @@
 Checks only what makes a skill loadable, so a skill that cannot load is never
 packaged: SKILL.md exists, the YAML frontmatter parses, no unexpected
 frontmatter key is present, and `name` and `description` satisfy the Skills
-spec (kebab-case name <= 64 chars; description non-empty, <= 1024 chars, no
-angle brackets). It does not score rubric dimensions - that is skill-reviewer's
+spec (kebab-case name <= 64 chars, free of the reserved words `anthropic` and
+`claude`, and equal to the skill directory's name; description non-empty,
+<= 1024 chars, no angle brackets). It does not score rubric dimensions - that is skill-reviewer's
 job - and it does not inspect the body.
 
 Run as a module from the skill-creator directory, so the `scripts` package
@@ -76,6 +77,10 @@ def _bare_colon_key(frontmatter_text):
                 and value[0] not in "\"'|>[{&*!" and re.search(r":(?:\s|$)", value)):
             return key.strip()
     return None
+
+
+#: Words a skill name may not contain (skill-guide.md section 1.1).
+RESERVED_NAME_WORDS = ("anthropic", "claude")
 
 
 def validate_skill(skill_path):
@@ -159,6 +164,14 @@ def validate_skill(skill_path):
         # Check name length (max 64 characters per spec)
         if len(name) > 64:
             return False, f"Name is too long ({len(name)} characters). Maximum is 64 characters."
+        # Reserved words (skill-guide.md section 1.1): a name may not contain them.
+        reserved = [word for word in RESERVED_NAME_WORDS if word in name]
+        if reserved:
+            return False, f"Name '{name}' contains the reserved word '{reserved[0]}'"
+        # The host registers a skill by its directory, so the two must agree.
+        folder = skill_path.resolve().name
+        if name != folder:
+            return False, f"Name '{name}' does not match the skill directory name '{folder}'"
 
     # Extract and validate description
     description = frontmatter.get('description', '')
@@ -190,7 +203,8 @@ USAGE = """Usage: python -m scripts.quick_validate <path/to/skill-folder>
 Run from skills/skill-maker/skill-creator so the `scripts` package resolves.
 
 Checks SKILL.md exists, the frontmatter parses, no unexpected key is present,
-and name/description satisfy the Skills spec. Prints one line.
+and name/description satisfy the Skills spec (the name matches the directory and
+contains no reserved word). Prints one line.
 Exit codes: 0 = valid, 1 = a validation failure or a missing argument."""
 
 if __name__ == "__main__":

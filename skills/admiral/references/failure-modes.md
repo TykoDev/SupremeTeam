@@ -34,7 +34,7 @@ handling is procedural rather than routing. Nothing here repeats a row stated in
 
 | Scenario | Response |
 | --- | --- |
-| Mode probe at a boundary disagrees with the cached `execution_mode` | Reconcile in place: update `_state.md`, append `MODE_RECHECK` with `cached`, `detected`, and `action`, continue under the new mode. Do not abort the delegation, do not force the user to retry. |
+| Mode probe at a boundary disagrees with the cached `execution_mode` | Reconcile in place: publish the change through `python skills/harness/hooks/save_run.py checkpoint --run-id {run-id} --owner admiral --expect-revision <n> --set execution_mode=<new> --set mode_recheck="cached={old},detected={new},action={upgrade|downgrade}"` (the trail records the writer's own `checkpoint` event; the trail is not appendable by hand), and continue under the new mode. Do not abort the delegation, do not force the user to retry. |
 | A create-skill or create-team request arrives without usable trigger language, success criteria, or packaging target | Stop at intake, collect the missing intent, and do not hand skill-maker an underspecified brief. |
 
 ## Registry And Hook Readiness

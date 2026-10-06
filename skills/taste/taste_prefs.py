@@ -561,9 +561,13 @@ def mutate(record: dict[str, Any], command: str, args: argparse.Namespace, sourc
             incoming = json.loads(Path(args.input).read_text(encoding="utf-8"))
         except Exception as exc:
             raise TasteError("invalid_import", "import must be a readable JSON file", path=args.input) from exc
-        if isinstance(incoming, dict) and "entries" in incoming and ("schema" in incoming or "schema_version" in incoming):
+        # A schema declaration is checked wherever it appears: a flat map that names an
+        # unknown schema is not a bare map of ids, and must not import its keys as entries.
+        if isinstance(incoming, dict) and ("schema" in incoming or "schema_version" in incoming):
             if (incoming.get("schema"), incoming.get("schema_version")) not in ((SCHEMA, VERSION), (EXPORT_SCHEMA, EXPORT_VERSION)):
                 raise TasteError("invalid_schema", "an import that declares a schema must declare a recognised schema and version", expected=[SCHEMA, EXPORT_SCHEMA])
+            if "entries" not in incoming:
+                raise TasteError("invalid_import", "an import that declares a schema must carry its preferences under entries")
         entries = incoming.get("entries", incoming) if isinstance(incoming, dict) else incoming
         if not isinstance(entries, dict) or len(entries) > 1000:
             raise TasteError("invalid_import", "import entries must be a JSON object with at most 1000 entries")

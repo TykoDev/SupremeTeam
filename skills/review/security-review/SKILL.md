@@ -118,7 +118,7 @@ inspected manifest or lockfile by sha256. Run
 
 ## Packet Shape
 
-Every pass returns the same fields in this order, so `review/code-chief` merges lenses instead of reformatting them and `cso` can lift the scan record out without re-reading the prose (`../../execution-contract.md`, clause 6; this lens owns no gate, so it returns no verdict — `code-chief` issues the review verdict and `cso` the `security-review` one):
+Every pass returns the same fields in this order, so `review/code-chief` merges lenses instead of reformatting them and `cso` can lift the scan record out without re-reading the prose (`../../execution-contract.md`, clause 6; this lens owns no gate, so it returns no verdict — `code-chief` writes the `review_verdict` recommendation that `review/gatekeeper-code` judges at `review-to-delivery`, and `cso` submits the `security-review` package on which `gatekeeper-admiral` issues the verdict):
 
 ```text
 Outcome:     security-review, <stage>, <revision reviewed>, <n> findings: <c> Critical, <m> Major, <k> Minor, <i> Info
@@ -173,6 +173,7 @@ At the cycle cap, an unresolved Critical or Major returns unchanged with its blo
 
 ## Required Contracts
 
+- **Read-only over the reviewed surface**: This lens reports and never edits the code, configuration, lockfiles, or dependencies it reviews. `allowed-tools` does not enforce that: it grants `Write` and `Bash`, and either can change any file. The enforcement is the guard hook's Rule D (`../../harness/hooks/guard_hook.py`), and only while the run carries a `read_only` record (`guard_state.py read-only --run-id <run> --owner <owner> --allow "skillset-saves/runs/<run>/**"`): every write outside that record's allow globs and `.harness-state/` is then denied, a package install included. With no record, or with the hooks unregistered, nothing mechanical stops an edit and the posture is this lens's own rule, so the packet's Evidence says which held. `Write` is for the packet, the scan record, and its retained output under the save path only; `Bash` runs the scanner through `skills/scripts/scan_record.py` and never the reviewed program, its build, or a script the reviewed tree ships. A pin, a patch, or a hardening step this lens can see is written into the finding as the narrowest viable fix and routed through the owning orchestrator to the build skill that owns it; a dependency bumped here would change the inputs the scan record is bound to and leave nothing reviewed behind the record.
 - **Vendoring detection**: Detect generated, vendored, or third-party imported content and treat it with tighter review rules than first-party changes.
 - **Before/After Evidence**: Capture observable state before and after each intervention so improvements can be verified instead of asserted.
 - **Shared severity**: Grade every finding Critical | Major | Minor | Info, the four-tier model clause 3 of `../../execution-contract.md` defines, so upstream and downstream packages interpret risk consistently.

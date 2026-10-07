@@ -8,7 +8,7 @@ description: >-
   validate the review package, review delivery readiness, say whether the review is
   finished enough to deliver, gate the review output, or challenge this review
   packet. Whether work is ready to *enter* review is `build/gatekeeper-build`.
-version: 1.1.0
+version: 1.2.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -28,7 +28,7 @@ reaches delivery as consensus.
 
 Two things follow from that, and they shape everything below:
 
-- A conflict between lenses is `REVISE` when evidence can settle it and `ESCALATE` when only a person can. It is never resolved here by picking a side.
+- A conflict between lenses over a Critical or Major is `REVISE` when evidence can settle it and `ESCALATE` when only a person can; a conflict over a Minor is preserved in the record and rides along (`../../gates.yaml` `revise_policy.revise_threshold`). It is never resolved here by picking a side.
 - `rendered_verification` belongs to `design-qa`, not to the submitter, so the package's own author cannot repair its most commonly failing key.
 
 ## Entry Routing
@@ -235,12 +235,12 @@ the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 - **Shared severity**: Grade every finding Critical | Major | Minor | Info, the four-tier model clause 3 of `../../execution-contract.md` defines, so upstream and downstream packages interpret risk consistently.
 - **CSO lens coverage**: When a review package claims security leadership signoff, accepted-risk readiness, release security posture, regulated-data governance, or operating-model control review, require a `review/cso` packet or an explicit scoped skip reason. The `review` pipeline in `../../pipelines.yaml` has no cso stage, so that packet can only come from the separate `security` pipeline, which `code-chief` reaches by escalating to `admiral`; it is never a lens `code-chief` runs.
 - **Harness-doctrine citation**: When the package adds or changes a cross-cutting runtime intervention, check it against `../../harness-doctrine.md` §5 and cite the violated section by number in the verdict.
-- **Batched REVISE** (`../../gates.yaml` `revise_policy`): A `REVISE` carries every mechanical failure and every judgment finding from the pass, grouped by owner exactly as `check.py` reports them in `revise_packet.by_owner`; never return the first defect alone. On a resubmission run with `--prior`, re-judge only `changed_evidence` and carry the prior judgment on `unchanged_evidence`; the mechanical pass always covers the whole package. A package that fails mechanically was never eligible for submission (the submitter self-checks) and is returned without judgment.
+- **Batched REVISE** (`../../gates.yaml` `revise_policy`): A `REVISE` carries every mechanical failure and every judgment finding from the pass, grouped by owner exactly as `check.py` reports them in `revise_packet.by_owner`; never return the first defect alone. On a resubmission run with `--prior`, re-judge only `changed_evidence` and carry the prior judgment on `unchanged_evidence`; the mechanical pass always covers the whole package. A package that fails mechanically was never eligible for submission (the submitter self-checks) and is returned without judgment. On a resubmission a new finding is raised only against `changed_evidence` or a defect the change introduced (`revise_policy.batch_fix`); a finding that could have been raised on unchanged evidence in the first pass is not raised now, because a gate that reveals its standard one finding per round is the slowest thing in the pipeline.
 
 ## Verdict Model
 
 - **APPROVED**: The package is ready to advance with its current evidence.
-- **REVISE**: The package can progress after specific mandatory changes.
+- **REVISE**: The package can progress after specific mandatory changes: a mechanical failure, a Critical finding, or a Major the finding policy leaves unresolved (`../../gates.yaml` `revise_policy.revise_threshold`). Minor and Info findings never produce a REVISE on their own; they are recorded in the verdict record and ride along on APPROVED, for the submitter to carry into `residual_risk` or the next owner's handoff.
 - **ESCALATE**: The package cannot advance without external judgment or a broader scope decision.
 
 ## Evidence Standard
@@ -260,7 +260,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | The result reports `manifest_schema_version: 1`, so no typed record, waiver wording or finding policy was checked | Return `REVISE` to `code-chief` for a schema-2 manifest carrying `boundary` and `owner`. Exit 0 on a flat schema-1 package means the keys are present and the hashes hold, not that `executed_probes` was ever read as a passing probe or that `review_verdict` carries its challenge record. |
 | A mandatory specialist report is missing or older than the package revision under review | Reject the submission, name the missing or stale report, and require the owning orchestrator to resubmit a coherent package set. |
 | The package claims security leadership signoff, accepted-risk readiness, or release security posture without `review/cso` evidence or an explicit skip reason | Return REVISE to `review/code-chief`: remove the unsupported leadership claim, or escalate to `admiral` to open the `security` pipeline under `cso` and carry that engagement's packet into the package. The review pipeline has no cso stage, so there is no CSO lens for `code-chief` to run. |
-| Specialist findings conflict on severity, exploitability, or scope | Preserve the contradiction in the verdict record and return REVISE unless the conflict requires external judgment, in which case return ESCALATE. |
+| Specialist findings conflict on severity, exploitability, or scope | Preserve the contradiction in the verdict record; return REVISE when the disputed finding is Critical or Major and evidence can settle it, ESCALATE when the conflict requires external judgment, and let a dispute over a Minor ride along on the verdict (`revise_threshold`). |
 | The package claims a skip without recording the reason or evidence boundary | Mark the package incomplete and require a skip justification before re-evaluating readiness. |
 | A lens slot reports `ARTIFACT_PRESENT`, but its `location` is not that lens's packet — typically a `code-chief` summary filling `lens_code` through `*code*.md` | Treat the lens as missing and return `REVISE` to `review/code-chief`: the slot was filled by name, not by the lens, so the script's `PASS` proves nothing about the review that should have produced it. |
 | `scripts/check.py` fails a lens as `ARTIFACT_MISSING` and names a near miss — a file that lacks the `Outcome:` and `Findings:` fields, or one already counted for another lens — or reports `LINK_ESCAPES_PACKAGE` | Return `REVISE` to `review/code-chief`: each lens files its own packet in the shape its skill fixes, a file that covers several lenses fills one, and a link out of the package directory is replaced by the file itself. |

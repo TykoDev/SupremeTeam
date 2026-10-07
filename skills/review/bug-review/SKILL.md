@@ -8,7 +8,7 @@ description: >-
   only: exploit chaining goes to `review/mr-robot`, defensive posture to
   `review/security-review`, tech debt to `review/quality-review`, merge-readiness to
   `review/code-review`, and the whole multi-lens flow to `review/code-chief`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -151,7 +151,7 @@ Skip only when the surface required by the review lens does not exist, such as a
 When a `### Save Context` block is included in the delegation prompt with `Persistence active: yes`:
 
 1. Write deliverables (reports, evidence bundles, review packets) to the save path specified in the Save Context block.
-2. Name the lens packet `deliverable_bug-review.md`. `review/gatekeeper-code` fills the `lens_bug` slot with any `*bug*.md` file that carries the `Outcome:` and `Findings:` fields; the fixed name keeps a second `bug` file in the package from competing for the slot, and a packet whose name lacks `bug` leaves the slot empty and fails the mechanical pass for a lens that ran.
+2. Name the lens packet `deliverable_bug-review.md`. `review/gatekeeper-code` fills the `lens_bug` slot with any `*bug*.md` file that carries the `Outcome:` and `Findings:` fields; the fixed name is the producer convention, not a uniqueness guarantee: another qualifying `bug` file can take the slot, so code-chief must remove rival packets or explicitly verify the selected file, and a packet whose name lacks `bug` leaves the slot empty and fails the mechanical pass for a lens that ran.
 3. Never write `_phase-state.md`. No class in the save-ownership policy declares that path, so it is not an orchestrator-owned file either — phase state is published only through `save_run.py checkpoint`, which keeps revision lineage and the audit trail coherent.
 
 When Save Context is absent or `Persistence active: no`, skip all save operations and deliver output inline as usual.

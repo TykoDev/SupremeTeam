@@ -87,12 +87,15 @@ class PipelineContractTests(unittest.TestCase):
         for name, pipeline in self.spec["pipelines"].items():
             available = set(pipeline.get("external_inputs", []))
             for stage in pipeline["stages"]:
-                required = set(stage.get("requires", []))
+                contract = validate_manifests.stage_dependencies(pipeline, stage)
+                if stage.get("after_boundary"):
+                    available.add("approved-boundary")
+                required = set(contract.get("requires", []))
                 with self.subTest(pipeline=name, step=stage.get("step")):
                     self.assertLessEqual(required, available)
-                    self.assertTrue(set(stage.get("produces", [])).isdisjoint(available))
+                    self.assertTrue(set(contract.get("produces", [])).isdisjoint(available))
                 checked += len(required)
-                available.update(stage.get("produces", []))
+                available.update(contract.get("produces", []))
         self.assertGreater(checked, 0, "expected at least one machine-readable stage dependency")
 
     def test_validator_rejects_a_forward_dependency(self):

@@ -117,11 +117,13 @@ or `parity-evidence` record. Its behaviour is part of the contract, not an
 implementation detail.
 
 ```bash
+# From the project root; replace input placeholders with resolver-returned run paths.
+# Resolve --out with output_paths.py --run-id {run-id} --phase redesign --kind evidence.
 # mock parity, once per mock
-python skills/scripts/check_parity.py --level mock --inventory <design-inventory.json> --app <mock>/mock.html --components <mock>/components.html --out redesign/evidence/mock-parity-<id>.json --project-root .
+python skills/scripts/check_parity.py --level mock --inventory <design-inventory.json> --app <mock>/mock.html --components <mock>/components.html --out skillset-saves/runs/{run-id}/redesign/evidence/mock-parity-<id>.json --project-root .
 
 # full parity, once, for the selected variant only
-python skills/scripts/check_parity.py --level full --inventory <design-inventory.json> --app <variant>/app.html --components <variant>/components.html --out redesign/evidence/parity-<variant>.json --project-root .
+python skills/scripts/check_parity.py --level full --inventory <design-inventory.json> --app <variant>/app.html --components <variant>/components.html --out skillset-saves/runs/{run-id}/redesign/evidence/parity-<variant>.json --project-root .
 ```
 
 Once all four exit 0, the mock-level records are summarised into one aggregated

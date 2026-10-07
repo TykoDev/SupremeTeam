@@ -58,7 +58,7 @@ MANIFEST = gc.Manifest(
         gc.ArtifactSpec(
             key="research",
             label="research evidence",
-            patterns=("*research*.md", "deliverable_*research*.md"),
+            patterns=("*research*.md", "deliverable_*research*.md", "requirements-brief.md"),
             content_marker=r"research\w*|findings?|evidence|sources?",
             stages=("research",),
         ),
@@ -90,6 +90,7 @@ MANIFEST = gc.Manifest(
             patterns=("*taste*snapshot*", "*effective*profile*"),
             content_marker=r"canonical digest|source revisions?|resolved entries|applicability",
             evidence_key="taste_snapshot",
+            stages=("taste-snapshot",),
         ),
         gc.ArtifactSpec(
             key="impl_spec",
@@ -107,7 +108,7 @@ MANIFEST = gc.Manifest(
         gc.ArtifactSpec(
             key="ui_handoff",
             label="frontend/UI handoff (shadcn template + UI/UX handoff)",
-            patterns=("*ui*.md", "*frontend*.md", "*handoff*.md", "*design-system*.md"),
+            patterns=("ui-*.md", "*_ui*.md", "*-ui*.md", "*frontend*.md", "*handoff*.md", "*design-system*.md"),
             requirement="conditional",
             stages=("interface-and-design-system",),
         ),

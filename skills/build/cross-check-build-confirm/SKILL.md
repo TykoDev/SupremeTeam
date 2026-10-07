@@ -8,7 +8,7 @@ description: >-
   `build/gatekeeper-build`'s verdict, not this report. Internal build specialist
   reached through `build/build-management`, not directly, even when the request is
   only "did we finish everything?".
-version: 1.0.1
+version: 1.0.2
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 

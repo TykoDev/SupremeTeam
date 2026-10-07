@@ -141,7 +141,7 @@ python skills/harness/hooks/guard_state.py release --glob "tools/legacy/**" --re
 ```
 
 ```text
-refused: tools/legacy/** was recorded as a bare glob with no owner, so authority cannot be verified. Re-record it through this writer (guard_state.py freeze --glob ... --owner ...) before releasing it.
+refused: tools/legacy/** was recorded as a bare glob with no owner, so authority cannot be verified. Obtain explicit project-owner authorization, then use guard_state.py adopt-legacy --glob ... --owner ... --reason ... --authorization-ref ... before releasing it. Adoption keeps the boundary active.
 ```
 
 (exit 1)
@@ -149,5 +149,5 @@ refused: tools/legacy/** was recorded as a bare glob with no owner, so authority
 **Output:**
 - Finding: the entry predates the single writer and is a bare glob string, so there is no `owner` and no `approvers` for the authority check to consult. The writer refuses rather than trusting the requester.
 - Distinction worth recording: a bare string is refused outright, while a record with an absent `owner` but a populated `approvers` list can still be released by a listed approver. Both appear under the same `unowned` warning, so the record itself has to be read, not just the warning.
-- Resolution: the boundary owner re-records it through `guard_state.py freeze --glob "tools/legacy/**" --owner <owner>`, then releases it, so the lift carries an attributable `released_by`.
+- Resolution: after explicit project-owner approval, run `guard_state.py adopt-legacy --glob "tools/legacy/**" --owner tooling-lead --reason "legacy migration" --authorization-ref <approval-reference>`. Protection remains active; tooling-lead then releases it normally. Retain the approval reference and original legacy glob; never assume the requester historically owned it.
 - Not done: the state file is not hand-edited around the refusal — that would reproduce precisely the unattributable lift the writer exists to prevent, and the hook denies the write in any case.

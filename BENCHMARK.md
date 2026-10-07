@@ -1,9 +1,11 @@
 # Benchmark
 
-Scores are model judgements against a written rubric. Routing is a paid model
-run. CI re-runs neither. Open defects: [docs/quality-audit.md](docs/quality-audit.md).
+The tables below are a **historical snapshot**, not a re-score of the current
+remediation diff. Scores are model judgements against a written rubric; routing
+is a paid model run. Neither was rerun here, and CI re-runs neither. No audit
+findings are open; the fixes are in [CHANGELOG.md](CHANGELOG.md).
 
-| Measure | Result |
+| Historical measure | Recorded result |
 |---|---|
 | Skills (53) | mean **98.6**, lowest 93, 18 at 100 |
 | Spec and doctrine (22) | mean **95.0**, lowest 82 |
@@ -57,9 +59,11 @@ Top misroutes:
 - Design leads confuse each other (5).
 - `build/debugger` goes to `investigate` (4).
 
-## Tests
+## Tests (historical run)
 
-| Suite | Tests | Command |
+These counts belong to the recorded seven-suite run, not the current diff.
+
+| Suite | Recorded tests | Command |
 |---|---:|---|
 | hooks | 971 | `python -m unittest discover -s skills/harness/hooks -p "test_*.py"` |
 | gates | 271 | `python -m unittest discover -s skills/harness/gatekeeper -p "test_*.py"` |
@@ -69,8 +73,38 @@ Top misroutes:
 | installers | 85 | `python -m unittest discover -s scripts -p "test_*.py"` |
 | skill_creator | 164 | `python -m unittest discover -s skills/skill-maker/skill-creator -p "test_*.py"` |
 
-Validators: `validate_manifests.py`, `check_runtime.py`, `package_check.py --root .`
-all pass.
+Validators recorded with that snapshot: `validate_manifests.py`, `check_runtime.py`,
+`package_check.py --root .` all passed.
+
+## Current verification (not a benchmark rerun)
+
+On 2026-10-07 the complete seven-suite set, the three validators and the delivery
+archive ran on this host (Python 3.14.4, Linux under WSL2), once with PyYAML 6.0.3
+and once in a bare virtual environment without it. Both legs are green, and pinned
+Ruff 0.16.9 passes. The gate spec is revision 8 and the pipeline spec revision 3.
+
+| Suite | With PyYAML | Without PyYAML |
+|---|---:|---:|
+| hooks | 1010 (13 skipped) | 1010 (13 skipped) |
+| gates | 282 (2 skipped) | 282 (2 skipped) |
+| validation | 266 | 263 (8 skipped) |
+| scripts | 402 | 402 (3 skipped) |
+| taste | 214 | 214 |
+| installers | 85 | 85 |
+| skill_creator | 164 (2 skipped) | 164 (3 skipped) |
+
+The skips without PyYAML are the tests that need it and say so; the two
+skill_creator skips with it are host-specific. Skip counts are reported by
+`unittest`, not inferred.
+
+This run replaces the focused subsets recorded before it, which had passed while
+the full hooks suite failed 19 tests and the gates suite 5. The fixes, the N-8
+coverage that an independent probe of about 280 shell commands then added, and
+the document corrections are in [CHANGELOG.md](CHANGELOG.md), not in new rubric
+scores. Python 3.13, Windows and macOS are the CI matrix's to run; host hook
+firing, OS-level write isolation and performance baselines were not measured
+here, no timing budget was relaxed, and no paid routing result or model score was
+rerun or inferred.
 
 ## Not measured
 

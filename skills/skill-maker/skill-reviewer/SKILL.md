@@ -8,7 +8,7 @@ description: >-
   skill", or asks whether a skill is production-ready. Reviews skill definitions, not
   application code — a codebase goes to `review/code-chief`. Reports findings; never
   applies fixes.
-version: 1.0.0
+version: 1.0.2
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -69,11 +69,9 @@ block, an active run lock with `session_pin: true` exists under
 `skillset-saves/`, or the invocation explicitly names `skill-maker` as the
 delegating owner.
 
-Reached cold — "score this skill" with no handoff — the review can still be
-read, but say plainly that it is an isolated score with no iteration lineage,
-and do not report a delta, a plateau, or a SHIP verdict, since all three are
-claims about a loop this invocation is not inside. Route the user to `admiral`
-for a governed run.
+Reached cold — "score this skill" with no handoff — score nothing. Route to
+`admiral`, then accept the review delegation through `skill-maker`. Review-only
+is still a governed stage, not permission to create an isolated cold score.
 
 ## Phase 1 — Score
 
@@ -176,6 +174,15 @@ files: X | depth: X | broken refs: X | orphans: X | voice violations: X
 ---
 
 ## Phase 2 — Audit
+
+For a new or changed runtime intervention, read `../../harness-doctrine.md` §5
+and audit all five rejection duties: named lifecycle layer, earliest enforceable
+placement, no substitution of harness controls for residual reasoning, inertness
+on a competent model's correct action, and a regression note. Cite an explicit
+`Layer 1`–`Layer 4` plus the relevant section in each finding. Missing or violated
+duties are blocking Major findings, and the recommendation cannot be SHIP until
+resolved or validly dispositioned by the owning gate. Mechanical citation checks
+prove only shape; this reviewer still judges the substance.
 
 Two parallel lenses. Every finding uses the standard finding format.
 

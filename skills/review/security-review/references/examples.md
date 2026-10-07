@@ -9,7 +9,7 @@ fails on. Severities use the shared four-tier model
 — Critical | Major | Minor | Info — and nothing else: "blocking" and
 "conditional" describe a finding's consequence and its confidence, never its
 grade. Every finding carries a stable `SEC-NN` id and a status, because that is
-what `../../../gates.yaml` `evidence_types.findings` requires of the items
+what `../../../gates.yaml` `evidence_type_rules.findings` requires of the items
 `code-chief` and `cso` merge into `findings`.
 
 ## Contents
@@ -85,7 +85,7 @@ python skills/scripts/scan_record.py --project-root . --out skillset-saves/runs/
 - Record: `security/evidence/vulnerability-scan.json` — `sha256:9b2e…d417`.
 - `result.status: fail`, `exit_code: 1`, `tool: npm`, inputs bound: `package.json` `sha256:31ca…`, `package-lock.json` `sha256:7d08…`.
 - Limitation on the record: optional peer dependencies were not installed, so their advisories are out of coverage. Stated here because a limitation `cso` never sees becomes a coverage claim it did not make.
-- Defensive findings behind the record, each traced to a boundary in `cso`'s threat model and each carrying the `{id, severity, status}` shape `../../../gates.yaml` `evidence_types.findings` requires: `SEC-06` | **Major** | status `open` | the session store's cookie flags omit `SameSite` and `Secure`; `SEC-07` | **Minor** | status `open` | a deprecated transitive parser, `tar-stream@2.2.0`, remains on the dependency path.
+- Defensive findings behind the record, each traced to a boundary in `cso`'s threat model and each carrying the `{id, severity, status}` shape `../../../gates.yaml` `evidence_type_rules.findings` requires: `SEC-06` | **Major** | status `open` | the session store's cookie flags omit `SameSite` and `Secure`; `SEC-07` | **Minor** | status `open` | a deprecated transitive parser, `tar-stream@2.2.0`, remains on the dependency path.
 - Secrets check: the retained raw output was reviewed before handover and echoes no registry credential; the record ships as routine evidence.
 - Not returned: the triage, the remediation plan, and the residual risk. `cso` owns those keys and closes the boundary.
 

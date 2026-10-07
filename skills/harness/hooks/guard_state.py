@@ -184,6 +184,33 @@ def cmd_add(args, key: str) -> int:
     return 0
 
 
+def cmd_adopt_legacy(args) -> int:
+    """Record explicit project-owner authorization without lifting a legacy boundary."""
+    if any(not str(getattr(args, name, "")).strip() for name in ("owner", "reason", "authorization_ref")):
+        _refuse("adopt-legacy requires a non-empty owner, reason, and authorization-ref.")
+    state = _load()
+    target = _normalised(args.glob)
+    adopted = 0
+    for key in ("frozen_globs", "blocked_globs"):
+        entries = _records(state, key)
+        for index, entry in enumerate(entries):
+            if isinstance(entry, str) and _active(entry) and _canonical(entry) == target:
+                entries[index] = {
+                    "glob": target, "owner": args.owner, "scope": "adopted legacy boundary",
+                    "created_at": _now(), "released_at": None, "approvers": [],
+                    "legacy_glob": entry, "adoption_reason": args.reason,
+                    "authorization_ref": args.authorization_ref,
+                }
+                adopted += 1
+        state[key] = entries
+    if not adopted:
+        _refuse(f"no active ownerless legacy boundary matches {args.glob}; owned records cannot be adopted.")
+    _save(state)
+    print(json.dumps({"ok": True, "action": "adopt-legacy", "glob": target,
+                      "owner": args.owner, "records": adopted, "boundary_still_active": True}))
+    return 0
+
+
 def cmd_release(args) -> int:
     state = _load()
     target = _canonical(args.glob)
@@ -195,13 +222,13 @@ def cmd_release(args) -> int:
     if not hits:
         _refuse(f"no active boundary matches {args.glob}.")
 
-    for key, entry in hits:
+    for _key, entry in hits:
         if isinstance(entry, str):
             _refuse(
                 f"{args.glob} was recorded as a bare glob with no owner, so authority "
-                "cannot be verified. Re-record it through this writer (guard_state.py "
-                f"{'freeze' if key == 'frozen_globs' else 'block'} --glob ... --owner ...) "
-                "before releasing it."
+                "cannot be verified. Obtain explicit project-owner authorization, then use "
+                "guard_state.py adopt-legacy --glob ... --owner ... --reason ... "
+                "--authorization-ref ... before releasing it. Adoption keeps the boundary active."
             )
         if not _authorized(entry, args.requester):
             _refuse(
@@ -366,6 +393,13 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--approver", action="append",
                        help="delegate permitted to release (repeatable)")
         p.set_defaults(func=lambda a, _k=key: cmd_add(a, _k))
+
+    p = sub.add_parser("adopt-legacy", help="attribute an ownerless boundary without releasing it")
+    p.add_argument("--glob", required=True)
+    p.add_argument("--owner", required=True)
+    p.add_argument("--reason", required=True)
+    p.add_argument("--authorization-ref", required=True, help="explicit project-owner approval reference; attested, not authenticated")
+    p.set_defaults(func=cmd_adopt_legacy)
 
     p = sub.add_parser("release", help="set released_at on a boundary (never deletes)")
     p.add_argument("--glob", required=True)

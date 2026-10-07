@@ -7,9 +7,10 @@ parent: admiral-agent
 
 purpose: |
   Autonomous design pipeline orchestrator. Manages the design phases in the
-  order pipelines.yaml declares (researcher → architect → security-builder when
-  a trust boundary exists → planner → engineer), locks the stack, and submits at
-  design-to-build with gatekeeper-design validating each phase. Produces a
+  order pipelines.yaml declares after Admiral's intake (taste snapshot →
+  researcher → architect → security-builder's scoped assessment → planner →
+  engineer), locks the stack, and submits the consolidated package at
+  design-to-build with one closing gatekeeper-design stage. Produces a
   consolidated design package.
 
 capabilities:
@@ -29,13 +30,15 @@ tools_required:
     operations: [invoke, receive-result]
 
 delegates_to:                   # listed in pipelines.yaml stage order
+  - name: taste
+    skill_path: taste
   - name: researcher
     skill_path: design/researcher
   - name: architect
     skill_path: design/architect
   - name: security-builder
     skill_path: build/security-builder
-    when: trust boundary         # security-seed stage; sits between architecture and the plan
+    # Unconditional security-seed assessment, including the no-boundary case.
   - name: planner
     skill_path: design/planner
   - name: engineer

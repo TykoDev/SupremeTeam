@@ -104,6 +104,31 @@ class GuardStateTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         self.assertIn("no owner", proc.stderr)
 
+    def test_legacy_adoption_preserves_boundary_then_allows_owned_release(self):
+        path = self.project / ".harness-state" / "guard-state.json"
+        path.write_text(json.dumps({"frozen_globs": ["./infra/**"], "blocked_globs": ["infra/**"]}), encoding="utf-8")
+        proc = self.run_guard("adopt-legacy", "--glob", "infra/**", "--owner", "ops",
+                              "--reason", "legacy migration", "--authorization-ref", "owner-approved fixture")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        for key in ("frozen_globs", "blocked_globs"):
+            entry = self.record()[key][0]
+            self.assertEqual(entry["owner"], "ops")
+            self.assertIsNone(entry["released_at"])
+            self.assertIn("legacy_glob", entry)
+        self.assertIn("deny", self.pre_tool({"tool_name": "Write", "tool_input": {"file_path": "infra/x.txt", "content": "x"}}))
+        self.assertEqual(self.run_guard("release", "--glob", "infra/**", "--requester", "other").returncode, 1)
+        self.assertEqual(self.run_guard("release", "--glob", "infra/**", "--requester", "ops").returncode, 0)
+        self.assertTrue(self.record()["frozen_globs"][0]["released_at"])
+
+    def test_legacy_adoption_cannot_transfer_owned_records_or_omit_authorization(self):
+        self.run_guard("freeze", "--glob", "infra/**", "--owner", "ops")
+        before = self.record()
+        for ref in ("", "owner-approved fixture"):
+            proc = self.run_guard("adopt-legacy", "--glob", "infra/**", "--owner", "other",
+                                  "--reason", "migration", "--authorization-ref", ref)
+            self.assertEqual(proc.returncode, 1)
+            self.assertEqual(self.record(), before)
+
     # --- allow_dangerous -------------------------------------------------
 
     def test_allow_dangerous_is_an_owned_grant_with_an_expiry(self):

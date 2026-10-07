@@ -1082,6 +1082,16 @@ else
     printf 'Hook registration: completed\n'
 fi
 printf 'Restart your assistant session if it was already running.\n'
+if [[ $register_hooks -ne 1 || $hooks_declined -eq 1 || $hooks_failed -ne 0 ]]; then
+    printf '\n%s\n' '=================================================================='
+    printf 'RUNTIME HOOKS ARE NOT REGISTERED: Supreme Team is installed without its enforcement layer.\n'
+    printf 'Without the three hooks the assistant is only advised, never stopped: a guarded or frozen\n'
+    printf 'path can be written, a lifecycle request can bypass admiral, and a run heartbeat goes stale.\n'
+    printf 'Register them (the installer previews every file it would change and asks first):\n'
+    printf '    bash ./scripts/install.sh --register-hooks\n'
+    printf 'Then restart the assistant and confirm with: python "%s/harness/hooks/check_readiness.py" --host auto --require-hooks\n' "$destination"
+    printf '%s\n' '=================================================================='
+fi
 if [[ $register_hooks -ne 1 ]]; then
     printf 'To register runtime harness hooks for the selected hosts, run this installer again from a checkout with --register-hooks, or preview the registration with: python "%s/harness/hooks/repair_registration.py" --host <host> --scope project\n' "$destination"
 fi

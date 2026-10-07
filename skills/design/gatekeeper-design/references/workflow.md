@@ -27,7 +27,7 @@ against.
 ## Verdict Rules
 
 - Return `APPROVED` only when the packet is coherent enough that the next design phase or the build phase could consume it without inventing missing structure.
-- Return `REVISE` when the packet can be repaired by reconciling contradictions, restoring missing artifacts, or tightening decision ownership.
+- Return `REVISE` when the packet can be repaired by reconciling contradictions, restoring missing artifacts, or tightening decision ownership, and only for a mechanical failure, a Critical, or an unresolved Major (`../../../gates.yaml` `revise_policy.revise_threshold`); Minor and Info findings ride along on `APPROVED`.
 - Return `ESCALATE` when the packet reaches a product, scope, or risk decision that the design pipeline cannot settle on its own — and whenever a validator exits 2, because an unrun check is not a clean one.
 - Reuse a prior verdict only when the packet revision and evidence set are unchanged.
 

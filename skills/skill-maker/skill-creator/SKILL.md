@@ -9,7 +9,7 @@ description: >-
   apply, an eval run, a description optimization, or packaging. An internal
   specialist, never the front door: a cold "write me a skill" belongs to
   `skill-maker`.
-version: 1.1.0
+version: 1.1.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -226,7 +226,7 @@ Three-step summary:
    ```bash
    python -m scripts.run_loop \
      --eval-set <path-to-trigger-eval.json> \
-     --skill-path <path-to-skill> \
+     --skill-path <absolute-path-to-skill> \
      --model <model-id> \
      --max-iterations 5 \
      --verbose

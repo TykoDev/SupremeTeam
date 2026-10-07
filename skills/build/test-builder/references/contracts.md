@@ -36,7 +36,7 @@ evidence fail loudly: when the implementation changes after the suite ran,
 describes code no longer in the package. A record without `inputs` passes the
 mechanical check and loses that protection.
 
-Artifacts are hashed byte-for-byte, so a log is never reformatted, trimmed, or
+Artifacts use canonical content digests (UTF-8 text with normalized line endings; binary content as raw bytes), so a log is never reformatted, trimmed, or
 re-encoded after its hash is taken. A log too large to attach comfortably is
 still attached; truncating it makes the evidence describe a run that did not
 happen.

@@ -10,7 +10,7 @@ escalation cap, and the repeat-release rule.
 1. Manifest shape
 2. Which keys `ship` may fill, and which it may not
 3. Responding to a REVISE
-4. Repeat releases: satisfying two keys the pipeline did not regenerate
+4. Repeat releases: current-run snapshots
 5. Standalone mode
 
 ## 1. Manifest Shape
@@ -28,11 +28,11 @@ One JSON file at the run's `release/` phase destination, resolved with
   "revisions": [2],
   "revision": 2,
   "evidence": {
-    "approved_delivery": "rev-8f21c0a (review-to-delivery APPROVED, 2026-04-18)",
+    "approved_delivery": "rev-8f21c0a",
     "deploy_config": "artifacts/deploy-config.yaml",
     "verification_plan": "artifacts/verification-plan.md",
     "rollback_plan": "artifacts/rollback-plan.md",
-    "human_go_required": "approver: release-owner; reference: GO-2026-04-19-01; revision: rev-8f21c0a; decided_at: 2026-04-19T20:05:00Z"
+    "human_go_required": {"decision": "go", "approver": "release-owner", "approval_reference": "GO-2026-04-19-01", "revision": "rev-8f21c0a", "decided_at": "2026-04-19T20:05:00Z"}
   },
   "artifact_hashes": {
     "artifacts/deploy-config.yaml": "<sha256>",
@@ -48,8 +48,9 @@ match the file on disk. Paths are manifest-relative and stay inside the run's ow
 why every destination is composed with `output_paths.py` rather than by hand.
 
 `approved_delivery` is typed `revision_ref`: a non-empty approved upstream revision identifier,
-not artifact-backed. `human_go_required` is a narrative record naming the approver, the approval
-reference, the exact revision, and the timestamp. `../../gates.yaml` sanctions **no** fallback
+not artifact-backed. `human_go_required` is typed `human_go`: decision `go`, non-blank
+approver, approval_reference, revision and timezone-qualified ISO decided_at. Its revision
+must equal approved_delivery. Identity and freshness are still verified by the owner. `../../gates.yaml` sanctions **no** fallback
 value for any of the five, so no applicability record waives any of them — this boundary has no
 waivable key at all, which is why a missing value is always a repair and never a note.
 
@@ -68,7 +69,7 @@ Per-key detail, in the order the boundary lists them:
 | `deploy_config` | plain | artifact | A path present in `artifact_hashes`, hashed to match the file |
 | `verification_plan` | plain | artifact | A path present in `artifact_hashes`, hashed to match the file |
 | `rollback_plan` | plain | artifact | A path present in `artifact_hashes`, hashed to match the file |
-| `human_go_required` | plain | none | Approver identity, approval reference, exact revision, and decision timestamp |
+| `human_go_required` | `human_go` | none | `{decision: go, approver, approval_reference, revision, decided_at}`; exact revision match, timezone-qualified ISO timestamp |
 
 A stale or missing `approved_delivery` is a blocker rather than a waiver, an artifact-backed key
 stated in prose fails the artifact check, and `human_go_required` is never satisfied by
@@ -109,28 +110,19 @@ both packets, the changed and unchanged evidence, and the owner of each key that
 converge. Hold the release while either verdict stands — a gate that has not approved has not
 approved slowly.
 
-## 4. Repeat Releases: Satisfying Two Keys the Pipeline Did Not Regenerate
+## 4. Repeat Releases: Current-Run Snapshots
 
-`../../pipelines.yaml` runs the `setup` stage only `when: first deployment`, so on a repeat
-release no stage produces `deploy_config` or `rollback_plan`, and neither key has a sanctioned
-fallback. **The checker does not yet admit a carry-forward (open finding P-1).** A manifest that
-points either key at the artifact an earlier run persisted fails with `artifact references
-another run` (`evidence_rules.evidence_root`), so until P-1 is resolved a repeat release passes
-only by reopening the `setup` stage under `setup-deploy` for this run, which writes the two
-artifacts into this run's `release/artifacts/`. The intended shape, which the gate does not yet
-accept, is:
+`../../pipelines.yaml` runs `setup` on every release before the boundary. On a repeat
+release, `setup-deploy` re-verifies the durable configuration and rollback source against
+this environment and revision, then writes immutable current-run snapshots under
+`release/artifacts/`, recording source run/revision and re-verification evidence. Ship
+requests these artifacts and hashes the supplied snapshots; it never writes them itself.
 
-1. The artifacts `setup-deploy` persisted on the first deployment are the durable source and
-   carry forward unchanged.
-2. `ship` re-verifies them against **this** release before submission: the target environment,
-   the artifact flow, the variable and secret references, and the rollback trigger and
-   procedure.
-3. The package names the persisted revision alongside the hash the artifact carried at
-   verification time, so the gate judges the file that was actually checked.
-
-A re-verification that fails is drift, not a waiver. It reopens the `setup` stage under
-`setup-deploy` for this release, because each of those keys has exactly one producer and `ship`
-may not stand in for it.
+The gate accepts the current-run paths exactly as on a first deployment. It still rejects
+references into another run: durable reuse is not permission to widen evidence containment.
+A failed re-verification is drift requiring repair by `setup-deploy`, never a waiver.
+`land-and-deploy` and `document` are explicitly `after_boundary` and cannot run until the
+cross-stage APPROVED record and the named owner's go decision are recorded.
 
 ## 5. Standalone Mode
 

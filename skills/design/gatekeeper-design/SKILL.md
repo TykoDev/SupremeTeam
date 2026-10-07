@@ -8,7 +8,7 @@ description: >-
   readiness, or challenge the packet — even when they only ask "is the design
   done?". Defers the other gates to `build/gatekeeper-build`,
   `review/gatekeeper-code`, `gatekeeper-admiral`.
-version: 1.1.0
+version: 1.2.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -283,12 +283,12 @@ the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 - **Taste snapshot**: Require its canonical digest, project and global source revisions, resolved and shadowed entries, unresolved conflicts, applicability decision, and effective-preference traceability rows. Confirm both source revisions are still current immediately before approval; reject stale snapshots or unresolved conflicts that affect a design decision.
 - **Harness-doctrine citation**: When the package adds or changes a cross-cutting runtime intervention, check it against `../../harness-doctrine.md` §5 and cite the violated section by number in the verdict.
 - **YAGNI and proof contract**: Reject packages that force speculative future commitments without current need, or that change behavior without a build-ready proof plan covering reproduction/contract tests, migration checks, and rollback evidence as applicable.
-- **Batched REVISE** (`../../gates.yaml` `revise_policy`): A `REVISE` carries every mechanical failure and every judgment finding from the pass, grouped by owner exactly as the boundary validator `../../harness/gatekeeper/check.py` reports them in `revise_packet.by_owner`; never return the first defect alone. On a resubmission run with `--prior`, re-judge only `changed_evidence` and carry the prior judgment on `unchanged_evidence`; the mechanical pass always covers the whole package. A package that fails mechanically was never eligible for submission (the submitter self-checks) and is returned without judgment.
+- **Batched REVISE** (`../../gates.yaml` `revise_policy`): A `REVISE` carries every mechanical failure and every judgment finding from the pass, grouped by owner exactly as the boundary validator `../../harness/gatekeeper/check.py` reports them in `revise_packet.by_owner`; never return the first defect alone. On a resubmission run with `--prior`, re-judge only `changed_evidence` and carry the prior judgment on `unchanged_evidence`; the mechanical pass always covers the whole package. A package that fails mechanically was never eligible for submission (the submitter self-checks) and is returned without judgment. On a resubmission a new finding is raised only against `changed_evidence` or a defect the change introduced (`revise_policy.batch_fix`); a finding that could have been raised on unchanged evidence in the first pass is not raised now, because a gate that reveals its standard one finding per round is the slowest thing in the pipeline.
 
 ## Verdict Model
 
 - **APPROVED**: The package is ready to advance with its current evidence.
-- **REVISE**: The package can progress after specific mandatory changes.
+- **REVISE**: The package can progress after specific mandatory changes: a mechanical failure, a Critical finding, or a Major the finding policy leaves unresolved (`../../gates.yaml` `revise_policy.revise_threshold`). Minor and Info findings never produce a REVISE on their own; they are recorded in the verdict record and ride along on APPROVED, for the submitter to carry into `residual_risk` or the next owner's handoff.
 - **ESCALATE**: The package cannot advance without external judgment or a broader scope decision.
 
 ## Evidence Standard
@@ -323,7 +323,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | A selection-dependent key carries a sanctioned wording while `selection.decision` is `variant`, or carries evidence while the decision was a merge or a deferral | Return `REVISE` to the key's owner, and to `redesign` for the mismatch itself. The wording means the requirement did not arise; beside a built variant it conceals evidence the package owes, and its absence after a deferral claims work that was never commissioned. |
 | `mock_parity` or `parity_evidence` is a probe record whose `inputs` are absent or do not bind by sha256 to the inventory and the mock or prototype files | Return `REVISE` to `design-mapper`. An unbound parity probe proves that something passed, not that the redesign matches the inventory it claims parity with. |
 | `mock_parity` fails a mock on a missing state, interaction, or flow | Return `REVISE` to `design-mapper`, not to the builder. Mock level scores routes and components only; those three lists are informational, and failing a mock on them asks its builder to implement before the selection stage has run. |
-| `mock_rendering` at `redesign-review` carries the sanctioned fallback string or an applicability record, or the shape check's `UNCHECKED` on it is read as a waiver | Return `REVISE` to `design-qa` and require hashed captures across the required breakpoints and themes, bound by `inputs` to the rendered mocks. The boundary lists the key under `no_fallback`, which beats the global fallback, and a conditional `UNCHECKED` from `check_redesign.py` is an unresolved question rather than permission. |
+| `mock_rendering` at `redesign-review` carries a purported fallback string or an applicability record, or the shape check's `UNCHECKED` on it is read as a waiver | Return `REVISE` to `design-qa` and require hashed captures across the required breakpoints and themes, bound by `inputs` to the rendered mocks. The boundary lists the key under `no_fallback`, and there is no global fallback for `mock_rendering`, and a conditional `UNCHECKED` from `check_redesign.py` is an unresolved question rather than permission. |
 
 ## Save Protocol
 

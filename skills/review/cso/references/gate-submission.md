@@ -93,7 +93,7 @@ cso keeps the same stage sequencing but returns artifacts inline and propagates
 | Specialist return | Verify the named artifact exists at its destination, then register its sha256 through a `session-memory` checkpoint (`--evidence <path>`) |
 | Scan and probe evidence | Typed records under `security/evidence/`: `scan_record.py` writes the scan record, and the probing specialist writes the denial-path log. Immutable per revision. The scan record names its raw output relative to `security/` (`evidence/<stem>.stdout.txt`, `.stderr.txt`), so it is embedded in the manifest unchanged and each name is hashed in `artifact_hashes` under exactly that spelling |
 | Gate submission | `security/manifest.json` (schema 2: `boundary: security-review`, `owner: cso`), carrying the hashed threat model, the scan record, the denial-path probe log, and the findings, remediation-plan, and residual-risk values |
-| Phase-gate verdict | Nothing: the gatekeeper writes `security/verdict_security-review.json` through `check.py --verdict-out`; cso records the semantic verdict in its next checkpoint |
+| Boundary verdict | Nothing: `gatekeeper-admiral` is this boundary's only validator and writes `security/verdict_security-review.cross-stage.json` through `check.py --verdict-out`; cso records the semantic verdict in its next checkpoint. No phase-verdict file is owed. |
 | Package consolidation | `security/reports/security-review-package.md` plus the manifest revision admiral submits to `gatekeeper-admiral` |
 
 ## Save Context Block for Specialist Delegations

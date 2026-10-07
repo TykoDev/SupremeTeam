@@ -1,16 +1,14 @@
 # Calling Skills Directly
 
-Short version: standalone tools you call whenever you want. Pipeline skills you
-can also name directly, they just start at `admiral` first. Small reversible work
-skips all of it and just gets done.
-
-The rules behind that are in [routing.md](routing.md).
+Standalone tools run whenever you call them. Pipeline skills can be named too;
+they start at `admiral` first. Small reversible work (Tier 0) skips all of it.
+Rules: [routing.md](routing.md).
 
 ## Standalone tools
 
-Out of routing scope. No pipeline, no intake, no gate. Just call them.
+No pipeline, no intake, no gate.
 
-| You want | Skill | Say something like |
+| You want | Skill | Say |
 |---|---|---|
 | A visible browser | `open-browser` | "Use the open-browser skill to launch a browser workspace" |
 | To drive a live page | `browse` | "Use the browse skill to click through the app and capture evidence" |
@@ -27,43 +25,36 @@ Out of routing scope. No pipeline, no intake, no gate. Just call them.
 | Testing with fixes | `qa` | "Use the qa skill to test this product and fix what's broken" |
 | Testing without fixes | `qa-only` | "Use the qa-only skill, just tell me what's broken" |
 | A performance comparison | `benchmark` | "Use the benchmark skill to compare performance" |
+| A harness audit | `audit-improve` | "Use the audit-improve skill to audit the saved runs" |
 
 ## Pipeline work
 
-You do not have to say "admiral". Say what you want; routing handles it.
+Say what you want; routing handles it. Naming `admiral` is never wrong and never
+required.
 
-| You want | Goes to | Say something like |
+| You want | Goes to | Say |
 |---|---|---|
-| The whole thing, idea to reviewed code | `admiral` | `Use the admiral skill to design, build, and review [your idea].` |
+| Idea to reviewed code | `admiral` | `Design, build, and review [your idea].` |
 | A design | `admiral`, delegating `commander` | `Design [your idea].` |
-| Code from an approved plan | `admiral`, delegating `build-management` | `Implement this approved design.` |
+| Code from an approved design | `admiral`, delegating `build-management` | `Implement this approved design.` |
 | A review | `admiral`, delegating `code-chief` | `Review this codebase.` |
-| To find out why something broke | `admiral`, delegating `investigate` | `Find the root cause of this failure.` |
+| A root cause | `admiral`, delegating `investigate` | `Find the root cause of this failure.` |
 | A security audit | `admiral`, delegating `cso` | `Audit this codebase for security issues.` |
 | Product testing | `admiral`, delegating `qa` | `Test this product and fix what's broken.` |
 | A new skill or team | `skill-maker` | `Create a skill that [behavior].` |
-| To save or resume | `session-memory` | `Save where we are.` / `Resume from saved state.` |
+| Save or resume | `session-memory` | `Save where we are.` / `Resume from saved state.` |
 
-Naming a pipeline skill directly is fine. "Design this thing" is honored, it just
-initiates through admiral so the run gets one intake, one persisted state, and one
-cross-stage gate. Naming admiral explicitly is never wrong, and never required.
-
-Every one of these closes at its own gate boundary. The boundary table and the
-evidence each needs is in [gatekeepers.md](gatekeepers.md).
+Each closes at its own boundary ([gatekeepers.md](gatekeepers.md)).
 
 ## Internal specialists
 
-`architect`, `bob-the-builder`, `mr-robot`, the stage gatekeepers, and the rest of
-the skills under `design/`, `build/`, and `review/` are reached through their
-owning sub-orchestrator, by path. They are not user entry points: a host that scans
-one level deep never lists them (only the 22 skills at the install root are
-registered by name), and a request phrased as one of them goes through the front
-door instead.
+Skills under `design/`, `build/` and `review/`, plus `taste-review`,
+`skill-creator` and `skill-reviewer`, are reached through their owning
+sub-orchestrator. A host that scans one level deep never lists them.
 
-## If your tool has no skill routing
+## Without skill routing
 
-`AGENTS.md` is the index of a checkout and is not installed, so this route works
-from one. Provide `AGENTS.md` and the specific `SKILL.md` as context, then ask:
+From a checkout, provide `AGENTS.md` and the `SKILL.md` as context:
 
 ```text
 Provide AGENTS.md and skills/admiral/SKILL.md, then ask: "Run the full pipeline for [description]."

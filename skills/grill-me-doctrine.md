@@ -48,7 +48,7 @@ judgement. Exactly one thing is mechanical: that a hashed artifact backs the
 | That a deferral carries a real owner and a real reopen trigger | judgement | nothing at this boundary; a `findings` record enforces owner-and-reopen-trigger for deferred Majors, which is a different key |
 | The taste grilling walked all eleven categories in the declared order | judgement | nothing |
 | That a grilling answer became a Taste entry only after confirmation | judgement here; machine-checked at `taste-review` | the typed `confirmation` record required at `taste-review` ([taste-doctrine.md](taste-doctrine.md) §6) |
-| This document itself | **judgement** | nothing — no comparator opens this file. The two mechanical rows above are properties of [gates.yaml](gates.yaml) and `check.py`, which know only that a hashed artifact backs a key. `team-manifest.yaml` `intake_doctrine` names this doctrine, and nothing resolves that name to a file (its own `authority.unchecked_keys` records the same gap), so this document could be renamed and every suite would still pass. |
+| This document itself | **partial structural coverage; semantic judgement** | Catalog prose scans inspect doctrine text, not the quality or timing of an interview. The two mechanical rows above are properties of [gates.yaml](gates.yaml) and `check.py`, which know only that a hashed artifact backs a key. `team-manifest.yaml` `intake_doctrine` names this doctrine, and nothing resolves that name to a file (its own `authority.unchecked_keys` records the same gap), so pointer resolution is not guaranteed by that declaration. |
 
 **Why the four-section requirement is not mechanical, and what would make it
 so.** `check.py` verifies that the `decisions` key names a path, that the path is
@@ -93,6 +93,13 @@ content.
 Every rule here is judgement. None is machine-checked, and the log in
 [Output](#output) is the only durable trace that any of them was applied.
 
+Delegated pipeline specialists consume Admiral's confirmed intake; they do not
+repeat the user interview from a sub-agent. Admiral owns `intake-grilling` and
+the user channel. Commander or a specialist discovering a new load-bearing
+choice returns one bounded question and recommendation to Admiral, then holds
+its deliverable until the updated Decision Register arrives. Applying this
+doctrine to an inherited decision is not permission to bypass that owner.
+
 ## Decision prompt contract
 
 When the host exposes a planning-mode or structured input primitive, use it for
@@ -125,6 +132,13 @@ deliverable is generated or delegated.
 - Ambiguous or high-stakes requests get the full treatment until the end
   conditions above are genuinely met.
 - Resumed runs re-confirm only the branches whose inputs changed.
+- A bounded change to an existing codebase — a fix or a small feature that the
+  interview confirms changes no architecture, interface contract, data model, or
+  trust boundary — records that determination in the Decision Register, and every
+  downstream artifact is sized to it: a one-page architecture note, a plan of one
+  slice, conditional stages skipped with their applicability records, the Taste
+  snapshot reused when the profile is unchanged. The gates and their evidence keys
+  do not change; the length of what satisfies them does.
 - When a user answers several branches in one message, map each answer to its
   decision node, record the resolved decisions, and resume at the next
   unresolved branch. Never re-ask a settled decision, and never reject input for

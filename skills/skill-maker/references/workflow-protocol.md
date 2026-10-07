@@ -63,7 +63,7 @@ ABORTED: clean exit, present current state summary.
 | `IMPROVE_COMPLETE` | orchestrator | Improved skill received, preparing re-review |
 | `OPTIMIZE_ACTIVE` | skill-creator | Running description optimization |
 | `OPTIMIZE_COMPLETE` | orchestrator | Optimized description applied |
-| `PACKAGE_ACTIVE` | skill-creator | Building .skill package |
+| `PACKAGE_ACTIVE` | skill-maker | Owns the package stage; delegates .skill construction to skill-creator |
 | `DELIVERED` | orchestrator | Pipeline complete, delivery report presented |
 | `USER_DECISION` | user | Waiting for user input on blocked/plateaued state |
 | `ABORTED` | orchestrator | Pipeline terminated by user |

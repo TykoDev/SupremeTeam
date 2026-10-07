@@ -8,7 +8,7 @@ description: >-
   "get deploys set up". Owns `deploy-config` and `rollback-plan`; defers running
   a rollout to `land-and-deploy` and orchestration to
   `ship`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -45,7 +45,7 @@ Route elsewhere to run an actual rollout (`land-and-deploy`), orchestrate a full
 - **`rollback_plan`** — evidence key at `deploy-readiness`, owner `setup-deploy`. Its content is the rollback-plan artifact: rollback trigger and procedure, and data considerations. Artifact-backed on the same terms, and with no sanctioned fallback value either.
 - Readiness gap list for missing credentials, protected-environment approvals, DNS/cert work, or automation prerequisites.
 
-`../pipelines.yaml` runs the `setup` stage only `when: first deployment`, so both artifacts are built to outlive the run that created them: they are the durable source a later release reuses and `ship` re-verifies. The `deploy-readiness` check does not yet accept a reference into an earlier run (`artifact references another run`; open finding P-1), so today a repeat release reopens this stage to write both artifacts into its own run. A re-verification failure returns here rather than being waived at the gate.
+`../pipelines.yaml` runs `setup` on every release, before `deploy-readiness`. On the first deployment establish the durable source; on repeat releases re-verify its environment, artifact flow, secret references and rollback procedure, then write immutable current-run snapshots into this run's `release/artifacts/`. Unchanged content may retain its canonical hash, but the new snapshot records source run/revision and re-verification evidence. Only `setup-deploy` writes these files. Cross-run references remain rejected; failed re-verification is drift requiring repair here, never a waiver.
 
 The two evidence keys above exist only inside a run. `../routing-doctrine.md` also classes this skill a standalone tool, invokable directly at any time, and standalone there is no package, no `deploy_config` or `rollback_plan` gate key, and no verdict: the same two artifacts are written to the project's own deployment surface under the same filenames, and the result says plainly that nothing judged them. **Record the destination that was actually resolved**, as an absolute path in the returned package, alongside the file hashes. Inside a run the save path makes this unambiguous; standalone it is whatever the project's deployment surface turned out to be, and a package naming only "the project's deployment surface" leaves the next release re-deriving a path this run already knew. The write is still bounded: the destination is canonical and inside the workspace, never reached by traversal or a link, so the resolved absolute path is also the evidence that the boundary held. Recording it absolute does not conflict with the Canonical-config-path contract's rejection of absolute paths — that rejection governs destinations *offered to* the skill and references written *into a manifest*, neither of which this is. The owner-approved diff is still required — it is a property of writing production configuration, not of being inside a run.
 

@@ -1,22 +1,28 @@
 {
   "schema_version": 1,
   "kind": "supremeteam-pipeline-spec",
+  "spec_revision": 3,
+  "scheduling": "The stage order is a topological order of each pipeline's declared requires, not a serial mandate: stages whose requires are all satisfied run concurrently, delegated in one turn. So the three unconditional review lenses and every conditional lens whose condition holds start together on the approved build, test-surface and security-checkpoint start together once the implementation lands, and taste-snapshot and research start together on the decisions. A stage never waits on a stage it does not require, and a pipeline's wall-clock is its longest dependency chain, not the sum of its stages.",
+  "conditional_outputs": "Every conditional stage emits its declared outputs: execution evidence, or a boundary-sanctioned applicability/no-op record on skip. Skipping is not an absent producer; an unsanctioned fallback cannot satisfy a required input. after_boundary stages run only after phase and cross-stage APPROVED verdicts, when approved-boundary becomes available.",
   "purpose": "Machine-readable definition of every Supreme Team pipeline, including Taste: ordered stages, stage owners, the gate boundary that closes the pipeline, and the pipeline-level deterministic scripts it must run itself. Owners must exist in team-manifest.yaml, boundaries in gates.yaml, and every declared script path on disk; validation/test_pipeline_contracts.py and scripts/validate_manifests.py enforce all three. An empty scripts list is a declaration, not an omission: see scripts_rule. The gate is modelled two ways across these ten pipelines: see gate_model. The prose workflows in the owning SKILL.md files elaborate these stages and must not contradict them.",
   "scripts_rule": "scripts lists only the deterministic scripts a pipeline must run itself, as project-relative paths that test_pipeline_contracts.py resolves on disk. Five pipelines declare an empty list - build, review, investigation, qa, and release - and that is a positive statement: those pipelines mandate no pipeline-level script of their own. Their determinism comes from the boundary instead, judged by skills/harness/gatekeeper/check.py, which the gatekeeper invokes and the pipeline does not. An empty list never means no tooling runs; the stage owners' own SKILL.md files name the commands they run, and those commands are not declared here.",
-  "gate_model": "All ten pipelines declare a boundary and every boundary is closed by a gatekeeper, but only four model the gate as a stage. design, redesign, build, and review carry an explicit phase-gate stage owned by a phase gatekeeper that validates inside the pipeline before gatekeeper-admiral validates the same boundary as the cross-stage handoff. security, investigation, qa, taste, skill-creation, and release carry no phase-gate stage because they have no phase gatekeeper: their boundary is judged once, by gatekeeper-admiral. The missing stage is a statement about validation depth, not a gap in the stage list. Mirrored in prose by contracts/responsibility-matrix.md.",
+  "gate_model": "All ten pipelines declare a boundary and every boundary is closed by a gatekeeper, but only four model the gate as a stage. design, redesign, build, and review carry an explicit phase-gate stage owned by a phase gatekeeper that validates inside the pipeline before gatekeeper-admiral validates the same boundary as the cross-stage handoff. security, investigation, qa, taste, skill-creation, and release carry no phase-gate stage because they have no phase gatekeeper: their boundary is judged once, by gatekeeper-admiral. The missing stage is a statement about validation depth, not a gap in the stage list. Explicit after_boundary stages separate approved follow-through from pre-approval evidence: release rollout/documentation and investigation handoff run after, never before, this declared boundary. Mirrored in prose by contracts/responsibility-matrix.md. At those four phase-gated boundaries the cross-stage pass is bounded by gates.yaml revise_policy.cross_stage_scope: with an APPROVED phase verdict and no changed evidence it judges the crossing and carries the phase gate's adequacy judgment, so one package is not reviewed twice for the same question.",
   "stage_fields": {
     "step": "Required. Stage id, unique within the pipeline.",
     "owner": "Required. Must be a team-manifest.yaml member. When the stage declares an artifact, the owner must equal that artifact's writer in ownership.yaml; test_pipeline_contracts.py StageArtifactOwnershipTests enforces it.",
     "artifact": "Optional. Must be an ownership.yaml artifact id. The stage owner keeps the write even when the work is delegated.",
-    "when": "Optional. A prose condition selecting the stage. No comparator evaluates the condition against a live run - that stays judgement, and failure_paths.when_condition_ambiguous governs it. What is checked is that the condition is stated somewhere on the handoff: validation/test_orchestration.py StageConditionTests requires the condition, minus any parenthetical gloss, to appear verbatim in the SKILL.md of the stage owner or of the pipeline owner, within a sentence of a word that frames it as a condition. Twenty-one stages carry a `when`; the four added when redesign became mock-first all state the same condition, `a variant was selected`. Sixteen are documented by the stage owner itself and five only by the orchestrator that invokes the stage, so either end satisfies the rule and a floor keeps the specialist-side share from eroding.",
+    "when": "Optional. A prose condition selecting the stage. No comparator evaluates the condition against a live run - that stays judgement, and failure_paths.when_condition_ambiguous governs it. What is checked is that the condition is stated somewhere on the handoff: validation/test_orchestration.py StageConditionTests requires the condition, minus any parenthetical gloss, to appear verbatim in the SKILL.md of the stage owner or of the pipeline owner, within a sentence of a word that frames it as a condition. Execution conditions and `delegate_when` are checked separately: required evidence is not made optional merely because delegation is conditional. Every declared condition is documented by the stage owner or invoking orchestrator, and a floor keeps the specialist-side share from eroding.",
     "delegate": "Optional. The skill the stage owner hands the work to while keeping the write. Declared by qa/evidence-capture (browse), qa/defect-record (qa-only, on a report-only run, which routing-doctrine.md and qa-only/SKILL.md both describe; qa remains the only qa-review submitter), and skill-creation/package (skill-creator, whose Package mode skill-maker Stage 5 calls). validation/test_orchestration.py PipelineOwnerRoleTests resolves the name: a delegate must be a skill on the team-manifest.yaml roster. Whether it is reachable from that stage is still judgement.",
-    "requires": "Optional list of dependency ids that must be present in pipeline external_inputs or produced by an earlier stage. scripts/validate_manifests.py and validation/test_pipeline_contracts.py reject missing and forward dependencies.",
-    "produces": "Optional list of dependency ids made available to later stages. An id may be produced only once in a pipeline.",
+    "delegate_when": "Optional condition for delegation only, never for producing the stage's evidence. QA owns unconditional executed-probes and defects, delegating browser probes or report-only discovery when appropriate.",
+    "after_boundary": "Optional boolean. True places the stage strictly after APPROVED at the declared boundary; approved-boundary cannot be an intake input or be produced by a stage.",
+    "dependency_graph": "Pipeline-level map from every stage id to its requires and produces lists; alternative to stage-local lists, not an exemption. All stages must have exactly one complete dependency declaration, and every external input and dependency is a non-blank string in a list.",
+    "requires": "Required locally or in dependency_graph. List of dependency ids that must be present in pipeline external_inputs or produced by an earlier stage. scripts/validate_manifests.py and validation/test_pipeline_contracts.py reject missing and forward dependencies.",
+    "produces": "Required locally or in dependency_graph. List of dependency ids made available to later stages. An id may be produced only once in a pipeline.",
     "then": "Optional. The pipeline or sub-pipeline the stage output continues into. Judgement.",
     "fan_out": "Optional. Parallel instances of the stage; a stage that declares none runs once. redesign/mock-build declares 4, matching mock_set.required_count in gates.yaml, which check.py does enforce on the submitted record. The numbers are compared: validation/test_orchestration.py StageConditionTests pairs the counted evidence keys gates.yaml evidence_owners assigns to a stage owner at the pipeline's boundary, in required_evidence order, with that owner's artifact-bearing stages in pipeline order, and requires each stage's fan-out to equal the required_count of the key it produces. prototyper owns two of them at redesign-review, so mock-build must fan out four ways for mock_set and selected-build must not fan out at all for selected_variant. design/redesign/agent/agent-manifest.yaml states the fanned-out number a third time for the same delegate and is compared too. A fan-out that stops producing the number the gate counts is a pipeline that cannot close."
   },
   "enforcement": {
-    "scripts/validate_manifests.py": "check_pipeline_mirrors: every pipeline owner and stage owner is a team member; an artifact-bearing stage matches ownership.yaml's writer; every declared script exists under skills/; the boundary set equals gates.yaml's; exactly one pipeline owns each boundary; every pipeline name is a declared phase directory in save-ownership.yaml.",
+    "scripts/validate_manifests.py": "check_pipeline_mirrors: every pipeline owner and stage owner is a team member; an artifact-bearing stage matches ownership.yaml's writer; every declared script exists under skills/; the boundary set equals gates.yaml's; exactly one pipeline owns each boundary; every pipeline name is a declared phase directory in save-ownership.yaml; complete dependency coverage, list shapes, unique step ids, forward/duplicate dependencies and after-boundary approval placement are checked.",
     "validation/test_pipeline_contracts.py": "The same owner, boundary, artifact, script, and requires/produces ordering facts as independent assertions, plus StageArtifactOwnershipTests and a taste-specific completeness test.",
     "validation/test_save_contracts.py": "Every pipeline name has a save phase directory, and the security and taste script declarations are present.",
     "validation/test_catalog_contracts.py": "StageDelegationTests: a pipeline owner's own documents must name every stage owner it delegates to.",
@@ -47,6 +53,13 @@
           "produces": ["decisions"]
         },
         {
+          "step": "taste-snapshot",
+          "owner": "taste",
+          "artifact": "taste-snapshot",
+          "requires": ["decisions"],
+          "produces": ["taste-snapshot"]
+        },
+        {
           "step": "research",
           "owner": "researcher",
           "requires": ["decisions"],
@@ -64,12 +77,11 @@
           "when": "user-facing surface",
           "artifact": "design-system",
           "requires": ["architecture"],
-          "produces": ["design-system"]
+          "produces": ["design-system", "ui-evidence"]
         },
         {
           "step": "security-seed",
           "owner": "security-builder",
-          "when": "trust boundary",
           "requires": ["architecture"],
           "produces": ["security-seed"]
         },
@@ -94,7 +106,7 @@
         {
           "step": "phase-gate",
           "owner": "gatekeeper-design",
-          "requires": ["decisions", "architecture", "plan", "implementation-spec", "stack-lock"],
+          "requires": ["decisions", "architecture", "plan", "implementation-spec", "stack-lock", "taste-snapshot", "security-seed", "ui-evidence"],
           "produces": ["design-gate-verdict"]
         }
       ],
@@ -106,6 +118,23 @@
     "redesign": {
       "owner": "redesign",
       "boundary": "redesign-review",
+      "external_inputs": ["request"],
+      "dependency_graph": {
+        "intake-grilling": {"requires": ["request"], "produces": ["decisions"]},
+        "design-inventory": {"requires": ["decisions"], "produces": ["design-inventory"]},
+        "taste-grilling": {"requires": ["design-inventory"], "produces": ["taste-grilling", "taste-snapshot"]},
+        "design-directions": {"requires": ["design-inventory", "taste-snapshot"], "produces": ["design-directions"]},
+        "mock-build": {"requires": ["design-inventory", "design-directions"], "produces": ["mock-set"]},
+        "mock-parity": {"requires": ["mock-set", "design-inventory"], "produces": ["mock-parity"]},
+        "mock-review": {"requires": ["mock-set", "mock-parity"], "produces": ["mock-rendering"]},
+        "selection": {"requires": ["mock-set", "mock-parity", "mock-rendering"], "produces": ["selection"]},
+        "selected-build": {"requires": ["selection", "design-inventory"], "produces": ["selected-variant"]},
+        "parity-verification": {"requires": ["selected-variant", "design-inventory"], "produces": ["parity-evidence"]},
+        "visual-qa": {"requires": ["selected-variant"], "produces": ["rendered-verification"]},
+        "frontend-review": {"requires": ["selected-variant"], "produces": ["accessibility-evidence"]},
+        "recommendation": {"requires": ["selection", "mock-rendering", "parity-evidence", "rendered-verification", "accessibility-evidence"], "produces": ["recommendation"]},
+        "phase-gate": {"requires": ["recommendation", "taste-snapshot", "mock-parity"], "produces": ["redesign-gate-verdict"]}
+      },
       "stages": [
         {
           "step": "intake-grilling",
@@ -193,6 +222,17 @@
     "build": {
       "owner": "build-management",
       "boundary": "build-to-review",
+      "external_inputs": ["approved-design", "security-seed"],
+      "dependency_graph": {
+        "implementation": {"requires": ["approved-design"], "produces": ["implementation"]},
+        "test-surface": {"requires": ["implementation"], "produces": ["tests"]},
+        "security-checkpoint": {"requires": ["implementation", "security-seed"], "produces": ["security-evidence"]},
+        "runtime-health": {"requires": ["implementation"], "produces": ["runtime"]},
+        "debugging": {"requires": ["tests", "runtime"], "produces": ["debugging-result"]},
+        "investigation": {"requires": ["tests", "runtime"], "produces": ["investigation-result"]},
+        "completeness-cross-check": {"requires": ["approved-design", "implementation", "tests", "runtime", "security-evidence", "debugging-result", "investigation-result"], "produces": ["completeness-report"]},
+        "phase-gate": {"requires": ["completeness-report", "tests", "runtime", "security-evidence"], "produces": ["build-gate-verdict"]}
+      },
       "stages": [
         {
           "step": "implementation",
@@ -238,6 +278,19 @@
     "review": {
       "owner": "code-chief",
       "boundary": "review-to-delivery",
+      "external_inputs": ["approved-build"],
+      "dependency_graph": {
+        "correctness-review": {"requires": ["approved-build"], "produces": ["bug-findings"]},
+        "merge-readiness-review": {"requires": ["approved-build"], "produces": ["merge-findings"]},
+        "maintainability-review": {"requires": ["approved-build"], "produces": ["quality-findings"]},
+        "security-review": {"requires": ["approved-build"], "produces": ["security-findings"]},
+        "penetration-review": {"requires": ["approved-build"], "produces": ["penetration-findings"]},
+        "frontend-review": {"requires": ["approved-build"], "produces": ["frontend-findings"]},
+        "visual-qa": {"requires": ["approved-build"], "produces": ["rendered-verification"]},
+        "developer-experience-review": {"requires": ["approved-build"], "produces": ["devex-findings"]},
+        "finding-triage": {"requires": ["bug-findings", "merge-findings", "quality-findings", "security-findings", "penetration-findings", "frontend-findings", "rendered-verification", "devex-findings"], "produces": ["review-verdict"]},
+        "phase-gate": {"requires": ["review-verdict"], "produces": ["review-gate-verdict"]}
+      },
       "stages": [
         {
           "step": "correctness-review",
@@ -293,6 +346,15 @@
     "security": {
       "owner": "cso",
       "boundary": "security-review",
+      "external_inputs": ["request"],
+      "dependency_graph": {
+        "scope-and-threat-model": {"requires": ["request"], "produces": ["scope", "threat-model"]},
+        "posture-assessment": {"requires": ["scope", "threat-model"], "produces": ["vulnerability-scan"]},
+        "adversarial-probe": {"requires": ["scope", "threat-model", "vulnerability-scan"], "produces": ["denial-path-evidence"]},
+        "triage": {"requires": ["vulnerability-scan", "denial-path-evidence"], "produces": ["findings", "remediation-plan", "residual-risk"]},
+        "remediation": {"requires": ["findings", "remediation-plan"], "produces": ["remediation-result"]},
+        "package": {"requires": ["scope", "threat-model", "vulnerability-scan", "denial-path-evidence", "findings", "remediation-result", "residual-risk"], "produces": ["security-package"]}
+      },
       "stages": [
         {
           "step": "scope-and-threat-model",
@@ -331,6 +393,14 @@
     "investigation": {
       "owner": "investigate",
       "boundary": "investigation-review",
+      "external_inputs": ["request"],
+      "dependency_graph": {
+        "scope-and-reproduction": {"requires": ["request"], "produces": ["scope", "reproduction"]},
+        "evidence-chain": {"requires": ["scope", "reproduction"], "produces": ["evidence-chain"]},
+        "mechanism": {"requires": ["evidence-chain"], "produces": ["mechanism"]},
+        "bounded-fix-path": {"requires": ["mechanism", "evidence-chain"], "produces": ["fix-path", "residual-uncertainty", "investigation-package"]},
+        "return-to-owning-phase": {"requires": ["approved-boundary", "investigation-package"], "produces": ["owning-phase-handoff"]}
+      },
       "stages": [
         {
           "step": "scope-and-reproduction",
@@ -353,7 +423,8 @@
         },
         {
           "step": "return-to-owning-phase",
-          "owner": "admiral"
+          "owner": "admiral",
+          "after_boundary": true
         }
       ],
       "scripts": []
@@ -361,6 +432,15 @@
     "qa": {
       "owner": "qa",
       "boundary": "qa-review",
+      "external_inputs": ["request"],
+      "dependency_graph": {
+        "scope-and-matrix": {"requires": ["request"], "produces": ["scope", "test-matrix"]},
+        "browser-session": {"requires": ["scope", "test-matrix"], "produces": ["browser-session"]},
+        "evidence-capture": {"requires": ["scope", "test-matrix", "browser-session"], "produces": ["executed-probes"]},
+        "defect-record": {"requires": ["executed-probes"], "produces": ["defects"]},
+        "scoped-fixes": {"requires": ["defects"], "produces": ["fixes-applied"]},
+        "rerun-until-stable": {"requires": ["test-matrix", "executed-probes", "defects", "fixes-applied"], "produces": ["qa-package"]}
+      },
       "stages": [
         {
           "step": "scope-and-matrix",
@@ -376,7 +456,7 @@
           "step": "evidence-capture",
           "owner": "qa",
           "delegate": "browse",
-          "when": "browser surface under test",
+          "delegate_when": "browser surface under test",
           "artifact": "executed-probes"
         },
         {
@@ -384,7 +464,7 @@
           "owner": "qa",
           "artifact": "defects",
           "delegate": "qa-only",
-          "when": "report-only run (fixes not authorized)"
+          "delegate_when": "report-only run (fixes not authorized)"
         },
         {
           "step": "scoped-fixes",
@@ -401,6 +481,18 @@
     "taste": {
       "owner": "taste",
       "boundary": "taste-review",
+      "external_inputs": ["request"],
+      "dependency_graph": {
+        "intake": {"requires": ["request"], "produces": ["taste-intake"]},
+        "diff": {"requires": ["taste-intake"], "produces": ["preference-diff"]},
+        "confirmation": {"requires": ["preference-diff"], "produces": ["confirmation"]},
+        "conflict-analysis": {"requires": ["preference-diff", "confirmation"], "produces": ["conflict-analysis"]},
+        "persistence": {"requires": ["preference-diff", "confirmation", "conflict-analysis"], "produces": ["persistence-result"]},
+        "effective-profile": {"requires": ["persistence-result"], "produces": ["effective-profile"]},
+        "consumer-handoff": {"requires": ["effective-profile"], "produces": ["consumer-handoff"]},
+        "package": {"requires": ["taste-intake", "preference-diff", "confirmation", "conflict-analysis", "persistence-result", "effective-profile", "consumer-handoff"], "produces": ["taste-package"]},
+        "review": {"requires": ["taste-package"], "produces": ["taste-review-record"]}
+      },
       "stages": [
         {"step": "intake", "owner": "taste", "artifact": "taste-intake"},
         {"step": "diff", "owner": "taste", "artifact": "preference-diff"},
@@ -421,6 +513,13 @@
     "skill-creation": {
       "owner": "skill-maker",
       "boundary": "skill-maker-to-delivery",
+      "external_inputs": ["request"],
+      "dependency_graph": {
+        "intake": {"requires": ["request"], "produces": ["skill-intake"]},
+        "draft": {"requires": ["skill-intake"], "produces": ["skill-draft"]},
+        "review": {"requires": ["skill-draft"], "produces": ["skill-review"]},
+        "package": {"requires": ["skill-draft", "skill-review"], "produces": ["skill-package"]}
+      },
       "stages": [
         {
           "step": "intake",
@@ -447,6 +546,13 @@
     "release": {
       "owner": "ship",
       "boundary": "deploy-readiness",
+      "external_inputs": ["approved-delivery"],
+      "dependency_graph": {
+        "readiness": {"requires": ["approved-delivery"], "produces": ["verification-plan", "human-go-record"]},
+        "setup": {"requires": ["approved-delivery"], "produces": ["deploy-config", "rollback-plan"]},
+        "land-and-deploy": {"requires": ["approved-boundary", "approved-delivery", "verification-plan", "human-go-record", "deploy-config", "rollback-plan"], "produces": ["rollout-result"]},
+        "document": {"requires": ["approved-boundary", "rollout-result"], "produces": ["release-documentation"]}
+      },
       "stages": [
         {
           "step": "readiness",
@@ -454,17 +560,18 @@
         },
         {
           "step": "setup",
-          "owner": "setup-deploy",
-          "when": "first deployment"
+          "owner": "setup-deploy"
         },
         {
           "step": "land-and-deploy",
           "owner": "land-and-deploy",
-          "when": "human go decision recorded"
+          "when": "human go decision recorded",
+          "after_boundary": true
         },
         {
           "step": "document",
-          "owner": "document-release"
+          "owner": "document-release",
+          "after_boundary": true
         }
       ],
       "scripts": []

@@ -8,7 +8,7 @@ description: >-
   attacker, chain these weaknesses into an attack, work this surface from the outside,
   or look for exploit chains. A whole security engagement is `review/cso`; a
   standalone defensive flaw with no sequencing is `review/security-review`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -116,7 +116,7 @@ Every pass returns the same fields in this order, so `review/code-chief` merges 
 ```text
 Outcome:     mr-robot, <stage>, <revision reviewed>, <n> findings: <c> Critical, <m> Major, <k> Minor, <i> Info
 Evidence:    <entry points and boundaries traced; probes executed or the fallback value and why>
-Findings:    <id> | Critical|Major|Minor|Info | <entry point → steps → asset> | confirmed|conditional | <preconditions and blast radius> | <containment that breaks the chain>
+Findings:    <id> | Critical|Major|Minor|Info | <status: open|blocking|verified|deferred|not-applicable> | <entry point → steps → asset> | confirmed|conditional | <preconditions and blast radius> | <containment that breaks the chain>
 Open risks:  <chain links that stayed unproven, and the control-plane or runtime evidence that would settle each>
 Next action: <single next step with its owner>
 Revision:    <revision this packet judges>

@@ -80,6 +80,7 @@ for _path in (SKILLS_ROOT / "scripts", Path(__file__).resolve().parent):
 
 from _gatecheck import DEFAULT_BLOCKED_PHRASES, compile_blocked_phrases, is_blank_file  # noqa: E402
 from data_formats import DataFormatError, content_sha256, load_data  # noqa: E402
+from contract_floor import gate_floor_errors  # noqa: E402
 
 SUPPORTED_MANIFEST_SCHEMAS = {1, 2}
 #: The schema a manifest inside skillset-saves/runs/<run>/<phase>/ must declare.
@@ -109,7 +110,7 @@ VARIANT_FILES = ("spec", "tokens", "components", "app")
 EVIDENCE_KINDS = frozenset({
     "scan", "render", "probe", "findings", "verdict", "stack_lock", "revision_ref",
     "preference_diff", "confirmation", "conflict_analysis", "persistence_result", "effective_profile",
-    "consumer_handoff", "variant_set", "selection"})
+    "consumer_handoff", "variant_set", "selection", "security_seed", "human_go"})
 
 
 class Engine(ValueError):
@@ -193,6 +194,10 @@ def load_gate_spec(path: Path) -> dict:
     policy = spec.get("finding_policy", {})
     if not isinstance(policy, dict):
         raise Engine("gate spec finding_policy must be a JSON object")
+    if path.resolve() == GATE_SPEC_PATH.resolve():
+        floor = gate_floor_errors(spec)
+        if floor:
+            raise Engine("; ".join(floor))
     return spec
 
 
@@ -244,6 +249,16 @@ def parse_date(value: object) -> date | None:
         return date.fromisoformat(value) if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) else None
     except ValueError:
         return None
+
+
+def timestamp_valid(value: object) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed.tzinfo is not None and parsed.utcoffset() is not None
+    except ValueError:
+        return False
 
 
 def is_sha256(value: object) -> bool:
@@ -395,7 +410,8 @@ class Package:
         """Resolve a project-root-relative *input* reference (binding, not evidence)."""
         raw = str(relative)
         candidate_rel = Path(raw)
-        if not raw or candidate_rel.is_absolute() or candidate_rel.drive or raw.startswith(("/", "\\", "\\\\")):
+        if (not raw or raw != raw.strip() or "\x00" in raw or candidate_rel.is_absolute() or candidate_rel.drive
+                or raw.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", raw)):
             self.failures.append(f"{label} input path must be project-relative: {relative}")
             return None
         candidate = Path(os.path.normpath(self.project_root / candidate_rel))
@@ -403,6 +419,13 @@ class Package:
             candidate.relative_to(Path(os.path.normpath(self.project_root)))
         except ValueError:
             self.failures.append(f"{label} input path escapes project root: {relative}")
+            return None
+        # Resolve even a missing leaf: a parent symlink/junction can already
+        # leave the project. Hashing an external file is not input containment.
+        try:
+            Path(os.path.realpath(candidate)).relative_to(Path(os.path.realpath(self.project_root)))
+        except ValueError:
+            self.failures.append(f"{label} input path escapes project root via link: {relative}")
             return None
         return candidate
 
@@ -505,7 +528,10 @@ class Package:
             value = evidence.get(key)
             if not value:
                 continue
-            if self.applicability_record(key, value):
+            # An explicit no-boundary seed is evidence of a scoped assessment,
+            # not a waiver. Other applicable:false records retain waiver rules.
+            seed_assessment = key == "security_seed" and types.get(key) == "security_seed"
+            if not seed_assessment and self.applicability_record(key, value):
                 continue
             if self.fallback_match(key, value):
                 if self.schema >= 2:
@@ -553,6 +579,10 @@ class Package:
     def check_typed(self, key: str, kind: str, value: object) -> None:
         if kind in {"scan", "render", "probe"}:
             self.check_result_record(key, kind, value)
+        elif kind == "security_seed":
+            self.check_security_seed(key, value)
+        elif kind == "human_go":
+            self.check_human_go(key, value)
         elif kind == "findings":
             self.check_findings(key, value)
         elif kind == "verdict":
@@ -573,6 +603,42 @@ class Package:
             self.check_selection(key, value)
         else:
             raise Engine(f"evidence type {kind!r} for {key} has no validator")
+
+    def check_security_seed(self, key: str, value: object) -> None:
+        if not isinstance(value, dict):
+            self.failures.append(f"{key} must be a scoped security_seed assessment")
+            return
+        for field in ("scope", "decided_by", "architecture_revision", "reason"):
+            if not filled(value.get(field)):
+                self.failures.append(f"{key} requires {field}")
+        if not isinstance(value.get("applicable"), bool):
+            self.failures.append(f"{key} applicable must be boolean")
+        boundaries = value.get("boundaries")
+        if not isinstance(boundaries, list):
+            self.failures.append(f"{key} requires a boundaries list")
+        elif value.get("applicable") is False and boundaries:
+            self.failures.append(f"{key} no-boundary assessment must have no boundaries")
+        elif value.get("applicable") is True and not boundaries:
+            self.failures.append(f"{key} applicable assessment requires boundaries and controls")
+        else:
+            for index, boundary in enumerate(boundaries):
+                if not isinstance(boundary, dict) or not filled(boundary.get("id")) or not filled(boundary.get("control")):
+                    self.failures.append(f"{key}.boundaries[{index}] requires id and control")
+
+    def check_human_go(self, key: str, value: object) -> None:
+        if not isinstance(value, dict):
+            self.failures.append(f"{key} must be a human_go record")
+            return
+        for field in ("approver", "approval_reference", "revision", "decided_at"):
+            if not filled(value.get(field)):
+                self.failures.append(f"{key} requires {field}")
+        if value.get("decision") != "go":
+            self.failures.append(f"{key} decision must be go")
+        if not timestamp_valid(value.get("decided_at")):
+            self.failures.append(f"{key} decided_at must be a timezone-qualified ISO timestamp")
+        delivery = self.data.get("evidence", {}).get("approved_delivery")
+        if filled(delivery) and value.get("revision") != delivery:
+            self.failures.append(f"{key} revision must match approved_delivery")
 
     def type_params(self, key: str, kind: str) -> dict:
         """Typed-record parameters, read by evidence key first and kind second.
@@ -778,6 +844,23 @@ class Package:
         for field in digest_fields:
             if not is_sha256(value.get(field)):
                 self.failures.append(f"{key} record requires sha256 {field}")
+        if kind == "confirmation":
+            if not timestamp_valid(value.get("timestamp")):
+                self.failures.append(f"{key} timestamp must be a timezone-qualified ISO timestamp")
+            if not filled(value.get("confirmed_scope")) or value["confirmed_scope"] not in {"project", "repository", "global", "session"}:
+                self.failures.append(f"{key} confirmed_scope is invalid")
+            evidence = self.data.get("evidence", {})
+            diff = evidence.get("preference_diff") if isinstance(evidence, dict) else None
+            candidates = value.get("candidate_ids")
+            if isinstance(candidates, list) and all(filled(item) for item in candidates):
+                if len(candidates) != len(set(candidates)):
+                    self.failures.append(f"{key} candidate_ids must be unique")
+                changed_fields = ("added", "updated", "deprecated", "revoked")
+                if isinstance(diff, dict) and all(isinstance(diff.get(field), list) and
+                        all(filled(item) for item in diff[field]) for field in changed_fields):
+                    changed = {item for field in changed_fields for item in diff[field]}
+                    if set(candidates) != changed:
+                        self.failures.append(f"{key} candidate_ids must match the preference_diff changed ids")
         if kind == "consumer_handoff":
             # gates.yaml calls this "the immutable effective-profile sha256", and
             # both records sit in the same manifest, so the comparison is mechanical.
@@ -789,6 +872,15 @@ class Package:
                 if handed.lower() != profile["digest"].lower():
                     self.failures.append(f"{key} effective_profile_digest does not match the {profile_key} digest")
         if kind == "persistence_result":
+            destinations = value.get("requested_destinations")
+            if isinstance(destinations, list) and any(not filled(item) for item in destinations):
+                self.failures.append(f"{key} requested_destinations requires non-blank strings")
+            revisions = value.get("committed_revisions")
+            if isinstance(revisions, list) and any(isinstance(item, bool) or
+                    not ((isinstance(item, int) and item > 0) or filled(item)) for item in revisions):
+                self.failures.append(f"{key} committed_revisions requires positive integers or revision identifiers")
+            if not filled(value.get("atomicity_status")) or value["atomicity_status"] not in {"committed", "not-required", "unchanged"}:
+                self.failures.append(f"{key} atomicity_status must be committed, unchanged or not-required")
             hashes = value.get("hashes")
             if not isinstance(hashes, dict) or not hashes or any(
                     not is_sha256(item) for item in hashes.values()):
@@ -800,6 +892,8 @@ class Package:
                         for field in ("id", "source_scope", "source_id")):
                     self.failures.append(
                         f"{key}.entries[{index}] requires id, source_scope, and source_id")
+                elif entry["source_scope"] not in {"project", "repository", "global", "session"}:
+                    self.failures.append(f"{key}.entries[{index}] source_scope is invalid")
 
     def check_result_record(self, key: str, kind: str, value: object) -> None:
         if not isinstance(value, dict):
@@ -833,8 +927,12 @@ class Package:
             if status == "inferred" and not filled(value.get("limitation")):
                 self.failures.append(f"{key} inferred render requires a limitation statement")
             for field in ("breakpoints", "themes"):
-                if not isinstance(value.get(field), list) or not value.get(field):
+                items = value.get(field)
+                if not isinstance(items, list) or not items:
                     self.failures.append(f"{key} render record requires non-empty {field}")
+                elif any(not (filled(item) or (field == "breakpoints" and
+                         isinstance(item, int) and not isinstance(item, bool) and item > 0)) for item in items):
+                    self.failures.append(f"{key} render {field} has invalid nested values")
         inputs = value.get("inputs")
         if kind in {"scan", "render"}:
             if not isinstance(inputs, list) or not inputs:

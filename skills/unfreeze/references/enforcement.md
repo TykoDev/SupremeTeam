@@ -38,11 +38,14 @@ difference is load-bearing:
 | `read_only` | `release-read-only --run-id <run> --requester <r>` | the record's `owner` **only** — `cmd_read_only` writes no `approvers` field at all, so unlike a frozen glob there is no delegate to name and `_authorized`'s approver branch can never match for this key |
 | `allow_dangerous` | `revoke-dangerous --requester <r>` | the grant's `owner` **only** — the writer records no `approvers` on a grant, so there is no delegate and no fallback |
 
-Two legacy shapes defeat the check entirely and have to be re-recorded through
-the writer before they can be lifted: a **bare glob string**, refused outright
-because there is no field to check; and a record with an **absent `owner`**,
-releasable only by a name in its `approvers` and by nobody when that list is
-empty. `status` reports both under its unowned-entries warning.
+A **bare glob string** cannot be released directly. After explicit project-owner
+approval, `adopt-legacy --glob <glob> --owner <owner> --reason <reason>
+--authorization-ref <reference>` attributes it without lifting protection and
+retains the original spelling and approval reference. The owner can then release
+it normally. Authorization is attested, not authenticated by the CLI. Adoption
+cannot transfer an owned record. An object with an **absent owner** is releasable
+only by a named approver; with no approver it remains blocked for explicit
+administrative recovery. `status` reports both under its unowned warning.
 
 ## Release, never deletion
 

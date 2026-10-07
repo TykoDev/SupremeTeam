@@ -313,7 +313,7 @@ def parse_yaml(text: str) -> Any:
 def load_data(path: Path) -> Any:
     """Load JSON or the supported YAML subset from ``path``."""
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeError) as exc:
         raise DataFormatError(f"cannot read {path}: {exc}") from exc
     try:

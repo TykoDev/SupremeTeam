@@ -19,25 +19,32 @@
 Supreme Team routes a coding request through **design → build → review**, with a
 gate between every phase. Each phase boundary is checked against evidence on disk
 before the next phase is handed its work. Where the host allows interception,
-optional runtime hooks turn some of the rules into refusals instead of advice;
-they are off until you register them, and without them routing and guards are
-advisory (see [Install.md](Install.md#runtime-hooks)).
+the runtime hooks are what turns the rules into refusals instead of advice. They
+are off until you register them, and an install that skips them says so in capital
+letters: without hooks a guarded path can be written, a lifecycle request can
+bypass `admiral`, and a run heartbeat goes stale. Registering them is the one
+install step that changes what the assistant can do (see
+[Install.md](Install.md#runtime-hooks)).
 
 ![The four lifecycle layers of the runtime harness](docs/assets/7_harness.jpg)
 
 ## First ten minutes
 
-1. **Install** — hand [Install.md](Install.md) to your agent, or run the installer for your OS from [scripts/](scripts/) (`bash ./scripts/install.sh`, or `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1`). The skill files copy without Python; the checks and hooks need **Python 3.13 or newer**. Runtime hooks are optional and registered separately (`--register-hooks`, which edits host config files and asks first on a terminal); Claude Code, Codex and GitHub Copilot take config entries, Cursor and OpenCode a plugin.
-2. **Restart your assistant** so it loads the skills, then [check the installed copy](#check-an-installation).
-3. **Start a run** — call `admiral`. It interviews you, writes the scope down, creates a run on disk, and hands off phase one. A governed run reads a lot of text; [QUICK-START.md](QUICK-START.md#what-a-run-costs) says how much and how to avoid it.
-4. **Let it flow** — small reversible edits skip the whole route and just get done (the Tier 0 fast path); security, deploy, and production work are never Tier 0 and take the full route. Routing is instruction, not enforcement: registered hooks remind the model on every prompt and refuse guarded writes, but nothing forces a request through `admiral`.
+1. **Install** — hand [Install.md](Install.md) to your agent, or run the installer for your OS from [scripts/](scripts/) (`bash ./scripts/install.sh`, or `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1`). The skill files copy without Python; the checks and hooks need **Python 3.13 or newer**.
+2. **Register the hooks** — `bash ./scripts/install.sh --register-hooks` (`-RegisterHooks` on Windows). This is the enforcement layer: the pre-tool hook refuses guarded, frozen and single-writer writes, the prompt hook sends lifecycle work through `admiral`, and the post-tool hook keeps the run heartbeat alive. It edits host config files and asks first on a terminal; Claude Code, Codex and GitHub Copilot take config entries, Cursor and OpenCode a plugin. Skip it and everything above is advice the model may ignore; the installer ends every such run with a banner saying so.
+3. **Restart your assistant** so it loads the skills and the hooks, then [check the installed copy](#check-an-installation).
+4. **Start a run** — call `admiral`. It interviews you, writes the scope down, creates a run on disk, and hands off phase one. A governed run reads a lot of text; [QUICK-START.md](QUICK-START.md#what-a-run-costs) says how much and how to avoid it.
+5. **Let it flow** — small reversible edits skip the whole route and just get done (the Tier 0 fast path); security, deploy, and production work are never Tier 0 and take the full route. Routing is instruction, not enforcement: registered hooks remind the model on every prompt and refuse guarded writes, but nothing forces a request through `admiral`.
 
 ## Review gates
 
 Every phase boundary hits a gatekeeper. The package and its hashed evidence go
 through two deterministic validators, then a gatekeeper issues one verdict:
-**APPROVED** advances, **REVISE** returns with the exact missing fact (twice, then
-escalate), **ESCALATE** comes to you. Evidence that names its source files by
+**APPROVED** advances, **REVISE** returns every finding at once, grouped by owner,
+and only for a mechanical failure, a Critical, or an unresolved Major (twice, then
+escalate), **ESCALATE** comes to you. The cross-stage gate judges the crossing and
+carries the phase gate's judgment, so a package is not reviewed twice for the same
+question. Evidence that names its source files by
 sha256 fails with `input hash drift` when one of them changes, instead of the gate
 trusting a stale log. Scan and render records must name their sources; a test or
 probe record that names none is accepted as the submitter's own statement, and the
@@ -60,9 +67,8 @@ More in [docs/persistent-saves.md](docs/persistent-saves.md).
 
 ## How well it works
 
-Scores and routing accuracy are in [BENCHMARK.md](BENCHMARK.md). Open defects
-are in [docs/quality-audit.md](docs/quality-audit.md). Scores are model judgements
-and routing is a paid run; CI re-runs neither.
+Scores and routing accuracy are in [BENCHMARK.md](BENCHMARK.md). Scores are model
+judgements and routing is a paid run; CI re-runs neither.
 
 The routing figure is the one worth reading the methodology for: a catalog scores
 100% when queried with its own advertised phrasings, which measures lexical echo,
@@ -125,7 +131,6 @@ python -m unittest discover -s skills/skill-maker/skill-creator -p "test_*.py"
 | [QUICK-START.md](QUICK-START.md) | Install and first run |
 | [Install.md](Install.md) | The full installation procedure |
 | [BENCHMARK.md](BENCHMARK.md) | Scores, routing accuracy, test results |
-| [docs/quality-audit.md](docs/quality-audit.md) | Open audit findings |
 | [AGENTS.md](AGENTS.md) | Flat skill index for tool discovery |
 | [docs/architecture.md](docs/architecture.md) | Pipelines, tiers, execution modes |
 | [docs/skills.md](docs/skills.md) | Every skill and what it owns |

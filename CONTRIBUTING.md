@@ -18,7 +18,8 @@ does not.
 
 ## Run the suites
 
-Seven suites, then the validators. These are the commands CI runs, copied from
+Seven suites, then the validators, the last of which CI runs a second time to
+write the delivery archive. These are the commands CI runs, copied from
 `commands` in `skills/runtime-manifest.yaml`:
 
 ```bash
@@ -32,6 +33,7 @@ python -m unittest discover -s skills/skill-maker/skill-creator -p "test_*.py"
 python skills/scripts/check_runtime.py
 python skills/scripts/validate_manifests.py
 python skills/scripts/package_check.py --root .
+python skills/scripts/package_check.py --root . --out .harness-state/packages/supremeteam.zip
 ```
 
 Lint is a separate CI job. Install the version pinned in `.github/workflows/ci.yml`

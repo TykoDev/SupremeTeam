@@ -50,7 +50,9 @@ skill's own artifact, not part of the package under review.
 A cell holding a typed applicability record `{applicable: false, reason, scope,
 decided_by}`, whose `reason` carries the sanctioned wording from
 `../../../gates.yaml` `fallback_values`, **is evidence present**. The row is
-proven by waiver and the package is not blocked.
+satisfied for that waivable cell and does not block on that cell. At
+`build-to-review` only `security_evidence` is waivable; the whole row still owes
+its non-waivable implementation, test and runtime proof.
 
 The record is the waiver, not the wording. A bare string carrying that same
 sanctioned wording is refused at schema 2: `skills/harness/gatekeeper/check.py`

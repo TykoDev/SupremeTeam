@@ -20,15 +20,15 @@
 
 | Evidence key | Value in the manifest | Backing |
 | --- | --- | --- |
-| `approved_delivery` | `rev-8f21c0a (review-to-delivery APPROVED, 2026-04-18)` | Typed `revision_ref` — no artifact, no fallback |
+| `approved_delivery` | `rev-8f21c0a` | Typed `revision_ref` — no artifact, no fallback |
 | `deploy_config` | `artifacts/deploy-config.yaml` | Hashed file, owned by `setup-deploy` |
 | `verification_plan` | `artifacts/verification-plan.md` | Hashed file, owned by `ship` |
 | `rollback_plan` | `artifacts/rollback-plan.md` | Hashed file, owned by `setup-deploy` |
-| `human_go_required` | approver, reference, revision, timestamp | Narrative — no artifact, no fallback |
+| `human_go_required` | `{decision: go, approver, approval_reference, revision: rev-8f21c0a, decided_at}` | Typed `human_go` — no artifact, no fallback |
 
 - Manifest: `schema_version: 2`, `boundary: deploy-readiness`, `owner: ship`, `run_id`, `submission_id`, and a single `revision` matching `revisions`.
 - `artifact_hashes` carries one sha256 per artifact-backed path, each manifest-relative and inside the run directory; `output_paths.py` composes every one of them.
-- Repeat release: the `setup` stage did not run, so the two `setup-deploy` keys name the artifacts persisted on the first deployment, with the revision and the hash each carried at re-verification time. See `gate-submission.md`.
+- Repeat release: `setup-deploy` runs the `setup` stage again, re-verifies the durable source, and supplies current-run snapshots with source revision and re-verification evidence. The manifest never points into an earlier run. See `gate-submission.md`.
 
 ## Example 3 — standalone mode, no gate, go decision carries the release
 

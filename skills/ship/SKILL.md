@@ -8,8 +8,8 @@ description: >-
   marketing, comms, or product-announcement launch. Owns the `deploy-readiness`
   gate; defers the merge-and-rollout to `land-and-deploy`, deploy config to
   `setup-deploy`, and notes to `document-release`.
-version: 1.0.0
-allowed-tools: Read, Grep, Glob, Bash, Write, Edit
+version: 1.0.3
+allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 ---
 
 
@@ -23,7 +23,7 @@ A release is the one step in the lifecycle that cannot be undone by rerunning it
 
 `ship` is directly invokable **and** owns a gated pipeline, so the entry path decides which of the two is running (`../routing-doctrine.md`). Resolve it before any release work starts: a handoff is present when the prompt carries a `### Save Context` block, or an active run lock with `session_pin: true` exists under `skillset-saves/`.
 
-- **Handoff present** → run the gated `release` pipeline defined in `../pipelines.yaml`: `readiness` under `ship`, `setup` under `setup-deploy` on a first deployment, `land-and-deploy` under `land-and-deploy` once the human go decision is recorded, and `document` under `document-release`. Persist to the run's `release/` phase directory and close at the `deploy-readiness` boundary with the submission described below.
+- **Handoff present** → run the gated `release` pipeline defined in `../pipelines.yaml`: `readiness` under `ship`, `setup` under `setup-deploy` on every release (it establishes the durable deployment source on the first deployment and re-verifies it against this release, with current-run snapshots, on every repeat), `land-and-deploy` under `land-and-deploy` once the human go decision is recorded, and `document` under `document-release`. Persist to the run's `release/` phase directory and close at the `deploy-readiness` boundary with the submission described below.
 - **Handoff absent** → run the standalone orchestration, and say so in the opening line of the result. The readiness, sequencing, verification, and follow-up work is the same, but there is no saved run, no gate package, and no gate verdict, so the result reports no `deploy-readiness` verdict, because no package was submitted for one. A cold lifecycle release request that needs intake, persistence, and the gate belongs to `admiral` first; standalone mode covers an explicit, bounded request to drive a release directly.
 
 ## Execution Contract
@@ -74,7 +74,7 @@ The first five entries below are the gate submission and its evidence keys, so t
 
 ## Workflow
 
-1. Confirm the release candidate and launch window, then re-verify the persisted deployment settings and rollback path from `setup-deploy` against this release instead of assuming the first deployment's assumptions still hold.
+1. Confirm the release candidate and launch window, then confirm that the `setup` stage under `setup-deploy` has re-verified the persisted deployment settings and rollback path against this release and written its current-run snapshots, instead of assuming the first deployment's assumptions still hold; this skill reads that evidence and never re-verifies or asserts it on `setup-deploy`'s behalf.
 2. Draft the verification plan before the rollout: each post-release check, the signal it reads, and the condition that counts as a pass. Sequence the launch around those checks with explicit go or no-go points so packaging, deployment, communication, and verification happen in the right order.
 3. **Require an explicit owner go-decision before committing the production ship**: a named owner or approver must issue a clear "go" for this specific release at this specific time. Prerequisite checks, artifact validation, and CI status satisfy readiness but do not substitute for an explicit human go-decision. Capture the approver identity, the approval reference, the exact revision approved, and the decision timestamp as the `human_go_required` evidence inside the deploy-readiness package.
 4. Close the readiness boundary according to the entry mode resolved above:
@@ -100,7 +100,7 @@ The `release` pipeline closes at the `deploy-readiness` boundary in `../gates.ya
 | `deploy_config` | `setup-deploy` | yes | none |
 | `verification_plan` | `ship` | yes | none |
 | `rollback_plan` | `setup-deploy` | yes | none |
-| `human_go_required` | `ship` | no | none |
+| `human_go_required` | `ship` | no — typed `human_go` | none |
 
 Self-check before submitting:
 
@@ -119,7 +119,7 @@ In standalone mode the boundary is not submitted, so the five keys above are not
 Coordination is what this skill is, so the surface is three specialists and the
 four keys it consumes from them:
 
-- `setup-deploy` — owns `deploy_config` and `rollback_plan`, both required at `deploy-readiness` and neither carrying a sanctioned fallback. Reopened as the `setup` stage when a repeat release finds either drifted from the target environment; this skill never asserts either key on its behalf.
+- `setup-deploy` — owns `deploy_config` and `rollback_plan`, both required at `deploy-readiness` and neither carrying a sanctioned fallback. Its `setup` stage runs on every release (`../pipelines.yaml`), re-verifying both against the target environment on a repeat release, and drift found there is repaired in that stage; this skill never asserts either key on its behalf.
 - `land-and-deploy` — executes the merge-to-environment step once the go decision is recorded, and returns the rollout evidence the verification plan is judged against.
 - `document-release` — drafts the release notes and operational follow-up from what actually shipped, and holds publication for its own named approver. Delegated after verification, never before: notes written against the plan rather than the outcome describe a release that did not happen.
 - The **named release owner** is not a skill and not substitutable by one. The go decision at `human_go_required` is theirs, and no amount of passing evidence stands in for it.
@@ -143,7 +143,7 @@ Skip only when the requested surface, tool, or environment does not exist and a 
 | No owner go-decision is present — prerequisites pass but no named approver has issued an explicit go | Hold the release; do not ship. Record the missing go-decision as a blocker and wait for a named owner to provide an explicit approval for this specific release. |
 | Verification signals are incomplete or contradictory during rollout | Freeze the next launch step, preserve the current state, and decide whether to retry, pause, or roll back. |
 | A required approval or external coordination step has not happened yet | Keep the deploy-readiness package in no-go state until the dependency is resolved instead of launching optimistically. |
-| A repeat release finds the carried-forward deployment settings or rollback procedure no longer matching the target environment | Treat the mismatch as drift on a `setup-deploy`-owned key, reopen the `setup` stage for this release, and hold the gate; `deploy_config` and `rollback_plan` have no sanctioned fallback, so neither can be asserted from here. |
+| The `setup` stage's re-verification on a repeat release finds the carried-forward deployment settings or rollback procedure no longer matching the target environment | Treat the mismatch as drift on a `setup-deploy`-owned key, have that stage repair it for this release before its snapshots are written, and hold the gate until it has; `deploy_config` and `rollback_plan` have no sanctioned fallback, so neither can be asserted from here. |
 | The returned rollout evidence contradicts the verification plan submitted at the gate | Preserve both, grade the contradiction as a finding against its owner, and decide rollback or controlled hold before any follow-up describes the release as complete. |
 | Verification passes, but the rollback plan's decision deadline expires mid-rollout — the canary window closes, a migration passes the point of reversibility, or a stated "rollback available until" time lapses | Treat it as **rollback-unavailable** from that moment, and say so before the next step rather than after. A green verification proves the release works; it does not restore the option to undo it, and the two are separately load-bearing — `rollback_plan` is a required key precisely because passing checks are not a substitute for a way back. Stop at the current step, record that the deadline lapsed and which steps are now irreversible, and get an explicit owner decision to continue without a rollback path. That decision is the same named-owner go the gate requires, taken again against materially different terms; it is not carried over from the original go. Where the deadline is foreseeable, size it to the whole rollout at `setup-deploy` time, the way `benchmark` sizes a grant expiry to the whole operation. |
 | The rollout partially succeeds but leaves uncertainty about user impact | Record the partial state, define the rollback trigger, and keep follow-up actions explicit rather than implying a full ship. |

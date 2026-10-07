@@ -26,7 +26,7 @@ native tool access. This means Admiral can operate in a hybrid mode:
 
 1. **Skill content loaded**: SKILL.md provides the pipeline logic and contracts.
 2. **Tools available**: Read, Write, Edit, Bash, Glob, Grep, Agent are all native.
-3. **Agent tool for delegation**: Sub-orchestrators can be invoked via the Agent tool.
+3. **Agent tool for delegation**: Orchestrators grant `Agent` and the legacy `Task` alias in `allowed-tools`. Metadata cannot create a tool or override host permissions: probe the actual exposed API and use only an available authorized spelling. If neither is available, run inline in skill mode and report that fallback.
 4. **No explicit registration**: No separate agent manifest needed; Claude Code
    infers capabilities from the loaded skill and available tools.
 

@@ -950,15 +950,15 @@ class LayerCitationTests(unittest.TestCase):
             _write(pkg, "change.md", body)
             return gc.run_gate(pkg, _manifest())
 
-    def test_a_section_number_in_the_words_of_the_failure_message_counts(self):
-        for citation in ("(§1)", "see §1", "§ 4", "harness-doctrine", "Layer 3"):
+    def test_an_explicit_lifecycle_layer_counts(self):
+        for citation in ("Layer 1", "Layer 2", "Layer 3", "Layer 4", "harness-doctrine §1, Layer 3"):
             with self.subTest(citation=citation):
                 report = self._report(f"A new PreToolUse hook, {citation}. Regression: none observed.")
                 self.assertIn("DOCTRINE_NOTE_PRESENT", _codes(report))
                 self.assertNotIn("DOCTRINE_GAP", _codes(report))
 
     def test_a_section_outside_the_doctrine_does_not(self):
-        for citation in ("§ 10", "§6", "xLayer 2", "the harness-doctrines"):
+        for citation in ("§ 10", "§6", "§1", "§2", "§3", "§4", "§5", "harness-doctrine", "xLayer 2", "Layer 5", "the harness-doctrines"):
             with self.subTest(citation=citation):
                 report = self._report(f"A new PreToolUse hook, {citation}. Regression: none observed.")
                 self.assertIn("DOCTRINE_GAP", _codes(report))

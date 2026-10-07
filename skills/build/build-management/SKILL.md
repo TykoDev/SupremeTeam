@@ -9,8 +9,8 @@ description: >-
   specification into code — even when Admiral is never named. Defers to
   `admiral` when reached cold; reviewing the finished code belongs to
   `review/code-chief`.
-version: 1.0.1
-allowed-tools: Read, Grep, Glob, Bash, Write, Edit
+version: 1.1.0
+allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 ---
 
 # Build Management
@@ -96,7 +96,7 @@ orchestrator and gatekeeper to carry the clauses verbatim; a paraphrase is drift
 ## Workflow
 
 1. Validate the implementation scope and identify any design gaps before code work starts.
-2. Run the ordered stages `../../pipelines.yaml` defines for the `build` pipeline as separate controlled phases: implementation through `build/bob-the-builder`, the test surface through `build/test-builder`, then the security checkpoint through `build/security-builder` when a trust boundary is in scope.
+2. Run the stages `../../pipelines.yaml` defines for the `build` pipeline as separately owned phases: implementation through `build/bob-the-builder`, the test surface through `build/test-builder`, and the security checkpoint through `build/security-builder` when a trust boundary is in scope. The test surface, the security checkpoint and the runtime-health smoke all require only the implementation (`../../pipelines.yaml` `scheduling`), so delegate them together once it lands rather than one after the other; a startup smoke does not wait for a test suite it does not read.
 3. Run the `runtime-health` stage through `build/health-check` on every build. `../../pipelines.yaml` attaches no condition to that stage, and its startup and entry-point smoke log is the `runtime` evidence `build-to-review` requires, so a passing test suite never stands in for it.
 4. Engage `build/debugger` for the `debugging` stage when a reproduced build-phase failure exists, and `investigate` for the `investigation` stage when the failure mechanism is unknown. Investigation runs its own pipeline gated at `investigation-review` and returns a bounded fix path to the build phase; it never becomes a second build.
 5. Confirm completeness through `build/cross-check-build-confirm`, route every finding back to the owning build specialist, and re-run the affected phases before the build package advances.
@@ -131,8 +131,8 @@ unconditional.
 - Record each boundary before requesting a verdict.
 - Reuse prior verdicts only when the package revision is unchanged.
 - Push remediation back to the owning sub-surface instead of editing its package locally.
-- Self-check before submitting: run `python skills/harness/gatekeeper/check.py --boundary build-to-review --package skillset-saves/runs/<run>/build/manifest.json` (no `--verdict-out`) from the project root (the directory that holds `skillset-saves/`), so the script path and `--package` resolve from the same directory and fix every mechanical failure first; a package that fails the machine is never submitted (`../../gates.yaml` `revise_policy.self_check`).
-- Treat a `REVISE` as one packet: delegate each owner group in `revise_packet.by_owner` in parallel, batching every finding for a specialist into a single revision delegation, and resubmit once with `--prior` so the gate re-judges only `changed_evidence`.
+- Self-check before submitting: run `python skills/harness/gatekeeper/check.py --boundary build-to-review --package skillset-saves/runs/<run>/build/manifest.json` (no `--verdict-out`) from the project root (the directory that holds `skillset-saves/`), so the script path and `--package` resolve from the same directory and fix every mechanical failure first; a package that fails the machine is never submitted (`../../gates.yaml` `revise_policy.self_check`). Run the phase gatekeeper's package-shape validator too, `python skills/build/gatekeeper-build/scripts/check.py skillset-saves/runs/<run>/build`, so a packet missing its marker fields, a near-miss filename, or a blocked phrase is fixed here and never costs a gate round.
+- Treat a `REVISE` as one packet: delegate each owner group in `revise_packet.by_owner` in parallel, batching every finding for a specialist into a single revision delegation, and resubmit once with `--prior` so the gate re-judges only `changed_evidence`. Re-run only the stages whose outputs the packet names or whose `requires` depend on an output that changed (`revise_policy.rerun_scope`); a key this skill authors itself is corrected in place with no specialist re-run, and unchanged evidence carries with its prior judgment. A gate returns REVISE only for a mechanical failure, a Critical, or an unresolved Major (`revise_policy.revise_threshold`), so Minor and Info findings on an APPROVED verdict are carried into the package, not fixed before advancing.
 
 ## Skip Rule
 
@@ -166,6 +166,10 @@ phase-state files belong to no class `../../save-ownership.yaml` declares; and
 when persistence is inactive or read-only resume is in effect, keep the same
 phase sequencing but return artifacts inline and propagate
 `Persistence active: no` to every specialist.
+
+Any performance claim accepted into this package follows
+`../../performance-doctrine.md`: require a suitable-host baseline and measured
+evidence, or report the claim unverified without weakening its budget.
 
 ## References
 

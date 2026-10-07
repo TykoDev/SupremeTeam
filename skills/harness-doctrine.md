@@ -40,7 +40,7 @@ are not.
 | --- | --- | --- |
 | §5: a package touching a runtime intervention names its lifecycle layer and carries a regression note | machine-checked | `skills/harness/gatekeeper/_gatecheck.py`, `check_harness_doctrine()`; see §5 for the exact markers |
 | §0 and §3 *inert on the strong case*, for the gate engine | machine-checked by construction | `_gatecheck.py` fires only on mechanically certain signals and emits `NO_RUNTIME_INTERVENTION` otherwise |
-| §1 Layer 3: guarded, frozen, read-only, single-writer, and destructive write boundaries | machine-checked where hooks are registered | `skills/harness/hooks/pre_tool_use.py`, against `.harness-state/guard-state.json` |
+| §1 Layer 3: guarded, frozen, read-only, single-writer, and destructive write boundaries | best-effort checks for supported actions where hooks are registered; not a sandbox | `skills/harness/hooks/pre_tool_use.py`, against `.harness-state/guard-state.json` |
 | §1 Layer 4: repeated-failure, empty-output, and oscillation trajectory patterns | machine-checked where hooks are registered | `skills/harness/hooks/post_tool_use.py` |
 | Single-writer ownership of the run record and the guard boundary record | machine-checked | `skills/validation/test_catalog_contracts.py`, `GuardWriterTests`, with [save-ownership.yaml](save-ownership.yaml) |
 | Fail-open behavior of every hook, and fail-loud behavior of the gate engine | machine-checked | `skills/harness/hooks/test_hooks*.py` and `skills/harness/gatekeeper/test_gatecheck.py` |
@@ -50,7 +50,7 @@ are not.
 | §3 beyond the gate check: local and minimal, evidence-triggered, no oracle | judgement | nothing |
 | §4: the author checklist | judgement | nothing — it is a checklist for a human author, not a validator |
 | §5 substance: that the cited layer is the right layer, and that the intervention is genuinely inert on a competent model | judgement | the engine reports `DOCTRINE_NOTE_PRESENT` as `UNCHECKED` precisely so a reviewer resolves it |
-| This document itself | **judgement** | nothing — no comparator opens this file, and the §5 row above is not a counter-example. `skills/harness/gatekeeper/test_gatecheck.py` pins the *codes* `_gatecheck.py` emits (`NO_RUNTIME_INTERVENTION`, `DOCTRINE_NOTE_PRESENT`, `DOCTRINE_GAP`), and `_gatecheck.py` matches the literal token `harness-doctrine` inside a *submitted package*. Both read the engine and the package; neither reads this text, so the §5 check keeps working while any sentence here could change with no suite failing. |
+| This document itself | **partial structural coverage; semantic judgement** | Catalog prose scans inspect this document; that does not validate every intervention. The §5 package check is not a complete doctrine comparator. `skills/harness/gatekeeper/test_gatecheck.py` pins the *codes* `_gatecheck.py` emits (`NO_RUNTIME_INTERVENTION`, `DOCTRINE_NOTE_PRESENT`, `DOCTRINE_GAP`), and `_gatecheck.py` matches an explicit `Layer 1`-`Layer 4` citation inside a *submitted package*. Both read the engine and the package; neither checks the complete doctrine text, so package-shape coverage must not be confused with semantic coverage. |
 
 ## 0. Thesis and the model-agnostic principle
 
@@ -199,7 +199,8 @@ each is worth knowing because they decide when the check fires:
    check ends. This is §0 applied to the engine itself: a package that does not
    touch the harness is never asked to justify one.
 2. *Is a lifecycle layer cited?* The `_LAYER_CITATION` regex accepts
-   `Layer 1`-`Layer 4`, `§1`-`§5`, or the literal `harness-doctrine`.
+   only `Layer 1`-`Layer 4`. A bare section number or document name does not
+   identify a lifecycle layer; cite the section as well when explaining the finding.
 3. *Is a regression note present?* The `_REGRESSION_NOTE` regex looks for the
    word `regression`.
 

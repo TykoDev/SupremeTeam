@@ -9,8 +9,8 @@ description: >-
   compare four redesigns, or ask for alternative design systems — even when Admiral
   is never named. Defers to `admiral` when reached cold; a first-time design belongs
   to `design/commander`.
-version: 1.0.1
-allowed-tools: Read, Grep, Glob, Bash, Write, Edit
+version: 1.1.0
+allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 ---
 
 # Redesign
@@ -196,8 +196,8 @@ The `selection` stage is redesign's own: no specialist owns the user's decision.
 - Record each boundary before requesting a verdict.
 - Reuse prior verdicts only when the package revision is unchanged.
 - Push remediation back to the owning specialist instead of editing its artifact locally; batch every finding for one specialist into a single revision delegation and fan independent owners out in parallel.
-- Self-check before submitting: run `python skills/harness/gatekeeper/check.py --boundary redesign-review --package skillset-saves/runs/<run>/redesign/manifest.json` (no `--verdict-out`) from the project root (the directory that holds `skillset-saves/`), so the script path and `--package` resolve from the same directory and fix every mechanical failure first; a package that fails the machine is never submitted (`../../gates.yaml` `revise_policy.self_check`).
-- Treat a `REVISE` as one packet: delegate each owner group in `revise_packet.by_owner` in parallel, batching every finding for a specialist into a single revision delegation, and resubmit once with `--prior` so the gate re-judges only `changed_evidence` and carries its prior judgment on `unchanged_evidence`.
+- Self-check before submitting: run `python skills/harness/gatekeeper/check.py --boundary redesign-review --package skillset-saves/runs/<run>/redesign/manifest.json` (no `--verdict-out`) from the project root (the directory that holds `skillset-saves/`), so the script path and `--package` resolve from the same directory and fix every mechanical failure first; a package that fails the machine is never submitted (`../../gates.yaml` `revise_policy.self_check`). Run the phase gatekeeper's package-shape validator too, `python skills/design/gatekeeper-design/scripts/check_redesign.py skillset-saves/runs/<run>/redesign`, so a packet missing its marker fields, a near-miss filename, or a blocked phrase is fixed here and never costs a gate round.
+- Treat a `REVISE` as one packet: delegate each owner group in `revise_packet.by_owner` in parallel, batching every finding for a specialist into a single revision delegation, and resubmit once with `--prior` so the gate re-judges only `changed_evidence` and carries its prior judgment on `unchanged_evidence`. Re-run only the stages whose outputs the packet names or whose `requires` depend on an output that changed (`revise_policy.rerun_scope`); a key this skill authors itself is corrected in place with no specialist re-run, and unchanged evidence carries with its prior judgment. A gate returns REVISE only for a mechanical failure, a Critical, or an unresolved Major (`revise_policy.revise_threshold`), so Minor and Info findings on an APPROVED verdict are carried into the package, not fixed before advancing.
 
 ## Skip Rule
 
@@ -221,7 +221,7 @@ and decision failures whose handling is procedural rather than routing are in
 | The redesign request arrives without a surface in scope, without the flows that define parity, or with an unreadable inventory from a prior run | Delegate nothing. The inventory is the parity contract, so a missing or unparsable scope makes every downstream stage unmeasurable. Name the missing element, resolve it through the grilling interview when the user can answer it and by exploring the codebase when it is discoverable, and rebuild the inventory rather than reusing one whose ids cannot be read. |
 | A specialist offers to build the living prototypes for all four directions, or a returned mock has a router and wired interactions | Refuse the offer, and return the mock to `design/prototyper` to be reduced to a draft. Implementation follows selection; four living prototypes is the failure this pipeline is ordered to prevent, and it is not made acceptable by being cheap to delegate. |
 | `redesign-review` returns `REVISE` twice, exhausting `../../gates.yaml` `revise_policy.cycle_cap` of 2 | Stop resubmitting and escalate to Admiral with both revise packets, both verdicts, and the unclosed keys named with their owners. Two failed cycles on the same keys mean the disagreement is about the requirement — the differentiation bar, the parity contract, the accessibility floor — and a third submission spends the gatekeeper's judgment on the same dispute. |
-| A required capability is unavailable: no parallel fan-out for the four mocks, no command execution for `check_parity.py`, or no Python for the gate self-check | Fan out serially when parallelism is missing; the four mocks are independently derived, so order does not change them. A parity check that cannot execute is `result.status: unavailable`, which is a data gap and never full coverage, so the mock stays out of the comparison rather than entering it unverified. Without Python the self-check did not run, so the package is submitted as unverified rather than described as passing. |
+| A required capability is unavailable: no parallel fan-out for the four mocks, no command execution for `check_parity.py`, or no Python for the gate self-check | Fan out serially when parallelism is missing; the four mocks are independently derived, so order does not change them. A parity check that cannot execute produces no checker record; exit 2 likewise writes no record. Preserve the execution gap separately and leave parity unproven, so the mock stays out of the comparison rather than entering it unverified. Do not fabricate a `result.status: unavailable` checker output. Without Python the self-check did not run, so the package is submitted as unverified rather than described as passing. |
 
 ## Save Protocol
 

@@ -1,15 +1,15 @@
 ---
 name: debugger
 description: >-
-  Reproduces a build-phase failure to isolate the defect, repairs the broken
-  path, and returns a bounded fix path with proof that the failure mode changed
+  Reproduces a build-phase failure to isolate the defect, tests a bounded candidate
+  repair, and returns a bounded fix path with proof that the failure mode changed
   and that no temporary probe survived. Internal build specialist reached
   through `build/build-management` at the `debugging` stage, not directly, even
   when the request is only a pasted error and "why?"; the ask is to debug this
   failure, not to explain an unreproduced one. Defers feature code to
   `build/bob-the-builder`, test authoring to `build/test-builder`, and unknown
   cross-system mechanisms to `investigate`.
-version: 1.0.1
+version: 1.0.2
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -82,7 +82,7 @@ the hash is registered.
 1. Build a failure timeline from the symptom, recent code or environment changes, and the exact boundary where the system first stops behaving correctly.
 2. Reproduce or narrow the defect with targeted checks so the debug path stays anchored in observed evidence rather than guesswork, opening the instrumentation ledger with the first probe.
 3. Test candidate fixes against the actual failure mode and adjacent regression surface, keeping the remediation smaller than the original uncertainty.
-4. Tear the instrumentation down before packaging: walk the ledger, remove every temporary probe, and re-read the returned diff to confirm only the fix remains.
+4. Tear the instrumentation down before packaging: walk the ledger, remove every temporary probe, and restore the product tree to its incoming revision, then return the tested candidate patch as report evidence. Only bob-the-builder lands the implementation; neither candidate edits nor probes remain in the product diff.
 5. Return the `debug-report` with the root cause, the verified repair boundary, the remaining risk, and the next build-phase action.
 
 ## Required Contracts

@@ -77,8 +77,10 @@ reason. The distinction matters when routing the `REVISE`: the first is
 `design-qa` rewording a record or capturing a render, the second is a key that
 simply has to be produced by `code-chief`.
 
-Note that the same key is `no_fallback` at `redesign-review`, where no waiver is
-admissible at all. The key's rules are per boundary, not global.
+At `redesign-review`, `rendered_verification` accepts only the selection-dependent
+merge/deferred reasons when no variant was built; a chosen variant requires real
+render evidence. `mock_rendering`, a different key, is `no_fallback` there.
+The key's rules are per boundary, not global.
 
 ## 5. Reading the untyped keys
 

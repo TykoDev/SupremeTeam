@@ -215,7 +215,9 @@ Some surfaces accept extra fields. Use them only when genuinely needed:
 - `version:` — semantic version when revisions are tracked externally
 - `license:` — if the skill is open-sourced
 - `allowed-tools:` — on surfaces that honor it, e.g.
-  `Read, Write, Edit, Bash, Glob, Grep, TodoWrite`
+  `Read, Write, Edit, Bash, Glob, Grep, TodoWrite`; delegating orchestrators also
+  grant `Agent` and the legacy `Task` alias. A grant is not capability discovery
+  or permission to bypass a host's authorization controls.
 
 Omit optional fields rather than leaving them blank.
 

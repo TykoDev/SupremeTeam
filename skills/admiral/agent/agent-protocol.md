@@ -54,7 +54,7 @@ tools_verified: [list of confirmed tool categories]
 Before Admiral creates a new run or accepts a fresh-looking request, inspect `skillset-saves/` per `../../save-protocol.md` §2 Startup:
 
 1. Read `_latest.md` when present, then read the latest run's `_state.md` and `_lock.md`. Treat `_latest.md` as a pointer only — if it is missing or stale, scan `runs/*/_state.md` directly rather than concluding no run exists.
-2. Classify the save directory into one of the eleven values `../../save-protocol.md` §2 Startup defines: `active`, `inactive`, `complete`, `stale`, `orphaned`, `conflicting`, `corrupt`, `interrupted`, `missing`, `uninitialized`, `unreadable`. The classifier is `save_run.py status --run-id <id>`; only `active` and `orphaned` reinforce the session pin. The value is `conflicting`, not `conflict` — that is the spelling `_saves.py` emits and the one the state field below must carry.
+2. Classify the save directory into one of the eleven values `../../save-protocol.md` §2 Startup defines: `active`, `inactive`, `complete`, `stale`, `orphaned`, `conflicting`, `corrupt`, `interrupted`, `missing`, `uninitialized`, `unreadable`. The classifier is `save_run.py status` before an id is known (`--run-id <id>` additionally classifies a named run); only `active` and `orphaned` reinforce the session pin. The value is `conflicting`, not `conflict` — that is the spelling `_saves.py` emits and the one the state field below must carry.
 3. If the directory is `active`, run the resume protocol and continue from the earliest incomplete boundary.
 4. If the directory is `orphaned` (a non-terminal run exists under `runs/` but `_latest.md` is missing, unreadable, or points at a missing/terminal run), restore `_latest.md` through the sanctioned writer — `save_run.py heartbeat --run-id <run> --owner admiral` while the lock is held and fresh, or `save_run.py recover --run-id <run> --owner admiral --reason "<why>"` (with `--rollback` if an interrupted-checkpoint journal is present) when it is not — then run the resume protocol. The writer's own audit event (`recover` / `rollforward` / `rollback`) is what lands in `_audit-trail.md`; the pointer is never hand-written. `LATEST_POINTER_REBUILT` is an agent-mode state field (see the field list below), recorded with `--set` on the next `checkpoint` (`heartbeat` and `recover` publish no `--set` fields) — it is not an audit event and cannot be appended to the trail. Never fork a fresh run over a recoverable orphan.
 5. If the directory is `conflicting`, stop and warn that another fresh session owns the run unless the lock is stale and reclaimable.
@@ -257,7 +257,13 @@ last_heartbeat: "{ISO 8601}"
 skills_engaged: ["{skill-name}", ...]   # canonical, append-once list of every catalog skill engaged this run
 ```
 
-`skills_engaged` is the single source of truth for engagement. Append a skill the first time it is engaged
+`phase_state` labels normalize to the derived, reserved `protocol_state` through
+`save_taxonomy.py`, as defined in `../../contracts/workflow-protocol.md`. This maps
+names and does not authorize an edge.
+
+`skills_engaged` is the single source of truth for engagement. Pass it as a JSON
+list with `--set 'skills_engaged=["session-memory","commander"]'`; the writer
+preserves prior entries and appends new names once at each checkpoint. Append a skill the first time it is engaged
 (starting with the mandatory `session-memory` intake checkpoint, then each sub-orchestrator on
 `DELEGATION_STARTED`); re-engaging an already-listed skill does not duplicate the entry. Because the intake
 checkpoint plus the first stage sub-orchestrator are both unconditional, this list always holds at least two
@@ -296,7 +302,9 @@ python skills/harness/hooks/save_run.py checkpoint --run-id {run-id} --owner adm
 
 `--set` refuses the reserved fields (`schema_version`, `run_id`, `status`,
 `session_pin`, `revision`, `parent_revision`, `active_owner`, `evidence_paths`,
-`timestamp`, `artifact_hashes`) and accepts any other key. The writer's own
+`timestamp`, `artifact_hashes`, `protocol_state`) and accepts other keys.
+`phase_state` must have a declared protocol mapping; `skills_engaged` must be a
+JSON list of non-blank names, deduplicated and preserved append-once. The writer's own
 `checkpoint` event is what appears in the trail; the agent-mode detail rides in
 the state it published. Where a row describes a state change, the `save_run.py`
 call *is* the record — there is no second annotation step to perform.

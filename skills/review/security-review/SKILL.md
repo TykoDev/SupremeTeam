@@ -8,7 +8,7 @@ description: >-
   vulnerabilities, audit dependency risk, or trace data leakage — even when they
   only mention untrusted input or secrets. Defers exploit chaining to
   `review/mr-robot`, accepted risk to `review/cso`.
-version: 1.1.0
+version: 1.1.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -123,13 +123,13 @@ Every pass returns the same fields in this order, so `review/code-chief` merges 
 ```text
 Outcome:     security-review, <stage>, <revision reviewed>, <n> findings: <c> Critical, <m> Major, <k> Minor, <i> Info
 Evidence:    <trust boundaries enumerated and classes checked; scan record path, result.status, and bound inputs, or the applicability record and why>
-Findings:    <id> | Critical|Major|Minor|Info | <code path, dependency@version, or config entry> | confirmed|conditional | <reachability from the scoped surface> | <narrowest viable fix>
+Findings:    <id> | Critical|Major|Minor|Info | <status: open|blocking|verified|deferred|not-applicable> | <code path, dependency@version, or config entry> | confirmed|conditional | <reachability from the scoped surface> | <narrowest viable fix>
 Open risks:  <weaknesses left unproven, and the control-plane, runtime, or dependency evidence that would settle each>
 Next action: <single next step with its owner>
 Revision:    <revision this packet judges>
 ```
 
-Every item carries an id, one of the four severities, and a status, because that is exactly what `../../gates.yaml` `evidence_types.findings` requires of the items `code-chief` merges into `findings` and `cso` merges into its triaged set. Grade findings `Critical | Major | Minor | Info` and nothing else (`../../execution-contract.md`, clause 3). "Blocking" names a consequence, not a grade: a blocker is a Critical, or a Major whose status says it blocks.
+Every item carries an id, one of the four severities, and a status, because that is exactly what `../../gates.yaml` `evidence_type_rules.findings` requires of the items `code-chief` merges into `findings` and `cso` merges into its triaged set. Grade findings `Critical | Major | Minor | Info` and nothing else (`../../execution-contract.md`, clause 3). "Blocking" names a consequence, not a grade: a blocker is a Critical, or a Major whose status says it blocks.
 
 ### Clean pass
 

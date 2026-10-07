@@ -135,7 +135,7 @@ two owners.
 - Resubmitted **once**, at revision 3, with `--prior` so the gate re-judges only `changed_evidence`:
 
 ```bash
-python skills/harness/gatekeeper/check.py --boundary security-review --package skillset-saves/runs/2026-05-02_admin-audit_b41d/security/manifest.json --prior skillset-saves/runs/2026-05-02_admin-audit_b41d/security/verdict_security-review.json
+python skills/harness/gatekeeper/check.py --boundary security-review --package skillset-saves/runs/2026-05-02_admin-audit_b41d/security/manifest.json --prior skillset-saves/runs/2026-05-02_admin-audit_b41d/security/verdict_security-review.cross-stage.json
 ```
 
 - `scope`, `threat_model`, `denial_path_evidence`, and `residual_risk` came back as `unchanged_evidence` and carried their prior judgment; `vulnerability_scan`, `findings`, and `remediation_plan` came back as `changed_evidence` and were re-judged.

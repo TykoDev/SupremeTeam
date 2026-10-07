@@ -14,7 +14,7 @@ The phase-by-phase procedure for the `build` pipeline: how the approved design b
 ## Build-Pipeline Sequence
 
 1. Establish the approved design boundary, active scope, and revision baseline the build pipeline must honor. The baseline is the revision named in the `design-to-build` verdict, which becomes `approved_design_revision`.
-2. Delegate implementation, the test surface, the security checkpoint when a trust boundary is in scope, and runtime health on every build, in the order `../../../pipelines.yaml` declares, reopening only the affected phase path when a later finding invalidates earlier evidence.
+2. Delegate implementation, the test surface, the security checkpoint when a trust boundary is in scope, and runtime health on every build, in the dependency order `../../../pipelines.yaml` declares and concurrently where its `scheduling` rule allows (the test surface, the security checkpoint and runtime health all require only the implementation), reopening only the affected phase path when a later finding invalidates earlier evidence.
 3. Route a mid-build failure by what is known about it: a reproduced failure with a known mechanism to `build/debugger`, an unknown mechanism to `investigate`. Investigation is gated at `investigation-review` and returns a bounded fix path; it does not become a second build, and an investigation that returns no bounded path stops the phase instead of licensing a guess.
 4. Confirm completeness through `build/cross-check-build-confirm`, then assemble the consolidated build package only when code, tests, runtime health, security disposition, and completeness certification all align on the same revision.
 5. Send the package to `build/gatekeeper-build` with revision history, residual risk, and any bounded exceptions made explicit.
@@ -32,7 +32,7 @@ The phase-by-phase procedure for the `build` pipeline: how the approved design b
 - Mandatory build phases have current outputs for the submitted revision, including the `runtime-health` smoke log, which no test result substitutes for.
 - Non-first-party surfaces are identified against the mechanical detection rule and justified with source, version, owner, and scan note.
 - `traceability` walks every approved design decision to the changed artifact that carries it, with unproven rows stating why.
-- `python skills/harness/gatekeeper/check.py --boundary build-to-review --package skillset-saves/runs/<run>/build/manifest.json` passes mechanically before submission.
+- `python skills/harness/gatekeeper/check.py --boundary build-to-review --package skillset-saves/runs/<run>/build/manifest.json` and `python skills/build/gatekeeper-build/scripts/check.py skillset-saves/runs/<run>/build` both pass mechanically before submission.
 - The package is coherent enough for downstream review consumers to trust directly.
 
 ## Contract Notes

@@ -112,7 +112,7 @@ _INTERVENTION_MARKERS = re.compile(
 # A word boundary needs a word character on one side and the section sign is not
 # one, so only the alternatives that begin with a word are anchored on the left.
 _LAYER_CITATION = re.compile(
-    r"(?:\bLayer\s*[1-4]|§\s*[1-5]|\bharness-doctrine)\b", re.IGNORECASE
+    r"\bLayer\s*[1-4]\b", re.IGNORECASE
 )
 _REGRESSION_NOTE = re.compile(r"\bregression\b", re.IGNORECASE)
 
@@ -548,6 +548,11 @@ class Contracts:
             raise ContractsUnreadable(f"{type(exc).__name__}: {exc}") from exc
         if not isinstance(gates, dict) or not isinstance(pipelines, dict):
             raise ContractsUnreadable("gates.yaml and pipelines.yaml must be mappings")
+        if catalog is None:
+            from contract_floor import gate_floor_errors
+            floor = gate_floor_errors(gates)
+            if floor:
+                raise ContractsUnreadable("; ".join(floor))
         return cls(gates, pipelines)
 
     def _pipeline(self, name: str) -> dict:

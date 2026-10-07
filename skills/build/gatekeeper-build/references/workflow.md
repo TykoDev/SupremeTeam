@@ -26,7 +26,7 @@ the sequence, the verdict rules, and the checklist a verdict is written against.
 ## Verdict Rules
 
 - Return `APPROVED` only when the code, tests, security posture, and completeness claim all line up on the same revision.
-- Return `REVISE` when the build packet can be repaired by adding missing evidence, correcting stale summaries, or addressing unresolved findings.
+- Return `REVISE` when the build packet can be repaired by adding missing evidence, correcting stale summaries, or addressing unresolved findings, and only for a mechanical failure, a Critical, or an unresolved Major (`../../../gates.yaml` `revise_policy.revise_threshold`); Minor and Info findings ride along on `APPROVED`.
 - Return `ESCALATE` when the build packet crosses into a design or release decision that build-management cannot settle on its own — and whenever a validator fails to run or exits 2, because an unrun check is not a clean one.
 - Reuse a prior verdict only when the revision and evidence set are unchanged.
 

@@ -45,7 +45,11 @@ the project's own manifests. Then walk the same ladder used everywhere else:
 3. **The project manifest** — `scripts.start` in `package.json`, a declared
    entry point in `pyproject.toml`, a service command in a container or compose
    file, the command the deployment spec runs.
-4. **No candidate found.** Record the gap rather than inventing an invocation.
+4. **Library, CLI, or documentation surface with no service start.** Execute the
+   owner-authorized consumption-path smoke (import, CLI entry point, or documented
+   example) and return its hashed log and typed probe as `runtime`; do not invent
+   an HTTP service. Readiness polls apply only to long-running surfaces.
+5. **No authorized entry or consumption path found.** Record the gap.
    `runtime` has no fallback, so the honest return is a blocked boundary.
 
 ## Readiness Window
@@ -135,7 +139,7 @@ its output redirected there, scrub as written, register the hash through
 `python skills/harness/hooks/save_run.py checkpoint --run-id <run-id> --owner admiral --evidence <path>` (`--owner` names the run's lock holder, admiral, not the caller; any other owner is refused with `lock is owned by 'admiral'`),
 then build the record with `artifacts`, `result.status: pass`, `tool`,
 `command`, `observed_at`, and the environment and revision probed. Artifacts are
-hashed byte-for-byte, so no log is reformatted after its hash is taken.
+hashed using canonical content digests (UTF-8 text with normalized line endings; binary content as raw bytes), so no log is reformatted after its hash is taken.
 
 If a probe command is one that also produces coverage — a smoke run through the
 project's test runner, for instance — its coverage output goes to the run's

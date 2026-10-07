@@ -54,12 +54,13 @@ core save-protocol.md
 core taste-doctrine.md
 core LICENSE
 
-# The MCP registry ships as a blank template that admiral fills in on first use.
+# The MCP registry ships as a blank template; admiral maintains a project cache
+# under .harness-state/, not this installed seed.
 # Releases before the blank template shipped a snapshot of one machine's tools, and
 # an install that still holds one untouched gets the template. When the template
 # changes, keep the text it replaces in scripts/superseded/ and name it here.
 seed mcp-tools.md
-supersedes mcp-tools.md mcp-tools.2026-06-08.md mcp-tools.2026-06-30.md mcp-tools.2026-09-08.md
+supersedes mcp-tools.md mcp-tools.2026-06-08.md mcp-tools.2026-06-30.md mcp-tools.2026-09-08.md mcp-tools.2026-10-06.md
 
 # Friendly team name -> paths under skills/.
 team design design

@@ -101,7 +101,7 @@ def _stages():
 def _roster() -> set:
     """Every name the manifest declares, across all nine role and list keys."""
     names = set()
-    for key in ("phase_leads", "phase_gatekeepers", "pipeline_owners", "specialists",
+    for key in ("phase_leads", "phase_gatekeepers", "pipeline_owners", "specialists", "standalone_tools",
                 "creation", "release", "safety", "browser", "testing"):
         names.update(TEAM.get(key) or [])
     for key in ("front_door", "session_memory", "cross_stage_gatekeeper"):
@@ -1235,11 +1235,14 @@ class StageConditionTests(unittest.TestCase):
 
     @staticmethod
     def conditional_stages():
-        """(pipeline, pipeline owner, stage) for every stage carrying a `when`."""
+        """Check execution and delegation conditions without conflating them."""
         for name, pipeline in (PIPELINES.get("pipelines") or {}).items():
             for stage in pipeline.get("stages") or []:
                 if stage.get("when"):
                     yield name, pipeline.get("owner"), stage
+                if stage.get("delegate_when"):
+                    yield name, pipeline.get("owner"), {**stage, "step": stage["step"] + ":delegation",
+                                                        "when": stage["delegate_when"]}
 
     @staticmethod
     def condition(when: str) -> str:

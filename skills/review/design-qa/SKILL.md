@@ -7,7 +7,7 @@ description: >-
   polish, or validate the visual system — even when they only say a screen "looks
   off". Judges what a still capture shows; anything that must be resized, exercised,
   or measured goes to `review/frontier`, ergonomics to `review/devex-review`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -88,7 +88,7 @@ Every pass returns the same fields in this order, so `review/code-chief` merges 
 ```text
 Outcome:     design-qa, <revision reviewed>, digest <snapshot digest>, <n> findings: <c> Critical, <m> Major, <k> Minor, <i> Info
 Evidence:    <capture paths, tiers and themes covered, screens or states not captured>
-Findings:    <id> | Critical|Major|Minor|Info | <screen / state / tier> | <design-system rule broken> | <correction>
+Findings:    <id> | Critical|Major|Minor|Info | <status: open|blocking|verified|deferred|not-applicable> | <screen / state / tier> | <design-system rule broken> | <correction>
 Open risks:  <deviations suspected where no capture exists, and the capture that would settle each>
 Next action: <single next step with its owner>
 Revision:    <revision this packet judges>

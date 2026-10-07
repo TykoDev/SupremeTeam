@@ -13,7 +13,7 @@
 1. Confirm provenance and consent first: the session is one the user owns or is authorized to act for and has deliberately supplied. Refuse a harvested or third-party session, or one whose origin is unclear, before any other step.
 2. Confirm the target domain, environment, and intended identity before importing any state.
 3. Place the bundle on an untracked working path — never under `skillset-saves/`, the repository, or any Save-Protocol directory.
-4. Restrict the bundle's permissions to the current user (`chmod 600` on POSIX; `icacls "$Bundle" /inheritance:r /grant:r "$($env:USERNAME):(R,W)"` on Windows, which is this repo's primary platform where `chmod` is a no-op).
+4. Restrict the bundle's permissions to the current user (`chmod 600` on POSIX; `icacls "$Bundle" /inheritance:r /grant:r "$($env:USERNAME):(R,W)"` on Windows, using native ACLs on Windows; Linux, macOS and Windows are equally supported).
 5. Load cookies or browser state into the correct profile using a concrete mechanism (Playwright `context.addCookies()`, HAR import, or scoped-profile copy). Never log or echo raw cookie values, redact them in all evidence and screenshots, and do not widen the session boundary to unrelated tenants or environments.
 6. Delete the bundle unconditionally on every exit path — success, failure, or interruption — wiring the deletion (`trap ... EXIT`, or a `finally` block) before the import begins so no path skips it.
 7. Reopen the protected surface and verify the resulting page, redirect chain, and visible account context.

@@ -359,7 +359,7 @@ class ToolSurfaceTests(unittest.TestCase):
         self.assertEqual(missing, [], "every skill declares allowed-tools: " + ", ".join(missing))
 
     def test_tools_are_drawn_from_the_documented_vocabulary(self):
-        known = {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite"}
+        known = {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite", "Agent", "Task"}
         bad = []
         for name, d in SKILL_DIRS.items():
             front = skill_front(d / "SKILL.md") or {}
@@ -368,6 +368,15 @@ class ToolSurfaceTests(unittest.TestCase):
                 if tool and tool not in known:
                     bad.append(f"{name}: unknown tool '{tool}'")
         self.assertEqual(bad, [], "\n  ".join(bad))
+
+    def test_delegating_orchestrators_grant_native_agent_and_legacy_task(self):
+        owners = {pipeline["owner"] for pipeline in PIPELINES["pipelines"].values()} | {TEAM["front_door"]}
+        self.assertGreater(len(owners), 5)
+        for owner in owners:
+            with self.subTest(owner=owner):
+                front = skill_front(SKILL_DIRS[owner] / "SKILL.md")
+                tools = {tool.strip() for tool in front["allowed-tools"].split(",")}
+                self.assertTrue({"Agent", "Task"} <= tools)
 
     def test_gatekeepers_and_single_writers_do_not_grant_edit(self):
         expected = self._must_not_edit()

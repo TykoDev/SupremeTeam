@@ -8,7 +8,7 @@ description: >-
   the phase gate already passed, challenge the package boundary itself, or whether
   this can advance to the next stage. A single phase's own gate is its phase
   gatekeeper's. Reached cold, hand off to `admiral` first.
-version: 1.1.0
+version: 1.2.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -155,11 +155,11 @@ python skills/harness/gatekeeper/check.py --boundary <design-to-build|redesign-r
 It verifies, for the named boundary only:
 
 - every required key is present and non-falsy, and artifact-backed keys point at hashed files
-- typed records are shaped correctly, every artifact they name matches its sha256, and every `inputs` entry they carry still hashes as recorded (scan and render must carry `inputs`; a probe may not, and is then listed in `warnings`) — `scan`, `render`, `probe`, `findings`, `verdict`, `stack_lock`, `revision_ref`, `variant_set`, `selection`, and the Taste records `preference_diff`, `confirmation`, `conflict_analysis`, `persistence_result`, `effective_profile`, `consumer_handoff`. `references/boundary-evidence.md` § 2 is the roster; read it there rather than from this line
+- typed records are shaped correctly, every artifact they name matches its sha256, and every `inputs` entry they carry still hashes as recorded (scan and render must carry `inputs`; a probe may not, and is then listed in `warnings`) — `scan`, `render`, `probe`, `findings`, `verdict`, `stack_lock`, `revision_ref`, `security_seed`, `human_go`, `variant_set`, `selection`, and the Taste records `preference_diff`, `confirmation`, `conflict_analysis`, `persistence_result`, `effective_profile`, `consumer_handoff`. `references/boundary-evidence.md` § 2 is the roster; read it there rather than from this line
 - the revision lineage holds one value, and the declared `owner` is the boundary's only permitted submitter
 - no blocked phrase and no broken local link is present
 
-A typed record is the submitter's own statement. The validator never compares an artifact's content with what its record claims and never re-runs a command (it reads `.md` and `.txt` artifacts only for blocked phrases and local links), so whether a log is the runner's own output, or a scan ran at all, is a judgement it leaves to you.
+A typed record is the submitter's own statement. The validator never compares an artifact's content with what its record claims and never re-runs a command (it reads `.md` and `.txt` artifacts only for blocked phrases and local links), so whether a log is the runner's own output, or a scan ran at all, is a judgement it leaves to you; at a phase-gated boundary that judgement is the phase gate's and is carried unless `changed_evidence` names the key (`../gates.yaml` `revise_policy.cross_stage_scope`).
 
 A missing or malformed gate spec is an engine error (exit 2), never a pass, and
 exit 0 is a mechanical fact rather than approval. Reuse a prior verdict only when
@@ -168,10 +168,7 @@ submission, revision, package fingerprint, and gate spec digest, and only when t
 prior is this gate's own earlier record, `verdict_<boundary>.cross-stage.json`.
 `prior_reusable` describes the package, not who judged it. When `--prior` is the
 phase gatekeeper's `verdict_<boundary>.json` (Workflow step 2), `prior_reusable:
-true` is the expected result, since the phase gate judged this same package; it
-proves only that nothing changed since, so the cross-stage pass still judges every
-key itself and reads `changed_evidence` as drift since the phase verdict, never as
-the set it may limit itself to.
+true` is the expected result, since the phase gate judged this same package; it proves that nothing changed since, which is exactly what bounds this pass (`../gates.yaml` `revise_policy.cross_stage_scope`): with an APPROVED phase verdict and no `changed_evidence`, this gate judges the crossing and carries the phase gate's adequacy judgment on every key; `changed_evidence` is the set whose adequacy it re-judges, and a phase verdict that was not APPROVED means every key is judged here.
 
 **2. The package-shape validator.** `scripts/check.py` checks the phase package
 directory itself:
@@ -263,7 +260,7 @@ above).
 1. Classify the submission against `../gates.yaml`: one of the ten boundaries in the Boundary Contract above. Confirm the declared `boundary` and `owner` match the spec, and read the required-evidence list for that boundary from the spec rather than from memory.
 2. Run the boundary validator for that boundary, with `--prior` pointed at the phase gatekeeper's `verdict_<boundary>.json` when one exists.
 3. Run the package-shape validator against the `delivery/` phase directory, after confirming the path resolves inside the project.
-4. Judge what neither validator can: whether a present artifact is substantively adequate, whether a contradiction across artifacts is real, whether a waiver reason is honest, and whether the next-consumer contract holds.
+4. Judge what neither validator can, within `../gates.yaml` `revise_policy.cross_stage_scope`. At a boundary with a phase gatekeeper whose verdict is APPROVED and whose `--prior` comparison reports no `changed_evidence`, judge the crossing itself — lineage across revisions, boundary-to-package match, blocked phrases, the next-consumer contract, whether a contradiction across artifacts is real and whether a waiver reason is honest — and carry the phase gate's judgment of whether each artifact is substantively adequate. Re-judge a key's adequacy only where `changed_evidence` names it, where the phase verdict was not APPROVED, or at the six boundaries that have no phase gatekeeper, where this gate is the first independent reader of the package.
 5. Decide `APPROVED`, `REVISE`, or `ESCALATE` with a handoff-specific rationale that names the missing package element, conflicting approval, or unresolved risk-acceptance question, grouped by the owner each failing key belongs to.
 6. Reuse an existing verdict only when it is this gate's own cross-stage record and the same submission id and package revision recur; otherwise record how the resubmission changed before another handoff is allowed. The phase gatekeeper's verdict is an input to compare against, never a verdict to reuse.
 
@@ -272,15 +269,15 @@ above).
 - **Shared severity**: Grade every finding Critical | Major | Minor | Info, the four-tier model clause 3 of `../execution-contract.md` defines, so upstream and downstream packages interpret risk consistently.
 - **Forbidden-strings scan ownership**: Own the scan that rejects blocked phrases and treat any hit inside the candidate package as a blocking defect.
 - **Harness-doctrine citation**: When a package adds or changes a cross-cutting runtime intervention, evaluate it against `../harness-doctrine.md` §5 and cite the violated section by number in the verdict. A doctrine violation is a `REVISE` (or `ESCALATE` when it needs a scope decision).
-- **Gate spec is authoritative**: `../gates.yaml` is the only source of required evidence, artifact-backed keys, sanctioned fallback values, typed record shapes, submitters, and the finding policy. Never accept an evidence key this file does not list for the boundary, and never invent a waiver reason it does not sanction.
-- **Batched REVISE** (`../gates.yaml` `revise_policy`): A `REVISE` carries every mechanical failure and every judgment finding from the pass, grouped by owner exactly as `check.py` reports them in `revise_packet.by_owner`; never return the first defect alone. On a resubmission run with `--prior` pointed at this gate's own earlier cross-stage record, re-judge only `changed_evidence` and carry that judgment on `unchanged_evidence`; a phase gatekeeper's verdict is never carried this way; the mechanical pass always covers the whole package. A package that fails mechanically was never eligible for submission (the submitter self-checks) and is returned without judgment.
+- **Gate spec is authoritative**: `../gates.yaml` declares the required evidence subject to the independent safety floor in `../scripts/contract_floor.py`; the shipped loader and manifest validator refuse weakening. Explicit `--gates` experiments are non-shipped, never approval authority. It defines artifact-backed keys, sanctioned fallback values, typed record shapes, submitters, and the finding policy. Never accept an evidence key this file does not list for the boundary, and never invent a waiver reason it does not sanction.
+- **Batched REVISE** (`../gates.yaml` `revise_policy`): A `REVISE` carries every mechanical failure and every judgment finding from the pass, grouped by owner exactly as `check.py` reports them in `revise_packet.by_owner`; never return the first defect alone. On a resubmission run with `--prior` pointed at this gate's own earlier cross-stage record, re-judge only `changed_evidence` and carry that judgment on `unchanged_evidence`; at a phase-gated boundary the phase gate's APPROVED adequacy judgment is carried the same way (`revise_policy.cross_stage_scope`), while the crossing checks always run and the mechanical pass always covers the whole package. A package that fails mechanically was never eligible for submission (the submitter self-checks) and is returned without judgment. On a resubmission a new finding is raised only against `changed_evidence` or a defect the change introduced (`revise_policy.batch_fix`); a finding that could have been raised on unchanged evidence in the first pass is not raised now, because a gate that reveals its standard one finding per round is the slowest thing in the pipeline.
 - **Finding policy**: A Critical finding blocks until it is verified or marked not-applicable with a reason. A Major finding blocks unless it is verified, not-applicable with a reason, or deferred with a named owner and a reopen trigger recorded in the findings record.
 - **Workflow protocol**: Every verdict names the transition it guards per `../contracts/workflow-protocol.md`. An invalid transition returns `ESCALATE` and is never silently coerced.
 
 ## Verdict Model
 
 - **APPROVED**: The package is ready to advance with its current evidence.
-- **REVISE**: The package can progress after specific mandatory changes.
+- **REVISE**: The package can progress after specific mandatory changes: a mechanical failure, a Critical finding, or a Major the finding policy leaves unresolved (`../gates.yaml` `revise_policy.revise_threshold`). Minor and Info findings never produce a REVISE on their own; they are recorded in the verdict record and ride along on APPROVED, for the submitter to carry into `residual_risk` or the next owner's handoff.
 - **ESCALATE**: The package cannot advance without external judgment or a broader scope decision.
 
 ## Evidence Standard
@@ -295,7 +292,7 @@ approval. Concretely, at this gate:
 
 ## Skip Rule
 
-Do not skip gate evaluation; only reuse a prior cross-stage verdict of this gate's own when the exact package revision is unchanged. A phase gatekeeper's verdict on the same revision is never a reason to skip.
+Do not skip gate evaluation; only reuse a prior cross-stage verdict of this gate's own when the exact package revision is unchanged. A phase gatekeeper's APPROVED verdict on the same revision is never a reason to skip the crossing checks; it is the reason the adequacy judgment is carried rather than repeated (`../gates.yaml` `revise_policy.cross_stage_scope`).
 
 ## Failure Modes
 

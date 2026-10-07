@@ -66,7 +66,7 @@ checkpoint —
 Captured before/after output belongs under the phase `evidence/` directory,
 resolved with `--kind evidence`, and is cited from the report by path.
 
-Artifacts are hashed byte-for-byte, so a report or capture is never reformatted
+Artifacts use canonical content digests (UTF-8 text with normalized line endings; binary content as raw bytes), so a report or capture is never reformatted
 after its hash is taken.
 
 ## REVISE Handling

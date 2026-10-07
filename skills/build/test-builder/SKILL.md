@@ -7,7 +7,7 @@ description: >-
   `build/build-management`, not directly, even when the request is only "add
   some tests". Defers feature code to `build/bob-the-builder`, failure diagnosis
   to `build/debugger`, and startup and runtime health to `build/health-check`.
-version: 1.0.1
+version: 1.0.2
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -61,6 +61,7 @@ Everything below returns to `build/build-management`, the only skill
 Test-builder submits nothing itself; it owns the `tests` key inside that
 submission (`../../gates.yaml`, `evidence_owners.build-to-review`).
 
+- `reports/report_tests.md`, with Outcome, executed commands, coverage gaps and log references. The build package-shape check requires a separate `*test*.md` deliverable; this report supplements, never replaces, the log.
 - The executed test-runner log, written as a file under the phase `evidence/` directory and hashed. `evidence_type_rules.probe` is explicit that at `build-to-review` `tests` is that log, and that a bare count or claim is not evidence.
 - The typed `probe` record that carries it: hashed `artifacts`, `result.status: pass`, the `tool` and `command` that produced it, `observed_at`, and `inputs` binding the record by sha256 to the source files it exercised so stale evidence fails as input hash drift.
 - The coverage statement: which delivery slices and failure paths the run exercised, which it did not reach, and why — plus any quarantine record, which narrows the coverage claim rather than hiding a gap.

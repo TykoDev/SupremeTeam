@@ -373,7 +373,8 @@ def _closed(record: SaveRecord) -> dict[str, Any]:
 
 
 def _unverified(result: dict[str, Any], record: SaveRecord) -> dict[str, Any]:
-    """Say which registered evidence this account could not check, beside the classification the run's records give."""
+    """Expose coherent owner/revision and any evidence this account cannot check."""
+    result.update({"owner": record.owner, "revision": int(record.revision)})
     if record.evidence_unverifiable:
         result["evidence_unverifiable"] = list(record.evidence_unverifiable)
         result["detail"] += (f"; {len(record.evidence_unverifiable)} registered evidence path(s) cannot be checked by this "
@@ -521,6 +522,8 @@ def inspect_run(project_root: Path, run_id: str, *, now: datetime | None = None)
         result["run_status"] = record.status
     if record.revision:
         result["revision"] = int(record.revision)
+    if record.coherent:
+        result["owner"] = record.owner
     if record.evidence_missing:
         result["evidence_missing"] = list(record.evidence_missing)
     if record.evidence_unverifiable:

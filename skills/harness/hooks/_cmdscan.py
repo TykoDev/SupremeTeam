@@ -13,8 +13,8 @@ does and returns structure the guard rules apply to:
 * ``writes``: every path a redirect or a file-mutating command would write, with the
   working directories a ``cd`` or ``git -C`` earlier in the line may have set;
 * ``code``: the text of interpreter programs (``python -c``, ``node -e``, a heredoc to
-  ``python -``, an ``awk`` program), which cannot be read for what they write, so the
-  guard searches them for protected paths instead;
+  ``python -``, an ``awk`` program). A bounded Python pass places literal I/O targets;
+  other program effects remain unplaced or searched for protected paths;
 * ``unnamed``: the writes whose target is not in the command at all (a mutating verb
   that ``xargs`` feeds from standard input, an inline program that redirects or opens
   a file, a shell that reads its program from a pipe, the targets inside a diff), which
@@ -30,7 +30,7 @@ says so (``unresolved``, ``glob``, ``ok``) and the guard falls back to the old t
 rules, which are never weaker. Cost is linear in the command and nesting stops at
 ``MAX_DEPTH``; text below that depth is handed back as ``code`` rather than dropped.
 
-Stdlib only, no I/O, no import of another hook module.
+Stdlib only, no I/O; the pure _program_paths helper never evaluates source code.
 """
 from __future__ import annotations
 
@@ -41,6 +41,8 @@ import os
 import posixpath
 import re
 from dataclasses import dataclass, field
+
+import _program_paths
 
 MAX_DEPTH = 8
 _MAX_NEST = 100
@@ -605,6 +607,10 @@ def _home() -> str:
     return os.environ.get("HOME") or os.environ.get("USERPROFILE") or os.path.expanduser("~")
 
 
+# The temporary-directory variables a shell or PowerShell line may spell; each is the path the environment holds.
+_TEMP_VARS = frozenset({"TMPDIR", "TMP", "TEMP"})
+
+
 def _lookup(name: str, ctx: _Ctx) -> "str | None":
     key = name.lower() if ctx.ps else name
     if ctx.ps and key.startswith("env:"):
@@ -613,6 +619,10 @@ def _lookup(name: str, ctx: _Ctx) -> "str | None":
         return ctx.vars[key]
     if key == "HOME" or (ctx.ps and key in ("home", "userprofile")):
         return _home()
+    if key in _TEMP_VARS or (ctx.ps and key in ("tmpdir", "tmp", "temp")):
+        # The host's temporary directory, read from the hook's own environment as HOME is. Unset, the word stays
+        # unresolved: the shell would expand it to nothing, and a bare `/out.log` is not what the command meant.
+        return os.environ.get(key.upper()) or None
     if key in ctx.env:
         return ctx.env[key]
     # The shell's own directory: `.` in the analysis, whose paths are relative to the directory the `cd` chain left.
@@ -725,8 +735,9 @@ def _verb(text: str) -> str:
     name = re.split(r"[\\/]", text)[-1].lower()
     for extension in _EXTENSIONS:
         if name.endswith(extension):
-            return name[: -len(extension)]
-    return name
+            name = name[: -len(extension)]
+            break
+    return {"bsdtar": "tar", "gtar": "tar", "7zz": "7z", "7za": "7z", "7zr": "7z"}.get(name, name)
 
 
 def _split(rest: list, with_arg=frozenset(), short=frozenset()) -> tuple:
@@ -821,6 +832,8 @@ def _t_copy(verb: str, with_arg=frozenset(), short=frozenset(), recursive=frozen
                 return _deposits(verb, operands, values[name], tree)
         if not operands:
             return []
+        if verb in {"cp", "ln"} and ("--no-target-directory" in flags or _has_short(flags, "T")):
+            return [(operands[-1], (), f"{verb} -r")] if tree else operands[-1:]
         return _deposits(verb, operands[:-1], operands[-1], tree)
     return handler
 
@@ -974,6 +987,9 @@ def _t_wget(rest, ctx):
     return named
 
 
+_TAR_SUFFIX = re.compile(r"\.(?:tar(?:\.\w+)?|tgz|tbz2?|txz|zip)$", re.I)
+
+
 def _tar_parts(rest) -> tuple:
     """``(mode, archive, directory)`` of a tar command line: ``mode`` is ``x`` (extract), ``c`` (create, append or
     update) or ``""`` (list, compare); ``archive`` and ``directory`` are words or None."""
@@ -991,6 +1007,13 @@ def _tar_parts(rest) -> tuple:
             archive = queue.pop(0)
         elif letter == "C" and queue:
             directory = queue.pop(0)
+    # GNU `--one-top-level[=DIR]` extracts into DIR, or into a directory named after the archive, under `-C`.
+    top = values.get("--one-top-level")
+    if top is None and "--one-top-level" in flags and archive is not None:
+        top = _Arg(_TAR_SUFFIX.sub("", posixpath.basename(archive.text)) or ".", archive.glob, archive.unresolved)
+    if top is not None:
+        directory = top if directory is None else _Arg(posixpath.join(directory.text, top.text), directory.glob or top.glob,
+                                                        directory.unresolved or top.unresolved)
     letters = cluster + "".join(f[1:] for f in flags if not f.startswith("--"))
     if "x" in letters or "--extract" in flags or "--get" in flags:
         return "x", archive, directory
@@ -1013,6 +1036,33 @@ def _t_unzip(rest, ctx):
     return [values["-d"]] if "-d" in values else [_Arg(".")]
 
 
+def _generic_extract(verb: str, args):
+    """Conservative extraction intent for non-table tools; reads are not extraction."""
+    if _PYTHONS.match(verb) or verb in _EVAL_FLAGS or verb in _SHELLS or verb in {"grep", "rg", "ls", "cat", "head", "tail", "wc", "echo", "printf", "test"}:
+        return None
+    rar = verb in {"rar", "unrar"}
+    with_arg = frozenset({"-C", "--directory", "--destination", "--output"}) if rar else frozenset({"-C", "--directory", "-d", "--destination", "-o", "--output", "-f", "--file"})
+    flags, operands, values = _split(args, with_arg, frozenset("C" if rar else "Cdof"))
+    words = [a.text for a in operands]
+    archive_like = any(word.lower().endswith((".tar", ".tgz", ".gz", ".bz2", ".xz", ".txz", ".zip", ".7z", ".rar", ".arc")) for word in words + [a.text for a in values.values()])
+    extract = "--extract" in flags or "--unpack" in flags or ("-x" in flags and archive_like)
+    if verb in {"rar", "unrar"}:
+        extract = bool(words and words[0] in {"x", "e"})
+        operands = operands[1:]
+    elif verb == "unar":
+        extract = not any(flag in {"-l", "--list", "--help", "--version"} for flag in flags)
+    elif verb == "ditto":
+        extract = "-x" in flags
+    if not extract:
+        return None
+    archive = values.get("-f") or values.get("--file") or (operands[0] if operands else None)
+    destination = next((values[key] for key in ("-C", "--directory", "-d", "--destination", "-o", "--output") if key in values), None)
+    if destination is None and len(operands) > 1:
+        if verb == "ditto" or (rar and operands[-1].text.endswith(("/", "\\"))):
+            destination = operands[-1]
+    return archive, destination or _Arg(".")
+
+
 def extract_parts(verb: str, argv) -> "tuple | None":
     """``(archive, destination)`` of an archive extract (``tar -x``, ``unzip``, ``7z x``/``e``), or None for any other
     command. ``archive`` is None when the archive arrives on standard input (``tar -x`` without ``-f``, ``-f -``)."""
@@ -1033,6 +1083,10 @@ def extract_parts(verb: str, argv) -> "tuple | None":
             return None
         out = [f[2:] for f in flags if f.startswith("-o") and len(f) > 2]
         return (operands[1].text if len(operands) > 1 else None), (out[0] if out else ".")
+    generic = _generic_extract(verb, args)
+    if generic:
+        archive, destination = generic
+        return (archive.text if archive else None), destination.text
     return None
 
 
@@ -1041,7 +1095,12 @@ def copy_parts(verb: str, argv) -> "tuple | None":
     args = [a if isinstance(a, _Arg) else _Arg(a) for a in argv]
     if verb == "rsync":
         flags, operands, _ = _split(args, _RSYNC_ARG, frozenset("efBT"))
-        excludes = _values(args, frozenset({"--exclude", "--filter"}), "f")
+        # A filter is a rule language, not an exclude pattern. File-based and
+        # ordered filters cannot prove that an entire record directory survives.
+        excludes = _values(args, frozenset({"--exclude"}))
+        if any(flag in {"--delete-excluded", "--filter", "--include", "--include-from"} or
+               (not flag.startswith("--") and "f" in flag[1:]) for flag in flags):
+            excludes = []
         return ([a.text for a in operands[:-1]], operands[-1].text, flags, excludes) if operands else None
     if verb not in ("cp", "ln", "install", "scp"):
         return None
@@ -1148,6 +1207,28 @@ def git_clean_parts(argv) -> "tuple | None":
     return [a.text for a in operands], directories, flags, _values(rest, frozenset({"--exclude"}), "e")
 
 
+def git_ref_mutates(sub: str, argv) -> bool:
+    """Ref commands with write intent; listing/showing refs remains read-only."""
+    flags, operands, _ = _split([_Arg(a) for a in argv])
+    if "--help" in flags or "-h" in flags:
+        return False
+    if sub in {"update-ref", "pack-refs"}:
+        return True
+    if sub in {"branch", "tag"}:
+        if any(_has_short(flags, letter) for letter in "dDmMcCfFu") or any(
+                flag in {"--delete", "--move", "--copy", "--force", "--edit-description", "--set-upstream-to",
+                         "--unset-upstream", "--create-reflog"} for flag in flags):
+            return True
+        listing = any(flag in {"--list", "--contains", "--no-contains", "--merged", "--no-merged",
+                               "--points-at"} for flag in flags) or _has_short(flags, "l")
+        if sub == "tag" and ("--verify" in flags or _has_short(flags, "v")):
+            return False
+        return bool(operands) and not listing
+    if sub == "symbolic-ref":
+        return len(operands) > 1 or "--delete" in flags or _has_short(flags, "d")
+    return False
+
+
 def git_index_only(sub: str, flags) -> bool:
     """True for a git command that moves what is in the index and writes no file of the tree.
 
@@ -1167,12 +1248,80 @@ def git_dry_run(sub: str, flags) -> bool:
     return sub == "apply" and "--apply" not in flags and any(f in ("--check", "--stat", "--numstat", "--summary") for f in flags)
 
 
+_GIT_CLONE_ARG = frozenset({"-b", "--branch", "-o", "--origin", "--depth", "-c", "--config", "--reference", "--reference-if-able",
+                            "--template", "--separate-git-dir", "-j", "--jobs", "--filter", "-u", "--upload-pack", "--shallow-since",
+                            "--shallow-exclude", "--server-option", "--bundle-uri"})
+_GIT_INIT_ARG = frozenset({"--template", "--separate-git-dir", "--shared", "-b", "--initial-branch", "--object-format", "--ref-format"})
+_GIT_SUBMODULE_ARG = frozenset({"-b", "--branch", "--name", "--reference", "--depth"})
+
+
+def _clone_name(url: str) -> str:
+    """The directory `git clone <url>` creates when none is named: the last path segment, less `.git`."""
+    name = re.split(r"[/:]", url.rstrip("/"))[-1]
+    return (name[:-4] if name.endswith(".git") else name) or "."
+
+
+def _git_destination(rest, directories) -> list:
+    """The directory or file a git subcommand creates or fills, as ``_t_git`` returns targets, or an empty list.
+
+    `clone`, `init`, `worktree add` and `submodule add` fill a directory with a tree; `archive --output`, `format-patch
+    -o` and `bundle create` write where they are told. None of them takes a pathspec, so ``_t_git`` does not see them."""
+    args = [a if isinstance(a, _Arg) else _Arg(a) for a in rest]
+    i, _ = _git_head(args)
+    if i >= len(args):
+        return []
+    sub, tail = args[i].text, args[i + 1:]
+    where = tuple(directories)
+    if sub == "clone":
+        _, operands, _ = _split(tail, _GIT_CLONE_ARG, frozenset("bocju"))
+        if not operands:
+            return []
+        target = operands[1] if len(operands) > 1 else _Arg(_clone_name(operands[0].text), operands[0].glob, operands[0].unresolved)
+        return [(target, where, "git clone")]
+    if sub == "init":
+        # With no directory it creates `.git` where it runs, not a tree.
+        _, operands, _ = _split(tail, _GIT_INIT_ARG, frozenset("b"))
+        return [(operands[0] if operands else _Arg(".git"), where, "git init")]
+    if sub == "worktree" and tail and tail[0].text == "add":
+        _, operands, _ = _split(tail[1:], frozenset({"-b", "-B", "--reason"}), frozenset("bB"))
+        return [(operands[0], where, "git worktree")] if operands else []
+    if sub == "submodule" and tail and tail[0].text == "add":
+        _, operands, _ = _split(tail[1:], _GIT_SUBMODULE_ARG, frozenset("b"))
+        if not operands:
+            return []
+        target = operands[1] if len(operands) > 1 else _Arg(_clone_name(operands[0].text), operands[0].glob, operands[0].unresolved)
+        return [(target, where, "git submodule")]
+    if sub == "archive":
+        _, _, values = _split(tail, frozenset({"-o", "--output", "--format", "--prefix", "--remote", "--exec", "--add-file",
+                                                "--add-virtual-file"}), frozenset("o"))
+        out = values.get("-o") or values.get("--output")
+        return [(out, where, "git archive")] if out is not None else []
+    if sub == "format-patch":
+        _, _, values = _split(tail, frozenset({"-o", "--output-directory"}), frozenset("o"))
+        out = values.get("-o") or values.get("--output-directory")
+        return [(out, where, "git format-patch")] if out is not None else []
+    if sub == "bundle" and tail and tail[0].text == "create":
+        _, operands, _ = _split(tail[1:])
+        return [(operands[0], where, "git bundle")] if operands else []
+    return []
+
+
 def _t_git(rest, ctx):
     sub, operands, directories, flags = git_parts(rest)
-    if sub not in _GIT_PATHSPEC or git_index_only(sub, flags):
+    if sub not in _GIT_PATHSPEC:
+        return _git_destination(rest, directories)
+    if git_index_only(sub, flags):
         return []
     if sub == "clean":
         operands = [_Arg(text) for text in git_clean_parts(rest)[0]]
+        # `git clean` with no pathspec cleans the tree below the directory git runs in. From the project root that is
+        # Rule C's root-reach question; from a subdirectory (`-C`, a `cd`) it is a tree write aimed at that directory,
+        # named outright because a deny rule also tries the start directory for a `.`.
+        here = ctx.cwds[-1] if ctx.cwds else "."
+        moved = [d for d in directories if posixpath.normpath(d) != "."]
+        if not operands and (moved or posixpath.normpath(here or ".") != "."):
+            target = posixpath.normpath(posixpath.join(here or ".", *moved))
+            return [(_Arg(target), (), "git clean")]
     return [(operand, tuple(directories), "git " + sub) for operand in operands]
 
 
@@ -1525,10 +1674,18 @@ def _xargs(rest: list, upstream: "list | None") -> list:
     nested = list(rest[i:])
     words = [_Arg(word) for word in (upstream or [])]
     if not words:
-        return [(nested, not replace)]
+        # With `-I` the operands still arrive unread: a word that holds the replacement string is one built at run
+        # time from standard input, not a file of that name, so it stays a write the analysis cannot place.
+        return [(_fed_placeholders(nested, replace) if replace else nested, not replace)]
     if replace:
         return [([_Arg(a.text.replace(replace, word.text), a.glob, a.unresolved) for a in nested], False) for word in words]
     return [(nested + words, False)]
+
+
+def _fed_placeholders(nested: list, replace: "str | None") -> list:
+    """``nested`` with every word that a replacement string or a parallel placeholder stands in marked unresolved."""
+    return [_Arg(a.text, a.glob, a.unresolved or (replace is not None and replace in a.text) or bool(_PLACEHOLDER.search(a.text)))
+            for a in nested]
 
 
 _PARALLEL_ARG = frozenset({"-j", "--jobs", "-n", "--max-args", "-N", "-L", "--max-lines", "-a", "--arg-file", "-S", "--sshlogin",
@@ -1566,7 +1723,8 @@ def _parallel(rest: list, upstream: "list | None") -> list:
     replace = replace or ("{}" if any("{}" in arg.text for arg in nested) else None)
     placed = bool(replace) or any(_PLACEHOLDER.search(arg.text) for arg in nested)
     if not words:
-        return [(nested, not placed)]
+        # The placeholders are filled from standard input, which the analysis does not read (see ``_xargs``).
+        return [(_fed_placeholders(nested, replace) if placed else nested, not placed)]
     if replace:
         return [([_Arg(a.text.replace(replace, word.text), a.glob, a.unresolved) for a in nested], False) for word in words]
     return [(nested, False)] if placed else [(nested + words, False)]
@@ -2169,6 +2327,13 @@ def _find_targets(verb: str, rest: list, ctx: _Ctx) -> "tuple | None":
         return _TARGETS[verb](rest, ctx), verb
     if verb in _CMD_VERBS:
         return _t_cmd(verb, rest, ctx), verb
+    generic = _generic_extract(verb, rest)
+    if generic:
+        destination = generic[1]
+        if verb not in {"rar", "unrar", "unar", "ditto"}:
+            # An unknown tool's output-flag semantics are not placement proof.
+            destination = _Arg(destination.text, destination.glob, True)
+        return [destination], "archive-extract"
     return None
 
 
@@ -2211,17 +2376,41 @@ def _finish(args: list, ctx: _Ctx, body: "str | None", stdin: bool = False, pipe
     _record_targets(verb, rest, ctx, stdin)
     code = _inline_code(verb, rest, body)
     ctx.out.code.extend(code)
-    if _program_writes(verb, rest, code):
+    placed_python = False
+    if _PYTHONS.match(verb) and code:
+        # The literal command a program hands a shell (`os.system("tar -xf a.tar -C src")`) is judged like one a
+        # launcher runs, by the analyser itself; a command built at run time is an unplaced write.
+        targets = [_program_paths.python_targets(text, lambda func: bool(_FILE_CALL.search(func)),
+                                                 runs_command=lambda func: bool(_RUNS_COMMAND.search(func)))
+                   for text in code]
+        # A program the pass could read is judged by what it found; the textual fallback below is for one it could not
+        # (a syntax error, a program past its size bound).
+        placed_python = all(target is not None for target in targets)
+        for group in targets:
+            for path, via in group or []:
+                if via == "launch":
+                    _hide_text(ctx, path, False)
+                else:
+                    _note_write(ctx, path if path is not None else "$<runtime-python-target>", via, _recent(ctx), False, path is None)
+    if _program_writes(verb, rest, code) and not placed_python:
         _note_unnamed(ctx, verb, "program")
     if piped and body is None and not code and _reads_program_from_stdin(verb, rest):
         _note_unnamed(ctx, verb, "stdin", opaque=True)
-    if verb == "patch":
+    if verb == "apply_patch":
+        patch = body if body is not None else "\n".join(a.text for a in rest)
+        paths = re.findall(r"^\*\*\* (?:Update File|Add File|Delete File|Move to):\s*(.+?)\s*$", patch, re.M)
+        for path in paths:
+            _note_write(ctx, path, "apply_patch", _recent(ctx), False, False)
+        if not paths:
+            _note_unnamed(ctx, verb, "diff")
+    elif verb == "patch":
         flags, operands, _ = _patch_args(rest)
         if not operands and not _patch_checks(flags):
             _note_unnamed(ctx, verb, "diff")
     elif verb == "git":
         sub, _, _, flags = git_parts(rest)
-        if sub == "apply" and not git_dry_run(sub, flags):
+        # `git am` applies the patches of a mailbox and commits them: files named inside the diff, like `apply`.
+        if (sub == "apply" and not git_dry_run(sub, flags)) or sub == "am":
             _note_unnamed(ctx, verb, "diff")
     if _DOTNET_FILE.search(args[0].text):
         ctx.out.code.append(ctx.text)

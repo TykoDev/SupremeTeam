@@ -26,7 +26,7 @@ the sequence, the verdict rules, and the checklist a verdict is written against.
 ## Verdict Rules
 
 - Return `APPROVED` only when the package is internally consistent and every blocking claim is backed by visible evidence.
-- Return `REVISE` when the package can be repaired by adding missing reports, re-running stale evidence, clarifying contradictions, or tightening remediation guidance. Input-hash drift belongs here: the evidence is stale, not disputed.
+- Return `REVISE` when the package can be repaired by adding missing reports, re-running stale evidence, clarifying contradictions, or tightening remediation guidance, and only for a mechanical failure, a Critical, or an unresolved Major (`../../../gates.yaml` `revise_policy.revise_threshold`); Minor and Info findings ride along on `APPROVED`. Input-hash drift belongs here: the evidence is stale, not disputed.
 - Return `ESCALATE` when the disagreement requires scope judgment, risk acceptance, or an upstream decision that the review package cannot make on its own — and whenever a validator fails to run or exits 2, because an unrun check is not a clean one.
 - Preserve idempotency by comparing the current submission against the previous verdict before issuing a new one.
 

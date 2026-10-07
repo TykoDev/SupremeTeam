@@ -651,10 +651,17 @@ class UnnamedWriteTests(unittest.TestCase):
         self.assertEqual(paths("ls | xargs touch named"), {"named"})
         self.assertNotIn("<stdin>", " ".join(" ".join(argv) for _, argv in commands("ls | xargs rm")))
 
-    def test_a_program_that_redirects_or_opens_a_file_for_writing_is_unnamed(self):
+    def test_a_program_write_is_placed_or_explicitly_unplaced(self):
         for text, verb in INLINE_WRITES:
             with self.subTest(command=text):
-                self.assertEqual(unnamed(text), [(verb, "program")], text)
+                result = analyse(text)
+                launched = [item for item in result.hidden if item.writes or item.unnamed]
+                if verb.startswith("python") and (result.writes or launched):
+                    # A literal target is placed; the command a program hands a shell is judged below the line's own.
+                    self.assertTrue(all(write.via in {"python", "rm", "mv", "cp -r", "archive-extract"} for write in result.writes))
+                    self.assertEqual(result.unnamed, [])
+                else:
+                    self.assertEqual(unnamed(text), [(verb, "program")], text)
 
     def test_a_program_that_only_reads_is_not(self):
         for text in INLINE_READS:
@@ -709,10 +716,15 @@ class UnnamedWriteTests(unittest.TestCase):
             with self.subTest(opaque=text):
                 self.assertEqual([entry.opaque for entry in analyse(text, ps=ps).unnamed], [True], text)
         for text, ps in (("cat list | xargs rm", False), ("ls | xargs gzip", False), ("awk '{print > \"o\"}' f", False),
-                         ("python3 -c \"open('x','w')\"", False), ("patch -p1 < f.diff", False), ("git apply f.diff", False),
+                         ("python3 -c \"open(target,'w')\"", False), ("patch -p1 < f.diff", False), ("git apply f.diff", False),
                          ("Get-ChildItem | Remove-Item", True), ("[IO.File]::Delete('x')", True)):
             with self.subTest(found=text):
-                self.assertEqual([entry.opaque for entry in analyse(text, ps=ps).unnamed], [False], text)
+                result = analyse(text, ps=ps)
+                if text.startswith("python3"):
+                    self.assertTrue(any(write.unresolved for write in result.writes))
+                else:
+                    self.assertEqual([entry.opaque for entry in result.unnamed], [False], text)
+        self.assertEqual(paths("python3 -c \"open('x','w')\""), {"x"})
         for text in ("ls | parallel rm", "ls | entr rm /_"):
             with self.subTest(launched=text):
                 self.assertEqual([u.opaque for item in analyse(text).hidden for u in item.unnamed], [False], text)
@@ -925,7 +937,8 @@ LAUNCHED = (
     ("parallel -I@@ rm @@ ::: a", [(["a"], [])]),
     ("ls | parallel -I@@ rm @@", [(["@@"], [])]),
     ("ls | parallel mv {} out/", [(["out/", "{}"], [])]),
-    ("ls | parallel cp {} out/", [(["out/", "out/{}"], [])]),
+    # A source the placeholder stands for names no file, so the copy is a deposit into `out/` as well as a write there.
+    ("ls | parallel cp {} out/", [(["out/", "out/"], [])]),
     ("ls | parallel gzip", [([], [("gzip", "stdin")])]),
     ("ls | parallel rm {.}", [(["{.}"], [])]),
     ("echo a b | parallel rm", [(["a", "b"], [])]),
@@ -953,6 +966,56 @@ class LauncherTests(unittest.TestCase):
                 main = analyse(text)
                 self.assertEqual((main.writes, main.unnamed), ([], []), text)
                 self.assertFalse({c.verb for c in main.commands} & {"rm", "touch", "mv", "gzip", "cp"}, text)
+
+    def test_tar_one_top_level_names_the_directory_it_extracts_into(self):
+        self.assertEqual(paths("tar -xf a.tar --one-top-level=dest"), {"dest"})
+        self.assertEqual(paths("tar -xf a.tar -C base --one-top-level=dest"), {"base/dest"})
+        self.assertEqual(paths("tar -xf a.tar --one-top-level"), {"a"})
+        self.assertEqual(paths("tar -xzf vendor.tar.gz --one-top-level"), {"vendor"})
+        self.assertEqual(paths("tar -tf a.tar --one-top-level=dest"), set())
+
+    def test_git_subcommands_that_create_a_tree_or_a_file_name_their_destination(self):
+        for text, expected in (("git clone https://h/x.git dest", [("dest", "git clone")]), ("git clone https://h/x.git", [("x", "git clone")]),
+                               ("git clone -b main --depth 1 https://h/x dest", [("dest", "git clone")]),
+                               ("git -C base clone https://h/x", [("x", "git clone")]), ("git init", [(".git", "git init")]),
+                               ("git init dest", [("dest", "git init")]), ("git worktree add dest feature", [("dest", "git worktree")]),
+                               ("git worktree add -b feat dest", [("dest", "git worktree")]),
+                               ("git submodule add https://h/x dest", [("dest", "git submodule")]),
+                               ("git submodule add -b main https://h/x", [("x", "git submodule")]),
+                               ("git archive --output=dest/a.tar HEAD", [("dest/a.tar", "git archive")]),
+                               ("git archive -o dest/a.tar --prefix=p/ HEAD", [("dest/a.tar", "git archive")]),
+                               ("git format-patch -o dest HEAD~1", [("dest", "git format-patch")]),
+                               ("git format-patch --output-directory dest HEAD~1", [("dest", "git format-patch")]),
+                               ("git bundle create dest/b.bundle HEAD", [("dest/b.bundle", "git bundle")])):
+            with self.subTest(command=text):
+                self.assertEqual([(w.path, w.via) for w in analyse(text).writes], expected, text)
+        for text in ("git archive HEAD", "git format-patch HEAD~1", "git worktree list", "git submodule status", "git bundle list-heads b.bundle"):
+            with self.subTest(command=text):
+                self.assertEqual(paths(text), set(), text)
+
+    def test_git_am_is_a_diff_write_and_git_clean_from_a_subdirectory_is_aimed_there(self):
+        self.assertEqual(unnamed("git am < p.diff"), [("git", "diff")])
+        self.assertEqual(unnamed("git am p.diff"), [("git", "diff")])
+        self.assertEqual([(w.path, w.via, w.cwds) for w in analyse("git -C sub clean -fd").writes], [("sub", "git clean", ())])
+        self.assertEqual([(w.path, w.via) for w in analyse("cd sub && git clean -fd").writes], [("sub", "git clean")])
+        self.assertEqual([(w.path, w.via) for w in analyse("git -C a -C b clean -fd").writes], [("a/b", "git clean")])
+        for text in ("git clean -fd", "git -C . clean -fd", "cd sub && cd .. && git clean -fd"):
+            with self.subTest(command=text):
+                self.assertEqual(paths(text), set(), text)
+
+    def test_a_placeholder_filled_from_standard_input_is_an_unresolved_target(self):
+        """`{}` or an `-I` replacement string with nothing literal upstream stands for a line the analysis never reads."""
+        for text in ("ls | parallel rm {}", "ls | parallel -I@@ rm @@", "ls | parallel rm {.}", "ls | xargs -I{} rm {}",
+                     "ls | xargs -I@@ touch @@", "ls | parallel rm src/{}"):
+            with self.subTest(command=text):
+                writes = [write for item in analyse(text).hidden for write in item.writes] + analyse(text).writes
+                self.assertTrue(writes, text)
+                self.assertTrue(all(write.unresolved for write in writes), text)
+        for text in ("echo a b | parallel rm {}", "parallel rm ::: a b", "parallel -I@@ rm @@ ::: a", "echo a | xargs -I{} rm {}"):
+            with self.subTest(command=text):
+                writes = [write for item in analyse(text).hidden for write in item.writes] + analyse(text).writes
+                self.assertTrue(writes, text)
+                self.assertFalse(any(write.unresolved for write in writes), text)
 
     def test_a_launcher_that_runs_a_read_finds_nothing(self):
         for text in LAUNCHED_READS:

@@ -91,7 +91,7 @@ it is first-party, generated, or vendored, and the delivery slice it serves.
 Register each executed log through a `session-memory` checkpoint —
 `python skills/harness/hooks/save_run.py checkpoint --run-id <run-id> --owner admiral --evidence <path>`
 (`--owner` names the run's lock holder, admiral, not the caller; any other owner is refused with `lock is owned by 'admiral'`) — so the hash is recorded by the same writer that owns the run record. Artifacts
-are hashed byte-for-byte, so a log is never reformatted, re-indented, or
+use canonical content digests (UTF-8 text with normalized line endings; binary content as raw bytes), so a log is never reformatted, re-indented, or
 re-encoded after its hash is taken; do that and the gate reports hash drift on
 evidence that was never actually changed.
 

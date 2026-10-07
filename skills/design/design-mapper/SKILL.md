@@ -9,7 +9,7 @@ description: >-
   or a prototype reproduces the existing app — even when the ask is just "what
   does this app do now?". Defers directions to `design/architect` and mocks and
   prototypes to `design/prototyper`.
-version: 1.0.1
+version: 1.0.2
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 

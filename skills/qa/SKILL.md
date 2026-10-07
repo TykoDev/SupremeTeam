@@ -9,8 +9,8 @@ description: >-
   rather than reading the change: reading code is `review/code-chief`. Report-only
   runs go to `qa-only`, performance measurement to
   `benchmark`.
-version: 1.0.0
-allowed-tools: Read, Grep, Glob, Bash, Write, Edit
+version: 1.0.2
+allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 ---
 
 
@@ -38,7 +38,7 @@ This skill is reachable two ways, and how it was reached decides which one is ru
 
 | Signal | Mode | Behavior |
 |--------|------|----------|
-| A `### Save Context` block, or an active run lock under `skillset-saves/` | **Pipeline** | Run the `qa` pipeline, persist to the run, and assemble the `qa-review` package described under Gate evidence. |
+| A `### Save Context` block, or a fresh coherent active run lock with `session_pin: true` under `skillset-saves/` | **Pipeline** | Run the `qa` pipeline, persist to the run, and assemble the `qa-review` package described under Gate evidence. |
 | Neither present | **Standalone** | Run the same workflow directly and return the record inline. Persist nothing and submit no gate. |
 
 Say which mode is active in the first response, so the operator knows whether a gate verdict
@@ -100,7 +100,8 @@ required evidence keys, so each one is produced here or the gate cannot close
 must contain. Three shapes cause almost every mechanical failure:
 
 - `test_matrix` and `executed_probes` are typed `probe` records naming **hashed files** under the run's `evidence/` destination. A pass rate or a count is a claim about evidence, not evidence.
-- `defects` is a typed `findings` record — `{items: [{id, severity, status}]}` — never prose.
+- `defects` is a typed `findings` record — `{items: [{id, severity, status}]}` — never prose. `defect-record` runs on both fix and report-only paths; a clean surface emits `{items: []}`. Delegation to `qa-only` is conditional on a report-only run (fixes not authorized); the evidence producer is never conditional.
+- `evidence-capture` is unconditional. QA executes and hashes probes for CLI/API/library surfaces too; only browser delegation to `browse` is conditional on a browser surface under test. A non-browser run records a no-op browser-session decision, not a waiver of `executed_probes`.
 - `fixes_applied` on a report-only run carries `report-only run - no fixes applied` as the `reason` of an applicability record, never as a bare string.
 
 `scope` and `residual_risk` are narrative and have no sanctioned fallback.

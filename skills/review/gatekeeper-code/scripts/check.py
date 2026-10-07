@@ -85,7 +85,8 @@ MANIFEST = gc.Manifest(
         gc.ArtifactSpec(
             key="lens_security",
             label="security-review lens",
-            patterns=("*security*.md", "deliverable_*security*.md"),
+            patterns=("security-review.md", "deliverable_security-review.md", "lens-security*.md",
+                      "*security-review-report*.md", "*security-review-packet*.md", "*security-findings*.md"),
             fields=_PACKET,
             stages=("security-review",),
         ),
@@ -99,7 +100,8 @@ MANIFEST = gc.Manifest(
         gc.ArtifactSpec(
             key="lens_cso",
             label="CSO security-leadership lens",
-            patterns=("*cso*.md", "deliverable_*cso*.md"),
+            patterns=("*cso*.md", "deliverable_*cso*.md", "security-review-package.md",
+                      "deliverable_security-review-package.md"),
             fields=_CSO_PACKET,
             requirement="conditional",
         ),

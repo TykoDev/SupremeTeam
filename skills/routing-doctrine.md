@@ -43,7 +43,7 @@ states which is which.
 | Statement | Status | What actually checks it |
 | --- | --- | --- |
 | A routing reminder is injected on a fresh turn with no active run, and suppressed for an explicit slash command | machine-checked where the hook is registered | `skills/harness/hooks/user_prompt_submit.py` |
-| Whether a saved run is active, coherent, and fresh (the input the pin precedence rule reads) | machine-checked | `skills/harness/hooks/_saves.py`, through `has_active_run` |
+| Whether a saved run is active, coherent, and fresh (the input the pin precedence rule reads) | machine-checked | `skills/harness/hooks/_saves.py`, through `inspect_saves`; `has_active_run` also conservatively protects unreadable held records and is not handoff admission |
 | A pinned run's lock is held, fresh, and single-owner | machine-checked | `skills/harness/hooks/save_run.py`, the only writer of the run record |
 | Every skill named in the tables below exists | machine-checked | `skills/validation/test_trigger_routing.py`, through `RoutingClassTableTests.test_every_name_in_the_table_exists`, which resolves every backticked name in the routing-class table to a SKILL.md on disk |
 | The routing-class table agrees with the roles in [team-manifest.yaml](team-manifest.yaml) | machine-checked | `skills/validation/test_trigger_routing.py`, through `RoutingClassTableTests` — see the note below |
@@ -154,7 +154,7 @@ disambiguates. Every skill in the catalog falls in exactly one row.
 | Gatekeepers (must defer) | `gatekeeper-admiral` (`cross_stage_gatekeeper`); `gatekeeper-design`, `gatekeeper-build`, `gatekeeper-code` (`phase_gatekeepers`) | Reached only by a submitting owner presenting a package at the boundary they validate. Never a front door. |
 | Session memory | `session-memory` | A component of the Admiral pipeline, engaged by `admiral` at its declared checkpoints; it hands off to `admiral` when reached cold. |
 | Internal specialists | every skill under `design/`, `build/`, `review/` not named in a row above; `taste/taste-review`; `skill-maker/skill-creator` and `skill-maker/skill-reviewer` | Reached only through the owning sub-orchestrator. |
-| Standalone tools | `audit-improve` (`specialists`); `careful`, `freeze`, `guard`, `unfreeze`, `browse`, `open-browser`, `setup-browser-cookies`, `pair-agent`, `benchmark`, and `setup-deploy`, `land-and-deploy`, `document-release` | Direct read-only auditing or out-of-routing tools. An audit-improve proposal enters Admiral and skill-maker after evidence is collected. |
+| Standalone tools | `audit-improve` (`standalone_tools`); `careful`, `freeze`, `guard`, `unfreeze`, `browse`, `open-browser`, `setup-browser-cookies`, `pair-agent`, `benchmark`, and `setup-deploy`, `land-and-deploy`, `document-release` | Direct read-only auditing or out-of-routing tools. An audit-improve proposal enters Admiral and skill-maker after evidence is collected. |
 
 Two rows deliberately overlap a directory glob, and the named row wins:
 `review/cso` owns the security pipeline and belongs to the pipeline-owner row,
@@ -283,9 +283,13 @@ that keeps Admiral's own delegations from bouncing back.
 An active Admiral handoff is present when any of these is true:
 
 - the delegation prompt contains a `### Save Context` block, or
-- an active run lock with `session_pin: true` exists under `skillset-saves/`, or
+- `save_run.py status` classifies a coherent, fresh held pinned run as `active` or `orphaned` under `skillset-saves/`, with readable state/lock and matching owner/revision, or
 - the invocation explicitly frames this skill as the owning sub-orchestrator for
   a named boundary.
+
+A stale, future-dated, released, malformed or unreadable lock does not establish
+this signal merely by containing `session_pin: true`. Preserve it and route
+recovery through Admiral; never create a rival run to bypass it.
 
 Handoff present: proceed; the skill is running inside an Admiral run. No handoff on a
 cold lifecycle request: start `admiral` first, let it run intake, persistence,
@@ -300,8 +304,10 @@ skill carries it, not because a validator enforces it.
 ## Session pin
 
 Set `session_pin: true` while a coherent run is active or gate-pending. Release
-it on `RUN_COMPLETE`, the explicit command `release admiral` or `/exit-admiral`,
-or verified lock staleness. The `complete`, `block` or `release` call records it.
+it on `RUN_COMPLETE`, an explicit user request to release Admiral, or verified
+lock staleness. `release admiral` and `/exit-admiral` are conversational intent
+phrases, not registered host commands or CLI subcommands. Admiral handles the
+request through `save_run.py release`; `complete`, `block` or `release` records it.
 
 The pin lives in the run lock, whose only writer is
 `harness/hooks/save_run.py`. Whether a lock is held, fresh, coherent, and

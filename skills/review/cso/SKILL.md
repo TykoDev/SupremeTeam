@@ -9,8 +9,8 @@ description: >-
   audit, a threat model, a hardening round, or a challenge to accepted risk. A single
   dimension goes to the lens that owns it: `review/security-review` scans,
   `review/mr-robot` probes.
-version: 1.0.2
-allowed-tools: Read, Grep, Glob, Bash, Write
+version: 1.0.3
+allowed-tools: Read, Grep, Glob, Bash, Write, Agent, Task
 ---
 
 # CSO

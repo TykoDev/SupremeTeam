@@ -227,8 +227,9 @@ Not skills. These are the files the skills are checked against.
 | **guard_hook.py** | `skills/harness/hooks/guard_hook.py` | The guard engine: Rules A to G, one function per rule (destructive commands, frozen and blocked boundaries, read-only runs, single writers, the hook scripts and their registration files, a write the analysis cannot place) plus the coverage advisory |
 | **_cmdscan.py** | `skills/harness/hooks/_cmdscan.py` | Shell command analyser behind the guard: quoting, wrappers, heredocs, `cd`, and the write targets of the usual verbs |
 | **_paths.py** | `skills/harness/hooks/_paths.py` | Path and glob canonicaliser behind the guard: separators, `.` and `..`, `~`, drive letters, links and case |
+| **_program_paths.py** | `skills/harness/hooks/_program_paths.py` | Bounded literal Python I/O targets behind the guard: an AST pass over inline programs that never evaluates code; runtime values stay unplaced |
 | **guard_state.py** | `skills/harness/hooks/guard_state.py` | The only writer of the guard record (`.harness-state/guard-state.json`) that `guard`, `freeze` and `unfreeze` request |
-| **post_tool_use.py** | `skills/harness/hooks/post_tool_use.py` | `PostToolUse`: records trajectory degeneration, refreshes the run heartbeat |
+| **post_tool_use.py** | `skills/harness/hooks/post_tool_use.py` | `PostToolUse`: records trajectory degeneration, refreshes the run heartbeat, sweeps project-root coverage residue into the run |
 | **size_audit.py** | `skills/harness/hooks/size_audit.py` | Periodic bounded report of oversized runtime files and directories |
 | **audit_improve.py** | `skills/harness/hooks/audit_improve.py` | Bounded read-only audit of saved failures and a skill-maker handoff |
 | **user_prompt_submit.py** | `skills/harness/hooks/user_prompt_submit.py` | `UserPromptSubmit`: advisory entry-routing and session-pin reminder |
@@ -247,9 +248,11 @@ Not skills. These are the files the skills are checked against.
 
 Shared tooling is in `skills/scripts/`. Its command-line tools are
 `check_runtime.py`, `output_paths.py`, `scan_record.py`, `check_parity.py`,
-`content_hash.py`, `validate_manifests.py` and `package_check.py`;
-`data_formats.py` is the JSON and YAML reader every script shares, and the rest are
-modules behind `check_runtime.py` and the save layout, listed in
+`content_hash.py`, `validate_manifests.py`, `package_check.py` and
+`mcp_registry.py`; `data_formats.py` is the JSON and YAML reader every script
+shares, `contract_floor.py` is the independent safety floor the gate validator
+loads, and the rest are modules behind `check_runtime.py` and the save layout,
+listed in
 [docs/directory-structure.md](docs/directory-structure.md). Contract suites are in
 `skills/validation/`; the other suites sit beside the code they test: `test_*.py` in
 `skills/harness/hooks/` (the guard, state, writers and registration), in

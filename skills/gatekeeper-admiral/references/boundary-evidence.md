@@ -54,9 +54,11 @@ this table is untyped — required and non-falsy, nothing more.
 | `verdict` | `review_verdict` | APPROVED, or REVISE/ESCALATE with a challenge record naming `by` and `reason` |
 | `stack_lock` | `stack_lock` | `{slug, versions, overlay_sha256}` validated against `../../tech-stacks/registry.yaml` |
 | `revision_ref` | `approved_design_revision` `approved_delivery` | a non-empty approved upstream revision identifier |
+| `security_seed` | `security_seed` | scoped assessment with boolean applicable and boundary/control records; assessed no-boundary requires an empty list, not a waiver |
+| `human_go` | `human_go_required` | decision go, named approver and approval reference, exact approved_delivery revision match, timezone-qualified ISO decided_at |
 | `variant_set` | `mock_set` `selected_variant` | exactly `evidence_type_params.<key>.required_count` entries (4 mocks, 1 selected variant) with unique ids, and the key's `file_fields` (`spec` / `tokens` / `components` / `mock` for a mock, `spec` / `tokens` / `components` / `app` for the built variant) hashed per entry |
 | `selection` | `selection` | `{decision, chosen, recommended, decided_by, decided_at, basis}` with `decision` in `variant` / `merge` / `deferred`; `chosen` names a `mock_set` id only under `variant`, and `selected_variant.variants[0].id` must equal it; under `merge` or `deferred` the four build-dependent keys carry the matching sanctioned applicability record |
-| Taste records | `preference_diff` `confirmation` `conflict_analysis` `persistence_result` `effective_profile` `consumer_handoff` | the field sets in `evidence_type_rules`; `confirmation.candidate_ids` must be a list of non-blank string ids. `check.py` never compares it with the changed ids in `preference_diff`, so whether it is the exact changed id set `../../gates.yaml` asks for is your judgement |
+| Taste records | `preference_diff` `confirmation` `conflict_analysis` `persistence_result` `effective_profile` `consumer_handoff` | the field sets in `evidence_type_rules`; `confirmation.candidate_ids` must be a list of non-blank string ids. `check.py` requires its unique ids to exactly match the changed ids in `preference_diff`, validates timezone-qualified timestamps and scope values, and checks nested persistence/profile values. Whether the recorded actor truly confirmed is still your judgement |
 
 ## 3. Sanctioned waivers, verbatim
 
@@ -152,16 +154,19 @@ failure as granting a waiver the boundary refuses — it routes a `REVISE` to
 
 ## 5. Reading a key that is neither artifact-backed nor typed
 
-Untyped keys — `interfaces`, `acceptance`, `security_seed`, `ui_evidence`,
+Untyped keys — `interfaces`, `acceptance`, `ui_evidence`,
 `implementation`, `traceability`, `residual_risk`, `revision_lineage`, `scope`,
-`intent`, `mechanism`, `fix_path`, `recommendation`, `skills`, `human_go_required`,
+`intent`, `mechanism`, `fix_path`, `recommendation`, `skills`,
 and the rest — are checked only for presence and non-falsiness. The validator
 cannot tell an adequate `acceptance` statement from an empty one that happens to
 contain words.
 
 That gap is the judgment half of this gate. For each untyped key, ask whether the
 next consumer could act on the value as written, and treat a value that only
-restates the key name as absent.
+restates the key name as absent. At the four phase-gated boundaries that question
+was the phase gate's, and its answer is carried unless the key is in
+`changed_evidence` or the phase verdict was not APPROVED (`../../gates.yaml`
+`revise_policy.cross_stage_scope`); at the other six it is asked here first.
 
 ## Cross-references
 

@@ -1,18 +1,9 @@
 # Architecture
 
-Ten pipelines, one front door.
-
-Each pipeline closes at a gate boundary defined in
-[`skills/gates.yaml`](../skills/gates.yaml) and declared in
-[`skills/pipelines.yaml`](../skills/pipelines.yaml), which holds the stages, the
-stage owners, the closing boundary, and the scripts each stage needs.
-
-Those two files are the truth. This page elaborates them, and where the two
-differ the files win. The contract tests read the files, not this page: they check
-that every owner is on the roster, every boundary exists in the gate spec, every
-named artifact has exactly one writer, and every required script is on disk.
-`validate_manifests.py` compares this page with the pipeline table rows and the
-pipeline count only, so the stage diagrams below are kept by hand.
+Ten pipelines, one front door. Each pipeline's stages, owners and dependency
+graph are in [`skills/pipelines.yaml`](../skills/pipelines.yaml); the boundary it
+closes at is in [`skills/gates.yaml`](../skills/gates.yaml). Where this page and
+those files differ, the files win.
 
 ![The delivery lifecycle](assets/Intro.jpg)
 
@@ -21,7 +12,7 @@ pipeline count only, so the stage diagrams below are kept by hand.
 | Pipeline | Owner | Closes at | What it is for |
 |---|---|---|---|
 | `design` | commander | `design-to-build` | Requirements, architecture, interfaces, design system, plan, implementation spec, stack lock |
-| `redesign` | redesign | `redesign-review` | Inventory of the current design, taste grilling, four design-system mocks at route and component parity, comparison, the user's decision, and one living prototype for the selected direction |
+| `redesign` | redesign | `redesign-review` | Inventory, taste grilling, four mocks, the user's decision, one living prototype |
 | `build` | build-management | `build-to-review` | Implementation, tests, hardening, runtime health, completeness |
 | `review` | code-chief | `review-to-delivery` | Correctness, quality, security, frontend, visual QA, developer experience |
 | `security` | cso | `security-review` | Threat model, vulnerability scan, adversarial probe, remediation |
@@ -31,40 +22,27 @@ pipeline count only, so the stage diagrams below are kept by hand.
 | `skill-creation` | skill-maker | `skill-maker-to-delivery` | Skill and team drafting, review, packaging |
 | `release` | ship | `deploy-readiness` | Readiness, deploy config, rollout, release notes |
 
-The last seven are not side channels. They run inside the same state machine as the
-first three, occupying a design-shaped or build-shaped state in their own phase
-directory, and meeting a gate at their own boundary.
-
-Production rollout still needs a fresh human decision even after
-`deploy-readiness` approves. Approval is not a trigger.
+All ten run inside one state machine
+([`workflow-protocol.md`](../skills/contracts/workflow-protocol.md)) and meet a
+gate at their own boundary. Production rollout still needs a fresh human decision
+after `deploy-readiness` approves.
 
 ## Admiral
 
-The single front door ([`routing-doctrine.md`](../skills/routing-doctrine.md)).
-For anything that is not Tier 0, it:
+For anything above Tier 0, `admiral`:
 
-1. Runs the startup save check, classifies any existing run, and resumes a
-   coherent one before starting anything new.
-2. Runs the intake interview ([`grill-me-doctrine.md`](../skills/grill-me-doctrine.md))
-   and writes the result to `intake/report_grilling.md`. That file is the hashed
-   artifact behind the `decisions` gate key.
-3. Probes what it can actually do: sub-agent delegation, file I/O, command
-   execution. Verifies hook registration, reads the readiness map, checks MCP
-   registry freshness.
-4. Creates the run through `session-memory` and `save_run.py create` before the
-   first delegation, then checkpoints before every later one and at every returned
-   boundary.
-5. Picks the earliest incomplete boundary and delegates with the same run id,
-   revision, artifact mode, execution mode, save path, and session pin.
-6. Routes every returned package through its gatekeeper, and rewinds to the
-   earliest affected boundary when upstream evidence changes.
-7. Assembles only gate-approved packages into the delivery package.
+1. Classifies the save directory and resumes a coherent run before starting one.
+2. Runs the intake interview ([`grill-me-doctrine.md`](../skills/grill-me-doctrine.md)); the log is the hashed `decisions` artifact.
+3. Probes delegation, file I/O and command execution; verifies hook registration; checks MCP registry freshness.
+4. Creates the run through `save_run.py` before the first delegation and checkpoints before every later one.
+5. Delegates the earliest incomplete boundary with the run id, revision, execution mode, save path and session pin.
+6. Routes every returned package through its gate; rewinds to the earliest affected boundary when upstream evidence changes.
+7. Assembles only approved packages into the delivery package.
+
+Ceremony scales with the change, not the mode: a bounded change to an existing
+codebase runs every stage and gate, sized to the change.
 
 ### Tiers
-
-Tier belongs to the run, not the skill
-([`execution-contract.md`](../skills/execution-contract.md)). The same skill runs
-at Tier 0 for a typo and Tier 3 for an authentication change.
 
 | Tier | Blast radius | Ceremony |
 |---|---|---|
@@ -78,142 +56,107 @@ at Tier 0 for a typo and Tier 3 for an authentication change.
 | Mode | Trigger | Path |
 |---|---|---|
 | Full | "run the full pipeline", "ship this end to end" | design, build, review, delivery |
-| Partial | "just design", "just review this code" | Only the approved subset asked for |
-| Resume | A coherent active or orphaned run is found | Earliest incomplete boundary, after lock and lineage checks |
+| Partial | "just design", "just review this code" | The earliest incomplete boundary of the requested subset |
+| Resume | A coherent active or orphaned run exists | Earliest incomplete boundary after lock and lineage checks |
 | Create-skill | "create a skill" | Intake, skill-maker, delivery |
 | Create-team | "create a team", "build me a pipeline" | Intake, skill-maker team mode, delivery |
 
-Admiral notices what already exists. A supplied design package skips to build; an
-existing codebase skips to review. A skip is honored only when the upstream
-artifact is fully approved, structurally complete, and valid for the next
-boundary.
+A supplied approved design skips to build; an existing codebase skips to review.
+A skip is honored only when the upstream artifact is approved, complete and valid
+for the next boundary.
 
 ### Execution modes
 
-**Agent mode** uses `skills/admiral/agent/agent-manifest.yaml`,
-`agent-protocol.md`, and the adapters in `agent/adapters/` to manage state
-programmatically and delegate sub-agents with live tool access.
+Agent mode delegates sub-agents with live tool access through
+`skills/admiral/agent/`. Skill mode runs the same sequencing as instructions the
+host carries out itself. The mode is recorded in run state and re-probed before
+every boundary and on resume.
 
-**Skill mode** keeps the same stage sequencing, gate routing, and rewind rules,
-but expresses them as instructions the host carries out itself.
+## Scheduling
 
-The detected mode is recorded in run state and re-probed before every boundary and
-on every resume, so a resume never mixes autonomous and instruction-only behavior
-halfway through.
+Stage order in `pipelines.yaml` is a topological order of each stage's
+`requires`, not a queue (`scheduling`). Stages whose requires are satisfied are
+delegated together: all review lenses on the approved build; the test surface,
+security checkpoint and runtime smoke on the implementation; the taste snapshot
+and research on the decisions; the security seed and the plan on the
+architecture. A pipeline's wall-clock is its longest dependency chain.
 
 ## Design
 
 Owner: [`commander`](../skills/design/commander/SKILL.md)
 
 ```text
-commander -> researcher -> architect -> [security-builder seed] -> planner
+commander -> [taste snapshot | researcher] -> architect -> [security-builder seed | planner]
           -> engineer -> stack lock -> gatekeeper-design -> design-to-build
 ```
 
-`architect` owns the frontend and UI design system for user-facing surfaces
-([`design-doctrine.md`](../skills/design-doctrine.md)): the component template,
-the UI/UX handoff, responsive behavior across six tiers, accessibility.
-
-The stack lock names the registry slug, locked versions, and overlay digest from
+`architect` owns the design system for user-facing surfaces
+([`design-doctrine.md`](../skills/design-doctrine.md)). The stack lock names the
+registry slug, versions and overlay digest from
 [`tech-stacks/registry.yaml`](../skills/tech-stacks/registry.yaml), or the
-sanctioned fallback when no runtime or framework changes. Detect the slug with
-`python skills/scripts/check_runtime.py --project-root . --detect-project` from the
-project root; the report prints the root it inspected and warns when nothing under
-it looks like a project. The stack lock comes after the implementation spec in the
-stage order, so the engineer works from the detected stack and `commander` locks it
-afterwards.
+sanctioned fallback when no runtime or framework changes; detect the slug with
+`python skills/scripts/check_runtime.py --project-root . --detect-project`. A lock
+on a slug past `support_ends`, or against a registry older than its
+`verification_ttl_days`, passes with a warning.
 
-A digest in the registry is the integrity of the overlay text, not where the
-guidance came from. The registry also records when its pins were last read
-(`verified_at`, with a `verification_ttl_days` window) and the end-of-support dates
-the overlays state (`support_ends`). The gate reads both: a lock on a slug whose
-support has ended, or against a registry not re-read within its window, still passes
-and the result carries a warning, because choosing a supported version is the owner's
-decision.
-
-Out: an approved design package with requirements, architecture, interface
-contracts, design system, plan, implementation spec, and traceability.
+Out: requirements, architecture, interface contracts, design system, plan,
+implementation spec, traceability.
 
 ## Redesign
 
 Owner: [`redesign`](../skills/design/redesign/SKILL.md)
 
 ```text
-redesign -> design-mapper (inventory, baseline) -> taste (taste grilling, confirmation)
-         -> architect (four directions) -> prototyper x4 (static mocks)
-         -> design-mapper (mock parity) -> design-qa (mock captures)
-         -> the user's selection
-         -> prototyper x1 (living prototype for the chosen direction)
+redesign -> design-mapper (inventory) -> taste (grilling) -> architect (four directions)
+         -> prototyper x4 (mocks) -> design-mapper (mock parity) -> design-qa (captures)
+         -> the user's selection -> prototyper x1 (living prototype)
          -> design-mapper (full parity) -> design-qa (render) -> frontier (accessibility)
-         -> comparison and recommendation -> gatekeeper-design -> redesign-review
+         -> recommendation -> gatekeeper-design -> redesign-review
 ```
 
-The four drafts are mocks: drawn screens, real tokens, a real component catalog,
-and no behaviour. Implementation follows selection, so exactly one living
-prototype is built — for the direction the user picked. Four prototypes built
-before the choice would be three implementations made to be thrown away.
-
-The inventory is the parity contract: every route, state, component,
-interaction, and flow gets a stable id. `check_parity.py --level mock` proves
-each mock carries every route and component; `--level full` proves the selected
-prototype carries every id in the inventory. `mock_set` is validated
-mechanically for exactly four mocks with hashed files and `selected_variant` for
-exactly one, and `mock_rendering` accepts no fallback at this boundary because
-the mocks are always built.
-
-Out: four static mocks with component catalogs, evidence across the set, a
-recorded decision, and one living single-page prototype for the selected
-direction with its own parity, rendering, and accessibility evidence; that
-variant enters the design pipeline as its design-system input. Nothing under a
-redesign touches application source.
+The four drafts are static mocks; one living prototype is built for the chosen
+direction. The inventory gives every route, state, component, interaction and
+flow a stable id; `check_parity.py --level mock` and `--level full` prove
+coverage. Nothing under a redesign touches application source.
 
 ## Build
 
 Owner: [`build-management`](../skills/build/build-management/SKILL.md)
 
 ```text
-build-management -> bob-the-builder -> test-builder -> [security-builder]
-                 -> health-check -> [debugger] [investigate]
-                 -> cross-check-build-confirm -> gatekeeper-build -> build-to-review
+build-management -> bob-the-builder -> [test-builder | security-builder | health-check]
+                 -> [debugger] [investigate] -> cross-check-build-confirm
+                 -> gatekeeper-build -> build-to-review
 ```
 
 `tests` and `runtime` are typed probe records: the test-runner log and the startup
-smoke log, each a hashed file under `build/evidence/`. A count is not evidence.
-
-Out: production code, tests, security evidence, runtime health, completeness
-confirmation.
+smoke log, hashed under `build/evidence/`. A count is not evidence.
 
 ## Review
 
 Owner: [`code-chief`](../skills/review/code-chief/SKILL.md)
 
 ```text
-code-chief -> bug-review -> code-review -> quality-review -> [security-review]
-           -> [mr-robot] -> [frontier] -> [design-qa] -> [devex-review]
+code-chief -> bug-review | code-review | quality-review
+           | [security-review] [mr-robot] [frontier] [design-qa] [devex-review]
            -> finding triage -> gatekeeper-code -> review-to-delivery
 ```
 
-Bracketed stages are conditional. Security when a trust boundary moved. mr-robot
-when there is an exploitable surface. frontier and design-qa when visible behavior
-changed. devex-review when a developer-facing surface changed.
+Bracketed lenses are conditional: security-review when a trust boundary moved,
+mr-robot when there is an exploitable surface, frontier and design-qa when visible
+behavior or surface changed, devex-review when a developer-facing surface changed.
+`design-qa` produces `rendered_verification`.
 
-`design-qa` produces `rendered_verification`: a typed render record with hashed
-captures, the breakpoints and themes covered, and inputs bound to the rendered
-source.
+## Underneath
 
-Out: adversarially validated findings, executed probes, rendered verification,
-residual risk, and a verdict recommendation.
-
-## The pieces underneath
-
-| Subsystem | What it covers | Where |
-|---|---|---|
-| Entry routing | Front door, tiers, Tier 0, loop guard | [routing.md](routing.md), `skills/routing-doctrine.md` |
-| Gate spec | One boundary contract for required, artifact-backed, and typed evidence | [gatekeepers.md](gatekeepers.md), `skills/gates.yaml` |
-| Runtime harness | Deterministic hooks and the two gate validators | [harness.md](harness.md), `skills/harness-doctrine.md` |
-| Persistent saves | Cross-session resume, locks, journal, audit trail | [persistent-saves.md](persistent-saves.md), `skills/save-protocol.md` |
-| Contracts | Evidence standards, handoffs, delivery record, responsibility, states | `skills/contracts/` |
-| Ownership | One writer per artifact and per save path | `skills/ownership.yaml`, `skills/save-ownership.yaml` |
-| Tech stacks | 14 overlays with pinned versions and digests | `skills/tech-stacks/registry.yaml` |
-| MCP registry | Available MCP tools with a freshness TTL checked at intake | `skills/mcp-tools.md` |
-| Standalone tools | Browser, release, safety, testing | [direct-invocation.md](direct-invocation.md) |
+| Subsystem | Where |
+|---|---|
+| Entry routing, tiers, loop guard | [routing.md](routing.md), `skills/routing-doctrine.md` |
+| Gate spec and verdicts | [gatekeepers.md](gatekeepers.md), `skills/gates.yaml` |
+| Hooks and validators | [harness.md](harness.md), `skills/harness-doctrine.md` |
+| Saves, locks, resume | [persistent-saves.md](persistent-saves.md), `skills/save-protocol.md` |
+| Contracts | `skills/contracts/` |
+| Ownership | `skills/ownership.yaml`, `skills/save-ownership.yaml` |
+| Tech stacks | `skills/tech-stacks/registry.yaml` |
+| MCP registry | `skills/mcp-tools.md` |
+| Standalone tools | [direct-invocation.md](direct-invocation.md) |

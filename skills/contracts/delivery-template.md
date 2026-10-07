@@ -165,9 +165,9 @@ digests the run actually computed.
 - parent_revision: 1
 - owner: admiral
 - status: complete
-- preamble_tier: 1 — documentation-only change inside skills/contracts/, no
-  runtime, no product source, and no externally visible surface; blast radius is
-  the contract layer's own readers, and the two parsing tests bound it.
+- preamble_tier: 2 — multi-step contract edits submitted through a saved run
+  and review gate, not read-only work or the Tier 0 fast path; no runtime,
+  product source, or externally visible action is changed.
 - evidence_paths: skillset-saves/runs/run-2026-09-14-contracts/review/evidence/
 
 ## Goal
@@ -277,10 +277,9 @@ judgement, including the field table. Three facts bound that:
 - The sibling field `Preamble tier` in
   [handoff-templates](handoff-templates.md)'s Save Context block is compared by
   `SaveContextParityTests`, but only across the copies that comparator
-  recognizes — a file carrying the block's `Run ID` anchor line, which is 10 of
-  the 91 Markdown files under `skills/` that contain the words "Save Context". It
-  checks that the field name is present, never that a value was filled in, and
-  this template is one of the 81 it skips.
+  recognizes — a file carrying the block's `Run ID` anchor line. It checks that
+  the field name is present, never that a value was filled in; this template is
+  one of the files it skips. Counts vary as the catalog changes.
 - `Changed artifacts` digests, `Gate verdicts`, and the claims, gaps, and proof
   collections restate records that are enforced at the gate by
   [`check.py`](../harness/gatekeeper/check.py) — artifact hashes, verdict

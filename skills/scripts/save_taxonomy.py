@@ -38,6 +38,32 @@ PHASE_SUBDIRECTORIES = ("reports", "artifacts", "evidence", "packages")
 PHASE_ROOT_FILES = ("report_*.md", "deliverable_*.md", "review-packet.md")
 INTAKE_ROOT_FILES = ("report_grilling.md", "intake-brief.md")
 
+PROTOCOL_STATES = frozenset({"INTAKE", "DESIGN", "BUILD", "REVIEW", "GATE", "RELEASE", "SAFETY", "REVISE",
+                             "ESCALATE", "BLOCKED", "COMPLETE", "TASTE_ACTIVE", "TASTE_GATE_PENDING", "TASTE_GATE_REVISE"})
+PHASE_PROTOCOL = {"INTAKE": "INTAKE", "DESIGN": "DESIGN", "REDESIGN": "DESIGN", "BUILD": "BUILD",
+                  "REVIEW": "REVIEW", "SECURITY": "REVIEW", "INVESTIGATION": "BUILD", "QA": "REVIEW",
+                  "SKILL_CREATION": "BUILD", "CREATE": "BUILD", "IMPROVE": "BUILD", "OPTIMIZE": "BUILD",
+                  "PACKAGE": "BUILD", "DELIVERY": "GATE", "RELEASE": "RELEASE"}
+
+
+def protocol_state_for(phase_state: str) -> str:
+    """Normalize saved phase labels; this maps names, it does not authorize an edge."""
+    if phase_state in PROTOCOL_STATES:
+        return phase_state
+    if phase_state in {"RUN_COMPLETE", "DELIVERED"}:
+        return "COMPLETE"
+    if phase_state == "DISPUTED_AWAITING_USER":
+        return "ESCALATE"
+    for suffix, state in (("_GATE_PENDING", "GATE"), ("_GATE_REVISE", "REVISE"), ("_ACTIVE", None)):
+        if phase_state.endswith(suffix):
+            phase = phase_state[:-len(suffix)].replace("-", "_")
+            if phase in PHASE_PROTOCOL:
+                # Release preparation is GATE-shaped until approval; RELEASE
+                # itself is reserved for the authorized external rollout.
+                return "GATE" if phase == "RELEASE" and state is None else state or PHASE_PROTOCOL[phase]
+    raise ValueError(f"unknown phase_state {phase_state!r}")
+
+
 SCHEMA_VERSION = 1
 ACTIVE_STATUSES = frozenset({"active", "paused", "awaiting-input"})
 TERMINAL_STATUSES = frozenset({"complete", "blocked", "released"})

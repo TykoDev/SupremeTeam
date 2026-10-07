@@ -9,7 +9,7 @@ description: >-
   the per-slice spec inside it. Returns to `design/commander`; defers architecture to
   `design/architect`, milestones to `design/planner`, code to
   `build/bob-the-builder`.
-version: 1.0.1
+version: 1.0.2
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -140,7 +140,7 @@ Skip only when the requested scope proves an implementation spec is genuinely ou
 | --- | --- |
 | The delegation arrives with no approved design package — no architecture, no interface contracts, or no plan for the requested scope | Write no slices. Name the missing artifact and its owner, return to `design/commander`, and let the pipeline replay from the earliest invalid stage; slicing an unapproved design manufactures a sequence no gate can validate. |
 | An upstream artifact is present but malformed — an architecture with no component boundaries, an endpoint named with no contract, a plan whose slices carry no acceptance condition | Quote the missing field, treat it as the blocker for the slices that depend on it, and return the gap to its owner. Do not infer the missing contract and do not spec around it. |
-| `design/gatekeeper-design` returns a `REVISE` naming the implementation spec | Treat the whole owner group in `revise_packet.by_owner` as one batch, fix every finding in a single revision, and return the changed artifact with its new sha256 so the gate re-judges only `changed_evidence`. Returning the first fix alone burns a cycle against `revise_policy.cycle_cap`. |
+| `design/gatekeeper-design` returns a `REVISE` naming the implementation spec | Commander receives the key-owner groups in `revise_packet.by_owner` and delegates the implementation-spec corrections here; engineer owns no gate evidence key. Fix every delegated correction in one revision and return the changed artifact and sha256 to commander for the owning key's `changed_evidence`. Returning the first fix alone burns a cycle against `revise_policy.cycle_cap`. |
 | A tool or host capability the proof plan depends on is unavailable — no test runner, no migration harness, no environment for a cutover rehearsal | Record the verification as unavailable with its reason, name the command that would prove the slice, and mark that slice's acceptance evidence pending. Never report a check that did not run. |
 | The slice order requires downstream modules, infrastructure, or schema changes before their prerequisites exist | Reorder the plan around the actual dependency chain and do not hand build work a sequence that only works by guesswork. |
 | The implementation spec ignores migrations, backfills, feature-flag rollout, or observability even though the design clearly needs them | Treat the spec as operationally incomplete and add the missing delivery constraints before it advances. |

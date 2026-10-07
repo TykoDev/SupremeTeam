@@ -20,7 +20,7 @@ SCRIPTS = HOOKS.parents[1] / "scripts"
 # what makes visible an edit that Rule F cannot see because it was made outside a session, and
 # verify_registration.module_hashes records all of them (test_registration_hardening.EnforcementRecordTests pins that),
 # so a file added to either list is hashed or a test fails.
-HOOK_FILES = ("_bootstrap.py", "_cmdscan.py", "_fsutil.py", "_paths.py", "_saves.py", "_state.py", "audit_improve.py", "guard_hook.py",
+HOOK_FILES = ("_bootstrap.py", "_cmdscan.py", "_fsutil.py", "_paths.py", "_program_paths.py", "_saves.py", "_state.py", "audit_improve.py", "guard_hook.py",
               "post_tool_use.py", "pre_tool_use.py", "run_heartbeat.py", "save_run.py", "size_audit.py", "user_prompt_submit.py")
 SCRIPT_FILES = ("data_formats.py", "save_taxonomy.py")
 

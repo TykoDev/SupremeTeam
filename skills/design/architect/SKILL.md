@@ -8,7 +8,7 @@ description: >-
   specs, or propose four redesign directions — even when the ask is just "how
   should this be structured?". Defers requirements to `design/researcher`,
   milestones to `design/planner`, slices to `design/engineer`.
-version: 1.0.1
+version: 1.0.2
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -156,7 +156,7 @@ Skip only when the requested scope proves the specialist artifact is genuinely o
 
 When a `### Save Context` block is included in the delegation prompt with `Persistence active: yes`:
 
-1. Write each deliverable to the `Expected artifact` destination the block names. Resolve it with `python skills/scripts/output_paths.py --run-id {run-id} --phase design --kind <reports|artifacts> --name <file>` — the architecture report and `design-system.md` under `reports/`, `design-directions.md` under `artifacts/` with `--phase redesign`. Both `--kind` and `--run-id` are required, and the resolver exits non-zero on a missing run id or a name that is absolute or traverses. That exit is the containment check: never compose a path by hand, and never write to a supplied path the resolver did not return.
+1. Write each deliverable to the `Expected artifact` destination the block names. Resolve it with `python skills/scripts/output_paths.py --run-id {run-id} --phase design --kind <reports|artifacts> --name <file>` — the architecture report and `design-system.md` under `reports/`, `design-directions.md` under `reports/` with `--phase redesign`. Both `--kind` and `--run-id` are required, and the resolver exits non-zero on a missing run id or a name that is absolute or traverses. That exit is the containment check: never compose a path by hand, and never write to a supplied path the resolver did not return.
 2. Use filenames that match the deliverable type, such as `report_{name}.md`, `design-system.md`, or `design-directions.md`.
 3. Return each path with its sha256 so the phase lead can register it as a hashed artifact. Never write `_phase-state.md`. No class in the save-ownership policy declares that path, so it is not an orchestrator-owned file either — phase state is published only through `save_run.py checkpoint`, which keeps revision lineage and the audit trail coherent.
 

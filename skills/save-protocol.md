@@ -60,10 +60,10 @@ preference pipeline (`taste`; the durable preference store itself lives at
 pipeline, and `release/` the release pipeline (`ship`). `intake/` and `delivery/` are `admiral`'s own phase directories:
 `delivery/reports/handoff_{boundary}.md` is the cross-stage handoff record for
 each boundary and `delivery/reports/delivery-package.md` the final delivery
-package. A gate produces two verdict records in the phase directory: the phase
-gatekeeper writes `verdict_{boundary}.json`, and `gatekeeper-admiral` re-validates
-with `--prior` and writes `verdict_{boundary}.cross-stage.json` beside it, so
-neither record overwrites the other. The grilling
+package. The four boundaries with a phase gatekeeper produce two verdict records:
+the phase gatekeeper writes `verdict_{boundary}.json`, then `gatekeeper-admiral`
+re-validates with `--prior` and writes `verdict_{boundary}.cross-stage.json` beside
+it. The other six have only the cross-stage record; no phase verdict is invented. The grilling
 log lives at `intake/report_grilling.md` and is the hashed artifact behind the
 `decisions` gate key; a phase manifest references it as
 `../intake/report_grilling.md`, which the gate admits because the run directory
@@ -129,6 +129,12 @@ revision: 1
 updated_at: 2026-04-23T12:00:00Z
 ~~~
 
+`phase_state`, when supplied through `--set`, derives a reserved `protocol_state`
+using `scripts/save_taxonomy.py`; see `contracts/workflow-protocol.md` for the
+mapping. It normalizes names without authorizing transitions. `skills_engaged`
+is a JSON list (`--set 'skills_engaged=["session-memory","commander"]'`), deduplicated
+and merged append-once at checkpoints, not stored as an encoded string.
+
 Each run state records `run_id`, `status`, `session_pin`, `revision`,
 `parent_revision`, `active_owner`, `evidence_paths`, `artifact_hashes`, and
 `timestamp`. Its lock records `run_id`, `owner`, `status` (`held` or
@@ -142,13 +148,13 @@ prompt-submit hook, and the gate checker's run-root verification.
 
 1. Classify state as active, inactive, complete, stale, orphaned, conflicting,
    corrupt, interrupted, missing, uninitialized, or unreadable with
-   `python skills/harness/hooks/save_run.py status --run-id <id>` (or the
-   readiness diagnostic). `complete` is a closed run the pointer names;
+   `python skills/harness/hooks/save_run.py status` (no run id needed), or the
+   readiness diagnostic. `complete` is a closed run the pointer names;
    `inactive` is anything else that is not held (released, blocked, or several
    closed runs), and `run_status` in the result says which. `uninitialized` is a
    run directory holding no record at all, which is what intake leaves when it
    has written its report and `create` has not run: the next step is `create`,
-   not recovery. `status` also classifies the `--run-id` you passed on its own
+   not recovery. `status --run-id <id>` also classifies that named run on its own
    as `requested_run`, and names the `next_step` for the classification. Only a
    coherent fresh active or orphaned record reinforces the session pin. A record
    that exists and that this account cannot read (every record is owner-only, so a
@@ -380,7 +386,7 @@ so deleting any of those three pointers fails the suite.
 | §1 The preference store under `skillset-saves/preferences/` is written only by `taste_prefs.py` | Machine-checked where hooks are registered | `pre_tool_use.py` denies an edit-tool write to `taste.json`, `taste.md`, `taste.journal.jsonl`, `taste.lock`, and `_history/*` under that directory, naming `skills/taste/taste_prefs.py` as the sanctioned writer; `SaveLifecycleTests.test_direct_edit_of_project_taste_state_is_denied_but_reads_pass` executes the hook on all five and confirms a `Read` of the same file is not denied |
 | §1 Pointer and run records carry schema version 1 | Machine-checked by `_saves.py` | a record whose `schema_version` is not 1 is classified `corrupt` and never reinforces the pin |
 | §1 `_latest.md` is only a pointer; scan `runs/` when it is absent, stale, or conflicting | Judgement | Nothing. `_saves.py` classifies the pointer and `heartbeat` rewrites it from the run, but whether a caller falls back to scanning `runs/` instead of trusting a stale pointer is the caller's discipline. |
-| §1 A gate writes two verdict records: `verdict_{boundary}.json` and `verdict_{boundary}.cross-stage.json` beside it | Judgement | Nothing compares those two filenames. `--verdict-out` writes wherever it is pointed, so the `.cross-stage.` suffix that keeps `gatekeeper-admiral` from overwriting the phase record is a naming convention this file carries, not a check. Passing the same `--verdict-out` path twice would silently overwrite. |
+| §1 A boundary with a phase gate writes two records; the other six write only `verdict_{boundary}.cross-stage.json` | Judgement | Nothing compares those two filenames. `--verdict-out` writes wherever it is pointed, so the `.cross-stage.` suffix that keeps `gatekeeper-admiral` from overwriting the phase record is a naming convention this file carries, not a check. Passing the same `--verdict-out` path twice would silently overwrite. |
 | §1 Active state requires a pinned, held lock; terminal state an unpinned, released lock | Machine-checked by `save_run.py` and `_saves.py` | asserted end to end by `SaveLifecycleTests.test_create_checkpoint_heartbeat_complete_lifecycle` |
 | §2.1–2.2 State classification, lock verification, and the heartbeat contract | Machine-checked | `save_run.py status` returns the classification, table-driven in `harness/hooks/test_saves_reader.py`; `run_heartbeat.refresh` applies its preconditions, the five-minute throttle, and the once-a-minute scan throttle (`HeartbeatHotPathTests`), and a hook skips instead of waiting for a busy writer lock (`WriterExclusionTests.test_a_hook_never_waits_for_the_writer_lock`); a checkpoint or heartbeat on a stale lock is refused, and `recover --reason` records the stale lock in the audit trail first (`test_stale_lock_recovery_records_evidence`) |
 | §2.3 Resume a single coherent active run automatically | Judgement | Nothing. The classification the rule reads is mechanical; acting on it is the orchestrator's discipline. |

@@ -8,12 +8,13 @@ Commander owns the design pipeline boundary from intake through final design pac
 
 The order `../../pipelines.yaml` declares for the design pipeline. Architecture precedes the plan; the plan sequences delivery against the approved component boundaries.
 
-1. Researcher
-2. Architect (includes the frontend/UI visual design system when a frontend surface exists)
-3. Security-builder (`security-seed`), when the design introduces or moves a trust boundary
-4. Planner
-5. Engineer
-6. Commander (`stack_lock`), before submission at `design-to-build`
+1. Admiral's confirmed intake; Taste (`taste-snapshot`) produces the immutable profile or no-profile record
+2. Researcher
+3. Architect (includes the frontend/UI visual design system when a frontend surface exists)
+4. Security-builder (`security-seed`) on every design, including a typed no-boundary assessment
+5. Planner
+6. Engineer
+7. Commander (`stack_lock`), before submission at `design-to-build`
 
 ## Required Inputs
 
@@ -25,7 +26,7 @@ The order `../../pipelines.yaml` declares for the design pipeline. Architecture 
 ## Gate Contract
 
 - Commander is the only phase owner that advances design work through the design gate in pipeline mode.
-- Maximum revisions per phase: 2 (`gates.yaml` `revise_policy.cycle_cap`).
+- Maximum REVISE rounds per boundary: 2, shared between phase and cross-stage verdicts under `../../contracts/workflow-protocol.md`; self-checks do not count.
 - Skip decisions must be explicit and justified.
 - All nine `design-to-build` keys are required: `decisions`, `architecture`, `interfaces`, `plan`, `acceptance`, `security_seed`, `stack_lock`, `taste_snapshot`, `ui_evidence`.
 - Exactly three are waivable, each only through its own sanctioned fallback carried as an applicability record: `stack_lock` (`no new runtime or framework - existing stack unchanged`), `taste_snapshot` (`no saved Taste profile available`), `ui_evidence` (`no user-facing surface - design system not engaged`). `security_seed` has no sanctioned fallback and is never waived.

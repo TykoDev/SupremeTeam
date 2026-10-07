@@ -1,193 +1,142 @@
 # The Skills
 
 53 of them. Ten pipelines (design, build and review are the delivery lifecycle),
-a few cross-cutting components, and five groups of standalone tools you can call
-whenever you like.
+five cross-cutting components, two Taste skills, and sixteen standalone tools.
 
-The roster is declared in
-[`skills/team-manifest.yaml`](../skills/team-manifest.yaml), and the validation
-suites check every pipeline owner, gate submitter, and artifact writer against it.
-Those checks read the manifest, not this page: `validate_manifests.py` compares
-this page only with the opening total and the count in the Taste heading, and
-`test_docs_inventory.py` adds the section counts up to the number of skills in the
-tree, so the tables below are kept by hand and the manifest is the authority.
-
-For the flat machine-readable index with paths, see [AGENTS.md](../AGENTS.md).
-
-![Diagram of the design, build and review phases and the standalone tool groups, drawn for an earlier, smaller roster](assets/1_Overview.jpg)
+The roster is [`skills/team-manifest.yaml`](../skills/team-manifest.yaml); the
+flat index with paths is [AGENTS.md](../AGENTS.md).
 
 ## Admiral layer (2)
 
 | Skill | What it does |
 |---|---|
-| **admiral** | The front door. Intake, routing, delegation, gate routing, delivery assembly |
-| **gatekeeper-admiral** | Argues with every package crossing between phases |
+| **admiral** | The front door: intake, run state, delegation, gate routing, delivery assembly |
+| **gatekeeper-admiral** | Cross-stage gate at every boundary |
 
 ## Design (9)
 
-Turns a vague idea into something you could hand to a builder without answering
-forty questions.
-
 | Skill | What it does |
 |---|---|
-| **commander** | Runs the pipeline, delegates the specialists, locks the stack, owns the gatekeeper-design cycle |
-| **researcher** | Requirements and domain analysis, grounded in what is actually in the repo |
+| **commander** | Owns the design pipeline, locks the stack, owns the gatekeeper-design cycle |
+| **researcher** | Requirements and domain analysis grounded in the repository |
 | **planner** | Milestones, rollout, decision gates, risk handling |
-| **architect** | System architecture, API contracts, and the frontend design system |
-| **engineer** | The implementation spec: delivery slices, dependency order, operational constraints |
-| **gatekeeper-design** | Design phase-exit validator; also gates `redesign-review` |
-| **redesign** | Runs the redesign pipeline: inventory, taste grilling, four design-system mocks, comparison, the user's decision, then one living prototype for the selected direction |
-| **design-mapper** | Records the current design as a stable-id inventory with baseline captures, then verifies variant parity |
-| **prototyper** | Builds one variant: tokens, a framework-free shadcn-shaped component library, and a living single-page prototype |
+| **architect** | System architecture, API contracts, the frontend design system |
+| **engineer** | Implementation spec: delivery slices, dependency order, operational constraints |
+| **gatekeeper-design** | Design phase-exit gate; also gates `redesign-review` |
+| **redesign** | Owns the redesign pipeline: inventory, taste grilling, four mocks, the user's decision, one living prototype |
+| **design-mapper** | Stable-id inventory of the current design with baseline captures; verifies parity |
+| **prototyper** | Builds one variant: tokens, framework-free component library, living single-page prototype |
 
-The UI design system belongs to **architect** per
-[`design-doctrine.md`](../skills/design-doctrine.md). There is no separate
-`designer` skill. `commander` locks the stack against
-[`tech-stacks/registry.yaml`](../skills/tech-stacks/registry.yaml) at the
-`design-to-build` boundary.
+The design system belongs to **architect** ([`design-doctrine.md`](../skills/design-doctrine.md)).
 
 ## Build (8)
 
-Writes the code, and then tries to prove it works.
-
 | Skill | What it does |
 |---|---|
-| **build-management** | Runs the pipeline, owns the gatekeeper-build cycle |
-| **bob-the-builder** | Implements the approved scope. No placeholders, no unowned TODOs |
-| **test-builder** | Builds the test surface across the scope and the failure paths that matter |
-| **security-builder** | Hardening: unsafe dependencies, insecure patterns, missing controls |
-| **cross-check-build-confirm** | Internal completeness check before the package goes anywhere |
-| **debugger** | Isolates the root cause of a reproduced build failure and returns a bounded fix |
-| **health-check** | Runtime health, startup readiness, environment dependencies |
-| **gatekeeper-build** | Build phase-exit validator |
+| **build-management** | Owns the build pipeline and the gatekeeper-build cycle |
+| **bob-the-builder** | Implements the approved scope; no placeholders, no unowned TODOs |
+| **test-builder** | Test surface across the scope and the failure paths that matter |
+| **security-builder** | Hardening; owns `security_seed` at design and `security_evidence` at build |
+| **cross-check-build-confirm** | Completeness cross-check of the build package |
+| **debugger** | Root cause of a reproduced build failure; returns a bounded fix |
+| **health-check** | Runtime health and startup readiness; produces the `runtime` probe |
+| **gatekeeper-build** | Build phase-exit gate |
 
 ## Review (11)
 
-The biggest group, because this is where most of the value is.
-
 | Skill | What it does |
 |---|---|
-| **code-chief** | Runs the pipeline, triages findings, recommends the verdict |
+| **code-chief** | Owns the review pipeline, triages findings, recommends the verdict |
 | **bug-review** | Correctness defects, broken invariants, crash paths, data corruption |
-| **code-review** | Merge readiness, local quality, change risk, clarity of the change as submitted |
+| **code-review** | Merge readiness, local quality, change risk, clarity |
 | **quality-review** | Maintainability, architecture drift, standards, tech-debt pressure |
 | **security-review** | Defensive posture, dependency exposure, access control, data handling |
-| **cso** | Security leadership: governance, accepted risk, release posture, control gaps. Also owns the standalone security pipeline |
-| **mr-robot** | Adversarial penetration testing: exploit paths, abuse cases, chaining |
+| **cso** | Security leadership; owns the standalone security pipeline and threat model |
+| **mr-robot** | Adversarial penetration testing; produces deny-path evidence |
 | **frontier** | Frontend performance, accessibility, robustness, component behavior |
-| **design-qa** | Visual QA: hierarchy, token adherence, responsive behavior, polish |
-| **devex-review** | Developer experience: onboarding, tooling, docs clarity, integration friction |
-| **gatekeeper-code** | Reviews the reviewers. Validates the consolidated review package |
+| **design-qa** | Visual QA; produces the `rendered_verification` render record |
+| **devex-review** | Onboarding, tooling, docs clarity, integration friction |
+| **gatekeeper-code** | Review phase-exit gate |
 
 ## Cross-cutting (5)
 
 | Skill | What it does |
 |---|---|
-| **investigate** | Root-cause analysis across code, logs, runtime clues, and environment when the failure shape is still unclear. Owns the investigation pipeline; its bounded fix path returns to the owning phase rather than becoming a build of its own |
-| **skill-maker** | End-to-end creation, review, improvement, and packaging of skills and skill teams |
-| **skill-creator** | Drafts and improves skills: authoring, supporting files, evals, trigger tuning, packaging |
-| **skill-reviewer** | Adversarial quality gate. Scores 0 to 100 across ten dimensions and returns a prioritized fix list |
-| **session-memory** | Cross-session state and durable learnings. Checkpoints and resume |
+| **investigate** | Root-cause analysis when the failure shape is unclear; owns the investigation pipeline and returns a bounded fix path to the owning phase |
+| **skill-maker** | Creation, review, improvement and packaging of skills and teams |
+| **skill-creator** | Drafts and improves skills: authoring, supporting files, evals, packaging |
+| **skill-reviewer** | Adversarial quality gate; scores 0 to 100 across ten dimensions |
+| **session-memory** | Run record and durable learnings; writes only through `save_run.py` |
 
 ## Taste (2)
 
 | Skill | What it does |
 |---|---|
-| **taste** | Owns preference intake, canonical writes, effective-profile resolution, and the Taste gate submission |
-| **taste-review** | Read-only review of provenance, conflicts, redaction, confirmation, and persistence safety |
+| **taste** | Preference intake, canonical writes, effective-profile resolution, the Taste gate submission |
+| **taste-review** | Read-only review of provenance, conflicts, redaction, confirmation, persistence safety |
 
 ## Standalone tools (16)
 
-Directly reachable: call any of these, at any time, with or without a pipeline
-running. `qa`, `qa-only` and `ship` also own a gated pipeline when `admiral`
-delegates to them, which is what routing calls dual-mode entry
-([routing.md](routing.md)).
+Directly callable at any time. `qa`, `qa-only` and `ship` also own a gated
+pipeline when `admiral` delegates to them ([routing.md](routing.md)).
 
 ### Harness audit (1)
 
 | Skill | What it does |
 |---|---|
-| **audit-improve** | Audits generated harness and run state, then routes supported skill improvements through Admiral and skill-maker |
+| **audit-improve** | Audits harness and run state, then routes supported improvements through Admiral and skill-maker |
 
 ### Browser automation (4)
 
 | Skill | What it does |
 |---|---|
-| **browse** | Drives an existing browser session with an evidence-first page-reading workflow |
-| **open-browser** | Launches a visible browser workspace, reusing one before installing anything |
+| **browse** | Drives an existing browser session, evidence first |
+| **open-browser** | Launches a visible browser workspace, reusing one if available |
 | **setup-browser-cookies** | Prepares authenticated session state for protected surfaces |
-| **pair-agent** | Pairs a remote collaborator to a browser session with short-lived scoped access |
+| **pair-agent** | Pairs a remote collaborator to a browser session with scoped access |
 
 ### Release and deployment (4)
 
 | Skill | What it does |
 |---|---|
-| **ship** | Release orchestration: readiness, sequencing, verification, follow-up |
-| **land-and-deploy** | Merge, rollout, verification, and post-release checks with rollback awareness |
-| **setup-deploy** | Durable deployment settings and environment conventions |
+| **ship** | Release orchestration; owns the `deploy-readiness` submission |
+| **land-and-deploy** | Merge, rollout, verification, post-release checks, rollback awareness |
+| **setup-deploy** | Durable deployment settings, environment conventions, rollback plan |
 | **document-release** | Release notes, operational follow-up, documentation trail |
 
 ### Safety guardrails (4)
 
 | Skill | What it does |
 |---|---|
-| **guard** | Intent checks and write boundaries together |
+| **guard** | Intent check and write boundary together |
 | **careful** | Confirmation before a destructive or irreversible action |
-| **freeze** | Locks a declared path from edits until you lift it |
-| **unfreeze** | Clears a protection boundary and records that the area is open |
+| **freeze** | Locks a declared path until lifted |
+| **unfreeze** | Clears an active protection boundary |
 
 ### Testing and QA (3)
 
 | Skill | What it does |
 |---|---|
-| **qa** | Tests the product, records evidence, applies scoped fixes, reruns until stable |
-| **qa-only** | Read-only testing. An evidence-backed defect report, no fixes |
+| **qa** | Product testing with evidence, scoped fixes, reruns until stable |
+| **qa-only** | Read-only product testing; evidence-backed defect report, no fixes |
 | **benchmark** | Comparative performance measurement with repeatable evidence |
 
-## What holds it together
-
-Not skills, but load-bearing. See [architecture.md](architecture.md),
-[gatekeepers.md](gatekeepers.md), and [harness.md](harness.md).
-
-### Machine-readable specs
+## Not skills, but load-bearing
 
 | File | Purpose |
 |---|---|
-| `gates.yaml` | Ten boundaries: required and artifact-backed evidence, fallbacks, typed records, finding policy, submitters |
-| `pipelines.yaml` | Ten pipelines: ordered stages, owners, closing boundary, required scripts |
-| `ownership.yaml` | One writer per design and handoff artifact |
-| `save-ownership.yaml` | One writer per path class under `skillset-saves/` and `.harness-state/` |
-| `team-manifest.yaml` | The roster everything else is checked against |
-| `runtime-manifest.yaml` | Runtime floor, launchers, supported commands |
-| `package-manifest.yaml` | Include, exclude, delivery contract |
+| `gates.yaml` | Ten boundaries: required and artifact-backed evidence, fallbacks, typed records, finding and revise policy, submitters |
+| `pipelines.yaml` | Ten pipelines: stages, owners, dependency graphs, scheduling, closing boundary |
+| `ownership.yaml`, `save-ownership.yaml` | One writer per artifact; one writer per save path class |
+| `team-manifest.yaml` | The roster everything is checked against |
+| `runtime-manifest.yaml`, `package-manifest.yaml` | Runtime floor and commands; packaging and delivery contract |
 | `tech-stacks/registry.yaml` | 14 stack overlays with pinned versions and digests |
-
-### Doctrine and contracts
-
-| File | Purpose |
-|---|---|
 | `execution-contract.md` | The six preamble clauses and the tier table |
-| `routing-doctrine.md` | Entry routing, precedence, Tier 0, session pin |
-| `grill-me-doctrine.md` | Intake interview; produces the hashed decisions artifact |
-| `design-doctrine.md` | Frontend design system, responsive tiers, accessibility, gate evidence |
-| `taste-doctrine.md` | Canonical semantics, provenance, lifecycle, scope, and resolution for user presentation and interaction preferences |
-| `harness-doctrine.md` | Lifecycle layers, failure taxonomy, non-negotiables |
-| `performance-doctrine.md` | Measured optimization, baselines, regression budgets |
-| `save-protocol.md` | Save layout, lifecycle, ownership, resume, rewind |
-| `mcp-tools.md` | MCP tool registry with a freshness TTL |
-| `contracts/evidence-standards.md` | What can support a claim |
-| `contracts/handoff-templates.md` | Save Context block, request and response fields, manifest schema 2 |
-| `contracts/workflow-protocol.md` | State machine, revision lineage, rewind, resume, failure rules |
-| `contracts/responsibility-matrix.md` | One writer per lifecycle layer |
-| `contracts/universal-frameworks.md` | Cross-cutting invariants and where they are practiced |
-| `contracts/delivery-template.md` | The final delivery record |
+| `routing-doctrine.md`, `grill-me-doctrine.md` | Entry routing and session pin; intake interview and ceremony scaling |
+| `design-doctrine.md`, `taste-doctrine.md`, `performance-doctrine.md` | Design system; preferences; measured optimization |
+| `harness-doctrine.md`, `save-protocol.md`, `mcp-tools.md` | Lifecycle layers; save lifecycle; MCP registry |
+| `contracts/` | Evidence standards, handoff templates, workflow protocol, responsibility matrix, universal frameworks, delivery template |
+| `harness/hooks/`, `harness/gatekeeper/` | The three hooks and their writers; the two gate validators |
+| `scripts/`, `validation/` | Shared tooling; contract test suites |
 
-### Runtime
-
-| Component | Purpose |
-|---|---|
-| `harness/hooks/` | Three lifecycle hooks (the pre-tool one is the guard, with its `guard_hook.py`, `_cmdscan.py` and `_paths.py` modules), the `save_run.py` and `guard_state.py` writers, the shared `_saves.py` reader, `_state.py`, `_fsutil.py` and `run_heartbeat.py` helpers, registration and readiness diagnostics |
-| `harness/gatekeeper/check.py` | The boundary validator. Loads `gates.yaml` |
-| `harness/gatekeeper/_gatecheck.py` | The package-shape engine behind each `gatekeeper-*/scripts/check.py` |
-| `scripts/` | Data formats, output paths, runtime and stack detection, scan records, parity and content hashes, manifest validation, package check |
-| `validation/` | Contract suites for pipelines, ownership, and the save lifecycle |
+See [architecture.md](architecture.md), [gatekeepers.md](gatekeepers.md), [harness.md](harness.md).

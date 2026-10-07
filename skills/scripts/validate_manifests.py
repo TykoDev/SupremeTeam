@@ -33,10 +33,11 @@ SKILLS = Path(__file__).resolve().parents[1]
 if str(SKILLS / "scripts") not in sys.path:
     sys.path.insert(0, str(SKILLS / "scripts"))
 from data_formats import DataFormatError, load_data  # noqa: E402
+from contract_floor import gate_floor_errors  # noqa: E402
 
 TEAM_ROLE_KEYS = ("front_door", "session_memory", "cross_stage_gatekeeper")
 TEAM_LIST_KEYS = (
-    "phase_leads", "phase_gatekeepers", "pipeline_owners", "specialists",
+    "phase_leads", "phase_gatekeepers", "pipeline_owners", "specialists", "standalone_tools",
     "creation", "release", "safety", "browser", "testing",
 )
 REQUIRED_LAUNCHERS = ("windows", "macos_linux", "codex", "claude_code", "copilot")
@@ -171,6 +172,7 @@ def check_ownership(ownership: dict[str, Any], members: set[str], errors: list[s
 
 
 def check_gates(gates: dict[str, Any], owners: set[str], errors: list[str]) -> None:
+    errors.extend(gate_floor_errors(gates))
     boundaries = gates.get("boundaries")
     if not isinstance(boundaries, dict) or not boundaries:
         errors.append("gates.yaml: boundaries must be a non-empty mapping")
@@ -461,13 +463,68 @@ def check_package(package: dict[str, Any], errors: list[str]) -> None:
             errors.append(f"package-manifest.yaml: exclude must contain {required}")
 
 
+def stage_dependencies(pipeline: dict[str, Any], stage: dict[str, Any]) -> dict[str, Any]:
+    graph = pipeline.get("dependency_graph", {})
+    step = stage.get("step")
+    contract = graph.get(step, stage) if isinstance(graph, dict) and isinstance(step, str) else stage
+    return contract if isinstance(contract, dict) else {}
+
+
 def pipeline_dependency_errors(name: str, pipeline: dict[str, Any]) -> list[str]:
-    """Return ordering errors for one pipeline's declared data dependencies."""
+    """Validate dependency shapes, total stage coverage and approval ordering."""
     errors: list[str] = []
-    produced = set(_names(pipeline.get("external_inputs", [])))
+
+    def names(value: object, label: str) -> set[str]:
+        if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
+            errors.append(f"pipelines.yaml: {name}/{label} must be a list of non-blank strings")
+            return set()
+        if len(value) != len(set(value)):
+            errors.append(f"pipelines.yaml: {name}/{label} contains duplicate dependencies")
+        return set(value)
+
+    produced = names(pipeline.get("external_inputs"), "external_inputs")
+    if "approved-boundary" in produced:
+        errors.append(f"pipelines.yaml: {name} approval cannot be an external intake input")
+        produced.discard("approved-boundary")
+    graph = pipeline.get("dependency_graph", {})
+    if not isinstance(graph, dict):
+        errors.append(f"pipelines.yaml: {name}/dependency_graph must be a mapping")
+        graph = {}
+    stage_ids = [stage.get("step") for stage in pipeline.get("stages", []) if isinstance(stage, dict)]
+    if any(not isinstance(step, str) or not step.strip() for step in stage_ids):
+        errors.append(f"pipelines.yaml: {name} step ids must be non-blank strings")
+    steps = {step for step in stage_ids if isinstance(step, str)}
+    if len(stage_ids) != len(steps):
+        errors.append(f"pipelines.yaml: {name} stage step ids must be unique")
+    if graph and set(graph) != steps:
+        errors.append(f"pipelines.yaml: {name}/dependency_graph must cover exactly every stage")
+    after_boundary = False
     for stage in pipeline.get("stages", []):
-        requires = _names(stage.get("requires", []))
-        creates = _names(stage.get("produces", []))
+        step = stage.get("step")
+        fan_out = stage.get("fan_out", 1)
+        if not isinstance(fan_out, int) or isinstance(fan_out, bool) or fan_out < 1:
+            errors.append(f"pipelines.yaml: {name}/{step}.fan_out must be a positive integer")
+        contract = stage_dependencies(pipeline, stage)
+        if step in graph and any(field in stage for field in ("requires", "produces")):
+            errors.append(f"pipelines.yaml: {name}/{step} has duplicate dependency declarations")
+        requires = names(contract.get("requires"), f"{step}.requires")
+        creates = names(contract.get("produces"), f"{step}.produces")
+        marked = stage.get("after_boundary", False)
+        if not isinstance(marked, bool):
+            errors.append(f"pipelines.yaml: {name}/{step}.after_boundary must be boolean")
+        if marked is True:
+            after_boundary = True
+            produced.add("approved-boundary")
+            if "approved-boundary" not in requires:
+                errors.append(f"pipelines.yaml: {name}/{step} must require approved-boundary")
+        elif after_boundary:
+            errors.append(f"pipelines.yaml: {name}/{step} cannot move back before the boundary")
+        if ((name == "release" and step in {"land-and-deploy", "document"}) or
+                (name == "investigation" and step == "return-to-owning-phase")) and marked is not True:
+            errors.append(f"pipelines.yaml: {name}/{step} must be after_boundary")
+        if "approved-boundary" in creates:
+            errors.append(f"pipelines.yaml: {name}/{step} cannot produce gate approval")
+            creates.discard("approved-boundary")
         unavailable = sorted(requires - produced)
         if unavailable:
             errors.append(

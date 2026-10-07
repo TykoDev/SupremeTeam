@@ -86,6 +86,8 @@ Include this block in every sub-orchestrator delegation with values copied from 
 - Rewind when upstream approvals drift, artifacts are mixed across revisions, or a saved package loses mandatory deliverables.
 - Preserve superseded packages and verdicts as evidence; do not overwrite them into a false single history.
 - Route every remediation cycle back to the same owning sub-orchestrator and stop after two failed revision attempts.
+- A REVISE is one packet fixed as one revision per owner; the owner re-runs only the stages the packet names or that depend on changed evidence (`../../gates.yaml` `revise_policy.rerun_scope`), and a gate returns REVISE only for a mechanical failure, a Critical, or an unresolved Major (`revise_threshold`); Minor and Info ride along on APPROVED.
+- At the four phase-gated boundaries `gatekeeper-admiral` judges the crossing and carries the phase gate's adequacy judgment unless evidence changed or the phase verdict was not APPROVED (`cross_stage_scope`).
 
 ## Delivery Closure
 

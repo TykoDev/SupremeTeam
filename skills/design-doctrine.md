@@ -55,7 +55,7 @@ decides whether it is quiet, restrained, harmonious, or accessible.
 
 | Statement | Status | What actually checks it |
 | --- | --- | --- |
-| `taste_snapshot`, `ui_evidence`, and `rendered_verification` are present and correctly shaped at their boundaries | machine-checked | `skills/harness/gatekeeper/check.py`, driven by [gates.yaml](gates.yaml) |
+| `taste_snapshot` is present and artifact-backed (or sanctioned applicability); `ui_evidence` is a required untyped claim; `rendered_verification` is present and typed | machine-checked to these different extents | `skills/harness/gatekeeper/check.py`, driven by [gates.yaml](gates.yaml) |
 | A `rendered_verification` record is a typed `render` record with hashed captures, declared breakpoints and themes, and `inputs` bound to the rendered source by sha256 | machine-checked | `check.py`, `evidence_type_rules.render` in [gates.yaml](gates.yaml) |
 | An artifact-backed evidence key references a correctly hashed artifact in the package | machine-checked | `check.py`, the `artifact_evidence` list per boundary |
 | A fallback uses only the sanctioned applicability string for that key | machine-checked | `check.py`, `fallback_values` in [gates.yaml](gates.yaml) |
@@ -69,7 +69,7 @@ decides whether it is quiet, restrained, harmonious, or accessible.
 | That the breakpoints a `render` record declares actually cover the six tiers §4 requires | judgement | the record's shape is checked; the coverage claim is read by a reviewer |
 | That four directions genuinely differ in three or more Taste categories (§9) | judgement | `mock_set` counts mocks; it cannot measure divergence |
 | WCAG 2.2 AA contrast, focus visibility, semantic HTML, reduced motion (§6) | judgement | `frontier` grades it; no automated contrast check is wired to a gate key |
-| This document itself | **judgement** | nothing — no comparator opens this file. The mechanical rows above are properties of [gates.yaml](gates.yaml) with `check.py`, and of `check_parity.py`; they would keep passing if §1–§9 here were rewritten. `team-manifest.yaml` `design_system_doctrine` names this doctrine, and nothing resolves that name to a file (its own `authority.unchecked_keys` records the same gap). |
+| This document itself | **partial structural coverage; semantic judgement** | Catalog prose scans inspect doctrine text; they do not validate every design rule. The mechanical rows above are properties of [gates.yaml](gates.yaml) with `check.py`, and of `check_parity.py`; they would keep passing if §1–§9 here were rewritten. `team-manifest.yaml` `design_system_doctrine` names this doctrine, and nothing resolves that name to a file (its own `authority.unchecked_keys` records the same gap). |
 
 The distinction matters most at §7. Six of its eight bullets are reviewer
 judgement, so a package can satisfy every mechanical check in the gate and still

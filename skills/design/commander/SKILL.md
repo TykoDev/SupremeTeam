@@ -9,8 +9,8 @@ description: >-
   and architect this project, even when Admiral is never named. Defers to
   `admiral` when reached cold; reworking an existing UI starts at
   `design/redesign`.
-version: 1.0.2
-allowed-tools: Read, Grep, Glob, Bash, Write, Edit
+version: 1.1.0
+allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 ---
 
 # Commander
@@ -117,9 +117,9 @@ paraphrase is drift.
 
 ## Workflow
 
-1. Confirm the product goal, constraints, and technology preferences before assigning specialist work by running the `../../grill-me-doctrine.md` intake interview to a shared understanding — one question at a time, always recommending an answer and deferring non-load-bearing future branches with reopen triggers. If either Taste store exists, ask Admiral/Taste to resolve and return the effective-profile snapshot; do not reconstruct it from mutable stores. If no saved profile is available, record the `taste_snapshot` applicability fallback with reason, scope, and decider.
-2. Move through the stages `../../pipelines.yaml` declares for the design pipeline, in that order: research (`design/researcher`), architecture (`design/architect`), interface and design-system work (`design/architect`, when a user-facing surface exists), the security seed (`build/security-builder`, when a trust boundary exists), the delivery plan (`design/planner`), the implementation spec (`design/engineer`), and the stack lock commander owns itself. Architecture is the input to planning, not its output; a plan assembled before the architecture is approved is drift and returns to the earliest invalid boundary.
-3. Delegate `build/security-builder` for the `security-seed` stage whenever the design introduces or moves a trust boundary, after the interface work and before the delivery plan, so the controls the build must implement are sequenced rather than discovered later. With no trust boundary in scope the key is still required and still unwaivable: record the determination itself — who decided no boundary moved, and against which architecture revision — as the `security_seed` value.
+1. Consume Admiral's confirmed `../../grill-me-doctrine.md` intake and Decision Register before assigning specialists. `intake-grilling` belongs to Admiral; a delegated commander does not interview the user from a sub-agent. Return a bounded clarification question to Admiral when intake is incomplete. Delegate the unconditional `taste-snapshot` stage to `taste`: it returns the immutable effective-profile snapshot with canonical digest, source revisions, resolved entries and applicability, or the sanctioned no-profile record with reason, scope and decider. An existing unreadable store is a blocker, not absence; never reconstruct the snapshot from mutable stores here.
+2. Move through the stages `../../pipelines.yaml` declares for the design pipeline, in dependency order: taste snapshot (`taste`), research (`design/researcher`), architecture (`design/architect`), interface and design-system work (`design/architect`, when a user-facing surface exists), the unconditional security assessment (`build/security-builder`), the delivery plan (`design/planner`), the implementation spec (`design/engineer`), and the stack lock commander owns itself. Architecture is the input to planning, not its output; a plan assembled before the architecture is approved is drift and returns to the earliest invalid boundary. The order is topological, not serial (`../../pipelines.yaml` `scheduling`): the taste snapshot and research both require only the decisions and run together, and the security assessment requires only the architecture and the delivery plan only the architecture and the decisions, so they run together.
+3. Delegate `build/security-builder` for `security-seed` on every design, as soon as the architecture is approved and alongside the delivery plan. It returns the typed assessment `{applicable, scope, decided_by, architecture_revision, reason, boundaries}`. A trust boundary requires each boundary's id and control; no boundary requires `applicable: false` and an empty boundaries list. This is assessed evidence, not a waiver. Commander packages it but never invents the determination.
 4. Own the design gate cycle so no phase advances without a recorded approval or explicit skip rule.
 5. Publish one consolidated design package that downstream build work can use without reinterpreting the design intent.
 
@@ -139,7 +139,8 @@ document paraphrases the other.
 
 - `design/researcher` (requirements brief)
 - `design/architect` (architecture, API endpoint contracts, and the frontend/UI visual design system)
-- `build/security-builder` (`security-seed`, when the design crosses a trust boundary)
+- `taste` (immutable `taste-snapshot`, or its sanctioned no-profile record)
+- `build/security-builder` (`security-seed`, including the assessed no-boundary case)
 - `design/planner` (delivery plan, sequenced against the approved architecture)
 - `design/engineer` (implementation spec)
 - `design/gatekeeper-design` (phase gate at `design-to-build`)
@@ -149,8 +150,8 @@ document paraphrases the other.
 - Record each boundary before requesting a verdict.
 - Reuse prior verdicts only when the package revision is unchanged.
 - Push remediation back to the owning sub-surface instead of editing its package locally.
-- Self-check before submitting: run `python skills/harness/gatekeeper/check.py --boundary design-to-build --package skillset-saves/runs/<run>/design/manifest.json` (no `--verdict-out`) from the project root (the directory that holds `skillset-saves/`), so the script path and `--package` resolve from the same directory and fix every mechanical failure first; a package that fails the machine is never submitted (`../../gates.yaml` `revise_policy.self_check`).
-- Treat a `REVISE` as one packet: delegate each owner group in `revise_packet.by_owner` in parallel, batching every finding for a specialist into a single revision delegation, and resubmit once with `--prior` so the gate re-judges only `changed_evidence`.
+- Self-check before submitting: run `python skills/harness/gatekeeper/check.py --boundary design-to-build --package skillset-saves/runs/<run>/design/manifest.json` (no `--verdict-out`) from the project root (the directory that holds `skillset-saves/`), so the script path and `--package` resolve from the same directory and fix every mechanical failure first; a package that fails the machine is never submitted (`../../gates.yaml` `revise_policy.self_check`). Run the phase gatekeeper's package-shape validator too, `python skills/design/gatekeeper-design/scripts/check.py skillset-saves/runs/<run>/design`, so a packet missing its marker fields, a near-miss filename, or a blocked phrase is fixed here and never costs a gate round.
+- Treat a `REVISE` as one packet: delegate each owner group in `revise_packet.by_owner` in parallel, batching every finding for a specialist into a single revision delegation, and resubmit once with `--prior` so the gate re-judges only `changed_evidence`. Re-run only the stages whose outputs the packet names or whose `requires` depend on an output that changed (`revise_policy.rerun_scope`); a key this skill authors itself is corrected in place with no specialist re-run, and unchanged evidence carries with its prior judgment. A gate returns REVISE only for a mechanical failure, a Critical, or an unresolved Major (`revise_policy.revise_threshold`), so Minor and Info findings on an APPROVED verdict are carried into the package, not fixed before advancing.
 
 ## Skip Rule
 

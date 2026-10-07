@@ -372,7 +372,10 @@ fields and §8 makes `taste_snapshot` a required, hashed evidence key at
 `fallback_values` sanctions the single reason `no saved Taste profile available`,
 carried at schema 2 as a typed applicability record, for a project that has no
 saved profile to snapshot. A run with no Taste history is not blocked at this
-key; a run that *has* a profile and skips the snapshot is. That is the mechanism by which a design is reviewed against
+key. A run that *has* a profile must not skip the snapshot: this is the producer's
+and reviewer's obligation, not proof of absence supplied by the gate. The gate
+checks the applicability record's shape and sanctioned reason, not the live
+store's existence or readability. The snapshot binds a design to
 the profile approved with it rather than against a later store revision.
 
 The redesign pipeline's taste grilling ([grill-me-doctrine.md](grill-me-doctrine.md)
@@ -430,7 +433,8 @@ enters the normal lifecycle (§5, §6): nothing a grilling produces becomes
   `taste-review` the `confirmation` record makes this checkable; before the
   gate it is judgement.
 - **The host cannot run `taste_prefs.py`** (no Python, no writable store root).
-  Taste is unavailable, not empty. Say so, continue on project conventions and
-  tool defaults per §7 steps 4 and 5, and carry the sanctioned
-  `no saved Taste profile available` applicability record at `design-to-build`
-  rather than shipping a snapshot that claims an empty profile was resolved.
+  Taste is unavailable, not empty. Preserve the stores and record the capability
+  gap. Continue only independent work; snapshot-dependent design cannot advance.
+  Do not use `no saved Taste profile available` for an existing unreadable profile
+  or when absence could not be established. That applicability record is reserved
+  for verified absence, never a substitute for a failed read.

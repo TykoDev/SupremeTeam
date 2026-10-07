@@ -7,6 +7,173 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ## [Unreleased]
 
+### Faster gates: severity threshold, one review per boundary, concurrent stages
+
+- Diagnosis of 3 to 5 hour runs for 1 to 2 hour work: every phase-gated boundary
+  was judged twice in full (the cross-stage gate was told to re-judge every key
+  the phase gate had just approved); any finding could return REVISE, so Minor and
+  Info findings cost a full fix-and-resubmit round; the package-shape validator ran
+  only at the gate, so a filename, a missing packet field or a `TODO` in a report
+  spent a round; the stage order was read as a queue although the dependency
+  graphs allow the review lenses, the build's test and security stages and the
+  design's taste and research stages to run together; and a REVISE re-ran the
+  whole downstream chain instead of the stages the packet touched.
+- `gates.yaml` (revision 8) `revise_policy` gains `revise_threshold` (REVISE only
+  for a mechanical failure, a Critical, or an unresolved Major; Minor and Info ride
+  along on APPROVED), `batch_fix` (one revision per owner; no new finding on
+  unchanged evidence at resubmission), `rerun_scope` (re-run only the stages the
+  packet names or that depend on changed evidence) and `cross_stage_scope`
+  (`gatekeeper-admiral` judges the crossing and carries the phase gate's adequacy
+  judgment unless evidence changed or the phase verdict was not APPROVED); the
+  `self_check` now covers the package-shape validator too, and `finding_policy`
+  records `minor_info: recorded-never-revise`. The five pinned entries and
+  `cycle_cap: 2` are unchanged.
+- `pipelines.yaml` (revision 3) declares `scheduling`: the stage order is
+  topological, stages whose requires are satisfied run concurrently in one
+  delegation turn, and a pipeline's wall-clock is its longest dependency chain.
+  The build's `runtime-health` stage now requires only the implementation, not
+  the test surface, so the three build evidence producers run together.
+- Gatekeepers 1.2.0 (`gatekeeper-admiral`, `gatekeeper-design`, `gatekeeper-build`,
+  `gatekeeper-code`): the Verdict Model states the threshold, the batched REVISE
+  states the resubmission rule, and the cross-stage gate's pass is bounded.
+- Owners 1.1.0 (`commander`, `redesign`, `build-management`, `code-chief`): both
+  validators in the self-check, concurrent scheduling where the graph allows,
+  rerun scope on a REVISE. `admiral` 2.2.0: ceremony scales with the change (a
+  bounded change to an existing codebase runs every stage and gate at the size of
+  the change), and the cross-stage pass is bounded; `grill-me-doctrine.md` Scaling
+  records the bounded-change determination.
+- Hook registration is explicit: both installers end with a capital-letter banner
+  when hooks were not registered, declined or failed; README makes registration
+  its own step; QUICK-START and Install.md say what each hook enforces and what
+  is lost without it.
+
+### Full-suite verification and guard follow-up
+
+- Ran the complete seven-suite set, the three validators and the delivery archive
+  on this host with PyYAML and in a bare virtual environment without it, plus
+  pinned Ruff 0.16.9. The focused subsets recorded below had passed while the full
+  hooks suite failed 19 tests and the gates suite 5; both are green now, and
+  [BENCHMARK.md](BENCHMARK.md) carries the per-suite counts.
+- Gates: four run-layout fixtures still passed a bare string for `security_seed`;
+  they now carry the typed no-boundary assessment the gate requires at schema 2.
+- Hooks: three rule tests still encoded the policy Rule G replaced (unplaced
+  launcher writes passing under a boundary, `$TMPDIR` treated as known) and were
+  brought to the current policy, as the N-8 commit said it had done. An inline
+  program that only ran `subprocess.check_output(["git", "log"])` was denied as a
+  write; command-launching calls are now judged by the literal command they hand
+  over, read by the shell analyser like a launcher's command, and a command built
+  at run time stays an unplaced write.
+- The temporary directory (`$TMPDIR`, `$TMP`, `$TEMP`, `$env:TEMP`) is read from
+  the hook's environment as `$HOME` is; unset, the word stays unresolved.
+- A placeholder filled from standard input (`parallel rm {}`, `xargs -I{} rm {}`,
+  `parallel -I@@ rm @@`) is an unresolved target, not a file of that name, so Rule
+  G refuses it where it refuses `parallel rm`.
+- Independent N-8 probe (about 280 commands against a frozen boundary) led to:
+  module opens (`gzip`, `codecs`, `tarfile`, ...) and `os.open` with read flags
+  are reads, not `Path.open` writes; `tarfile`/`zipfile` `extractall`/`extract`
+  are deposits into their literal destination, unplaced without one; `exec` and
+  `eval` of a literal are read as Python; `tar --one-top-level[=DIR]` names its
+  directory; `git am` is a diff write like `git apply`; `git clone`, `git init`,
+  `git worktree add`, `git submodule add`, `git archive --output`,
+  `git format-patch -o` and `git bundle create` name their destination; `git
+  clean` with no pathspec run from a subdirectory (`-C`, a `cd`) is a tree write
+  aimed there. A foreign path whose tail spells a boundary is documented as refused.
+- `ship` 1.0.3: its prose said release `setup` ran only on a first deployment and
+  was reopened on drift; `pipelines.yaml` runs it on every release and
+  `setup-deploy` re-verifies there, so the skill now says the same.
+- Documents: AGENTS.md lists `_program_paths.py` and `mcp_registry.py` and the
+  coverage sweep; docs/harness.md names Rule G and the module; CONTRIBUTING.md and
+  docs/harness.md list the archive command CI also runs; the hooks README manifest
+  names itself. Python 3.13, Windows and macOS remain the CI matrix's to run.
+- `docs/` states current behaviour only: every page cut to what the code does today,
+  `quality-audit.md`, `independent-benchmark-remediation.md` and the outdated roster
+  diagram removed, their links retired; the test-pinned tables and sentences kept.
+
+### N-8 guard coverage follow-up
+
+- Committed the preceding dev-branch follow-up as `f8eb66d`.
+- Closed the reproduced N-8 extractor/runtime-destination gaps: canonical archive
+  aliases, conservative generic extraction intent, unknown root-inventory refusal,
+  and recognized unplaced-write denial at frozen/blocked/single-writer boundaries.
+- Added bounded literal Python I/O target extraction without code execution
+  (`skills/harness/hooks/_program_paths.py`); runtime values, mixed command-launching
+  calls and unsupported/deep qualifiers remain unplaced. Registered-hook integrity
+  includes the new support module.
+- Converted both expected-failure probes to passing regressions; added archive,
+  computed/mixed I/O, safe-read and parser-fallback controls. Updated legacy test
+  expectations for the intentionally stricter policy without relaxing timing budgets.
+- Completed focused runs passed: 78 scanner/program, 41 audit/harness/root,
+  29 boundary/launcher and 43 repository/document tests. Validators, Ruff 0.16.9
+  and diff hygiene pass. Earlier bounded attempts were incomplete or exposed
+  obsolete policy expectations, corrected before the passing runs.
+- Only complete seven-suite/installer/platform/Python/dependency matrix verification
+  remains. No arbitrary executable isolation, host hook firing, overall gate approval,
+  performance baseline or independent score increase is claimed.
+
+### Dev-branch audit and document follow-up
+
+- Prior verified remediation committed on `dev` as `c6a59ea`.
+- Addressed O-8, O-15, D-6, D-16 and the informational D-19: native Agent/Task
+  grants retain real capability probing; a blank MCP template no longer pauses
+  intake; project caches have a declared writer and metadata TTL/identity checks;
+  doctrine enforcement labels, Taste unreadable-state policy, sanctioned Major
+  resolution, conversational release intent and single/dual verdict scope agree.
+- Addressed the 67 document deductions: canonical text/binary hashing, non-waivable
+  proof obligations, debugger candidate ownership, library consumption smoke,
+  test report deliverables, exact owner/gate table comparators, researcher intake,
+  real run-relative parity inputs/outputs, render fallback and file-field scope,
+  finding statuses, review routing, package-relative evidence, absolute optimizer
+  paths, peer platform support and post-persistence Taste review. The rubric TOC
+  example was already correct and was revalidated, not re-scored.
+- `audit-improve` is declared as a standalone tool, not an internal specialist.
+  MCP template upgrades preserve edited seeds and recognize the prior unedited
+  template through an exact archived copy in `scripts/superseded/`.
+- Added explicit `adopt-legacy` guard recovery: recorded project-owner approval
+  attributes bare globs without releasing protection or transferring owned records.
+  CLI approval references are attested, not authenticated.
+- At this checkpoint N-8 remained open (superseded by the follow-up above).
+  Two expected-failure probes reproduced unknown-extractor and
+  computed-destination gaps without executing the commands. No sandbox is claimed.
+- Verification: 83 focused contract/documentation tests (2 skips), 6 MCP/example
+  tests passed and 2 legacy-adoption tests passed. A full contract retry exceeded
+  300 seconds and is incomplete. MCP template and unedited-seed upgrade checks
+  passed; the edited-seed preservation retry exceeded 180 seconds and is incomplete.
+  Historical scores, performance budgets and the
+  outstanding suitable-host/CI matrix requirement are unchanged.
+- Skill versions: `admiral` 2.1.3; `commander` 1.0.4; `build-management`,
+  `code-chief`, `investigate`, `qa`, `ship`, `redesign`, `skill-maker`,
+  `bob-the-builder`, `cross-check-build-confirm`, `debugger`, `health-check`,
+  `test-builder`, `careful`, `architect`, `engineer`, `design-mapper`, `skill-reviewer` 1.0.2;
+  `cso` 1.0.3; `gatekeeper-design`, `gatekeeper-code` 1.1.3; `taste` 1.1.2;
+  `prototyper`, `researcher`, `bug-review`, `quality-review`,
+  `design-qa`, `mr-robot`, `setup-browser-cookies`, `taste-review` 1.0.1;
+  `security-review`, `skill-creator` 1.1.1; `qa-only` 1.0.4; `unfreeze` 1.1.1.
+
+### Continued quality-audit remediation
+
+- Closed G-3, G-10, G-11, G-13; P-1 through P-6; O-3, O-4, O-6, O-9,
+  O-13, O-14, O-16, O-17; D-2, D-4, D-5, D-9, D-14, D-17 with focused
+  regression and contract checks. Remaining findings stay in `docs/quality-audit.md`.
+- Independent `contract_floor.py` prevents a weakened shipped gate spec from
+  redefining required/artifact-backed evidence, typed kinds, submitters, finding
+  policy, waivers, variant counts and selection binding. Explicit `--gates`
+  experiments remain non-shipped inputs, not approval authority.
+- Typed security assessments admit the assessed no-boundary case without waiving
+  `security_seed`; typed human-go decisions bind to the approved delivery revision.
+  Nested Taste/persistence/render values are checked without claiming record truth.
+- All ten pipelines declare complete checked dependencies. Required QA evidence
+  and release setup are unconditional; repeat releases receive current-run snapshots.
+  Rollout and investigation handoff stages are explicitly after their approval boundary.
+- Design now delegates a Taste snapshot producer; Admiral retains the intake user
+  channel. Saved phase labels derive protocol states, engaged skills persist as an
+  append-once JSON list, and status discovery no longer needs a run id and exposes
+  coherent owner/revision. Added startup-probe ownership and clarified the shared
+  owner-maintained revision cap, fresh-lock admission and Copilot Tier 0 precedence.
+- Corrected requirements/UI/CSO filename attribution, lifecycle-layer citations,
+  the skill-reviewer doctrine duty and the gated-edit tier example.
+- Historical benchmark scores/counts are not re-scored here. This host is not used
+  as a performance baseline; no timing budget was weakened.
+
 ### Added
 
 - Installs carry the repository `LICENSE` at the install root (`skills/LICENSE`, a
@@ -62,6 +229,26 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ### Changed
 
+- Quality-audit remediation closes N-1, N-2, N-3, N-5, N-6, N-9, H-7, H-9,
+  H-10, G-7, G-8 and G-9 with regression probes. Unaddressed findings remain
+  in `docs/quality-audit.md`; benchmark scores have not been re-assessed.
+- Guard archive inventories reject links, special/traversing/absolute members
+  and tar renaming/stripping modes over records; existing member-path links are
+  resolved. Root tar/zip members are checked against frozen and hook paths
+  outside runs too. Recursive `cp -T` copies are treated as contents writes.
+- Git clean handles magic/quoted wildcard pathspecs and whole-directory
+  exclusions, using the final working directory for root reach. Rsync filter
+  rules and `--delete-excluded` no longer masquerade as protective excludes.
+- Read-only guards deny Git ref mutations but allow ref listings; inline
+  interpreter reads no longer count as writes. The former test that expected
+  a read of a guard record to be denied now asserts read allowance and write
+  denial. Shell `apply_patch` arguments/heredocs expose all file-operation paths
+  to freeze, read-only and single-writer checks.
+- Gate input references reject symlinks/junctions leaving the project, including
+  missing leaves below linked parents. UTF-8 BOM JSON/YAML loads correctly.
+  Taste confirmation ids must exactly cover added, updated, deprecated and
+  revoked preference ids, without duplicates; the workflow fixture now carries
+  the preference change it confirms.
 - BENCHMARK.md and `docs/quality-audit.md` rewritten to current state only.
   Fresh re-score: skills 98.6, spec 95.0.
 - Fixed audit findings: H-5, H-6, H-8, H-11, N-4, N-7, N-10, G-2, G-4, G-5, G-6,
@@ -503,15 +690,15 @@ bump for new behaviour, a patch for a fix. Skills not listed are unchanged at 1.
 test compares this list with the `version:` of every `SKILL.md`, so a bump that is not
 recorded here, or a record the skill does not carry, fails it.
 
-- `admiral` 2.1.1: how its commands read in an installed copy, the eleven save-directory
+- `admiral` 2.2.0: ceremony scaled to the change and a bounded cross-stage pass; previously native delegation grants and non-blocking MCP template intake; previously startup classification and shared-cap clarification; previously how its commands read in an installed copy, the eleven save-directory
   classes, and what `create` carries.
-- `design/architect` 1.0.1: works from the stack the project already fixes, not a lock
+- `design/architect` 1.0.2: directions use the reports destination; previously works from the stack the project already fixes, not a lock
   that comes later in the pipeline.
-- `design/engineer` 1.0.1: works from the detected stack, not a lock that comes later.
-- `design/commander` 1.0.2: states the stack-lock rule the engine enforces (every
+- `design/engineer` 1.0.2: key-owner REVISE corrections arrive through commander; previously works from the detected stack, not a lock that comes later.
+- `design/commander` 1.1.0: both validators in the self-check, concurrent taste/research and seed/plan stages, rerun scope on REVISE; previously native delegation grants; previously confirmed Admiral intake, explicit Taste snapshot and unconditional security assessment; previously states the stack-lock rule the engine enforces (every
   declared version is one the registry offers), and its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
-- `design/design-mapper` 1.0.1: states what `check_parity.py` now refuses in an inventory.
-- `careful` 1.0.1: describes the guard as it is (it reads the command, and counts faults).
+- `design/design-mapper` 1.0.2: parity examples use real run paths; previously states what `check_parity.py` now refuses in an inventory.
+- `careful` 1.0.2: malformed-state and active-run protection limits; previously describes the guard as it is (it reads the command, and counts faults).
 - `freeze` 1.3.0: one record per boundary whatever the spelling, a refused glob that can
   never match (a leading `!`, a root, an absolute path under a directory the machine
   lacks), a warning for a leading-slash glob outside the project that names a directory that
@@ -524,36 +711,49 @@ recorded here, or a record the skill does not carry, fails it.
   and announced, writers serialise on a lock, Rule F covers the `skills/scripts`
   modules the hooks import, and Rule C reads a command aimed at the project root by what
   it would put into or remove from the record directories.
-- `unfreeze` 1.1.0: releases by the normalised glob and records the cap on a grant.
-- `gatekeeper-admiral` 1.1.0: a REVISE row for a schema-1 result, the typed-record
+- `unfreeze` 1.1.1: explicit legacy adoption keeps protection active; previously releases by the normalised glob and records the cap on a grant.
+- `gatekeeper-admiral` 1.2.0: bounded cross-stage scope, severity threshold and resubmission batch rule; previously independent spec floor and typed security/human-go records; previously audit fixes for input containment, BOM manifests and confirmation-id consistency; previously a REVISE row for a schema-1 result, the typed-record
   roster and what a typed record leaves unchecked.
-- `design/gatekeeper-design` 1.1.0: as `gatekeeper-admiral`, and the stack-lock and
+- `design/gatekeeper-design` 1.2.0: severity threshold and resubmission batch rule; previously no invented mock-rendering fallback; previously spec floor, exact layer citation and corrected research/UI slots; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, and the stack-lock and
   selection rules the engine now enforces.
-- `build/gatekeeper-build` 1.1.0: as `gatekeeper-admiral`, with its package guard and
+- `build/gatekeeper-build` 1.2.0: severity threshold and resubmission batch rule; previously shared gate safety floor and layer-citation correction; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, with its package guard and
   optional slots.
-- `review/gatekeeper-code` 1.1.0: as `gatekeeper-admiral`, with its package guard and
+- `review/gatekeeper-code` 1.2.0: severity threshold and resubmission batch rule; previously selection-dependent redesign render applicability; previously safety floor and corrected CSO/security attribution; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, with its package guard and
   optional slots.
 - `session-memory` 1.1.1: the writer lock, `checkpoint --drop-evidence`, the
   `uninitialized` class, the refusal reasons and the `access_denied` mark; its checkpoint
   example names the lock holder as `--owner` and a project-relative evidence path.
-- `taste` 1.1.0: `propose` validation, redaction by shape, lock reclaim and the error codes.
-- `skill-maker` 1.0.1: the Stage 5 hand-off names the output directory as an absolute path, the
+- `taste` 1.1.2: structured set examples and native delegation grants; previously unconditional design snapshot producer; previously `propose` validation, redaction by shape, lock reclaim and the error codes.
+- `build/security-builder` 1.0.1: typed applicable/no-boundary security-seed assessments.
+- `qa` 1.0.2: session-pin admission and native delegation grants; previously unconditional probes and defects; only browser/report-only delegation is conditional.
+- `ship` 1.0.3: the `setup` stage runs on every release, as `pipelines.yaml` and `setup-deploy` already said, not only on a first deployment or on drift; previously native delegation grants, and before that the typed, revision-bound human-go record and repeat-release snapshots.
+- `setup-deploy` 1.0.1: re-verification and current-run snapshots on every release.
+- `skill-maker/skill-reviewer` 1.0.2: no cold isolated scoring; previously explicit harness-doctrine rejection duties.
+- `skill-maker` 1.0.2: native delegation, package-stage ownership and evidence paths; previously the Stage 5 hand-off names the output directory as an absolute path, the
   parent of the `path` that `output_paths.py` prints, and leaves it out outside a run.
-- `skill-maker/skill-creator` 1.1.0: the packager takes an absolute output directory and
+- `skill-maker/skill-creator` 1.1.1: absolute optimizer input paths; previously the packager takes an absolute output directory and
   refuses symlinks, secrets and run state; failed eval runs are not scored.
-- `review/security-review` 1.1.0: `scan_record.py` names its output relative to the
+- `review/security-review` 1.1.1: finding status and canonical rule references; previously `scan_record.py` names its output relative to the
   manifest and gains `--fail-on-output` and `--manifest-root`.
-- `review/cso` 1.0.2: the waiver reason must be the sanctioned wording, scan output
+- `review/cso` 1.0.3: single-validator verdict naming and delegation grants; previously the waiver reason must be the sanctioned wording, scan output
   paths follow the manifest, and its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
-- `design/redesign` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
-- `build/build-management` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
-- `review/code-chief` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
-- `investigate` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
-- `build/bob-the-builder` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
-- `build/test-builder` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
-- `build/debugger` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
-- `build/health-check` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
-- `build/cross-check-build-confirm` 1.0.1: its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
-- `qa-only` 1.0.3: the read-only boundary reference states what the hook now denies,
+- `design/redesign` 1.1.0: both validators in the self-check and rerun scope on REVISE; previously no fabricated unavailable parity record and native delegation grants; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `build/build-management` 1.1.0: both validators in the self-check, concurrent test and security stages, rerun scope on REVISE; previously performance doctrine discovery and delegation grants; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `review/code-chief` 1.1.0: both validators in the self-check, every lens scheduled at once, rerun scope on REVISE; previously canonical lens filename, performance doctrine and delegation grants; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `investigate` 1.0.2: owns its reproduction capture and grants delegation; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `build/bob-the-builder` 1.0.2: canonical text/binary hash semantics; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `build/test-builder` 1.0.2: explicit report deliverable and canonical hashing; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `build/debugger` 1.0.2: candidate teardown preserves implementation ownership; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `build/health-check` 1.0.2: authorized library consumption smoke and canonical hashing; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `build/cross-check-build-confirm` 1.0.2: no-code decisions still owe non-waivable proof; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `qa-only` 1.0.4: dual-mode routing and session-pin admission; previously the read-only boundary reference states what the hook now denies,
   including index-only git commands, package-manager installs and writes with no named
   target.
+- `design/prototyper` 1.0.1: exact gate file-field scope and executable run-path self-checks.
+- `design/researcher` 1.0.1: Admiral-owned intake, all required architecture inputs and commander-routed corrections.
+- `review/bug-review` 1.0.1: canonical filename is not a uniqueness guarantee.
+- `review/quality-review` 1.0.1: matcher limits and canonical findings rule reference.
+- `review/design-qa` 1.0.1: accepted finding statuses in packet and example.
+- `review/mr-robot` 1.0.1: finding statuses and same-pipeline delta review.
+- `setup-browser-cookies` 1.0.1: Linux, macOS and Windows are peer platforms.
+- `taste/taste-review` 1.0.1: review follows persistence and precedes gate approval.

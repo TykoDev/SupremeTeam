@@ -109,6 +109,12 @@ def _typed_record(kind: str, artifact: str, digest: str, key: str = "") -> objec
                 "decision": params.get("variant_decision", "variant"),
                 "chosen": chosen, "recommended": chosen, "decided_by": "workflow probe",
                 "decided_at": "2026-09-16T00:00:00Z", "basis": "synthetic decision"}
+    if kind == "security_seed":
+        return {"applicable": False, "scope": "synthetic design", "decided_by": "security-builder",
+                "architecture_revision": "r-3", "reason": "no boundary introduced", "boundaries": []}
+    if kind == "human_go":
+        return {"decision": "go", "approver": "synthetic owner", "approval_reference": "GO-1",
+                "revision": "r-3", "decided_at": "2026-09-16T00:00:00Z"}
     if kind == "revision_ref":
         # A scalar identifier, not a record: it names an upstream revision.
         return "r-3"
@@ -140,7 +146,7 @@ def _typed_record(kind: str, artifact: str, digest: str, key: str = "") -> objec
                 "committed_revisions": [1], "hashes": {artifact: digest}}
     if kind == "preference_diff":
         return {**base, "before_digest": "0" * 64, "after_digest": "1" * 64,
-                "added": [], "removed": [], "changed": [], "deprecated": [],
+                "added": ["p-1"], "removed": [], "changed": [], "deprecated": [],
                 "revoked": [], "unchanged": [], "updated": []}
     return base
 

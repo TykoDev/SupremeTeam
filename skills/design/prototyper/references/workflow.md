@@ -142,10 +142,10 @@ python skills/scripts/output_paths.py --run-id {run-id} --phase redesign --kind 
 # -> {"ok": true, "kind": "reports", "path": "...", "relative": "skillset-saves/runs/{run-id}/redesign/reports/parity-selfcheck-v2.json"}
 
 # mock build
-python skills/scripts/check_parity.py --level mock --inventory redesign/artifacts/inventory/design-inventory.json --app redesign/artifacts/mocks/v2/mock.html --components redesign/artifacts/mocks/v2/components.html --out skillset-saves/runs/{run-id}/redesign/reports/parity-selfcheck-v2.json --project-root .
+python skills/scripts/check_parity.py --level mock --inventory skillset-saves/runs/{run-id}/redesign/artifacts/inventory/design-inventory.json --app skillset-saves/runs/{run-id}/redesign/artifacts/mocks/v2/mock.html --components skillset-saves/runs/{run-id}/redesign/artifacts/mocks/v2/components.html --out skillset-saves/runs/{run-id}/redesign/reports/parity-selfcheck-v2.json --project-root .
 
 # selected build
-python skills/scripts/check_parity.py --level full --inventory redesign/artifacts/inventory/design-inventory.json --app redesign/artifacts/variants/v2/app.html --components redesign/artifacts/variants/v2/components.html --out skillset-saves/runs/{run-id}/redesign/reports/parity-selfcheck-v2.json --project-root .
+python skills/scripts/check_parity.py --level full --inventory skillset-saves/runs/{run-id}/redesign/artifacts/inventory/design-inventory.json --app skillset-saves/runs/{run-id}/redesign/artifacts/variants/v2/app.html --components skillset-saves/runs/{run-id}/redesign/artifacts/variants/v2/components.html --out skillset-saves/runs/{run-id}/redesign/reports/parity-selfcheck-v2.json --project-root .
 ```
 
 - Pass the resolver's `relative` value to `--out`. The resolver rejects an

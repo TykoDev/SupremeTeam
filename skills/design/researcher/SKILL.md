@@ -9,7 +9,7 @@ description: >-
   `design/commander`, writes no brief and returns there for intake first. Feeds
   `design/architect`, the next design stage; defers architecture to it and the
   delivery plan to `design/planner`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -20,7 +20,7 @@ allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 Own the research stage of the design pipeline, the first specialist stage after
 `admiral`'s `intake-grilling` in `../../pipelines.yaml`, where a request becomes
 evidence somebody can be held to. `../../ownership.yaml` makes `requirements-brief` the
-single artifact this skill writes and `design/architect`'s only required input, so
+single artifact this skill writes and one of `design/architect`'s required inputs, alongside Admiral's confirmed decisions, so
 every component boundary, interface contract, and milestone downstream rests on
 rows produced here. A requirement with no source is indistinguishable from a
 preference by the time it reaches the architecture stage, which is why the brief
@@ -92,7 +92,7 @@ fields above are how the rows carry them.
 
 ## Workflow
 
-1. Frame the research question in terms of actors, jobs to be done, constraints, success criteria, and the decisions the architecture stage must make. Run the `../../grill-me-doctrine.md` intake interview first to reach a shared understanding of intent and priorities — one question at a time, always recommending an answer.
+1. Frame the research question in terms of actors, jobs to be done, constraints, success criteria, and the decisions the architecture stage must make. Consume Admiral's confirmed `../../grill-me-doctrine.md` intake decisions first. Send missing load-bearing decisions through commander to Admiral; do not conduct a second interview from this delegation.
 2. Gather evidence from user input, existing artifacts, domain sources, and comparable flows, separating confirmed facts from assumptions and analogies as they are collected rather than afterwards.
 3. Write one row per material requirement or constraint with all five fields, assigning the confidence tier from what was actually observed, not from how plausible the claim feels.
 4. Synthesize the rows into requirements, constraints, risks, and open questions the architecture stage can consume directly, and that the plan stage inherits through it.
@@ -100,7 +100,7 @@ fields above are how the rows carry them.
 
 ## Required Contracts
 
-- **Grill-Me Intake**: Before producing the research packet, run the intake interview in `../../grill-me-doctrine.md` — resolve every load-bearing branch one question at a time, always recommend an answer, and explore the codebase, configs, and existing artifacts instead of asking when the answer is discoverable.
+- **Grill-Me Intake**: Before producing the packet, consume Admiral's confirmed intake. Explore discoverable evidence directly; return unresolved load-bearing branches through commander to Admiral, the `intake-grilling` owner.
 - **Provenance per row**: Every requirement carries its source and confidence tier, because the architect cannot weigh a constraint whose origin is invisible, and an unsourced row is the cheapest way for a preference to become a locked boundary.
 - **Shared severity**: Grade every finding Critical | Major | Minor | Info, the four-tier model clause 3 of `../../execution-contract.md` defines, so upstream and downstream packages interpret risk consistently.
 - **Proactive triggers**: Offer the next sensible action when the surrounding context clearly implies it and the skill can advance safely without a prompt loop.
@@ -127,9 +127,9 @@ Skip only when the requested scope proves a requirements brief is genuinely out 
 | Scenario | Response |
 | --- | --- |
 | The domain is greenfield: no prior art, no comparable flows, no usage data, no existing system to mine | Say so in the brief rather than padding it with analogies. Mark every requirement `assumed`, name the cheapest experiment or the smallest reversible commitment that would raise each to `observed`, and tell `design/architect` which boundaries are therefore being drawn against assumptions. An empty evidence section with a stated reason is more useful than a full one built from adjacent domains. |
-| The delegation arrives with no intake brief, or with a request that names a solution instead of a problem | Run the intake interview to recover the problem statement before gathering anything; if the request still resolves to a technology choice with no user-facing job behind it, return it to `design/commander` naming what is missing. Researching a pre-chosen solution produces evidence for it, not about it. |
+| The delegation arrives with no intake brief, or with a request that names a solution instead of a problem | Return the missing problem statement to commander for Admiral's intake before gathering anything; if the request still resolves to a technology choice with no user-facing job behind it, return it to `design/commander` naming what is missing. Researching a pre-chosen solution produces evidence for it, not about it. |
 | A supplied artifact is malformed or unreadable — a corrupt export, a link with no content, a spreadsheet whose columns do not match its headers | Record the artifact as an unusable source with its path and the specific defect, and do not infer its contents from its filename. The row it would have supported stays `assumed` until the artifact is replaced. |
-| `design/gatekeeper-design` returns a `REVISE` naming the research evidence | Take the whole owner group in `revise_packet.by_owner` as one batch, fix every finding in a single revision, and return the changed artifact with its new sha256 so the gate re-judges only `changed_evidence`. |
+| `design/gatekeeper-design` returns a `REVISE` naming the research evidence | Commander receives the gate key-owner group and delegates the research corrections here; researcher owns no gate evidence key. Fix the delegated findings in one revision and return the brief and sha256 to commander for the owning key's `changed_evidence`. |
 | A tool or host capability the research depends on is unavailable — no repository access, no network for prior art, no way to open a supplied format | Name the source that could not be reached, mark every row that depended on it `assumed` with the limitation stated, and return the brief as complete-with-limitations rather than blocked, unless the unreachable source is the only evidence for a load-bearing decision. |
 | Stakeholder goals conflict or are underspecified, so different actors are optimizing for different outcomes | Surface the conflict explicitly and avoid collapsing it into one false set of requirements. |
 | Evidence sources disagree on compliance, operational, or domain constraints | Preserve the disagreement, rank the confidence of each source, and flag the unresolved decision for the next gate. |

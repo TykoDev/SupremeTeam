@@ -8,7 +8,7 @@ description: >-
   work in?". Takes the multi-change health view; gating one diff for merge goes to
   `review/code-review`, concrete defects to `review/bug-review`, and security
   exposure to `review/security-review`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -60,7 +60,7 @@ This lens owns no evidence key. `../../gates.yaml` `evidence_owners` assigns eve
 
 | Path | What must be true |
 | --- | --- |
-| Graded items merge into `findings` | Every item carries an id, one of the four severities, and a status; a deferred Major also carries the owner and reopen trigger that make it tracked debt (`../../gates.yaml` `evidence_types.findings`, `finding_policy.major_deferral`). |
+| Graded items merge into `findings` | Every item carries an id, one of the four severities, and a status; a deferred Major also carries the owner and reopen trigger that make it tracked debt (`../../gates.yaml` `evidence_type_rules.findings`, `finding_policy.major_deferral`). |
 | The saved packet fills the `lens_quality` slot | `review/gatekeeper-code`'s `scripts/check.py` fills `lens_quality` with a file whose name matches `*quality*.md` (case-insensitive) and that carries an `Outcome:` and a `Findings:` line. The packet is saved as `deliverable_quality-review.md` so the name is unambiguous; a name without `quality` in it, or a packet missing either field, leaves the slot empty and fails the mechanical pass for a lens that actually ran. |
 
 The `maintainability-report` artifact `../../ownership.yaml` assigns to this lens is that same packet, due before finding triage.
@@ -166,7 +166,7 @@ Skip only when the surface required by the review lens does not exist, such as a
 When a `### Save Context` block is included in the delegation prompt with `Persistence active: yes`:
 
 1. Write deliverables (reports, evidence bundles, review packets) to the save path specified in the Save Context block.
-2. Name the lens packet `deliverable_quality-review.md`. `review/gatekeeper-code` fills the `lens_quality` slot with any `*quality*.md` file that carries the `Outcome:` and `Findings:` fields; the fixed name keeps a second `quality` file from competing for the slot, and a packet whose name lacks `quality` leaves the slot empty and fails the mechanical pass for a lens that ran.
+2. Name the lens packet `deliverable_quality-review.md`. `review/gatekeeper-code` fills the `lens_quality` slot with any `*quality*.md` file that carries the `Outcome:` and `Findings:` fields; the fixed name is a producer convention, not an enforced filename: another qualifying `quality` file can take the slot, so code-chief must remove rivals or verify which file was selected, and a packet whose name lacks `quality` leaves the slot empty and fails the mechanical pass for a lens that ran.
 3. Never write `_phase-state.md`. No class in the save-ownership policy declares that path, so it is not an orchestrator-owned file either — phase state is published only through `save_run.py checkpoint`, which keeps revision lineage and the audit trail coherent.
 
 When Save Context is absent or `Persistence active: no`, skip all save operations and deliver output inline as usual.

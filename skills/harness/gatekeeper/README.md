@@ -126,7 +126,7 @@ trusting a stored verdict.
 
 ## Boundaries
 
-`gates.yaml` (spec revision 5) carries ten boundaries. Each names the
+`gates.yaml` carries ten boundaries. Each names the
 transition it guards and the single skill permitted to submit it. The
 human-readable table lives in [`../../../docs/gatekeepers.md`](../../../docs/gatekeepers.md)
 and a drift test asserts it matches `gates.yaml` exactly.
@@ -179,8 +179,8 @@ evidence key covering the value and every artifact hash it references. With
 `--prior`, the result adds `changed_evidence` and `unchanged_evidence`, so the
 gatekeeper re-judges only what changed while the mechanical pass still covers
 the whole package (`gates.yaml` `revise_policy`). Submitters run `check.py`
-without `--verdict-out` before submitting; a mechanically failing package is
-not a submission.
+without `--verdict-out`, and the phase gatekeeper's `scripts/check.py` where one
+exists, before submitting; a mechanically failing package is not a submission.
 
 ## _gatecheck.py: the package-shape validator
 
@@ -244,3 +244,13 @@ changed/unchanged evidence split on a resubmission. `test_gate_engine.py` drives
 every boundary, every evidence type the spec declares) and inject an engine fault:
 waiver wording, policy fields that must be real strings, unhashable values,
 digest and path-reference shapes, typed-record consistency, and the schema rule.
+`test_quality_audit.py` also covers the shipped spec safety floor, typed security-seed
+and human-go records, nested values and research/UI/CSO slot attribution. The floor
+in `skills/scripts/contract_floor.py` is independent of gates.yaml and is checked
+by the shipped loader, shape-wrapper catalog loader and manifest validator. Explicit
+`--gates` experiments remain non-shipped inputs, never approval authority. The
+revision cap is declared/validated but counted by the orchestrator, not this engine.
+
+`test_quality_audit.py` covers project-input symlink containment (including linked
+parents of missing targets), UTF-8 BOM manifests, and confirmation ids compared
+with the changed ids in the preference diff.

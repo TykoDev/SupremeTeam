@@ -50,13 +50,14 @@ does not own the layer.
 
 ## Specialists
 
-The twenty-two specialists declared under `specialists` in
+The 21 specialists declared under `specialists` in
 [`../team-manifest.yaml`](../team-manifest.yaml) (researcher, planner,
 architect, engineer, design-mapper, prototyper, bob-the-builder, test-builder,
 security-builder, cross-check-build-confirm, debugger, health-check,
 bug-review, code-review, quality-review, security-review, mr-robot, frontier,
-design-qa, devex-review, taste-review, audit-improve) work inside these layers under the
-owning lead. That manifest list is the source; this one mirrors it in the same
+design-qa, devex-review, taste-review) work inside these layers under the
+owning lead. `audit-improve` is a standalone tool, declared under
+`standalone_tools`; only its improvement proposal enters Admiral and skill-maker. That manifest list is the source; this one mirrors it in the same
 order. Their write boundaries are the artifact ids in
 [`../ownership.yaml`](../ownership.yaml).
 
@@ -75,7 +76,10 @@ A layer that ends at a gate does not always have a phase gatekeeper. Four of the
 ten boundaries in [`../gates.yaml`](../gates.yaml) are validated twice — once
 inside the sub-pipeline by a phase gatekeeper, then again by `gatekeeper-admiral`
 as the cross-stage handoff. The other six are validated once, by
-`gatekeeper-admiral` alone.
+`gatekeeper-admiral` alone. The second pass is bounded by `revise_policy.cross_stage_scope`
+in `../gates.yaml`: with an APPROVED phase verdict and no changed evidence it judges the
+crossing and carries the phase gate's adequacy judgment, so one package is not reviewed
+twice for the same question.
 
 | Boundary | Phase gatekeeper | Cross-stage validator | Explicit `phase-gate` stage in `pipelines.yaml` |
 |----------|------------------|-----------------------|--------------------------------------------------|
@@ -92,8 +96,8 @@ as the cross-stage handoff. The other six are validated once, by
 
 The two columns agree: a boundary has a phase gatekeeper exactly when its
 pipeline carries a `phase-gate` stage, and the gatekeeper named is that stage's
-declared `owner`. Both columns are mechanically derivable and mechanically
-unverified — see *Mirror gaps* under [Enforcement](#enforcement). For the six without one, the GATE row's
+declared `owner`. `../validation/test_contract_mirrors.py` compares every cell in these columns
+against the gate and pipeline manifests. For the six without one, the GATE row's
 "the boundary's gatekeeper" resolves to `gatekeeper-admiral`, and there is no
 in-pipeline rehearsal before the cross-stage check. The submitter is the only
 owner between the work and that single gate, so its self-check under the
@@ -117,9 +121,11 @@ that releases a boundary, through `guard_state.py`, which keeps the released ent
 
 ## Enforcement
 
-Exactly two passages of this file are opened by a comparator: the `## Specialists`
-roster and the `| RELEASE ` row, both by `DeclaredCoverageTests`. Everything else
-here is a hand-maintained mirror of a machine manifest.
+`DeclaredCoverageTests` reads the specialist roster and RELEASE row.
+`../validation/test_contract_mirrors.py` now compares the entire Layer matrix
+Owner column and Gate coverage table, including missing/duplicate rows and exact
+column positions. Trigger, input/output and one-writer prose remain authored
+judgement; static agreement does not prove a run executed those responsibilities.
 
 That distinction is the point of this section, and the reason each row below
 carries two columns rather than one. Most rows name a guarantee that is real but
@@ -130,25 +136,24 @@ verified row from a plausible one.
 
 | Statement in this file | What is asserted, and by what | What that check does not cover |
 |------------------------|-------------------------------|--------------------------------|
-| A layer owner is a real team member | `../scripts/validate_manifests.py` (`check_pipeline_mirrors`) emits `pipelines.yaml: {name} owner is not a team member`, and the per-stage form for every stage owner; `../validation/test_pipeline_contracts.py` (`test_every_pipeline_owner_is_a_team_member`, `test_every_stage_owner_is_a_team_member`) asserts the same two facts. | Both read `../pipelines.yaml`. The Owner column of the Layer matrix above is never opened, so an owner invented *here* is caught by nothing. See the mirror gaps below. |
+| A layer owner is a real team member | `../scripts/validate_manifests.py` (`check_pipeline_mirrors`) emits `pipelines.yaml: {name} owner is not a team member`, and the per-stage form for every stage owner; `../validation/test_pipeline_contracts.py` (`test_every_pipeline_owner_is_a_team_member`, `test_every_stage_owner_is_a_team_member`) asserts the same two facts. | Both read `../pipelines.yaml`. `ResponsibilityMirrorTests` separately compares this table's exact Owner cells, including the safety roster and named roles. |
 | Each artifact has exactly one writer | `validate_manifests.py` (`check_ownership`) emits `ownership.yaml: {id} must have exactly {owner!r} as writer; found {writers}`, and rejects an artifact whose owner is not a declared owner. | Reads `../ownership.yaml`. The three role owners — `gatekeeper`, `safety-guardrails`, `phase-lead` — are exempt from the exactly-one rule: a role artifact needs only *some* declared writer, so two writers on one pass. |
 | A skill does not claim an artifact it may not write | `../validation/test_catalog_contracts.py` (`OwnershipProseTests`) matches write verbs against the `does_not_write` ids in `ownership.yaml` across SKILL.md prose. | Best-effort text matching, not a proof. A disclaiming clause anywhere in the sentence (`never`, `rather than`, `belongs to`, …) exonerates it, and single-stem ids — `plan`, `tests`, `findings`, `architecture` — are excluded outright as ordinary English. |
 | A stage that produces an artifact is run by that artifact's owner | `test_pipeline_contracts.py` (`StageArtifactOwnershipTests.test_every_artifact_bearing_stage_is_owned_by_the_artifact_owner`) compares every artifact-bearing stage in `pipelines.yaml` against the artifact's owner in `ownership.yaml`. | Nothing material: across the two manifests it reads, this one is exact. It does not read this file. |
 | A gatekeeper never repairs the submission | `test_catalog_contracts.py` (`ToolSurfaceTests.test_gatekeepers_and_single_writers_do_not_grant_edit`) asserts that no gatekeeper and no declared single-writer lists `Edit` in `allowed-tools`. | Only the `Edit` grant. Gatekeepers legitimately hold `Write` and `Bash` — `../build/gatekeeper-build` grants both — so a gatekeeper *can* write. The no-repair rule is policy backed by the single `gate-verdict` path class in [`../save-ownership.yaml`](../save-ownership.yaml), not by the tool surface. |
-| The RELEASE owner is `ship` | `DeclaredCoverageTests.test_release_layer_owner_matches_the_pipeline_and_the_gate` asserts `pipelines.yaml` `release.owner` equals the `gates.yaml` `deploy-readiness` submitter, then that this file's `| RELEASE ` row contains that name. `validate_manifests.py` independently requires exactly one pipeline per gate boundary. | The name must *be* one of the row's cells, not merely appear inside one: emptying the Owner cell fails the assertion even though `ship` still occurs in the notes cell. What is not covered is *which* cell — any cell equal to `ship` satisfies it, so the Owner column itself is not identified. |
+| The RELEASE owner is `ship` | `DeclaredCoverageTests.test_release_layer_owner_matches_the_pipeline_and_the_gate` asserts `pipelines.yaml` `release.owner` equals the `gates.yaml` `deploy-readiness` submitter, then that this file's `| RELEASE ` row contains that name. `validate_manifests.py` independently requires exactly one pipeline per gate boundary. | The name must *be* one of the row's cells, not merely appear inside one: emptying the Owner cell fails the assertion even though `ship` still occurs in the notes cell. The newer `ResponsibilityMirrorTests` identifies the exact Owner column and rejects an owner merely mentioned elsewhere. |
 | The specialist roster matches the team manifest | `DeclaredCoverageTests.test_responsibility_matrix_specialists_match_the_manifest` asserts that every `specialists` entry in `../team-manifest.yaml` appears in the `## Specialists` block, and that the count stated in prose matches the manifest's length. | One direction only: a name listed here that the manifest does not declare passes. The "same order" claim in that section is not compared — it holds today by hand, not by test. |
 | `session-memory` writes the run record through `save_run.py` only | `../harness/hooks/pre_tool_use.py` denies direct edit-tool writes to the core run files; `../validation/test_save_contracts.py` (`test_direct_edit_of_core_files_is_denied_by_hook`) executes the hook against `_state.md`, `_latest.md`, and a `_history/*.state.json`, requiring `save_run.py` in each denial. | Phase reports under the same run are deliberately not denied — the same test asserts that a write to `design/reports/report_plan.md` produces no denial. The rule covers the run record, not the run directory. |
 | The guard record has a single sanctioned writer | `test_catalog_contracts.py` (`GuardWriterTests`) requires the `harness-guards` class to name `guard_state.py`, requires that file to exist, and checks that `pre_tool_use.py` delegates to `guard_hook.py`, which protects the guard record. | The catalog check is structural; hook behavior is exercised separately by `test_guard_state.py`. |
 
-### Mirror gaps — checkable, and currently unchecked
+### Checked table mirrors
 
 The two tables below are not judgement. Every cell in them is derivable from a
-machine manifest, so a comparator would be short, and until one is written a
-drifted cell is silent. Naming them here is the honest alternative to calling
-them judgement:
+machine manifest, so a comparator would be short, and `ResponsibilityMirrorTests` now makes drift a failing regression rather than
+calling these cells judgement:
 
-- **The Gate coverage table.** All three columns restate [`../gates.yaml`](../gates.yaml) and [`../pipelines.yaml`](../pipelines.yaml): a boundary has a phase gatekeeper exactly when its pipeline carries a `phase-gate` stage, and the gatekeeper named is that stage's `owner`. All ten rows were compared with both manifests, by a script and by hand, on 2026-10-01 and agreed. A test reading the table and diffing it against the two manifests would make the verification durable.
-- **The Layer matrix Owner column.** Ten of the fourteen owners are the `owner` of the same-named pipeline in `../pipelines.yaml` — TASTE, DESIGN, REDESIGN, BUILD, REVIEW, SECURITY, INVESTIGATION, QA, SKILL CREATION, RELEASE. The remaining four come from [`../team-manifest.yaml`](../team-manifest.yaml): INTAKE from `front_door`, MEMORY from `session_memory`, SAFETY from the `safety` list, GATE from `phase_gatekeepers` plus `cross_stage_gatekeeper`. Only the `RELEASE` row is compared today, and only loosely.
+- **The Gate coverage table.** All three columns restate [`../gates.yaml`](../gates.yaml) and [`../pipelines.yaml`](../pipelines.yaml): a boundary has a phase gatekeeper exactly when its pipeline carries a `phase-gate` stage, and the gatekeeper named is that stage's `owner`. All ten rows were compared with both manifests, by a script and by hand, on 2026-10-01 and agreed. `test_responsibility_layer_owners_and_gate_columns_match_manifests` now makes that comparison durable.
+- **The Layer matrix Owner column.** Ten of the fourteen owners are the `owner` of the same-named pipeline in `../pipelines.yaml` — TASTE, DESIGN, REDESIGN, BUILD, REVIEW, SECURITY, INVESTIGATION, QA, SKILL CREATION, RELEASE. The remaining four come from [`../team-manifest.yaml`](../team-manifest.yaml): INTAKE from `front_door`, MEMORY from `session_memory`, SAFETY from the `safety` list, GATE from `phase_gatekeepers` plus `cross_stage_gatekeeper`. All fourteen Owner cells are now compared; role cells are checked against their declared vocabulary.
 
 ### Judgement, with no manifest to compare against
 

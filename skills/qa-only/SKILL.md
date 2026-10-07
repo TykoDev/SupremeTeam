@@ -7,7 +7,7 @@ description: >-
   audit — even when the request is only "just tell me what's broken". Reports,
   never edits; defers fix-and-reverify QA to `qa` and performance
   measurement to `benchmark`.
-version: 1.0.3
+version: 1.0.4
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -30,11 +30,11 @@ Route elsewhere when fixes should be applied in the same loop (`qa`) or when the
 
 ## Entry Routing
 
-`../routing-doctrine.md` classes `qa-only` a standalone tool, invokable directly at any time. It is also the report-only sweep the gated `qa` pipeline runs, and inside that pipeline it runs as a delegate: `../pipelines.yaml` names `qa-only` only as the `delegate` on the `defect-record` stage, whose owner is `qa`, so the sweep happens here while the stage, the package, and the submission stay with `qa`. Resolve the entry path before the first probe, because only one of them has a gate behind it:
+`../routing-doctrine.md` classes `qa-only` dual-mode: an explicit slash/tool invocation may run standalone, while a cold lifecycle request enters Admiral. It is also the report-only sweep the gated `qa` pipeline runs, and inside that pipeline it runs as a delegate: `../pipelines.yaml` names `qa-only` only as the `delegate` on the `defect-record` stage, whose owner is `qa`, so the sweep happens here while the stage, the package, and the submission stay with `qa`. Resolve the entry path before the first probe, because only one of them has a gate behind it:
 
 | Signal | Mode | Behavior |
 |--------|------|----------|
-| A `### Save Context` block, or an active run lock under `skillset-saves/` | **Delegated, inside the `qa` pipeline** | Run the sweep under `qa`'s ownership, persist to the run's `qa/` phase directory, and return the defect report and its evidence to `qa`, which assembles and submits the `qa-review` package. Submit nothing here. |
+| A `### Save Context` block, or a fresh coherent active run lock with `session_pin: true` under `skillset-saves/` | **Delegated, inside the `qa` pipeline** | Run the sweep under `qa`'s ownership, persist to the run's `qa/` phase directory, and return the defect report and its evidence to `qa`, which assembles and submits the `qa-review` package. Submit nothing here. |
 | Neither present | **Standalone** | Run the same sequence directly and return the defect report inline. Persist nothing; no package and no gate are involved. |
 
 Say which mode is active in the first response, so the operator knows whether a gate verdict is coming from `qa` afterwards. Both modes record the read-only boundary of Workflow step 1; only the run id differs, and `references/read-only-boundary.md` names the one to use in each.

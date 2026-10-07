@@ -5,10 +5,10 @@ description: >-
   provenance, conflicts, redaction, confirmation, and persistence safety, then writes
   the taste-review record for the `taste-review` gate. Use when `taste` hands a
   package to the review stage, or the user asks to review, audit, or double-check a
-  change to the Taste preference store before it is saved — even when they only ask
+  committed change to the Taste preference store before gate approval — even when they only ask
   "is this safe to save?". Not a reviewer for application settings or config files. Never mutates a preference store; preference decisions
   belong to `taste`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -34,11 +34,11 @@ store, and issues a recommendation rather than the gate verdict.
 
 ## Use This Skill When
 
-Use this reviewer to **re-read a preference package before it is persisted** — it recommends, and never writes to a store:
+Use this reviewer to **re-read the committed preference package before gate approval** — persistence precedes review; this stage recommends and never mutates a store:
 
 - "review this preference change" — check provenance, confirmation, and lifecycle against the doctrine
-- "is this safe to save?" — say whether the package can be persisted as it stands
-- "double-check a preference change before it is saved" — look for a contradiction that was tie-broken instead of surfaced
+- "is this safe to save?" — check the committed result before downstream approval
+- "double-check a preference change before it is saved" — route through Taste, then inspect the committed package for a contradiction that was tie-broken instead of surfaced
 - "audit this preference package before saving" — grade every gate evidence key, not only the changed entry
 
 Route elsewhere to make the preference decision or write the record (`taste`), which owns every mutation phrasing; this stage only issues a recommendation.

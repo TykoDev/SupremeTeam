@@ -60,7 +60,7 @@ python skills/scripts/scan_record.py --project-root . --out skillset-saves/runs/
 
 | Option | Purpose |
 | --- | --- |
-| `--out` | Path of the JSON record; the raw scanner output is retained beside it as `<stem>.stdout.txt` / `<stem>.stderr.txt`. Resolved against the process working directory, **not** `--project-root` — a bare relative value writes the one artifact this lens owns outside the run it belongs to (`../SKILL.md` Scan Evidence). |
+| `--out` | Path of the JSON record; the raw scanner output is retained beside it as `<stem>.stdout.txt` / `<stem>.stderr.txt`. Resolved against the process working directory, **not** `--project-root` — a bare relative value writes the one artifact this lens owns outside the run it belongs to (`../SKILL.md` Gate Evidence). |
 | `--input` | Repeatable; binds an inspected manifest or lockfile by sha256 |
 | `--tool` | Tool name override; defaults to the first token of the command |
 | `--version-command` | Command that prints the scanner version, recorded on the result. Split with POSIX shell quoting rules and run as an argument list, never through a shell, so shell operators in the text are ordinary arguments and quoting is how an argument keeps a space. A backslash is an escape, so write a Windows path with `/` or doubled backslashes. An unparseable value is a wrapper error; a command that cannot start leaves `tool_version` null and is named in the record's `limitations` |

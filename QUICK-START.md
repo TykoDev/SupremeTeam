@@ -76,11 +76,17 @@ registration ran. When it failed the first line reads `Supreme Team skills are
 installed, but hook registration failed.`, the skills are in place, and the installer
 exits with the registration's status after telling you how to try again.
 
-## 2. Register the hooks (optional, recommended)
+## 2. Register the hooks (the enforcement layer)
 
 A normal install copies the hook files but does not wire them into your host.
 That is deliberate: hooks change assistant runtime behavior, so turning them on
-is an explicit choice.
+is an explicit choice. Make it, unless you have a reason not to: without the
+hooks every rule in this catalog is advice. The pre-tool hook is what refuses a
+write into a guarded, frozen or single-writer path; the prompt hook is what sends
+a lifecycle request through `admiral` instead of straight to a specialist; the
+post-tool hook is what keeps a run's heartbeat fresh between checkpoints. An
+install that skips registration ends with a banner saying exactly that, and
+`check_readiness.py --require-hooks` reports it as not ready.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -RegisterHooks
@@ -115,9 +121,9 @@ only its hooks, run
 
 Then open `/hooks` or restart the host if it wants to review them first.
 
-Without hooks everything still works, but entry routing and write guards become
-advisory rather than enforced, and the run heartbeat only refreshes when a
-checkpoint happens.
+Without hooks the skills still run, but entry routing and write guards are
+advisory rather than enforced, the run heartbeat only refreshes when a checkpoint
+happens, and `admiral` says so at the top of every intake.
 
 ## 3. Restart your assistant
 

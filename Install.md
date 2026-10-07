@@ -197,6 +197,19 @@ Copying `skills/harness/` puts the three hooks (`pre_tool_use.py`,
 `post_tool_use.py`, `user_prompt_submit.py`) in place but does **not** register
 them — registration changes runtime behavior, so it is always explicit.
 
+Registration is the step that gives the catalog teeth. What each hook enforces,
+and what you are left with when it is not registered:
+
+| Hook | Registered | Not registered |
+|---|---|---|
+| `pre_tool_use.py` | Refuses a write into a frozen or blocked path, a read-only run's surface, a single-writer record, or the hook files themselves; refuses destructive commands | Every such write goes through; `freeze`, `guard` and the single-writer records are advice |
+| `user_prompt_submit.py` | Reminds the assistant on every fresh turn to enter lifecycle work through `admiral` and honours the session pin | A request can land on a specialist and skip intake, persistence and the gates |
+| `post_tool_use.py` | Refreshes the run heartbeat from real tool activity, records trajectory degeneration, sweeps coverage residue | A run goes stale between checkpoints and is reclaimed as abandoned |
+
+Both installers end with a capital-letter banner when hooks were not registered,
+declined or failed, and `check_readiness.py --require-hooks` reports such a host as
+not ready. The gate validators do not depend on the hooks and run either way.
+
 ```bash
 # Inspect current state (checks the hosts that have a config file or a host variable)
 python3 ~/.agents/skills/harness/hooks/verify_registration.py --host auto

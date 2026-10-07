@@ -102,10 +102,18 @@ enforcement:
 notes:
   - "Product source stays in the application's own layout. It is never written under skillset-saves; evidence that depends on it is snapshotted into <phase>/evidence/ with source path, revision, and sha256 provenance (typed-record inputs in gates.yaml)."
   - "Nothing under a run is deleted by automation. Superseded revisions move to _history/."
-  - "Four classes live outside any run: harness-test-scratch, skill-eval-reports, skill-eval-workspaces, and standalone-packages. They are run-independent scratch and delivery outputs, they are excluded from the package by package-manifest.yaml, and nothing under them is gate evidence."
+  - "Four resolver-backed classes live outside any run (the temporary persistence-probe is a separate startup exception): harness-test-scratch, skill-eval-reports, skill-eval-workspaces, and standalone-packages. They are run-independent scratch and delivery outputs, they are excluded from the package by package-manifest.yaml, and nothing under them is gate evidence."
   - "Those four class ids are the same four paths generated_roots_rule names by resolver kind, in the other vocabulary: harness-test-scratch is test_work, skill-eval-reports is eval_reports, skill-eval-workspaces is eval_workspace, and standalone-packages is standalone_packages. The kind is what scripts/output_paths.py --kind takes; the class id is what this file declares a writer for."
   - "Global Taste state is governed by the same taste writer, skills/taste/taste_prefs.py, but lives in a deterministic user-data directory outside every checkout and therefore lies outside this project-relative glob policy."
 classes:
+  - id: persistence-probe
+    writer: admiral
+    patterns:
+      - skillset-saves/_probe-*.tmp
+    rule: >-
+      Temporary write-capability probe prescribed by save-protocol.md, owned by Admiral.
+      Create, read back and remove only the current run's probe; never delete unrelated files.
+      It is not a run record or gate evidence and is the explicit startup exception to resolver-only destinations.
   - id: project-taste-preferences
     writer: taste
     tool: skills/taste/taste_prefs.py
@@ -188,6 +196,15 @@ classes:
       - skillset-saves/runs/*/*/verdict_*.json
       - skillset-saves/runs/*/*/verdict_*.md
     rule: The boundary's gatekeeper writes verdicts and never modifies the submission.
+  - id: mcp-registry-cache
+    writer: admiral
+    patterns:
+      - .harness-state/mcp-tools.md
+    rule: >-
+      Workspace/host MCP discovery cache, maintained by Admiral after confirmed
+      material changes. The installed mcp-tools.md is a template, not this cache.
+      Metadata freshness is diagnosed by scripts/mcp_registry.py; availability
+      and annotation retention remain host-aware judgement.
   - id: harness-guards
     writer: safety-guardrails
     filled_by: [guard, freeze, unfreeze]
@@ -196,7 +213,7 @@ classes:
       - .harness-state/guard-state.json
     rule: >-
       Owner-controlled protections written only through guard_state.py
-      (freeze/block/release/allow-dangerous/revoke-dangerous/read-only/release-read-only).
+      (freeze/block/adopt-legacy/release/allow-dangerous/revoke-dangerous/read-only/release-read-only).
       Every frozen_globs, blocked_globs, and read_only entry carries owner, scope, created_at,
       and released_at; a release sets released_at and never deletes the record, and age never
       expires a protection. allow_dangerous is an owned grant (owner, reason, scope, expires_at)

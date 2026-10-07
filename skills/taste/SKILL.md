@@ -9,8 +9,8 @@ description: >-
   export, or show effective preferences — “remember that I prefer,” “save this
   globally,” “only in this project” — even phrased casually. Ordinary design
   feedback is not a preference change.
-version: 1.1.0
-allowed-tools: Read, Grep, Glob, Bash, Write
+version: 1.1.2
+allowed-tools: Read, Grep, Glob, Bash, Write, Agent, Task
 ---
 
 # Taste
@@ -115,6 +115,15 @@ them.
 | `taste_snapshot` | `redesign-review` | The same snapshot for the redesign run, so variants are judged against the profile in force when they were built. | Yes — `artifact_evidence` at `redesign-review` names it here too | The same wording in the same applicability record; a snapshot that exists is shipped as a hashed file, never summarized |
 | `taste_grilling` | `redesign-review` | The `taste-grilling-log`: one category per prompt, the recommended answer, and what the user actually confirmed. | Yes — `artifact_evidence` at `redesign-review` names it, so the log ships as a hashed file | None — `../gates.yaml` lists no fallback for this key, and only keys in `fallback_values` are waivable, so a redesign records the grilling or the boundary does not close |
 
+The design pipeline's unconditional `taste-snapshot` stage delegates here, even
+without a preference mutation. Resolve the effective profile through `taste_prefs.py`
+and return a hashed immutable snapshot containing canonical digest, source revisions,
+resolved entries and applicability to `design/commander`, under the active run's
+design artifact destination. Both stores absent permits the sanctioned no-profile
+record. An existing unreadable or corrupt store blocks resolution, not absence.
+No mutation or new confirmation is inferred from ordinary consumption; preference
+changes return through Admiral into the Taste lifecycle before a new snapshot.
+
 A snapshot is immutable once handed over. When the profile changes mid-run, issue a new
 snapshot with a new digest rather than editing the one already submitted — a consumer that
 cited the old digest must be able to detect the drift.
@@ -133,10 +142,10 @@ python skills/taste/taste_prefs.py list --scope project
 python skills/taste/taste_prefs.py effective --scope both
 
 # first write into an empty scope (revision 0 -> 1)
-python skills/taste/taste_prefs.py set --scope project --id density --value '"Prefer compact layouts"'
+python skills/taste/taste_prefs.py set --scope project --id density --value '{"category":"density","normalized_rule":"Prefer compact layouts","strength":"strong","source":"explicit"}'
 
 # any later write requires --expect-revision (else the writer refuses with revision_required)
-python skills/taste/taste_prefs.py set --scope project --expect-revision 1 --id spacing --value '"tight"'
+python skills/taste/taste_prefs.py set --scope project --expect-revision 1 --id spacing --value '{"category":"layout","normalized_rule":"Prefer tight spacing","strength":"soft","source":"explicit"}'
 
 # promote writes global scope (or both) — never --scope project — with a revision per scope
 python skills/taste/taste_prefs.py promote --scope both --expect-revision project=2 --expect-revision global=0 --id density

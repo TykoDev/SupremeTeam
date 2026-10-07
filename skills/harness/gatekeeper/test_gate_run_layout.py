@@ -40,6 +40,16 @@ def waiver(key: str, scope: str = "whole run", decided_by: str = "commander") ->
     return {"applicable": False, "reason": SPEC["fallback_values"][key][0], "scope": scope, "decided_by": decided_by}
 
 
+def security_seed(revision: str = "r1") -> dict:
+    """The assessed no-boundary `security_seed` record the gate requires at schema 2.
+
+    A bare string such as "no external trust boundary" is not an assessment: the
+    typed record names its scope, decider, architecture revision and reason.
+    """
+    return {"applicable": False, "scope": "local design", "decided_by": "security-builder",
+            "architecture_revision": revision, "reason": "no external trust boundary", "boundaries": []}
+
+
 class RunLayoutFixture:
     """A canonical skillset-saves run with an intake grilling log."""
 
@@ -99,7 +109,7 @@ class EvidenceRootTests(unittest.TestCase):
             "evidence": {
                 "decisions": decisions, "architecture": "reports/architecture.md", "interfaces": "REST",
                 "plan": "reports/plan.md", "acceptance": "smoke + contract tests",
-                "security_seed": "no external trust boundary",
+                "security_seed": security_seed(),
                 "stack_lock": waiver("stack_lock"),
                 "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
                 "ui_evidence": waiver("ui_evidence", decided_by="architect"),
@@ -473,7 +483,7 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
             "evidence": {
                 "decisions": "../intake/report_grilling.md", "architecture": "reports/architecture.md",
                 "interfaces": "REST", "plan": "reports/plan.md", "acceptance": "smoke + contract tests",
-                "security_seed": "no external trust boundary",
+                "security_seed": security_seed(),
                 "stack_lock": {"slug": entry["slug"], "versions": entry["versions"], "overlay_sha256": entry["sha256"]},
                 "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
                 "ui_evidence": waiver("ui_evidence", decided_by="architect"),
@@ -705,7 +715,7 @@ class OverlayDigestPortabilityTests(unittest.TestCase):
                 "evidence": {
                     "decisions": "../intake/report_grilling.md", "architecture": "reports/architecture.md",
                     "interfaces": "REST", "plan": "reports/plan.md", "acceptance": "smoke + contract tests",
-                    "security_seed": "no external trust boundary",
+                    "security_seed": security_seed(),
                     "stack_lock": {"slug": entry["slug"], "versions": entry["versions"], "overlay_sha256": lf_digest},
                     "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
                     "ui_evidence": waiver("ui_evidence", decided_by="architect"),
@@ -739,7 +749,7 @@ class ArtifactHashPortabilityTests(unittest.TestCase):
             "evidence": {
                 "decisions": "../intake/report_grilling.md", "architecture": "reports/architecture.md",
                 "interfaces": "REST", "plan": "reports/plan.md", "acceptance": "smoke + contract tests",
-                "security_seed": "no external trust boundary",
+                "security_seed": security_seed(),
                 "stack_lock": {"slug": entry["slug"], "versions": entry["versions"], "overlay_sha256": entry["sha256"]},
                 "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
                 "ui_evidence": waiver("ui_evidence", decided_by="architect"),

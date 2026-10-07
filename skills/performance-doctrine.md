@@ -24,8 +24,8 @@ declared themselves binding for `benchmark`, `frontier`, `health-check`,
 `quality-review`, "and any build work that changes a hot path". The last clause
 had no boundary and no owner — every edit touches something that could be called
 a hot path — and the four named skills were not bound in any operative sense
-either: none of them references this file, so a run of any of them never loads
-it. A doctrine no bound skill loads cannot bind that skill by assertion.
+either: at that revision none referenced this file, so its discovery was not
+reliable. A doctrine no bound skill loads cannot bind that skill by assertion.
 
 The honest scope is therefore narrower and sharper. This doctrine applies
 whenever a run states that something is faster, lighter, or cheaper than it was,
@@ -41,18 +41,11 @@ build-phase claim, `code-chief` for a review-phase one — and either may engage
 delegation transfers the obligation: an unmeasured claim is the claiming skill's
 defect regardless of who could have measured it.
 
-**Reachability, stated plainly.** The only document in the catalog that links
-this file is
-[contracts/universal-frameworks.md](contracts/universal-frameworks.md), under
-*Measured optimization*. No `SKILL.md` and no skill reference document points
-here. In practice this doctrine is reached by a reader who already knows it
-exists, which is a real gap and is recorded as one rather than papered over with
-a binding claim. Closing it means adding a pointer from the skills that make
-performance claims. By the ownership rule just above, that is the phase lead who
-accepts such a claim into a package — `build-management` for a build-phase claim
-and `code-chief` for a review-phase one — so the edit belongs to those two
-skills, not to this file. `benchmark` and `frontier` may carry a pointer too, but
-neither owns the obligation, so neither closes the gap on its own.
+**Reachability.** `build/build-management/SKILL.md` and
+`review/code-chief/SKILL.md` now link this doctrine when accepting a performance
+claim, as does [contracts/universal-frameworks.md](contracts/universal-frameworks.md).
+The claiming owner remains responsible; a pointer improves discovery but does
+not prove the measurement happened.
 
 ## Enforcement status
 
@@ -64,9 +57,8 @@ report, so the whole file is one row:
 | Every step, threshold, and evidence requirement below | **judgement** | nothing |
 
 Concretely: no boundary in [gates.yaml](gates.yaml) requires a performance
-evidence key, no typed evidence record exists for one (`evidence_types` has
-`probe`, `render`, `scan`, `findings`, and the taste records, and none of them
-carries a latency, throughput, or memory field), and no script in the catalog
+evidence key, no typed evidence record exists for one (none of the declared typed kinds enforces a latency, throughput, memory,
+or comparative performance budget), and no script in the catalog
 checks these steps. An approved package therefore proves nothing about
 performance on its own. A reviewer applying this doctrine by hand is the only
 enforcement there is, and a reader must not infer otherwise from the fact that a

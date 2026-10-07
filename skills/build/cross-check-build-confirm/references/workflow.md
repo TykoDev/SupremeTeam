@@ -43,9 +43,11 @@ Two notes on scope. The `runtime` key is package-level rather than
 decision-level: it is checked once, as its own row with `decision_id: runtime`,
 because a startup smoke log proves the package boots rather than proving any
 single decision. A decision that legitimately touches no code — a documentation
-decision, a deferred decision recorded for lineage — is still a row, marked
-`proven` with its waiver reference rather than quietly omitted, because an
-omitted row is indistinguishable from a decision nobody checked.
+decision, a deferred decision recorded for lineage — is still a row. Bind it to
+the changed document or approved deferral artifact and its applicable verification;
+mark it `unproven` when that proof is missing. No-code does not waive implementation,
+`tests`, or `runtime`: only the `security_evidence` cell accepts its sanctioned
+applicability record. Never quietly omit a decision nobody checked.
 
 ## Status Vocabulary
 

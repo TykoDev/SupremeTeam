@@ -14,8 +14,8 @@ The phase-by-phase procedure for the `design` pipeline: the order phases run in,
 ## Design-Pipeline Sequence
 
 1. Establish the design entry conditions from the request, constraints, upstream approvals, and any saved stack-lock context.
-   The stage order is research, architecture, interface and design-system work, the security seed when a trust boundary exists, the delivery plan, the implementation spec, and the stack lock.
-2. Delegate only the earliest incomplete design phase and check its output against this file's acceptance checklist before advancing. The pipeline has one gate stage, `phase-gate`, after the stack lock: gatekeeper-design issues one `design-to-build` verdict for the whole package, not one per phase.
+   The stages are the taste snapshot and research (together, on the decisions), architecture, interface and design-system work when a user-facing surface exists, the unconditional security seed and the delivery plan (together, on the architecture), the implementation spec, and the stack lock.
+2. Delegate every incomplete stage whose requirements are met, in one turn (`../../../pipelines.yaml` `scheduling`), and check each output against this file's acceptance checklist before the stages that depend on it start. The pipeline has one gate stage, `phase-gate`, after the stack lock: gatekeeper-design issues one `design-to-build` verdict for the whole package, not one per phase.
 3. Reopen only the affected phase path when that verdict or drift invalidates downstream design work.
 4. Assemble the consolidated design package only after all required phase outputs and approval records align on the same revision.
 

@@ -10,8 +10,8 @@ description: >-
   merge, or pressure-test this project — even when the user only says review the
   code. Defers to `admiral` when cold; security governance to
   `review/cso`.
-version: 1.0.1
-allowed-tools: Read, Grep, Glob, Bash, Write
+version: 1.1.0
+allowed-tools: Read, Grep, Glob, Bash, Write, Agent, Task
 ---
 
 
@@ -106,7 +106,7 @@ orchestrator and gatekeeper to carry the clauses verbatim; a paraphrase is drift
 ## Workflow
 
 1. Classify the review scope and risk tier, then answer each condition `../../pipelines.yaml` attaches to a stage as a yes or no before assigning any phase: did a trust boundary change, is there an exploitable surface, did visible behavior change, did a visible surface change, did a developer-facing surface change. Also record the migration/deprecation surface, performance budget, and threat model the design and build packages carry.
-2. Run the three unconditional lenses on every review — `review/bug-review` (correctness), `review/code-review` (merge readiness), `review/quality-review` (maintainability) — then add each conditional lens whose answer in step 1 was yes: `review/security-review` when a trust boundary changed, `review/mr-robot` when an exploitable surface exists, `review/frontier` when visible behavior changed, `review/design-qa` when a visible surface changed, `review/devex-review` when a developer-facing surface changed. Record each no with its reason; an unrun lens whose condition held is a coverage gap, and a lens run without its surface is noise that dilutes the package.
+2. Run the three unconditional lenses on every review — `review/bug-review` (correctness), `review/code-review` (merge readiness), `review/quality-review` (maintainability) — then add each conditional lens whose answer in step 1 was yes: `review/security-review` when a trust boundary changed, `review/mr-robot` when an exploitable surface exists, `review/frontier` when visible behavior changed, `review/design-qa` when a visible surface changed, `review/devex-review` when a developer-facing surface changed. Record each no with its reason; an unrun lens whose condition held is a coverage gap, and a lens run without its surface is noise that dilutes the package. Schedule every lens that runs at once, in one delegation turn: each requires only the approved build (`../../pipelines.yaml` `scheduling`), so none waits on another and the review's wall-clock is the slowest lens rather than their sum.
 3. Escalate to `admiral` the moment security governance, accepted-risk decisions, or release security posture enter scope. Those judgments belong to the `security` pipeline under `cso`, gated at `security-review`, and `../../pipelines.yaml` gives the `review` pipeline no cso stage, so there is no lens here to schedule for them.
 4. Require each lens to separate blockers from optional cleanup, and to distinguish behavior-preserving simplification from speculative refactoring.
 5. Merge specialist reports into one review package without losing conflicting evidence, and carry the execution manifest that records every conditional lens that did not run together with the condition that was false.
@@ -144,8 +144,8 @@ the package records when it is present.
 - Record each boundary before requesting a verdict.
 - Reuse prior verdicts only when the package revision is unchanged.
 - Push remediation back to the owning sub-surface instead of editing its package locally.
-- Self-check before submitting: run `python skills/harness/gatekeeper/check.py --boundary review-to-delivery --package skillset-saves/runs/<run>/review/manifest.json` (no `--verdict-out`) from the project root (the directory that holds `skillset-saves/`), so the script path and `--package` resolve from the same directory and fix every mechanical failure first; a package that fails the machine is never submitted (`../../gates.yaml` `revise_policy.self_check`).
-- Treat a `REVISE` as one packet: delegate each owner group in `revise_packet.by_owner` in parallel, batching every finding for a specialist into a single revision delegation, and resubmit once with `--prior` so the gate re-judges only `changed_evidence`.
+- Self-check before submitting: run `python skills/harness/gatekeeper/check.py --boundary review-to-delivery --package skillset-saves/runs/<run>/review/manifest.json` (no `--verdict-out`) from the project root (the directory that holds `skillset-saves/`), so the script path and `--package` resolve from the same directory and fix every mechanical failure first; a package that fails the machine is never submitted (`../../gates.yaml` `revise_policy.self_check`). Run the phase gatekeeper's package-shape validator too, `python skills/review/gatekeeper-code/scripts/check.py skillset-saves/runs/<run>/review`, so a packet missing its marker fields, a near-miss filename, or a blocked phrase is fixed here and never costs a gate round.
+- Treat a `REVISE` as one packet: delegate each owner group in `revise_packet.by_owner` in parallel, batching every finding for a specialist into a single revision delegation, and resubmit once with `--prior` so the gate re-judges only `changed_evidence`. Re-run only the stages whose outputs the packet names or whose `requires` depend on an output that changed (`revise_policy.rerun_scope`); a key this skill authors itself is corrected in place with no specialist re-run, and unchanged evidence carries with its prior judgment. A gate returns REVISE only for a mechanical failure, a Critical, or an unresolved Major (`revise_policy.revise_threshold`), so Minor and Info findings on an APPROVED verdict are carried into the package, not fixed before advancing.
 
 ## Skip Rule
 
@@ -168,6 +168,10 @@ in `references/failure-modes.md`, which repeats none of these rows.
 ## Save Protocol
 
 See `references/workflow.md` — "Save Instructions Per Lens" and "Save Context Block Template" — for the full trigger table, file ownership rules, and the block to include in every specialist delegation.
+
+Any performance claim accepted into this review follows
+`../../performance-doctrine.md`: measurement belongs to the claiming owner;
+functional checks and rendered captures do not establish a speedup.
 
 ## References
 

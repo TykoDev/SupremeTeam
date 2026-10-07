@@ -8,7 +8,7 @@ description: >-
   an action, not a document: issues a go, no-go, or escalate verdict and nothing else.
   Locking a path belongs to `freeze`, both halves together to `guard`, lifting a lock
   to `unfreeze`.
-version: 1.0.1
+version: 1.0.2
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 

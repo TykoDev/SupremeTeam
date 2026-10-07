@@ -8,7 +8,7 @@ description: >-
   prepare authenticated access, or verify a protected page loads as the intended
   account. Supplies the signed-in state; opening the window itself is `open-browser`,
   driving the page is `browse`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -52,7 +52,7 @@ Route elsewhere to launch the workspace (`open-browser`), drive page interaction
    ```
 
    ```powershell
-   # Windows (repo is Windows-primary; chmod is a no-op here):
+   # Windows (a supported peer of Linux and macOS; use a native ACL):
    icacls "$Bundle" /inheritance:r /grant:r "$($env:USERNAME):(R,W)"
    ```
 

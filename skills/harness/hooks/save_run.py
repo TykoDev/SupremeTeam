@@ -85,6 +85,7 @@ _bootstrap.ensure_paths()
 from data_formats import content_sha256  # noqa: E402
 from save_taxonomy import (  # noqa: E402
     ACTIVE_STATUSES, HISTORY, JOURNAL, POINTER, RUN_ID, RUN_ID_RULE, SCHEMA_VERSION, TERMINAL_STATUSES, WRITE_LOCK,
+    protocol_state_for,
 )
 from _saves import (  # noqa: E402
     ACCESS_DENIED_STEP, heartbeat_is_stale, inspect_run, inspect_saves, is_directory, next_step, parse_timestamp, path_exists,
@@ -463,7 +464,7 @@ class RunStore:
                 "schema_version": SCHEMA_VERSION, "run_id": self.run_id, "status": "active", "session_pin": True,
                 "revision": 1, "active_owner": owner, "evidence_paths": sorted(hashes), "timestamp": stamp,
                 "execution_mode": execution_mode, "persistence_probe": "ok", "next_action": next_action,
-                "artifact_hashes": hashes, "parent_revision": None, **extra,
+                "artifact_hashes": hashes, "parent_revision": None, "protocol_state": "INTAKE", **extra,
             }
             lock = {"schema_version": SCHEMA_VERSION, "run_id": self.run_id, "owner": owner, "status": "held",
                     "session_pin": True, "revision": 1, "heartbeat": stamp, "acquired_at": stamp}
@@ -519,6 +520,7 @@ class RunStore:
             prior_hashes = dict(state.get("artifact_hashes") or {})
             hashes = {path: digest for path, digest in prior_hashes.items() if path in merged}
             hashes.update(self.evidence_hashes(merged, registered))
+            extra = merge_engagement(state, extra)
             stamp = now_iso()
             self.snapshot(current)
             new_state = {**state, **extra, "status": status, "session_pin": True, "revision": current + 1,
@@ -604,7 +606,8 @@ class RunStore:
             current = int(state.get("revision", 0))
             stamp = now_iso()
             self.snapshot(current)
-            new_state = {**state, **extra, "status": status, "session_pin": False, "revision": current + 1,
+            new_state = {**state, **merge_engagement(state, extra), "status": status, "session_pin": False, "revision": current + 1,
+                         "protocol_state": "COMPLETE" if status == "complete" else "BLOCKED" if status == "blocked" else "INTAKE",
                          "parent_revision": current, "timestamp": stamp,
                          "next_action": next_action if next_action is not None else state.get("next_action")}
             new_lock = {**lock, "status": "released", "session_pin": False, "revision": current + 1,
@@ -754,15 +757,45 @@ class RunStore:
         return result
 
 
+def merge_engagement(state: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
+    """Keep the canonical engagement list append-only, including terminal writes."""
+    if "skills_engaged" not in extra:
+        return extra
+    prior = state.get("skills_engaged", [])
+    if isinstance(prior, str):
+        try:
+            prior = json.loads(prior)
+        except ValueError as exc:
+            raise Refused("stored skills_engaged is malformed; preserve it for recovery") from exc
+    incoming = extra["skills_engaged"]
+    if any(not isinstance(items, list) or any(not isinstance(name, str) or not name.strip() for name in items)
+           for items in (prior, incoming)):
+        raise Refused("skills_engaged must be a list of non-blank skill names")
+    return {**extra, "skills_engaged": list(dict.fromkeys([*prior, *incoming]))}
+
+
 def parse_extra(values: list[str]) -> dict[str, Any]:
     extra: dict[str, Any] = {}
     for item in values or []:
         if "=" not in item:
             raise Refused(f"--set expects key=value, got {item!r}")
         key, value = item.split("=", 1)
-        if key in {"schema_version", "run_id", "status", "session_pin", "revision", "parent_revision", "active_owner", "evidence_paths", "timestamp", "artifact_hashes"}:
+        if key in {"schema_version", "run_id", "status", "session_pin", "revision", "parent_revision", "active_owner", "evidence_paths", "timestamp", "artifact_hashes", "protocol_state"}:
             raise Refused(f"--set may not override reserved field {key!r}")
+        if key == "skills_engaged":
+            try:
+                value = json.loads(value)
+            except ValueError as exc:
+                raise Refused("skills_engaged must be a JSON list of skill names") from exc
+            if not isinstance(value, list) or any(not isinstance(name, str) or not name.strip() for name in value):
+                raise Refused("skills_engaged must be a JSON list of skill names")
+            value = list(dict.fromkeys(value))
         extra[key] = value
+    if "phase_state" in extra:
+        try:
+            extra["protocol_state"] = protocol_state_for(extra["phase_state"])
+        except ValueError as exc:
+            raise Refused(str(exc)) from exc
     return extra
 
 
@@ -770,7 +803,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Supreme Team save lifecycle writer.")
     parser.add_argument("operation", choices=["create", "checkpoint", "heartbeat", "complete", "block", "release", "recover", "status"])
     parser.add_argument("--project-root", default=None, help="project root (default: nearest marked ancestor of the working directory)")
-    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--run-id", help="required for mutations; omit on status to classify the save root")
     parser.add_argument("--owner", default="admiral")
     parser.add_argument("--evidence", action="append", default=[], help="project-relative evidence path (repeatable); create requires at least one")
     parser.add_argument("--drop-evidence", action="append", default=[], help="checkpoint: stop registering this evidence path (repeatable; needs --reason)")
@@ -785,9 +818,17 @@ def main() -> int:
     parser.add_argument("--lock-timeout", type=float, default=WRITER_LOCK_TIMEOUT,
                         help="seconds to wait for another writer before refusing (default: %(default)s)")
     args = parser.parse_args()
+    if args.operation != "status" and not args.run_id:
+        parser.error("--run-id is required for mutations")
     store = None
     try:
-        store = RunStore(Path(args.project_root) if args.project_root else _state.project_root(), args.run_id,
+        root = Path(args.project_root) if args.project_root else _state.project_root()
+        if args.operation == "status" and not args.run_id:
+            result = inspect_saves(root)
+            result.update({"operation": "status", "result": "ok"})
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return EXIT_OK
+        store = RunStore(root, args.run_id,
                          lock_timeout=max(0.0, args.lock_timeout))
         extra = parse_extra(args.set)
         if args.operation == "block" and args.reason:

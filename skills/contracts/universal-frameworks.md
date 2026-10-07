@@ -5,152 +5,87 @@
 - Responsibility
 - Governing contract index
 - Cross-cutting frameworks
-- What this file enforces
+- Enforcement limits
 - Pointer failure paths
-- Unbacked pointer of record: performance-doctrine
+- Performance claims
 - Use
 
 ## Responsibility
 
-This file is the index of the shared contract layer. It states which document
-governs which concern, and whether that document's rules are mechanically
-checked or judgement-only. It carries no invariant of its own: every rule named
-here lives in the target, and where this index and its target disagree, the
-target is authoritative and the row here is the defect.
-
-"Machine-checked" means a script or test in this repository fails when the rule
-is broken, and the row names it. "Judgement" means a reader applies the rule and
-nothing detects a violation. A row may be partly backed; the row says which part.
+This is the shared contract index, not a new source of invariants. Each target
+owns its rule; where a row and its target disagree, the target wins and this row
+is the defect. Machine checks establish only the facts named below. Judgement
+means a reviewer still owes the semantic assessment, not that tests never read
+that document.
 
 ## Governing contract index
 
 | Concern | Governing document | Backing | Comparator |
 |---------|--------------------|---------|------------|
-| Lifecycle states, transitions, rewind, resume | [workflow-protocol](workflow-protocol.md) | partial | `../harness/gatekeeper/test_gate_manifests.py` (`GateSpecContractTests.test_documented_boundary_table_matches_gate_spec`) compares the boundary-name set of its gate table against [gates.yaml](../gates.yaml). States, edges, revision lineage, rewind, and resume are judgement. |
-| Gate boundaries, required evidence, typed records | [gates.yaml](../gates.yaml) | machine-checked for shape and digests; a typed record's content is attested | [`check.py`](../harness/gatekeeper/check.py) judges a submission against the boundary; `test_gate_manifests.py`, `test_gate_run_layout.py`, `test_gate_revise.py`, and `test_gate_engine.py` pin the spec shape and the documented mirrors. It checks each typed record's shape and the digests it names, never the content of an artifact. |
-| What can support a claim | [evidence-standards](evidence-standards.md) | partial | `check.py` enforces artifact backing, artifact hashes, waiver shape and wording, and revision lineage. It re-hashes `inputs` where a typed record names them and requires them for `scan` and `render` records only; a typed record is otherwise the submitter's own statement, and the gate never compares an artifact's content with what a record claims. Specificity, trust, calibration, and retention are judgement. |
-| One writer per artifact | [ownership.yaml](../ownership.yaml) | machine-checked | [`validate_manifests.py`](../scripts/validate_manifests.py) (`check_ownership`), and `../validation/test_catalog_contracts.py` (`OwnershipProseTests`) for prose that contradicts `does_not_write`. |
-| One writer per generated path class | [save-ownership.yaml](../save-ownership.yaml) | partial | `../validation/test_save_contracts.py` (`OwnershipAgreementTests`, `GeneratedRootPolicyTests`) and `test_catalog_contracts.py` (`GuardWriterTests`, `ToolSurfaceTests`). Enforcement at write time exists only for the classes the pre-tool hook names. |
-| Where generated output lands | [save-protocol](../save-protocol.md) with [`output_paths.py`](../scripts/output_paths.py) | partial | `output_paths.resolve` refuses traversal and unknown kinds; `GeneratedRootPolicyTests` pins every project kind under a declared generated root; the pre-tool hook denies direct writes to the core run files. The target's own `## Enforcement` section labels several §1 clauses judgement — the `_latest.md` fallback rule, the `verdict_{boundary}.cross-stage.json` naming convention, and which of the four governed subdirectories a file belongs in — so `machine-checked` would overstate the concern as a whole. Per *Pointer failure paths*, the target wins. |
-| Pipeline stages, stage owners, closing boundary | [pipelines.yaml](../pipelines.yaml) | machine-checked | `validate_manifests.py` (`check_pipeline_mirrors`) and `../validation/test_pipeline_contracts.py`. |
-| Roster and skill count | [team-manifest.yaml](../team-manifest.yaml) | machine-checked | `validate_manifests.py`: `check_team` for the role keys, list keys, state root, and verdict set; `check_pipeline_mirrors` for `skill_count` against the SKILL.md files on disk. |
-| Preamble tiers and execution clauses | [execution-contract](../execution-contract.md) | machine-checked | `test_catalog_contracts.py` (`ExecutionContractTests`) requires all six clauses verbatim in every bound orchestrator and gatekeeper. |
-| Delegation record fields | [handoff-templates](handoff-templates.md) | partial | `test_catalog_contracts.py` (`SaveContextParityTests`) compares the Save Context field set against the canonical block, but only for a copy that carries the `Run ID` anchor line: a file that only mentions the words "Save Context" in prose is skipped. No count of parsed and skipped files is recorded here, because a hand count goes stale on the next edit. Request fields, response fields, and the Taste example are judgement. |
-| Final delivery record | [delivery-template](delivery-template.md) | judgement | No comparator opens `delivery-template.md` — verified by searching every `test_*.py` under `skills/` for the filename as a quoted string, the same test the catalog's own `ClaimedEnforcementTests` uses to catch a document denying a comparator it has. |
-| Layer triggers, owners, and one-writer prose | [responsibility-matrix](responsibility-matrix.md) | partial | `test_catalog_contracts.py` `DeclaredCoverageTests` opens exactly two passages of it — the `## Specialists` roster against `team-manifest.yaml`, and the `\| RELEASE ` row against `pipelines.yaml` and the `gates.yaml` submitter, the latter satisfied when one cell of that row *is* the owner's name — a cell that merely contains it does not count, though which cell it is goes unchecked. Triggers, Inputs/Outputs, and the one-writer prose are judgement. Its Gate coverage table and Layer matrix Owner column are neither: the target's `## Enforcement` names them as *mirror gaps* — every cell derivable from `gates.yaml`, `pipelines.yaml`, or `team-manifest.yaml`, and no comparator written yet. |
-| Runtime floor, launchers, commands | [runtime-manifest.yaml](../runtime-manifest.yaml) | machine-checked | [`check_runtime.py`](../scripts/check_runtime.py) compares the live interpreter against the declared minimum. `validate_manifests.py` (`check_runtime`) covers all three parts of this concern, not only the floor: `major.minor` shape and a 3.9 lower bound, `stdlib_only_for_hooks_and_gates`, an on-disk fallback path for every optional dependency, and the presence of every entry in `REQUIRED_LAUNCHERS` and `REQUIRED_COMMANDS`. That a launcher works is not checked — only that it is declared. |
-| Package contents and delivery residue | [package-manifest.yaml](../package-manifest.yaml) | partial | [`package_check.py`](../scripts/package_check.py) enumerates the selected set and rejects residue classes (matched case-insensitively), symlinks, and the contents of a nested `.git/`; `validate_manifests.py` (`check_package`) checks required excludes and three delivery-contract booleans. |
-| Intake grilling | [grill-me-doctrine](../grill-me-doctrine.md) | partial | The grilling log is a hashed artifact behind the `decisions` gate key; `check.py` enforces the artifact and its hash, never the quality of the grilling. |
-| Presentation and interaction preferences | [taste-doctrine](../taste-doctrine.md) | machine-checked at the boundary, judgement in the doctrine | The `taste-review` boundary requires twelve keys, judged by `check.py`. Six are artifact-backed (`preference_diff`, `confirmation`, `conflict_analysis`, `persistence_result`, `effective_profile`, `taste_review_record`) and six carry a typed record shape (the same list with `taste_review_record` replaced by `consumer_handoff`) — two sets of six that overlap in five, not one set of six. Whether a recorded preference reflects what the user actually wants is judgement. |
-| Measured optimization | [performance-doctrine](../performance-doctrine.md) | judgement | None. See "Unbacked pointer of record" below. |
+| Lifecycle states, transitions, rewind, resume | [workflow-protocol](workflow-protocol.md) | partial | `../validation/test_orchestration.py` `GuardedTransitionTests` parses declared states and checks gate guard edges. `../harness/gatekeeper/test_gate_manifests.py` compares boundary names; `../validation/test_docs_inventory.py` `GateProseTests` compares Submitter cells. Actual run transitions and semantic rewind decisions remain judgement. |
+| Gate boundaries, required evidence, typed records | [gates.yaml](../gates.yaml) | partial | `../harness/gatekeeper/check.py` checks required keys, sanctioned applicability, typed shapes, digests and lineage. `../scripts/contract_floor.py` independently protects shipped obligations. Records attest observations; hashes do not prove their truth. |
+| Claim support | [evidence-standards](evidence-standards.md) | partial | The gate checks artifact backing, hashes and input binding where required. It reads `.md` and `.txt` artifacts for blocked phrases and links; it does not compare their substantive contents with record claims. Specificity, trust, calibration and retention remain judgement. |
+| Artifact ownership | [ownership.yaml](../ownership.yaml) | partial | `../scripts/validate_manifests.py` checks declared writers; `../validation/test_catalog_contracts.py` `OwnershipProseTests` checks selected SKILL.md claims. References and actual authorship are not fully checked. |
+| Generated path ownership | [save-ownership.yaml](../save-ownership.yaml) | partial | `../validation/test_save_contracts.py` compares path policies; the pre-tool hook enforces only classes it recognizes, not every role or generated file. |
+| Output destinations | [save-protocol](../save-protocol.md) | partial | `../scripts/output_paths.py` rejects unsupported kinds and traversal. Core run records use `save_run.py`. Phase directories and verdict naming conventions remain partly policy. |
+| Pipeline stages and dependencies | [pipelines.yaml](../pipelines.yaml) | partial | `validate_manifests.py` and `../validation/test_pipeline_contracts.py` compare owners, boundaries, artifacts, scripts and declared dependency order. They do not prove stage execution or approval. |
+| Roster | [team-manifest.yaml](../team-manifest.yaml) | partial | `validate_manifests.py` checks membership, role/list shapes and skill count. Routing classes also have catalog comparators; arbitrary grouping choices are not fully validated. |
+| Execution clauses | [execution-contract](../execution-contract.md) | partial | `test_catalog_contracts.py` `ExecutionContractTests` compares six clauses in bound skills. Run tier selection and response quality remain judgement. |
+| Delegation | [handoff-templates](handoff-templates.md) | partial | `SaveContextParityTests` compares discovered blocks carrying the Run ID anchor. Request/response semantics and skipped prose-only mentions are not validated. |
+| Delivery record | [delivery-template](delivery-template.md) | authored policy | A complete response and its approval scope require review; generic catalog text scans are not a delivery-shape validator. |
+| Layer owners and gate coverage | [responsibility-matrix](responsibility-matrix.md) | partial | `../validation/test_contract_mirrors.py` compares exact Owner cells and every Gate coverage column; `DeclaredCoverageTests` checks specialist coverage. Trigger, input/output and one-writer prose remain judgement. |
+| Runtime | [runtime-manifest.yaml](../runtime-manifest.yaml) | partial | `../scripts/check_runtime.py` checks the interpreter. `validate_manifests.py` checks floor, launchers, commands and optional-dependency fallbacks; declaration is not proof that each launcher works. |
+| Package delivery | [package-manifest.yaml](../package-manifest.yaml) | partial | `../scripts/package_check.py` rejects residue, symlinks and nested Git state in the selected set; manifest validation checks excludes and delivery flags. |
+| Intake | [grill-me-doctrine](../grill-me-doctrine.md) | partial | The gate checks the hashed `decisions` artifact, not interview quality or whether it happened at the right time. |
+| Preferences | [taste-doctrine](../taste-doctrine.md) | partial | `taste_prefs.py` validates storage and proposals; `taste-review` checks required evidence and typed records. User intent, complete semantic resolution and absence of a saved profile are not proved by record shape. |
+| MCP discovery | [mcp-tools](../mcp-tools.md) | partial | `../scripts/mcp_registry.py` diagnoses metadata TTL and host/workspace identity. It never proves live availability or permissions, and a blank template never blocks unrelated intake. |
+| Measured optimization | [performance-doctrine](../performance-doctrine.md) | judgement for measurement obligations | No performance gate key or typed timing record exists. Read the claim-triggered guidance; structural catalog coverage is not measurement validation. |
 
 ## Cross-cutting frameworks
 
-These are the cross-cutting invariants for delivery work. They point to the
-specialist references that define the detailed practice instead of duplicating
-it here. The `Backing` column states what fails when the invariant is broken.
+| Framework | Minimum invariant | Practice |
+|-----------|-------------------|----------|
+| Context-first build | Read neighboring contracts and observed evidence before implementation. | [bob-the-builder](../build/bob-the-builder/SKILL.md), [researcher](../design/researcher/SKILL.md) |
+| Grilled intake | Resolve load-bearing branches and record deferrals with reopen triggers. | [grill-me-doctrine](../grill-me-doctrine.md) |
+| Systematic debugging | Reproduce, isolate one mechanism, test a candidate and return the bounded repair to its writer. | [investigate](../investigate/SKILL.md), [debugger](../build/debugger/SKILL.md) |
+| Stack discipline | Lock versions and record dependency decisions. | [tech-stacks registry](../tech-stacks/registry.yaml) |
+| Design system | One component model, responsive tiers, accessibility as correctness. | [design-doctrine](../design-doctrine.md), [architect](../design/architect/SKILL.md) |
+| Redesign parity | Inventory first; four static directions; select before one living build. | [redesign](../design/redesign/SKILL.md), [design-mapper](../design/design-mapper/SKILL.md) |
+| Taste | Confirm provenance, apply deterministic scope precedence, never outrank mandatory requirements. | [taste-doctrine](../taste-doctrine.md) |
+| Release readiness | Configuration, rollback, owner go and exact revision binding precede rollout. | [ship](../ship/SKILL.md) |
+| Adversarial review | Preserve evidence, failure paths, gaps and finding severity/status. | [code-chief](../review/code-chief/SKILL.md), [mr-robot](../review/mr-robot/SKILL.md) |
+| Denial paths | Authorized probes demonstrate trust-boundary behavior rather than inferring it. | [security-review](../review/security-review/SKILL.md) |
+| Optimization | Baseline, one mechanism, noise bounds and unchanged acceptance budgets. | [performance-doctrine](../performance-doctrine.md), [benchmark](../benchmark/SKILL.md) |
+| Evidence-first reporting | Claim, scope, revision, hash, gap and trust level travel together. | [evidence-standards](evidence-standards.md) |
 
-| Framework | Minimum invariant | Backing | Specialized reference |
-|-----------|-------------------|---------|-----------------------|
-| Context-first build | Read the repository, neighboring contracts, constraints, and current evidence before choosing an implementation. | judgement | [bob-the-builder](../build/bob-the-builder/SKILL.md) and [researcher](../design/researcher/SKILL.md) |
-| Grilled intake | Resolve every load-bearing branch, record rejected options and deferrals with reopen triggers, and hash the log as the decisions artifact. | partial: the hashed artifact is checked, the reasoning is not | [grill-me-doctrine](../grill-me-doctrine.md) |
-| Systematic debugging | Reproduce the failure, reduce it to one variable, identify the mechanism, then fix the class and rerun the failing proof. | partial: `investigation-review` requires an artifact-backed `reproduction` and `evidence_chain` | [investigate](../investigate/SKILL.md) and [debugger](../build/debugger/SKILL.md) |
-| Stack discipline | Lock the runtime, framework, and interface versions at design time against the registry; a new dependency is a recorded decision, not a side effect. | partial: `stack_lock` is a required typed record at `design-to-build` | [tech-stacks/registry.yaml](../tech-stacks/registry.yaml) and `scripts/check_runtime.py --detect-project` |
-| Design system | One component template, one UI/UX handoff, six responsive tiers, accessibility as correctness. | judgement | [design-doctrine](../design-doctrine.md) and [architect](../design/architect/SKILL.md) |
-| Redesign parity | Map before changing anything: a stable-id inventory of the current design is the parity contract, four differentiated static mocks are compared on evidence, one is selected, and only then is a living prototype built for the chosen direction. | partial: `redesign-review` requires `mock_set`, `mock_parity`, `selection`, `selected_variant`, and `parity_evidence`; both parity records are produced with [`check_parity.py`](../scripts/check_parity.py) (`--level mock` for the drafts, `--level full` for the selected variant), and `check.py` requires the built variant's id to equal `selection.chosen` | [redesign](../design/redesign/SKILL.md) and [design-mapper](../design/design-mapper/SKILL.md) |
-| Taste | Apply user-authored or explicitly confirmed presentation and interaction preferences with scoped provenance and deterministic project-over-global resolution; never override mandatory requirements. | machine-checked at `taste-review` | [taste-doctrine](../taste-doctrine.md) |
-| Deployment readiness | Verify configuration, artifacts, permissions, target assumptions, rollback, and runtime evidence before an external release. | partial: `deploy-readiness` requires the evidence keys; the deployment itself is observed by no comparator | [ship](../ship/SKILL.md) and [health-check](../build/health-check/SKILL.md) |
-| Adversarial review | Search for failure paths, regressions, missing evidence, and interface risk; grade observed findings separately from inference. | judgement | [code-chief](../review/code-chief/SKILL.md) and [bug-review](../review/bug-review/SKILL.md) |
-| Security denial-path tests | Prove that unauthorized, malformed, replayed, expired, and over-broad requests are denied at the trust boundary. | partial: `security-review` requires artifact-backed deny-path evidence; probe adequacy is judgement | [mr-robot](../review/mr-robot/SKILL.md) and [security-review](../review/security-review/SKILL.md) |
-| Measured optimization | Baseline, bound, one mechanism at a time, and a preserved threshold. | judgement only: no gate key, no typed record, no script | [performance-doctrine](../performance-doctrine.md) and [benchmark](../benchmark/SKILL.md) |
-| Evidence-first reporting | Put claims, gaps, proof, hashes, scope, and revision beside the result; never turn an unavailable check into approval. | partial: hashes and artifact backing are checked by `check.py`, and source binding for the records that carry `inputs` (required for scan and render); calibration is judgement | [evidence-standards](evidence-standards.md) and [gatekeeper-admiral](../gatekeeper-admiral/SKILL.md) |
+## Enforcement limits
 
-## What this file enforces
-
-Nothing. No script parses this index and no test names `universal-frameworks.md`,
-so a stale row stays invisible until a reader follows it. That is a claim with a
-method: search every `test_*.py` under `skills/` for the filename as a quoted
-string — a mention in a comment is not a comparator. Re-run it before trusting
-this paragraph, because the catalog's `ClaimedEnforcementTests` fails a document
-that denies a comparator it actually has, and the failure mode here is the
-reverse — a comparator added later leaving this line quietly false.
-
-The rows above are claims about siblings, and the authority for each claim is the
-sibling. Every row was re-walked against its named comparator on 2026-09-16.
-
-Two rules are commonly attributed to this file. Neither originates here, and
-each holds only where its canonical contract is enforced:
-
-- One writer per artifact is enforced in [ownership.yaml](../ownership.yaml) by
-  `validate_manifests.py`, which rejects an artifact whose declared owner is not
-  its sole declared writer, and by `test_catalog_contracts.py`, which rejects
-  prose claiming authorship of an artifact listed under `does_not_write`. A
-  specialist reference cannot weaken it, because neither comparator reads the
-  specialist reference.
-- Evidence sufficiency is enforced at the gate by
-  [`check.py`](../harness/gatekeeper/check.py) for the keys
-  [gates.yaml](../gates.yaml) declares. A specialist reference cannot weaken
-  those keys, because the boundary contract is read from `gates.yaml` rather
-  than from the reference.
-
-A specialist reference may add requirements for its domain. It may not remove a
-required gate key or reassign a declared writer, and an attempt to do either
-fails at the comparators named above rather than here. Everything a specialist
-reference adds beyond those keys is judgement and is checked by nothing.
+`../validation/test_docs_inventory.py` reads this file for selected gate claims;
+`test_catalog_contracts.py` scans catalog prose. Neither parses every row of this
+index into a complete semantic model. The named sibling comparators, not this
+index, decide what is actually checked. A new domain requirement needs its own
+producer and evidence; it cannot remove a required gate key or reassign a writer.
 
 ## Pointer failure paths
 
-- A target is missing or unreadable. The concern is ungoverned. Record the
-  broken pointer, treat dependent work as blocked on a contract, and escalate.
-  The one-line summary in a row is an index entry, never a substitute for the
-  contract it points at.
-- A target contradicts its row. The target wins. The row is the defect: correct
-  the row, and never edit the target to match the index.
-- Two rows point at documents that disagree. Resolve against the governing
-  document named for that concern in the Governing contract index. When both are
-  governing, the conflict is a contract defect that escalates to the owner of
-  the more specific document.
-- A row names a comparator that does not exist or no longer runs. The row is
-  false, and the concern is judgement until the comparator is restored. An
-  unavailable check is never approval.
-- A concern has no row here. It is ungoverned by this layer: routing belongs to
-  [responsibility-matrix](responsibility-matrix.md) and the write boundary to
-  [ownership.yaml](../ownership.yaml).
+- Missing/unreadable target: record the broken pointer, block dependent work and
+  escalate; the index summary is not a substitute for the target.
+- Target and row disagree: correct the row, not the target to match the index.
+- Governing targets conflict: escalate the contract defect to the relevant owner.
+- Named comparator missing or unable to run: mark that check unverified; never
+  infer approval from absence of output.
+- Concern not covered: Admiral routes the gap; do not invent an implicit owner.
 
-## Unbacked pointer of record: performance-doctrine
+## Performance claims
 
-[`../performance-doctrine.md`](../performance-doctrine.md) is reachable from
-this index and from the repository documentation, and from no SKILL.md and no
-skill reference document in the catalog.
-
-Its scope is claim-triggered, not skill-bound. The file explicitly retires an
-earlier revision that declared itself binding on `benchmark`, `frontier`,
-`health-check`, and `quality-review` — none of the four names it, so the
-assertion bound nothing — and replaces it with a rule keyed to the statement
-rather than the code: the doctrine applies whenever a run states that something
-is faster, lighter, or cheaper than it was, or that a change will not make it
-slower, whatever skill is running. Touching a hot path without making such a
-claim engages nothing. Ownership follows the same trigger: the skill that states
-the improvement owns the measurement, which inside a delivery run is the phase
-lead who accepts the claim into the package (`build-management` for a build-phase
-claim, `code-chief` for a review-phase one), and delegating the measurement to
-`benchmark` or `frontier` does not transfer the obligation.
-
-The file also records its own reachability as a gap rather than papering over
-it: no skill points at it, so in practice it is read by someone who already
-knows it exists, and closing that gap means adding pointers from the skills that
-make performance claims.
-
-Nothing in it is machine-checked, and it says so: no boundary in
-[gates.yaml](../gates.yaml) requires a performance evidence key, no typed
-evidence record carries a latency, throughput, or memory field, and no script
-checks its steps. The Measured optimization row is therefore a pointer to
-guidance a reviewer applies by hand. An approved package proves nothing about
-performance, and a performance claim carries only the trust level its own
-evidence supports under [evidence-standards](evidence-standards.md).
+Build-management and code-chief link the performance doctrine when accepting a
+performance claim. Benchmark and frontier may measure; delegation does not move
+responsibility for the claim. Touching a hot path alone does not establish a win.
+No approved package, render capture or functional test substitutes for a measured
+baseline on a suitable host. Lack of a rig is a verification gap, not permission
+to lower a budget or report an inferred speedup.
 
 ## Use
 
-Apply the smallest relevant set, record which framework was used, and link its
-evidence in the delivery or review record. Where a row reads `judgement`, record
-that fact beside the claim rather than implying a check ran.
+Apply the smallest relevant set and cite its evidence. Distinguish a static
+contract comparison, an observed run, an attested record and semantic judgement.

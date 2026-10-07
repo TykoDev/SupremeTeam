@@ -1527,9 +1527,11 @@ class McpRegistryTemplateTests(unittest.TestCase):
         for stale in ("codex_app", "codex_apps", "multi_agent_v1", "node_repl", "playwright", "2026-06-30"):
             self.assertNotIn(stale, self.text)
 
-    def test_the_prose_still_describes_the_epoch_branch_admiral_relies_on(self):
-        self.assertIn("epoch placeholder", self.text)
+    def test_the_prose_describes_blank_discovery_without_an_intake_pause(self):
+        self.assertIn("undiscovered", self.text)
         self.assertIn("discovery_ttl_hours", self.text)
+        self.assertIn(".harness-state/mcp-tools.md", self.text)
+        self.assertIn("not an expired confirmed cache", self.text)
 
 
 if __name__ == "__main__":

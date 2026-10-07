@@ -58,6 +58,11 @@ conduct. Both halves matter, and only one of them is mechanical.
 
 ## Tier selection
 
+Clause 3's "resolve Major" includes a verified fix, a not-applicable reason, or a
+boundary-sanctioned `deferred` finding with its owner and reopen trigger (`gates.yaml`
+`finding_policy.major_deferral`, `finding_policy.statement`). An open or blocking Major is not resolved;
+a deferral is tracked residual risk, never a claim that the defect was fixed.
+
 Tier is a property of the run, not a fixed attribute of a skill. The same skill
 runs at Tier 0 for a typo fix and at Tier 3 for an authentication change. Blast
 radius decides:

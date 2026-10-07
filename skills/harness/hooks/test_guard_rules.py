@@ -17,6 +17,7 @@ import random
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -472,9 +473,18 @@ def spell(templates, path: str) -> list:
     return [text.replace("{PB}", path.replace("/", "\\")).replace("{P}", path) for text in templates]
 
 
+# Literal native command payloads have placed targets; stdin, diffs, runtime
+# values and unparsed interpreter writes do not. Keep this expectation independent
+# of the implementation's uncertainty flags.
+PLACED_LAUNCHED_WRITERS = LAUNCHED_WRITERS[:11] + (
+    "echo 'del {P}' | cmd", "parallel rm ::: {P}",
+    "ls | entr -s 'rm {P}'", "ls | entr sh -c 'rm {P}'", "watch 'rm {P}'", "watch -n 1 'touch {P}'",
+)
+PLACED_LAUNCHED_WRITERS_PS = LAUNCHED_WRITERS_PS[-6:]
+
+
 class LaunchedWriterTests(GuardCase):
-    """A freeze, a block and the single-writer rule refuse a writer the analyser cannot place, or finds inside a launcher, when
-    the command also names a protected path, as the substring rule did before the analyser; with no such path they pass."""
+    """Placed writes outside a boundary pass; recognized unplaced writes fail closed."""
 
     BLOCK = {"blocked_globs": [{"glob": "**/secrets/**", "owner": "sec"}]}
 
@@ -499,14 +509,18 @@ class LaunchedWriterTests(GuardCase):
     def test_the_same_writers_pass_when_they_name_no_protected_path(self):
         for state in (FROZEN, self.BLOCK, {**FROZEN, **self.BLOCK}):
             self.guard(state)
-            self.each(LAUNCHED_WRITERS, UNPROTECTED_SPELLINGS, deny=False)
-            self.each(LAUNCHED_WRITERS_PS, UNPROTECTED_SPELLINGS, deny=False, tool="PowerShell")
+            self.each(PLACED_LAUNCHED_WRITERS, UNPROTECTED_SPELLINGS, deny=False)
+            self.each(tuple(t for t in LAUNCHED_WRITERS if t not in PLACED_LAUNCHED_WRITERS), UNPROTECTED_SPELLINGS, deny=True)
+            self.each(PLACED_LAUNCHED_WRITERS_PS, UNPROTECTED_SPELLINGS, deny=False, tool="PowerShell")
+            self.each(tuple(t for t in LAUNCHED_WRITERS_PS if t not in PLACED_LAUNCHED_WRITERS_PS), UNPROTECTED_SPELLINGS, deny=True, tool="PowerShell")
 
     def test_a_freeze_does_not_refuse_what_names_only_another_boundarys_path(self):
         self.guard(FROZEN)
-        self.each(LAUNCHED_WRITERS, BLOCKED_SPELLINGS, deny=False)
+        self.each(PLACED_LAUNCHED_WRITERS, BLOCKED_SPELLINGS, deny=False)
+        self.each(tuple(t for t in LAUNCHED_WRITERS if t not in PLACED_LAUNCHED_WRITERS), BLOCKED_SPELLINGS, deny=True)
         self.guard(self.BLOCK)
-        self.each(LAUNCHED_WRITERS, FROZEN_SPELLINGS, deny=False)
+        self.each(PLACED_LAUNCHED_WRITERS, FROZEN_SPELLINGS, deny=False)
+        self.each(tuple(t for t in LAUNCHED_WRITERS if t not in PLACED_LAUNCHED_WRITERS), FROZEN_SPELLINGS, deny=True)
 
     def test_the_reads_pass_wherever_they_point(self):
         for state in (FROZEN, self.BLOCK, {}):
@@ -515,21 +529,24 @@ class LaunchedWriterTests(GuardCase):
                 self.each(LAUNCHED_READS, paths, deny=False)
                 self.each(LAUNCHED_READS_PS, paths, deny=False, tool="PowerShell")
 
-    def test_commands_that_name_nothing_protected_are_not_refused_flat(self):
-        """The unplaceable writers are not denied outright under a boundary: `cat list | xargs rm` is ordinary work."""
+    def test_unplaced_writes_fail_closed_but_placed_writes_and_reads_pass(self):
         self.guard({**FROZEN, **self.BLOCK})
-        self.check(("cat list | xargs rm", "echo 'rm x' | sh", "rm \"$f\"", "git checkout main", "git stash", "ls | parallel rm", "watch 'rm x'",
-                    "ls | entr rm /_", "patch -p1 < fix.diff", "git apply fix.diff", "rm $(cat list)", "printf 'rm a\\nrm b\\n' | bash",
-                    "find . -name '*.pyc' | xargs rm -f", "echo 'ls' | sh"), deny=False)
-        self.check(("Get-ChildItem | Remove-Item", "Get-ChildItem build | ForEach-Object { Remove-Item $_.FullName }",
-                    "'Remove-Item x' | iex"), deny=False, tool="PowerShell")
+        self.check(("cat list | xargs rm", "rm \"$f\"", "ls | parallel rm", "ls | entr rm /_",
+                    "patch -p1 < fix.diff", "git apply fix.diff", "rm $(cat list)",
+                    "find . -name '*.pyc' | xargs rm -f"), deny=True)
+        self.check(("echo 'rm x' | sh", "git checkout main", "git stash", "watch 'rm x'",
+                    "printf 'rm a\\nrm b\\n' | bash", "echo 'ls' | sh"), deny=False)
+        self.check(("Get-ChildItem | Remove-Item", "Get-ChildItem build | ForEach-Object { Remove-Item $_.FullName }"), deny=True, tool="PowerShell")
+        self.check(("'Remove-Item x' | iex",), deny=False, tool="PowerShell")
 
     def test_what_a_launcher_runs_is_judged_like_the_command_line(self):
         self.guard(FROZEN)
         self.check(("watch 'rm src/payments/a'", "ls | entr -s 'rm src/payments/a'", "parallel rm ::: src/payments/a", "ls | parallel rm src/payments/{}",
                     "ls | entr sh -c 'cd src/payments && rm a'", "watch -n 1 'cd src/payments; touch a'"), deny=True, fragment="frozen boundary")
-        self.check(("watch 'rm build/a'", "ls | entr -s 'rm build/a'", "parallel rm ::: build/a", "ls | parallel rm build/{}",
+        self.check(("watch 'rm build/a'", "ls | entr -s 'rm build/a'", "parallel rm ::: build/a",
                     "ls | entr sh -c 'cd src/other && rm a'", "watch 'ls src/payments'", "parallel cp {} build/ ::: src/payments/a"), deny=False)
+        # A placeholder filled from standard input may hold `../src/payments/a`: unplaced, so Rule G refuses it.
+        self.check(("ls | parallel rm build/{}",), deny=True, fragment="unplaced write target")
         self.check(("Start-Job { Remove-Item src\\payments\\a }", "Invoke-Command -ScriptBlock { Set-Content src\\payments\\a x }",
                     "Get-ChildItem | ForEach-Object { Remove-Item src\\payments\\a }"), deny=True, tool="PowerShell", fragment="frozen boundary")
         self.check(("Start-Job { Remove-Item build\\a }", "Get-ChildItem | ForEach-Object { Copy-Item $_ build\\ }"), deny=False, tool="PowerShell")
@@ -546,7 +563,8 @@ class LaunchedWriterTests(GuardCase):
                     self.each(LAUNCHED_WRITERS, [path], deny=True, fragment=fragment)
                     self.each(LAUNCHED_WRITERS_PS, [path], deny=True, tool="PowerShell", fragment=fragment)
         self.guard({})
-        self.each(LAUNCHED_WRITERS, UNPROTECTED_SPELLINGS, deny=False)
+        self.each(PLACED_LAUNCHED_WRITERS, UNPROTECTED_SPELLINGS, deny=False)
+        self.each(tuple(t for t in LAUNCHED_WRITERS if t not in PLACED_LAUNCHED_WRITERS), UNPROTECTED_SPELLINGS, deny=True)
 
     def test_the_single_writer_rule_judges_a_launchers_named_target_too(self):
         self.check(("watch 'rm skillset-saves/runs/r1/_state.md'", "parallel rm ::: skillset-saves/runs/r1/_lock.md",
@@ -570,14 +588,15 @@ class LaunchedWriterTests(GuardCase):
     def test_the_registered_hook_decides_the_same_under_every_interpreter(self):
         self.guard(FROZEN)
         denied = ("echo 'rm src/payments/a' | sh", "ls | parallel rm src/payments/{}", "cat src/payments/list | xargs rm", "watch 'rm src/payments/a'")
-        passed = ("cat list | xargs rm", "echo 'rm x' | sh", "cat src/payments/run.sh | bash", "git ls-files src/payments | xargs wc -l")
+        denied += ("cat list | xargs rm", "rm \"$f\"")
+        passed = ("echo 'rm x' | sh", "cat src/payments/run.sh | bash", "git ls-files src/payments | xargs wc -l")
         for label, python in [("current", None), *kit.older_interpreters()]:
             for command in denied:
                 with self.subTest(interpreter=label, denied=command):
                     result = kit.run_hook("pre_tool_use.py", kit.bash(command), self.root, python=python)
                     self.assertEqual(result.returncode, 0)
                     self.assertTrue(kit.denied(result.stdout.decode("utf-8")), result.stdout)
-                    self.assertIn("frozen boundary", kit.reason(result.stdout.decode("utf-8")))
+                    self.assertIn("frozen boundary" if "src/payments" in command else "unplaced write target", kit.reason(result.stdout.decode("utf-8")))
             for command in passed:
                 with self.subTest(interpreter=label, passed=command):
                     result = kit.run_hook("pre_tool_use.py", kit.bash(command), self.root, python=python)
@@ -589,7 +608,7 @@ class LaunchedWriterTests(GuardCase):
     def test_a_100kb_command_with_a_writer_it_cannot_place_is_decided_quickly(self):
         self.guard(FROZEN)
         names = " ".join(f"src/payments/f{i}" for i in range(6000))
-        for command, want in (("cat list | xargs rm; echo " + names, True), ("cat list | xargs rm; echo " + "x " * 40000, False),
+        for command, want in (("cat list | xargs rm; echo " + names, True), ("cat list | xargs rm; echo " + "x " * 40000, True),
                               ("echo 'rm x' | sh; ls " + names, True), ("while read f; do rm $f; done < list; echo " + names, True)):
             with self.subTest(length=len(command), denied=want):
                 start = time.perf_counter()
@@ -744,14 +763,13 @@ class ReadOnlyRunTests(GuardCase):
         self.check(("Get-ChildItem | Select-Object Name", "[System.IO.File]::ReadAllText('x')", "Get-ChildItem | Where-Object Length -gt 5",
                     f"'x' | Out-File skillset-saves/runs/{READ_ONLY_RUN}/investigation/o.txt"), deny=False, tool="PowerShell")
 
-    def test_the_unnamed_write_rule_refuses_flat_in_a_read_only_run_only(self):
-        """A freeze and a block do not refuse a write with no named target flat: only one in a command that also names
-        a protected path (see LaunchedWriterTests), as before the analyser; these name none."""
+    def test_unplaced_writes_are_refused_at_boundaries_and_single_writer_records(self):
+        """Even an empty guard record is protected by its single-writer contract."""
         commands = ("cat list | xargs rm -rf", "awk '{print > \"out\"}' f", "perl -e 'open(F, \">out\")'", "sed -n 'w out' f")
         for state in ({}, FROZEN, {"blocked_globs": [{"glob": "**/secrets/**", "owner": "ops"}]}):
             self.guard(state)
             with self.subTest(state=sorted(state)):
-                self.check(commands, deny=False)
+                self.check(commands, deny=True)
         self.guard(READ_ONLY)
         self.check(commands, deny=True, fragment="is recorded read-only")
 
@@ -819,19 +837,23 @@ class ReadOnlyRunTests(GuardCase):
             f"Get-ChildItem | ForEach-Object {{ Set-Content skillset-saves/runs/{READ_ONLY_RUN}/investigation/o.txt 'x' }}",
         ), deny=False, tool="PowerShell")
 
-    def test_what_a_launcher_runs_is_not_judged_by_a_freeze_or_a_block(self):
-        """Only a read-only run reads these (the coordinator's rule: leave the other states as they were)."""
-        commands = ("echo 'rm x' | sh", "ls | parallel rm {}", "ls | entr rm /_", "watch 'rm x'", "patch -p1 < fix.diff", "git apply fix.patch",
-                    "echo x | python3 -", "ls | parallel gzip")
+    def test_what_a_launcher_runs_is_judged_by_its_placed_words_and_refused_when_unplaced(self):
+        """A launcher's placed write passes under every state but a read-only run. One the analysis cannot place
+        (operands on standard input, a placeholder they fill, the files inside a diff) is refused by Rule G wherever a
+        boundary or a guard record exists, with no guard record it passes, and a read-only run refuses both kinds."""
+        placed = ("echo 'rm x' | sh", "watch 'rm x'", "echo x | python3 -")
+        unplaced = ("ls | parallel rm {}", "ls | xargs -I{} rm {}", "ls | entr rm /_", "patch -p1 < fix.diff", "git apply fix.patch",
+                    "ls | parallel gzip")
         shell_blocks = ("Get-Content list | ForEach-Object { Remove-Item $_ }", "Get-ChildItem | Remove-Item", "Get-ChildItem | Set-Content -Value x")
         for state in ({}, FROZEN, {"blocked_globs": [{"glob": "**/secrets/**", "owner": "ops"}]}, {"allow_dangerous": False}):
             self.guard(state)
             with self.subTest(state=sorted(state)):
-                self.check(commands, deny=False)
+                self.check(placed, deny=False)
+                self.check(unplaced, deny=True, fragment="unplaced write target")
         self.guard(FROZEN)
-        self.check(shell_blocks[:1], deny=False, tool="PowerShell")
+        self.check(shell_blocks[:1], deny=True, tool="PowerShell", fragment="unplaced write target")
         self.guard(READ_ONLY)
-        self.check(commands, deny=True, fragment="is recorded read-only")
+        self.check(placed + unplaced, deny=True, fragment="is recorded read-only")
         self.check(shell_blocks, deny=True, tool="PowerShell", fragment="is recorded read-only")
 
     def test_patch_and_git_apply_are_denied_unless_they_only_check(self):
@@ -971,9 +993,10 @@ class SingleWriterTests(GuardCase):
             "rm -rf skillset-saves/runs/r1/design/evidence/coverage", "git checkout -- .", "git clean -fd src",
         ), deny=False)
 
-    def test_an_interpreter_whose_code_names_the_record_is_treated_as_writing_it(self):
-        """The honest limit of a text guard: it cannot tell a read from a write inside a program, so it refuses the mention."""
-        out = self.call("python3 -c \"print(open('.harness-state/guard-state.json').read())\"")
+    def test_an_interpreter_read_is_not_a_record_write(self):
+        """H-9: only detected mutation makes a protected-path mention a write."""
+        self.check(("python3 -c \"print(open('.harness-state/guard-state.json').read())\"",), deny=False)
+        out = self.call("python3 -c \"open('.harness-state/guard-state.json', 'w').write('{}')\"")
         self.assertIn("guard_state.py", kit.reason(out))
 
 
@@ -1424,7 +1447,10 @@ class DirectoryDepositTests(GuardCase):
         super().setUp()
         (self.root / "src" / "payments").mkdir(parents=True)
         (self.root / "src" / "payments" / "a.py").write_text("x", encoding="utf-8")
-        mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": str(self.root)}).start()
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.temp = Path(scratch.name).resolve()
+        mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": str(self.root), "TMPDIR": str(self.temp)}).start()
         self.addCleanup(mock.patch.stopall)
 
     def test_a_copy_link_sync_or_extract_into_a_record_directory_is_refused(self):
@@ -1450,6 +1476,23 @@ class DirectoryDepositTests(GuardCase):
     def test_a_variable_that_leads_elsewhere_is_not(self):
         self.guard(FROZEN)
         self.check(FROZEN_VARIABLE_NEIGHBOURS, deny=False)
+
+    def test_the_temporary_directory_variable_is_the_path_the_environment_holds(self):
+        """`$TMPDIR` is read from the hook's environment as `$HOME` is: a write through it lands where it points, and
+        with the variable unset the word stays unplaced, which Rule G refuses while the boundary stands."""
+        self.guard(FROZEN)
+        commands = ("echo x > $TMPDIR/out.log", 'echo x > "$TMPDIR/out.log"', "echo x > ${TMPDIR}/out.log", "cp a.txt $TMPDIR/")
+        cmdlets = ("Remove-Item $env:TEMP\\out.log", "Set-Content $env:TMP\\out.log x")
+        inside = str(self.root / "src" / "payments")
+        with mock.patch.dict(os.environ, {"TMPDIR": inside, "TEMP": inside, "TMP": inside}):
+            self.check(commands, deny=True, fragment="frozen boundary")
+            self.check(cmdlets, deny=True, tool="PowerShell", fragment="frozen boundary")
+        with mock.patch.dict(os.environ, {"TMPDIR": str(self.temp), "TEMP": str(self.temp), "TMP": str(self.temp)}):
+            self.check(commands, deny=False)
+            self.check(cmdlets, deny=False, tool="PowerShell")
+        with mock.patch.dict(os.environ, {"TMPDIR": "", "TMP": "", "TEMP": ""}):
+            self.check(commands, deny=True, fragment="unplaced write target")
+            self.check(cmdlets, deny=True, tool="PowerShell", fragment="unplaced write target")
 
     def test_the_lifted_freeze_the_audit_reproduced_stays_in_place(self):
         """The whole H-1 chain: the copy is refused, so the frozen write after it is still refused."""
@@ -1507,10 +1550,12 @@ class RootExtractTests(GuardCase):
         self.check(("tar -xf evil.tar",), deny=True, fragment="project root")
         self.check(("tar -xzf vendor.tgz",), deny=False)
 
-    def test_an_archive_the_guard_cannot_read_is_refused_only_while_a_record_exists(self):
+    def test_unknown_root_archives_are_refused_at_a_boundary_or_record(self):
         commands = ("curl -s https://h/x.tgz | tar -xz", "7z x pkg.7z", "unzip missing.zip")
         self.check(commands, deny=False)
         self.guard(FROZEN)
+        self.check(commands, deny=True, fragment="frozen boundary")
+        self.guard({})
         self.check(commands, deny=True, fragment="cannot read")
 
 

@@ -22,11 +22,11 @@ behavior when work is rewound, resumed, or unable to proceed.
 
 | State | Owner | Enter when | Allowed next states |
 |-------|-------|------------|---------------------|
-| INTAKE | admiral | A request or resumable run is identified | DESIGN, BUILD, REVIEW, BLOCKED, ESCALATE, SAFETY |
-| DESIGN | commander | The intake boundary is accepted | BUILD, REVISE, BLOCKED, ESCALATE, SAFETY |
-| BUILD | build-management | The design contract is approved | REVIEW, REVISE, BLOCKED, ESCALATE, SAFETY |
+| INTAKE | admiral | A request or resumable run is identified | DESIGN, BUILD, REVIEW, TASTE_ACTIVE, BLOCKED, ESCALATE, SAFETY |
+| DESIGN | commander | The intake boundary is accepted | BUILD, GATE, REVISE, BLOCKED, ESCALATE, SAFETY |
+| BUILD | build-management | The design contract is approved | REVIEW, GATE, REVISE, BLOCKED, ESCALATE, SAFETY |
 | REVIEW | code-chief | A build or changed artifact is submitted | GATE, COMPLETE, REVISE, BLOCKED, ESCALATE, SAFETY |
-| GATE | the boundary's gatekeeper | A phase boundary requests an approval decision | DESIGN, RELEASE, COMPLETE, REVISE, BLOCKED, ESCALATE, SAFETY |
+| GATE | the boundary's gatekeeper | A phase boundary requests an approval decision | DESIGN, BUILD, REVIEW, RELEASE, COMPLETE, REVISE, BLOCKED, ESCALATE, SAFETY |
 | RELEASE | land-and-deploy | The gate approved an externally visible delivery | COMPLETE, REVISE, BLOCKED, ESCALATE, SAFETY |
 | SAFETY | careful, guard, freeze, or unfreeze | A guarded, frozen, destructive, or externally visible action is requested | INTAKE, DESIGN, BUILD, REVIEW, GATE, RELEASE, REVISE, BLOCKED, ESCALATE |
 | REVISE | current artifact owner | A finding or changed input names a correction boundary | DESIGN, BUILD, REVIEW, GATE, RELEASE, BLOCKED, ESCALATE, SAFETY |
@@ -47,6 +47,30 @@ The transition record names `from_state`, `to_state`, `run_id`, `revision`,
 `owner`, `reason`, `evidence_paths`, and `next_action`. An invalid transition is
 a protocol failure and returns `ESCALATE`; it is never silently coerced.
 
+### Saved phase-state mapping
+
+`save_run.py` derives `protocol_state` whenever `--set phase_state=...` is supplied,
+using `scripts/save_taxonomy.py::protocol_state_for`; callers cannot set the derived
+field directly. This is a name mapping, not authorization of a transition. Existing
+records lacking the field remain readable. `create` defaults to INTAKE; terminal
+operations record COMPLETE, BLOCKED, or INTAKE (released).
+
+| Saved phase prefix | ACTIVE protocol state |
+| --- | --- |
+| INTAKE | INTAKE |
+| DESIGN, REDESIGN | DESIGN |
+| BUILD, INVESTIGATION, SKILL_CREATION, CREATE, IMPROVE, OPTIMIZE, PACKAGE | BUILD |
+| REVIEW, SECURITY, QA | REVIEW |
+| DELIVERY, RELEASE | GATE |
+
+For each prefix, `_GATE_PENDING` maps to GATE and `_GATE_REVISE` maps to REVISE.
+The three `TASTE_*` labels map to themselves. RUN_COMPLETE and DELIVERED map to
+COMPLETE; DISPUTED_AWAITING_USER maps to ESCALATE. Bare protocol names remain valid.
+Unknown phase labels are refused. RELEASE_ACTIVE means release preparation,
+not permission for an external rollout; the explicit protocol RELEASE edge still
+requires the gate and safety decision. Sub-pipeline owners keep their phase
+ownership even where the table names the corresponding full-lifecycle owner.
+
 ## Approval, release, and safety edges
 
 `REVIEW -> GATE` is the normal review boundary. A `REVIEW -> COMPLETE` shorthand
@@ -64,8 +88,12 @@ to the source `GATE`, after which `GATE -> RELEASE` is allowed and
 permission or required owner intent, and `GATE -> ESCALATE` handles conflicting
 evidence or a failed validator. No gate failure is approval.
 
-`GATE -> DESIGN` is the one gate edge that is an approval rather than a
-correction: a design-shaped boundary whose package selects a design artifact
+`GATE -> DESIGN`, `GATE -> BUILD`, and `GATE -> REVIEW` return an approved
+investigation fix path to its owning phase. Diagnose-only investigation instead
+takes `GATE -> COMPLETE`; no build package or approved design is claimed by that
+handoff. A subsequent build still owes its own approved-design prerequisite, or
+Admiral first routes the bounded fix through design. For a selected redesign,
+`GATE -> DESIGN` is an approval rather than a correction: a design-shaped boundary whose package selects a design artifact
 returns it to `DESIGN` for the phase to adopt. `redesign-review` is that case,
 and `gates.yaml` guards it with `REDESIGN (design-shaped) -> GATE -> DESIGN with
 the chosen variant, or COMPLETE`. It is the same shape as the
@@ -100,14 +128,19 @@ boundary it validates, and every boundary guards a specific transition.
 | `build-to-review` | `BUILD -> REVIEW` | build-management | gatekeeper-build, then gatekeeper-admiral |
 | `review-to-delivery` | `REVIEW -> GATE -> COMPLETE` | code-chief | gatekeeper-code, then gatekeeper-admiral |
 | `security-review` | security pipeline to `GATE -> COMPLETE` | cso | gatekeeper-admiral |
-| `investigation-review` | investigation to the owning phase | investigate | gatekeeper-admiral |
+| `investigation-review` | investigation to `GATE -> DESIGN`, `BUILD`, `REVIEW`, or `COMPLETE` | investigate | gatekeeper-admiral |
 | `qa-review` | testing pipeline to `GATE -> COMPLETE` | qa | gatekeeper-admiral |
 | `taste-review` | `TASTE_ACTIVE -> TASTE_GATE_PENDING -> COMPLETE` or consuming pipeline | taste | gatekeeper-admiral |
 | `skill-maker-to-delivery` | skill-maker pipeline to `GATE -> COMPLETE` | skill-maker | gatekeeper-admiral |
 | `deploy-readiness` | `GATE -> RELEASE` | ship | gatekeeper-admiral |
 
 The phase gatekeeper validates inside its sub-pipeline; `gatekeeper-admiral`
-validates the same boundary as the cross-stage handoff. The taste pipeline uses
+validates the same boundary as the cross-stage handoff, bounded by `gates.yaml`
+`revise_policy.cross_stage_scope`: with an APPROVED phase verdict and no changed
+evidence it judges the crossing (lineage across revisions, boundary-to-package
+match, blocked phrases, the next consumer's contract) and carries the phase gate's
+adequacy judgment; it re-judges adequacy only on changed evidence, on a phase
+verdict that was not APPROVED, or at the six boundaries with no phase gatekeeper. The taste pipeline uses
 its explicit `TASTE_*` states: approval at
 `TASTE_GATE_PENDING` transitions either to `COMPLETE` for preference-only work
 or returns the immutable effective-profile handoff to the applicable consuming
@@ -164,6 +197,18 @@ difference exist today and both are intentional:
 Where a reader needs the exact guarded transition for a gate decision,
 `gates.yaml` is authoritative and this column is a reading aid.
 
+### Shared revision cap
+
+Phase and cross-stage gatekeepers share one owner-maintained counter per boundary:
+count REVISE **rounds**, identified by submitted revision, not tool calls. Two
+verdicts on the same revision count as one round. The second REVISE round reaches
+`cycle_cap: 2` and returns ESCALATE with both packets; a third silent retry is
+forbidden. Submitter mechanical self-checks do not increment the counter. Only an
+explicit user-authorized reopen starts a new cycle, recorded in the run audit.
+`check.py` checks package facts and lineage, not this live counter; the declared
+cap is validated as 2 by `validate_manifests.py`. Escalation enforcement is an
+orchestrator duty, not a deterministic engine verdict.
+
 ## Revision lineage
 
 Keep one `run_id` across a lifecycle. Each accepted state change or artifact
@@ -182,7 +227,11 @@ owner-controlled boundary; a changed design rewinds to `DESIGN`. Cap cross-stage
 revision cycles at two before escalating the dispute to the user. A `REVISE` is
 one packet: every finding from the pass grouped by owner
 (`gates.yaml` `revise_policy`); the lead fixes owner groups in parallel,
-resubmits once, and the gate re-judges only the keys whose evidence changed.
+resubmits once, and the gate re-judges only the keys whose evidence changed. A
+`REVISE` is returned only for a mechanical failure, a Critical, or an unresolved
+Major (`revise_threshold`); Minor and Info findings ride along on `APPROVED`. The
+lead re-runs only the stages the packet names or that depend on changed evidence
+(`rerun_scope`) and corrects a key it authors itself in place.
 
 ## Resume rules
 
@@ -199,12 +248,18 @@ evidence-incomplete, enter `ESCALATE` or `BLOCKED` and preserve the diagnosis.
 | A boundary's required evidence is present, artifact-backed, and hash-matched before approval | Machine-checked by [`../harness/gatekeeper/check.py`](../harness/gatekeeper/check.py) at submission. |
 | Mixed or stale revisions invalidate dependent verdicts | Machine-checked: `check.py` reports `mixed_revisions` and `stale verdict revision` and exits non-zero. |
 | An unchanged revision whose artifact hashes moved is drift | Machine-checked: `check.py` reports `idempotency_drift`. |
-| A `REVISE` is one packet with a cycle cap of two | Partly machine-checked: `validate_manifests.py` requires `revise_policy` to declare `self_check`, `one_packet`, `parallel_fix`, `delta_review`, and `cycle_cap: 2`; whether a given run honors the packet discipline is judgement. |
+| A `REVISE` is one packet with a cycle cap of two | Partly machine-checked: `validate_manifests.py` requires `revise_policy` to declare `self_check`, `one_packet`, `parallel_fix`, `delta_review`, and `cycle_cap: 2`; the `revise_threshold`, `batch_fix`, `rerun_scope` and `cross_stage_scope` entries, and whether a given run honors the packet discipline, are judgement. |
 | One run pointer, one lock, one owner, monotonic revisions on resume | Machine-checked by `../harness/hooks/save_run.py` and exercised in `../validation/test_save_contracts.py`: a revision conflict, a competing session pin, a wrong owner, and an interrupted checkpoint are all refused. |
 | The state table and the allowed-transition sets | Partly machine-checked: `../validation/test_orchestration.py` `GuardedTransitionTests` parses this table and requires every `gates.yaml` `guards` string to name only states it declares and to walk only edges it allows. Whether a *run* takes an allowed edge is still judgement. |
 | The approval, release, and safety edges | Judgement. No parser reads that prose, and an invalid transition is caught only by the owner applying this contract. |
-| The Guards, Submitter, and Validator columns | Judgement. See Gate table drift and what is compared. |
+| The Guards, Submitter, and Validator columns | Submitter is compared by `test_docs_inventory.py` `GateProseTests`; Guards and Validator prose remain judgement. See Gate table drift and what is compared. |
 | Rewind rules, resume rules, and the failure paths below | Judgement, with the exception of the lock and revision mechanics named in this table. |
+
+A fix returning to BUILD still owes a real `approved_design_revision`; that key
+has no fallback. If an investigation or review starts without an approved design,
+Admiral first routes the bounded repair through design approval before build.
+The fix-path report is not itself a design approval, and no synthetic revision
+may be inserted merely to satisfy the build gate.
 
 ## Failure paths
 

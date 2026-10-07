@@ -9,8 +9,8 @@ skill_count: 53
 phase_leads: [commander, build-management, code-chief]
 phase_gatekeepers: [gatekeeper-design, gatekeeper-build, gatekeeper-code]
 pipeline_owners: [cso, investigate, qa, redesign, skill-maker, ship, taste]
+standalone_tools: [audit-improve, careful, freeze, guard, unfreeze, browse, open-browser, setup-browser-cookies, pair-agent, benchmark, setup-deploy, land-and-deploy, document-release]
 specialists:
-  - audit-improve
   - researcher
   - planner
   - architect
@@ -64,7 +64,7 @@ authority:
 enforcement:
   machine_checked: >-
     scripts/validate_manifests.py check_team requires front_door, session_memory,
-    and cross_stage_gatekeeper to be non-empty, requires the nine list keys to be
+    and cross_stage_gatekeeper to be non-empty, requires the ten list keys to be
     non-empty lists, requires state_root to be skillset-saves, requires verdicts to
     be exactly APPROVED, REVISE, and ESCALATE. check_pipeline_mirrors requires
     skill_count to equal both the SKILL.md count on disk and the distinct member

@@ -1186,6 +1186,17 @@ try {
     Write-Host $backupStatus
     Write-Host "Hook registration: $hookStatus"
     Write-Host "Restart your assistant session if it was already running."
+    if ((-not $RegisterHooks) -or $script:hooksDeclined -or ($script:hooksFailed -ne 0)) {
+        Write-Host ""
+        Write-Host "=================================================================="
+        Write-Host "RUNTIME HOOKS ARE NOT REGISTERED: Supreme Team is installed without its enforcement layer."
+        Write-Host "Without the three hooks the assistant is only advised, never stopped: a guarded or frozen"
+        Write-Host "path can be written, a lifecycle request can bypass admiral, and a run heartbeat goes stale."
+        Write-Host "Register them (the installer previews every file it would change and asks first):"
+        Write-Host "    powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -RegisterHooks"
+        Write-Host "Then restart the assistant and confirm with: py -3 `"$Destination\harness\hooks\check_readiness.py`" --host auto --require-hooks"
+        Write-Host "=================================================================="
+    }
     if (-not $RegisterHooks) {
         Write-Host "To register runtime harness hooks for the selected hosts, run this installer again from a checkout with -RegisterHooks, or preview the registration with: python `"$Destination\harness\hooks\repair_registration.py`" --host <host> --scope project"
     }

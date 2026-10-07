@@ -280,9 +280,9 @@ class BoundaryManifestTests(unittest.TestCase):
     def test_taste_typed_records_and_confirmation_policy(self):
         digest = "a" * 64
         records = {
-            "preference_diff": {"artifacts": [ARTIFACT], "added": [], "updated": [],
-                                "deprecated": [], "revoked": [], "unchanged": ["p1"],
-                                "before_digest": digest, "after_digest": digest},
+            "preference_diff": {"artifacts": [ARTIFACT], "added": ["p1"], "updated": [],
+                                "deprecated": [], "revoked": [], "unchanged": [],
+                                "before_digest": "b" * 64, "after_digest": digest},
             "confirmation": {"artifacts": [ARTIFACT], "actor": "user",
                              "timestamp": "2026-09-11T00:00:00Z",
                              "confirmed_scope": "repository", "candidate_ids": ["p1"],

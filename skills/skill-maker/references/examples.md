@@ -115,8 +115,8 @@ name files that appear in `artifact_hashes`.
   "revision": 4,
   "revisions": [4],
   "artifact_hashes": {
-    "skill-creation/reports/link-report.md": "a41f70c2…",
-    "skill-creation/reports/validation-report.md": "6ce8b019…"
+    "reports/link-report.md": "a41f70c2…",
+    "reports/validation-report.md": "6ce8b019…"
   },
   "evidence": {
     "skills": "skills/log-triage — 100/100 on the 10-dimension rubric at iteration 4, re-reviewed at iteration 5 after description optimization.",
@@ -126,8 +126,8 @@ name files that appear in `artifact_hashes`.
       "scope": "one skill delivered; no team was created",
       "decided_by": "skill-maker"
     },
-    "link_report": "skill-creation/reports/link-report.md",
-    "validation_report": "skill-creation/reports/validation-report.md"
+    "link_report": "reports/link-report.md",
+    "validation_report": "reports/validation-report.md"
   }
 }
 ```

@@ -9,7 +9,7 @@ description: >-
   parity with the design inventory — even when the ask is just "show me this
   direction". Builds a draft to judge, not shippable product code, which is
   `build/build-management`. One draft per delegation.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -116,8 +116,8 @@ produces the whole of the second.
 
 | Key | Mode that produces it | The one thing that breaks it |
 | --- | --- | --- |
-| `mock_set` | `mock-build`, four times | Anything other than exactly four mocks, a duplicate id, or one unhashed file among the four |
-| `selected_variant` | `selected-build`, once | An id that is not `selection.chosen`, or one unhashed file among the six |
+| `mock_set` | `mock-build`, four times | Anything other than exactly four mocks, a duplicate id, or an unhashed required field (`spec`, `tokens`, `components`, `mock`) |
+| `selected_variant` | `selected-build`, once | An id that is not `selection.chosen`, or an unhashed required field (`spec`, `tokens`, `components`, `app`) |
 
 Neither key is ever waivable by this skill. `design/redesign` writes the two
 sanctioned applicability records for `selected_variant` when `selection.decision`
@@ -127,7 +127,7 @@ exact fallback wording; read it before returning either key.
 
 Returning a mock whose files are unhashed, whose id collides with a sibling's, or
 which is one of three rather than four breaks the record for the whole set, so
-each `mock-build` delegation returns its id and its five sha256 digests
+the producer still hashes all files: each `mock-build` delegation returns its id and its five sha256 digests
 explicitly. A `selected-build` returns its id and its six.
 
 ## Workflow

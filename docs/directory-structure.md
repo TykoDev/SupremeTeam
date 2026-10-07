@@ -31,8 +31,6 @@ SupremeTeam/
 │   ├── harness.md                        # Hooks, readiness, gate validators
 │   ├── persistent-saves.md               # Save layout, locks, resume
 │   ├── direct-invocation.md              # Calling skills directly
-│   ├── quality-audit.md                  # Open audit findings
-│   ├── independent-benchmark-remediation.md  # Disposition of an external benchmark's findings
 │   ├── directory-structure.md            # This file
 │   └── assets/                           # Diagrams used across the docs
 └── skills/
@@ -52,7 +50,7 @@ SupremeTeam/
     ├── harness-doctrine.md               # Lifecycle layers, taxonomy, rules
     ├── performance-doctrine.md           # Measured optimization
     ├── save-protocol.md                  # Save layout, lifecycle, resume
-    ├── mcp-tools.md                      # MCP registry with a freshness TTL
+    ├── mcp-tools.md                      # Blank MCP template; project cache uses the configured TTL
     ├── contracts/                        # Six canonical cross-phase contracts
     ├── tech-stacks/                      # 14 stack overlays + registry.yaml
     ├── scripts/                          # Shared deterministic tooling; its test_*.py suite sits in the same folder
@@ -69,7 +67,9 @@ SupremeTeam/
     │   ├── scan_record.py                # Typed scan evidence records
     │   ├── check_parity.py               # Redesign mock and prototype parity against the inventory
     │   ├── content_hash.py               # The catalog's sha256 (text folded to LF) for evidence files
-    │   ├── save_taxonomy.py              # The save-path constants the writer, reader and resolver share
+    │   ├── save_taxonomy.py              # Shared save constants and phase-to-protocol state mapping
+    │   ├── contract_floor.py             # Independent safety floor for the shipped gate spec
+    │   ├── mcp_registry.py               # Read-only project MCP freshness/identity diagnostic
     │   ├── validate_manifests.py         # Manifest and cross-reference contracts
     │   └── package_check.py              # Packaging enumeration and residue check
     ├── validation/                       # Contract test suites and the two paid evals
@@ -84,7 +84,8 @@ SupremeTeam/
     │   │   ├── guard_hook.py             # The guard engine: Rules A to G, one function per rule
     │   │   ├── _cmdscan.py               # Shell command analyser: wrappers, redirects, write targets
     │   │   ├── _paths.py                 # Path and glob canonicaliser
-    │   │   ├── guard_state.py            # The only writer of the guard record
+    │   │   ├── _program_paths.py         # Bounded literal Python I/O targets; never evaluates code
+    │   │   ├── guard_state.py            # Sole guard writer; legacy adoption preserves protection
     │   │   ├── post_tool_use.py          # PostToolUse: trajectory, heartbeat, coverage sweep
     │   │   ├── user_prompt_submit.py     # UserPromptSubmit: routing and session-pin reminder
     │   │   ├── save_run.py               # The only writer of the run record
@@ -130,37 +131,36 @@ SupremeTeam/
 
 ## The test suites
 
-Seven suites, standard library only, each beside the code it tests.
-[CONTRIBUTING.md](../CONTRIBUTING.md#run-the-suites) has the commands that run them.
-No document records how many tests a suite holds: that figure goes stale with the next
-test, so run the suite and read its last line.
+Seven suites, standard library only, each beside the code it tests; the commands
+are in [CONTRIBUTING.md](../CONTRIBUTING.md#run-the-suites).
 
 - **Hooks**, `skills/harness/hooks/`:
   - the guard: `test_guard_rules.py`, `test_guard_cmdscan.py`, `test_guard_paths.py`,
     `test_guard_harness_files.py`, `test_guard_state.py`, `test_pre_tool_entry.py`,
-    `test_hooks_robustness.py`
+    `test_hooks_robustness.py`, `test_quality_audit.py`, `test_program_paths.py`
   - the hooks and their state: `test_hooks.py`, `test_hooks_hardening.py`,
     `test_hooks_observed.py`, `test_state_hardening.py`, `test_fsutil.py`,
     `test_hooks_maintenance.py`
   - the run record and its reader: `test_hooks_lifecycle.py`, `test_run_state.py`,
-    `test_saves_reader.py`
+    `test_saves_reader.py`, `test_quality_state.py`
   - registration and readiness: `test_registration_contract.py`,
     `test_registration_hardening.py`, `test_installer_hooks.py`, `test_documented_flags.py`
   - maintenance audits: `test_size_audit.py`, `test_audit_improve.py`,
     `test_audit_improve_parts.py`
 - **Gates**, `skills/harness/gatekeeper/`: `test_gatecheck.py`, `test_gate_engine.py`,
   `test_gate_manifests.py`, `test_gate_run_layout.py`, `test_gate_revise.py`,
-  `test_gate_wrappers.py`
+  `test_gate_wrappers.py`, `test_quality_audit.py`
 - **Validation**, `skills/validation/`: `test_catalog_contracts.py`, `test_orchestration.py`,
   `test_pipeline_contracts.py`, `test_pipeline_workflows.py`, `test_save_contracts.py`,
   `test_save_prose.py`, `test_save_taxonomy.py`, `test_trigger_routing.py`,
   `test_eval_tools.py`, `test_repository_hygiene.py`, `test_docs_inventory.py`,
-  `test_lint_config.py`, `test_stdlib_only.py`
+  `test_lint_config.py`, `test_stdlib_only.py`, `test_contract_mirrors.py`
 - **Scripts**, `skills/scripts/`: `test_check_runtime_contract.py`,
   `test_check_runtime_detection.py`, `test_check_runtime_layout.py`,
   `test_check_runtime_redaction.py`, `test_check_runtime_scaffold.py`,
   `test_check_parity.py`, `test_data_formats.py`, `test_package_check.py`,
-  `test_runtime_utilities.py`, `test_scan_record.py`, `test_validate_manifests.py`
+  `test_runtime_utilities.py`, `test_scan_record.py`, `test_validate_manifests.py`,
+  `test_contract_floor.py`, `test_mcp_registry.py`, `test_quality_examples.py`
 - **Taste**, `skills/taste/`: `test_taste_prefs.py`, `test_taste_store.py`
 - **Installers**, `scripts/`: `test_install.py`
 - **Skill-creator**, `skills/skill-maker/skill-creator/scripts/`: `test_aggregate_benchmark.py`,
@@ -171,15 +171,10 @@ test, so run the suite and read its last line.
 
 ## The `.yaml` specs
 
-Three specs (`gates.yaml`, `pipelines.yaml`, `runtime-manifest.yaml`) are JSON
-documents that carry a `.yaml` extension; the rest are block YAML. JSON is valid
-YAML, so any YAML reader loads all of them, and the stdlib reader in
-`skills/scripts/data_formats.py`, which the harness uses when PyYAML is absent,
-accepts JSON first and a supported YAML subset after it. Renaming the three to
-`.json` would break every path that names them, so the extension stays. Load a
-spec with `data_formats.load_data` rather than assuming one format, and keep it in
-the format it is in: reformatting one as block YAML would have to stay inside the
-subset that reader supports.
+`gates.yaml`, `pipelines.yaml` and `runtime-manifest.yaml` are JSON documents with
+a `.yaml` extension; the rest are block YAML. `skills/scripts/data_formats.py`
+reads both without PyYAML. Load a spec with `data_formats.load_data` and keep each
+in the format it is in.
 
 ## What never gets committed
 
@@ -190,19 +185,14 @@ subset that reader supports.
 | `.harness-state/test-work/`, `eval-reports/`, `eval-workspaces/`, `packages/` | Test scratch, skill-creator reports and workspaces, packages built outside a run | Ignored. Never commit |
 | `**/__pycache__/`, `*.pyc` | Interpreter caches | Ignored. Never publish |
 
-Ignore rules are not the delivery control, though.
-`python skills/scripts/package_check.py --root .` enumerates exactly what
-`package-manifest.yaml` selects, rejects residue, and confirms the required assets
-are there.
+`python skills/scripts/package_check.py --root .` enumerates what
+`package-manifest.yaml` selects, rejects residue and confirms the required assets.
 
 ## The tree shape is load-bearing
 
-The root contracts, doctrines, manifests, `scripts/`, `harness/`, and each skill's
+Root contracts, doctrines, manifests, `scripts/`, `harness/` and each skill's
 `references/` and `scripts/` are resolved by relative path from inside skill
-files. Flatten the tree, rename a directory, or extract a skill without its
-dependencies and things break in ways that are annoying to diagnose.
-
-Why things sit where they do:
+files; a flattened or renamed tree breaks them.
 
 - `admiral`, `gatekeeper-admiral`, `investigate`, `skill-maker`,
   `session-memory`, `taste`, and `audit-improve` are directly under `skills/`
@@ -210,9 +200,8 @@ Why things sit where they do:
 - Pipeline-stage skills nest under their category (`design/`, `build/`,
   `review/`).
 - Standalone tools sit directly under `skills/` so a host that scans one level
-  deep registers them by name. Depth does matter to that loader: the 22 root-level
-  skills register, and the 31 nested specialists are reached by path through the
-  skill that delegates to them (`routing-doctrine.md`, "Host registration").
+  deep registers them by name: the 22 root-level skills register, the 31 nested
+  specialists are reached by path through the skill that delegates to them.
 - Contracts, doctrines, manifests, `scripts/`, `validation/`, `tech-stacks/`, and
   `harness/` live at the skill-set root so every skill can resolve them.
 - `AGENTS.md` is a flat index of a checkout. The installers do not copy it and no
@@ -230,10 +219,9 @@ The target mirrors the `skills/` subtree.
 | Cursor mirror | `~/.cursor/skills/` | `%USERPROFILE%\.cursor\skills\` |
 | OpenCode mirror | `~/.config/opencode/skills/` | `%USERPROFILE%\.config\opencode\skills\` |
 
-The common target is always installed. Existing mirrors get refreshed on upgrade
-so a stale copy does not stay discoverable. Codex and Cursor are mirrored only
-when their directory already holds Supreme Team files, or when you name that host
-explicitly.
+The common target is always installed; existing mirrors are refreshed on
+upgrade. Codex and Cursor are mirrored only when their directory already holds
+Supreme Team files or you name the host.
 
 ## What depends on what
 

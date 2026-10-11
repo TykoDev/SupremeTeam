@@ -8,7 +8,7 @@ description: >-
   specs, or propose four redesign directions — even when the ask is just "how
   should this be structured?". Defers requirements to `design/researcher`,
   milestones to `design/planner`, slices to `design/engineer`.
-version: 1.0.2
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -88,7 +88,7 @@ Route elsewhere when the need is requirement evidence and a grounded problem sta
 | Key | Boundary | Must contain | Artifact-backed | Fallback |
 | --- | --- | --- | --- | --- |
 | `architecture` | `design-to-build` | Component boundaries and data flow, invariants and failure behavior, trust boundaries | Yes — the value references the hashed architecture report in `artifact_hashes` | None sanctioned |
-| `interfaces` | `design-to-build` | The endpoint or interface inventory, request and response shapes, and the error taxonomy | No | None sanctioned |
+| `interfaces` | `design-to-build` | The endpoint or interface inventory, request and response shapes, and the error taxonomy | Yes, typed `interface_set` — `{artifacts: [the hashed architecture or contract report], change: changed\|none, items: [{id: IF-<n>, kind, name}]}`; every id stands in a named artifact, `changed` needs an item and `none` lists none | None sanctioned; a design that changes no interface says `change: none` on the artifact that shows it |
 | `ui_evidence` | `design-to-build` | The shadcn component template and UI/UX handoff template per `../../design-doctrine.md` section 5, responsive behavior across the six tiers, and accessibility expectations | No | `no user-facing surface - design system not engaged`, carried at manifest schema 2 as an applicability record with reason, scope, and decider |
 | `design_directions` | `redesign-review` | Four directions differentiated across at least three Taste categories, each with its token strategy, component approach, and Taste traceability rows | Yes — the value references the hashed `design-directions.md` in `artifact_hashes` | None sanctioned; a redesign without four directions is a `REVISE`, never a waiver |
 

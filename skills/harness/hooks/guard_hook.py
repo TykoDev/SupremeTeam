@@ -845,6 +845,16 @@ _GUARD_STATE_REASON = (
     "(freeze/block/release/allow-dangerous/revoke-dangerous/read-only). Editing it directly "
     "would lift an owned boundary with no owner check and no released_at trail."
 )
+# A gate verdict record is written only by check.py --verdict-out, which refuses to write one whose judgment is
+# ungrounded and records what it checked. A hand-written verdict_<boundary>.json (or .cross-stage.json) would be an
+# APPROVED nobody checked, and the next boundary's revision_ref binds to exactly that file. The gatekeeper's own
+# judgment draft, verdict_<boundary>[.cross-stage].judgment.json, is the input check.py reads and stays writable.
+_VERDICT_RECORD = re.compile(r"(?:^|/)skillset-saves/runs/[^/]+/[^/]+/verdict_(?!.*\.judgment\.json$)[^/]+\.json$", re.I)
+_VERDICT_REASON = (
+    "Blocked by harness Action Realization layer: gate verdict records are written only by "
+    "skills/harness/gatekeeper/check.py --verdict-out, which checks the package and the gatekeeper's judgment "
+    "before it writes one. Write the judgment draft as verdict_<boundary>.judgment.json and pass it with --judgment."
+)
 # The same files named anywhere inside a command that could not be tokenised.
 _CORE_SAVE_TOKEN = re.compile(
     r"skillset-saves/(?:_latest\.md|_write\.lock|runs/[^\s\"'/]+/(?:_state\.md|_lock\.md|_audit-trail\.md|_journal\.json|_history/))", re.I
@@ -863,6 +873,8 @@ def _protected_reason(target: "_paths.Target", above: bool = False) -> "str | No
             return _TASTE_SAVE_REASON
         if _GUARD_STATE_PATH.search(form):
             return _GUARD_STATE_REASON
+        if _VERDICT_RECORD.search(form):
+            return _VERDICT_REASON
     if above:
         for form in forms:
             if _PROTECTED_DIRS.search(form):

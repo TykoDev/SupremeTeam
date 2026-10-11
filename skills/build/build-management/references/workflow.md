@@ -28,10 +28,10 @@ The phase-by-phase procedure for the `build` pipeline: how the approved design b
 
 ## Acceptance Checklist
 
-- Design input and active scope are explicit, and `approved_design_revision` names the revision the `design-to-build` verdict approved.
+- Design input and active scope are explicit, and `approved_design_revision` is a `{revision, verdict}` record naming the hashed `design/verdict_design-to-build.cross-stage.json` that approved that revision.
 - Mandatory build phases have current outputs for the submitted revision, including the `runtime-health` smoke log, which no test result substitutes for.
 - Non-first-party surfaces are identified against the mechanical detection rule and justified with source, version, owner, and scan note.
-- `traceability` walks every approved design decision to the changed artifact that carries it, with unproven rows stating why.
+- `traceability` is a `trace_map` that covers every approved `AC-<n>` with its changes and tests, and every changed file in `implementation` is traced or listed in `supporting` with a reason.
 - `python skills/harness/gatekeeper/check.py --boundary build-to-review --package skillset-saves/runs/<run>/build/manifest.json` and `python skills/build/gatekeeper-build/scripts/check.py skillset-saves/runs/<run>/build` both pass mechanically before submission.
 - The package is coherent enough for downstream review consumers to trust directly.
 
@@ -50,7 +50,7 @@ pointer and the two rules that decide path resolution. When persistence is activ
 
 1. **Before delegating** a specialist: checkpoint through `session-memory` (`save_run.py checkpoint --run-id {run-id} --owner admiral --expect-revision <n> --set phase_state=BUILD_ACTIVE --set delegated_to=build-management`; `--owner` is the run's lock holder, which is admiral in every Admiral run: `save_run.py` refuses any other owner with `lock is owned by 'admiral'`, so the phase lead records itself through `--set delegated_to=` and never through `--owner`) and include the canonical `### Save Context` block naming the specialist as `Owner` and its `reports/`, `artifacts/`, or `evidence/` destination as `Expected artifact`. Do not create per-specialist directories or phase-state files.
 2. **After specialist returns**: verify the named artifact exists at its destination (for example `reports/report_implementation.md` or `evidence/tests.log`), then checkpoint with `--evidence <path>` so its sha256 is registered.
-3. **After gatekeeper-build verdict**: the gatekeeper has written `build/verdict_build-to-review.json`; record the semantic verdict and next action in the next checkpoint (`--set phase_state=BUILD_GATE_PENDING`, `BUILD_GATE_REVISE`, or the next active state). Never edit the verdict record.
+3. **After gatekeeper-build verdict**: the gatekeeper has written `build/verdict_build-to-review.json`; record the semantic verdict — `judgment.verdict` and `revise_packet.judgment_by_owner` read from that record, never restated from the gatekeeper's prose — and the next action in the next checkpoint (`--set phase_state=BUILD_GATE_PENDING`, `BUILD_GATE_REVISE`, or the next active state). Never edit the verdict record.
 4. **On package consolidation**: write `build/reports/build-package.md` and `build/manifest.json` (schema 2) summarizing all phase outcomes with hashes; admiral submits that manifest to `gatekeeper-admiral`.
 
 ### Save Context Block Template
@@ -93,7 +93,7 @@ and return the deliverable inline.
 | Specialist delegation | The delegation block above, naming the specialist as `Owner`, the exact `reports/`, `artifacts/`, or `evidence/` destination as `Expected artifact`, and `build-to-review` as `Return boundary` |
 | Specialist return | Nothing new: the returned artifact is verified at its destination and its sha256 registered through a checkpoint (`--evidence <path>`) |
 | Gate submission | `build/manifest.json` (schema 2: `boundary: build-to-review`, `owner: build-management`), carrying `tests` and `runtime` as typed probe records whose hashed logs live under `build/evidence/`, and `security_evidence` as a findings record or its applicability record |
-| Phase-gate verdict | Nothing: `build/gatekeeper-build` writes `build/verdict_build-to-review.json` through `check.py --verdict-out`; build-management records the semantic verdict in its next checkpoint |
+| Phase-gate verdict | Nothing: `build/gatekeeper-build` writes `build/verdict_build-to-review.json` through `check.py --verdict-out`; build-management records the semantic verdict in its next checkpoint, copied from the record's embedded `judgment`; it never writes or edits a verdict record, which the guard denies |
 | Package consolidation | `build/reports/build-package.md` plus the manifest revision admiral submits to `gatekeeper-admiral` |
 
 ## Collaboration Notes

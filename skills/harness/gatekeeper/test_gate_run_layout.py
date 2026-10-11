@@ -23,6 +23,15 @@ GATE_SPEC = SKILLS / "gates.yaml"
 sys.path.insert(0, str(SKILLS / "scripts"))
 from data_formats import content_sha256, load_data  # noqa: E402
 
+sys.path.insert(0, str(CHECK.parent))
+import _fixtures  # noqa: E402
+
+#: The intake log and the plan are read as tables (gates.yaml decision_log,
+#: acceptance_table), so the fixtures carry the real source-of-truth shape.
+SOURCE = _fixtures.source_of_truth("src/app.py")
+#: A design that changes no interface still says so, on an artifact.
+INTERFACES = {"artifacts": ["reports/architecture.md"], "change": "none", "items": []}
+
 
 def registry_entry() -> dict:
     return load_data(SKILLS / "tech-stacks" / "registry.yaml")["overlays"][0]
@@ -63,7 +72,7 @@ class RunLayoutFixture:
             "active_owner": owner, "evidence_paths": [f"skillset-saves/runs/{run_id}/intake/report_grilling.md"],
             "timestamp": "2026-09-05T00:00:00+00:00"}), encoding="utf-8")
         self.grilling = self.run_dir / "intake" / "report_grilling.md"
-        self.grilling.write_text("# Grilling\n\nResolved: ship it. Rejected: nothing.\n", encoding="utf-8")
+        self.grilling.write_text(SOURCE, encoding="utf-8")
 
     def phase(self, name: str) -> Path:
         directory = self.run_dir / name
@@ -74,6 +83,23 @@ class RunLayoutFixture:
         path = self.phase(phase) / name
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         return path
+
+    def approved_build_evidence(self) -> tuple[dict, dict]:
+        """Build-to-review evidence bound to an approved design: the upstream verdict and
+        manifest under design/, a changed source file, a diff and a test log under build/."""
+        design = self.phase("design")
+        plan = self.proof("design", "reports/plan.md", SOURCE)
+        verdict, verdict_digest = _fixtures.approved_upstream(
+            self.phase("build"), design, "design-to-build", "r1", self.run_id,
+            {"reports/plan.md": plan}, evidence={"acceptance": "reports/plan.md"})
+        source = self.project / "src" / "app.py"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("print('items')\n", encoding="utf-8")
+        proof = self.proof("build", "proof.md", SOURCE)
+        record = _fixtures.records("proof.md", "src/app.py", content_sha256(source))
+        evidence = {"approved_design_revision": {"revision": "r1", "verdict": verdict},
+                    "implementation": record["change_set"], "traceability": record["trace_map"]}
+        return evidence, {verdict: verdict_digest, "proof.md": content_sha256(proof)}
 
     def proof(self, phase: str, name: str = "proof.md", text: str = "# Proof\n\nObserved: probe executed, denied as expected.\n") -> Path:
         path = self.phase(phase) / name
@@ -102,13 +128,13 @@ class EvidenceRootTests(unittest.TestCase):
 
     def design_manifest(self, decisions: str = "../intake/report_grilling.md", **overrides) -> dict:
         architecture = self.fx.proof("design", "reports/architecture.md", "# Architecture\n\nHexagonal service.\n")
-        plan = self.fx.proof("design", "reports/plan.md", "# Plan\n\nThree increments.\n")
+        plan = self.fx.proof("design", "reports/plan.md", SOURCE)
         data = {
             "schema_version": 2, "run_id": self.fx.run_id, "boundary": "design-to-build", "owner": "commander",
             "submission_id": "design-1", "revision": "r1", "revisions": ["r1"],
             "evidence": {
-                "decisions": decisions, "architecture": "reports/architecture.md", "interfaces": "REST",
-                "plan": "reports/plan.md", "acceptance": "smoke + contract tests",
+                "decisions": decisions, "architecture": "reports/architecture.md", "interfaces": INTERFACES,
+                "plan": "reports/plan.md", "acceptance": "reports/plan.md",
                 "security_seed": security_seed(),
                 "stack_lock": waiver("stack_lock"),
                 "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
@@ -442,15 +468,15 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
         self.assertTrue(any("result not passing" in f for f in out["failures"]))
 
     def test_arbitrary_waiver_fails_and_applicability_record_passes(self):
-        proof = self.fx.proof("build")
+        bound, hashes = self.fx.approved_build_evidence()
         base = {
             "schema_version": 2, "run_id": self.fx.run_id, "boundary": "build-to-review", "owner": "build-management",
             "submission_id": "b1", "revision": "r1", "revisions": ["r1"],
-            "evidence": {"approved_design_revision": "r1", "implementation": "src changed",
+            "evidence": {**bound,
                          "tests": {"artifacts": ["proof.md"], "result": {"status": "pass"}},
                          "runtime": {"artifacts": ["proof.md"], "result": {"status": "pass"}},
-                         "traceability": "plan->impl", "security_evidence": "we looked, it is fine"},
-            "artifact_hashes": {"proof.md": content_sha256(proof)},
+                         "security_evidence": "we looked, it is fine"},
+            "artifact_hashes": hashes,
         }
         _, out = self.check(base, "build-to-review", "build")
         self.assertTrue(any("security_evidence must be a findings record" in f for f in out["failures"]), out["failures"])
@@ -476,13 +502,13 @@ class IdentityAndTypedEvidenceTests(unittest.TestCase):
     def test_stack_lock_record_is_validated_against_registry(self):
         entry = registry_entry()
         architecture = self.fx.proof("design", "reports/architecture.md", "# Architecture\n\nHexagonal service.\n")
-        plan = self.fx.proof("design", "reports/plan.md", "# Plan\n\nThree increments.\n")
+        plan = self.fx.proof("design", "reports/plan.md", SOURCE)
         data = {
             "schema_version": 2, "run_id": self.fx.run_id, "boundary": "design-to-build", "owner": "commander",
             "submission_id": "design-2", "revision": "r1", "revisions": ["r1"],
             "evidence": {
                 "decisions": "../intake/report_grilling.md", "architecture": "reports/architecture.md",
-                "interfaces": "REST", "plan": "reports/plan.md", "acceptance": "smoke + contract tests",
+                "interfaces": INTERFACES, "plan": "reports/plan.md", "acceptance": "reports/plan.md",
                 "security_seed": security_seed(),
                 "stack_lock": {"slug": entry["slug"], "versions": entry["versions"], "overlay_sha256": entry["sha256"]},
                 "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
@@ -708,13 +734,13 @@ class OverlayDigestPortabilityTests(unittest.TestCase):
                 "overlays": [{**entry, "sha256": lf_digest}]}), encoding="utf-8")
             fx = RunLayoutFixture(root)
             architecture = fx.proof("design", "reports/architecture.md", "# Architecture\n\nHexagonal service.\n")
-            plan = fx.proof("design", "reports/plan.md", "# Plan\n\nThree increments.\n")
+            plan = fx.proof("design", "reports/plan.md", SOURCE)
             data = {
                 "schema_version": 2, "run_id": fx.run_id, "boundary": "design-to-build", "owner": "commander",
                 "submission_id": "design-crlf", "revision": "r1", "revisions": ["r1"],
                 "evidence": {
                     "decisions": "../intake/report_grilling.md", "architecture": "reports/architecture.md",
-                    "interfaces": "REST", "plan": "reports/plan.md", "acceptance": "smoke + contract tests",
+                    "interfaces": INTERFACES, "plan": "reports/plan.md", "acceptance": "reports/plan.md",
                     "security_seed": security_seed(),
                     "stack_lock": {"slug": entry["slug"], "versions": entry["versions"], "overlay_sha256": lf_digest},
                     "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},
@@ -739,7 +765,7 @@ class ArtifactHashPortabilityTests(unittest.TestCase):
     """artifact_hashes are line-ending agnostic: a hash taken from LF text verifies a
     CRLF file and vice versa, so a checkout conversion never reads as drift."""
 
-    BODY = "# Plan\n\nThree increments.\n"
+    BODY = SOURCE
 
     def _package(self, fx, hashes):
         entry = registry_entry()
@@ -748,7 +774,7 @@ class ArtifactHashPortabilityTests(unittest.TestCase):
             "submission_id": "design-eol", "revision": "r1", "revisions": ["r1"],
             "evidence": {
                 "decisions": "../intake/report_grilling.md", "architecture": "reports/architecture.md",
-                "interfaces": "REST", "plan": "reports/plan.md", "acceptance": "smoke + contract tests",
+                "interfaces": INTERFACES, "plan": "reports/plan.md", "acceptance": "reports/plan.md",
                 "security_seed": security_seed(),
                 "stack_lock": {"slug": entry["slug"], "versions": entry["versions"], "overlay_sha256": entry["sha256"]},
                 "taste_snapshot": {"applicable": False, "reason": "no saved Taste profile available", "scope": "whole run", "decided_by": "commander"},

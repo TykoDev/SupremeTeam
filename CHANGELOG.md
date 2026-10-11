@@ -7,6 +7,62 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ## [Unreleased]
 
+### Gate judgment held to the source of truth
+
+- Audit of the design, build, review and release gates. The mechanical pass was
+  sound, but a gatekeeper's judgment had no checked record. `check.py` wrote
+  `mechanical_only: true`, and the semantic verdict and its findings lived only in
+  the submitter's checkpoint, so the party being judged recorded the verdict.
+  Nothing tied a REVISE finding to the intake decisions, the plan's acceptance
+  criteria or a contract, so a gate could raise a requirement no source of truth
+  held. `gatekeeper-admiral` was told to "carry the phase gate's adequacy
+  judgment" with no durable phase judgment to read. Intake decisions and
+  acceptance rows had no ids, so nothing could cite them.
+- `gates.yaml` gains `revise_policy.grounding` and `judgment_policy`. A judgment
+  finding names a required key (or none), an owner equal to `evidence_owners`, a
+  basis (`decision` `D-<n>`, `acceptance` `AC-<n>`, `contract` source and section,
+  or `contradiction` between two artifacts) and, when Critical or Major, hashed
+  anchors. A requirement in no source of truth is an ESCALATE to `admiral`, not a
+  REVISE.
+- `check.py --judgment` checks that record. Cited ids must be in the package's own
+  `decisions` or `acceptance`/`plan` artifact. Contract sources must exist. The
+  verdict must follow from the findings (`revise_threshold`). Only the phase
+  gatekeeper or `gatekeeper-admiral` may judge, never the submitter. On a
+  resubmission to the same gate, a new blocking finding on unchanged evidence
+  fails (`batch_fix`). A valid record is embedded in the verdict record under
+  `judgment`. A rejected one is never written. `--prior` reports the prior gate's
+  own judgment as `prior_record.judgment`.
+- `contract_floor.py` pins `judgment_policy.phase_gates` and `cross_stage_gate`.
+  `harness/gatekeeper/test_gate_judgment.py` covers the record (27 tests).
+- `grill-me-doctrine.md`: every grilling-log entry carries a stable `D-<n>` id.
+  `design/planner`: every acceptance row carries `AC-<n>`.
+- The free-text keys are typed records now. `decisions` is a `decision_log`: the
+  grilling log's four fixed tables, every cell filled, unique `D-<n>` ids,
+  sanctioned sources. `acceptance` is an `acceptance_table`: the plan's `AC-<n>`
+  table. `interfaces` is an `interface_set` of `IF-<n>` items that stand in their
+  artifact. `implementation` is a `change_set`: every changed file is re-hashed and
+  named by the hashed diff. `traceability` is a `trace_map`: every approved
+  `AC-<n>` is traced to changes and to tests named in the tests log, and every
+  changed file is traced. `acceptance`, `interfaces`, `implementation` and both
+  upstream approvals are artifact-backed.
+- Upstream approvals are bound. `approved_design_revision` and `approved_delivery`
+  are `{revision, verdict}`. The verdict must be the upstream boundary's
+  cross-stage record with `gatekeeper-admiral`'s valid APPROVED judgment for that
+  revision in this run. The approved manifest beside it must still fingerprint,
+  and every artifact it hashed must still hash, so a design or review changed
+  after approval fails downstream. A bare revision string is refused at schema 2.
+- Hooks. Rule C denies a hand-written `verdict_<boundary>[.cross-stage].json`;
+  only `check.py --verdict-out` writes one. The new `gate_watch.py`, run from
+  `post_tool_use.py`, re-runs `check.py` when a run manifest or intake log changes
+  and reports what fails (advisory, bounded). `check.py --intake-log` checks a
+  grilling log on its own.
+- The submitting skills (`commander`, `redesign`, `build-management`,
+  `code-chief`, `cso`, `investigate`, `admiral`) read the verdict from the gate's
+  own record and never write one. The producers (`planner`, `architect`,
+  `bob-the-builder`, `build-management`, `ship`) document the new record shapes.
+- Tests: `test_gate_source_of_truth.py` (14), `hooks/test_gate_watch.py` (8), and
+  `_fixtures.py`, which the boundary fixtures across the suites now share.
+
 ### Faster gates: severity threshold, one review per boundary, concurrent stages
 
 - Diagnosis of 3 to 5 hour runs for 1 to 2 hour work: every phase-gated boundary
@@ -690,13 +746,14 @@ bump for new behaviour, a patch for a fix. Skills not listed are unchanged at 1.
 test compares this list with the `version:` of every `SKILL.md`, so a bump that is not
 recorded here, or a record the skill does not carry, fails it.
 
-- `admiral` 2.2.0: ceremony scaled to the change and a bounded cross-stage pass; previously native delegation grants and non-blocking MCP template intake; previously startup classification and shared-cap clarification; previously how its commands read in an installed copy, the eleven save-directory
+- `admiral` 2.3.0: the intake log is parsed as four fixed tables, and the verdict is read from the gate's own record; previously ceremony scaled to the change and a bounded cross-stage pass; previously native delegation grants and non-blocking MCP template intake; previously startup classification and shared-cap clarification; previously how its commands read in an installed copy, the eleven save-directory
   classes, and what `create` carries.
-- `design/architect` 1.0.2: directions use the reports destination; previously works from the stack the project already fixes, not a lock
+- `design/architect` 1.1.0: `interfaces` is a typed `interface_set` with `IF-<n>` ids that stand in the hashed artifact; previously directions use the reports destination; previously works from the stack the project already fixes, not a lock
   that comes later in the pipeline.
 - `design/engineer` 1.0.2: key-owner REVISE corrections arrive through commander; previously works from the detected stack, not a lock that comes later.
-- `design/commander` 1.1.0: both validators in the self-check, concurrent taste/research and seed/plan stages, rerun scope on REVISE; previously native delegation grants; previously confirmed Admiral intake, explicit Taste snapshot and unconditional security assessment; previously states the stack-lock rule the engine enforces (every
+- `design/commander` 1.2.0: `decisions`, `interfaces` and `acceptance` are typed source-of-truth records, and the verdict is read from the gate's own record; previously both validators in the self-check, concurrent taste/research and seed/plan stages, rerun scope on REVISE; previously native delegation grants; previously confirmed Admiral intake, explicit Taste snapshot and unconditional security assessment; previously states the stack-lock rule the engine enforces (every
   declared version is one the registry offers), and its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `design/planner` 1.1.0: every acceptance row carries a stable `AC-<n>` id that gate findings cite, and `acceptance` is a typed `acceptance_table` read from the hashed plan.
 - `design/design-mapper` 1.0.2: parity examples use real run paths; previously states what `check_parity.py` now refuses in an inventory.
 - `careful` 1.0.2: malformed-state and active-run protection limits; previously describes the guard as it is (it reads the command, and counts faults).
 - `freeze` 1.3.0: one record per boundary whatever the spelling, a refused glob that can
@@ -704,7 +761,7 @@ recorded here, or a record the skill does not carry, fails it.
   lacks), a warning for a leading-slash glob outside the project that names a directory that
   exists, relative globs anchored at the project root, a writer lock, and what an
   unreadable record means.
-- `guard` 1.5.0: a grant is capped at 8 hours, the hook scripts are protected (Rule F,
+- `guard` 1.6.0: gate verdict records have a single writer, `check.py --verdict-out` (Rule C); previously a grant is capped at 8 hours, the hook scripts are protected (Rule F,
   advisory, whole registration file), a write after an unfollowable directory chain is
   denied (Rule G, with its own failure-mode row), a read-only run denies writes with no
   named target (pipes, launchers, PowerShell blocks, diffs), an unreadable record is counted
@@ -712,13 +769,13 @@ recorded here, or a record the skill does not carry, fails it.
   modules the hooks import, and Rule C reads a command aimed at the project root by what
   it would put into or remove from the record directories.
 - `unfreeze` 1.1.1: explicit legacy adoption keeps protection active; previously releases by the normalised glob and records the cap on a grant.
-- `gatekeeper-admiral` 1.2.0: bounded cross-stage scope, severity threshold and resubmission batch rule; previously independent spec floor and typed security/human-go records; previously audit fixes for input containment, BOM manifests and confirmation-id consistency; previously a REVISE row for a schema-1 result, the typed-record
+- `gatekeeper-admiral` 1.3.0: judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; carries the phase judgment from the phase gate's own record; previously bounded cross-stage scope, severity threshold and resubmission batch rule; previously independent spec floor and typed security/human-go records; previously audit fixes for input containment, BOM manifests and confirmation-id consistency; previously a REVISE row for a schema-1 result, the typed-record
   roster and what a typed record leaves unchecked.
-- `design/gatekeeper-design` 1.2.0: severity threshold and resubmission batch rule; previously no invented mock-rendering fallback; previously spec floor, exact layer citation and corrected research/UI slots; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, and the stack-lock and
+- `design/gatekeeper-design` 1.3.0: judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously no invented mock-rendering fallback; previously spec floor, exact layer citation and corrected research/UI slots; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, and the stack-lock and
   selection rules the engine now enforces.
-- `build/gatekeeper-build` 1.2.0: severity threshold and resubmission batch rule; previously shared gate safety floor and layer-citation correction; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, with its package guard and
+- `build/gatekeeper-build` 1.3.0: judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously shared gate safety floor and layer-citation correction; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, with its package guard and
   optional slots.
-- `review/gatekeeper-code` 1.2.0: severity threshold and resubmission batch rule; previously selection-dependent redesign render applicability; previously safety floor and corrected CSO/security attribution; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, with its package guard and
+- `review/gatekeeper-code` 1.3.0: judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously selection-dependent redesign render applicability; previously safety floor and corrected CSO/security attribution; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, with its package guard and
   optional slots.
 - `session-memory` 1.1.1: the writer lock, `checkpoint --drop-evidence`, the
   `uninitialized` class, the refusal reasons and the `access_denied` mark; its checkpoint
@@ -726,7 +783,7 @@ recorded here, or a record the skill does not carry, fails it.
 - `taste` 1.1.2: structured set examples and native delegation grants; previously unconditional design snapshot producer; previously `propose` validation, redaction by shape, lock reclaim and the error codes.
 - `build/security-builder` 1.0.1: typed applicable/no-boundary security-seed assessments.
 - `qa` 1.0.2: session-pin admission and native delegation grants; previously unconditional probes and defects; only browser/report-only delegation is conditional.
-- `ship` 1.0.3: the `setup` stage runs on every release, as `pipelines.yaml` and `setup-deploy` already said, not only on a first deployment or on drift; previously native delegation grants, and before that the typed, revision-bound human-go record and repeat-release snapshots.
+- `ship` 1.1.0: `approved_delivery` binds the APPROVED review cross-stage verdict over an unchanged review package; previously the `setup` stage runs on every release, as `pipelines.yaml` and `setup-deploy` already said, not only on a first deployment or on drift; previously native delegation grants, and before that the typed, revision-bound human-go record and repeat-release snapshots.
 - `setup-deploy` 1.0.1: re-verification and current-run snapshots on every release.
 - `skill-maker/skill-reviewer` 1.0.2: no cold isolated scoring; previously explicit harness-doctrine rejection duties.
 - `skill-maker` 1.0.2: native delegation, package-stage ownership and evidence paths; previously the Stage 5 hand-off names the output directory as an absolute path, the
@@ -735,17 +792,17 @@ recorded here, or a record the skill does not carry, fails it.
   refuses symlinks, secrets and run state; failed eval runs are not scored.
 - `review/security-review` 1.1.1: finding status and canonical rule references; previously `scan_record.py` names its output relative to the
   manifest and gains `--fail-on-output` and `--manifest-root`.
-- `review/cso` 1.0.3: single-validator verdict naming and delegation grants; previously the waiver reason must be the sanctioned wording, scan output
+- `review/cso` 1.0.4: the verdict is read from the gate's own record; previously single-validator verdict naming and delegation grants; previously the waiver reason must be the sanctioned wording, scan output
   paths follow the manifest, and its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
-- `design/redesign` 1.1.0: both validators in the self-check and rerun scope on REVISE; previously no fabricated unavailable parity record and native delegation grants; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
-- `build/build-management` 1.1.0: both validators in the self-check, concurrent test and security stages, rerun scope on REVISE; previously performance doctrine discovery and delegation grants; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
-- `review/code-chief` 1.1.0: both validators in the self-check, every lens scheduled at once, rerun scope on REVISE; previously canonical lens filename, performance doctrine and delegation grants; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
-- `investigate` 1.0.2: owns its reproduction capture and grants delegation; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
-- `build/bob-the-builder` 1.0.2: canonical text/binary hash semantics; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `design/redesign` 1.1.1: the verdict is read from the gate's own record; previously both validators in the self-check and rerun scope on REVISE; previously no fabricated unavailable parity record and native delegation grants; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `build/build-management` 1.2.0: `approved_design_revision` binds the APPROVED design cross-stage verdict, `traceability` is a `trace_map` over every approved `AC-<n>`, and the verdict is read from the gate's own record; previously both validators in the self-check, concurrent test and security stages, rerun scope on REVISE; previously performance doctrine discovery and delegation grants; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `review/code-chief` 1.1.1: the verdict is read from the gate's own record; previously both validators in the self-check, every lens scheduled at once, rerun scope on REVISE; previously canonical lens filename, performance doctrine and delegation grants; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `investigate` 1.0.3: the verdict is read from the gate's own record; previously owns its reproduction capture and grants delegation; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `build/bob-the-builder` 1.1.0: `implementation` is a typed `change_set` whose files are re-hashed and named by the hashed diff; previously canonical text/binary hash semantics; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
 - `build/test-builder` 1.0.2: explicit report deliverable and canonical hashing; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
 - `build/debugger` 1.0.2: candidate teardown preserves implementation ownership; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
 - `build/health-check` 1.0.2: authorized library consumption smoke and canonical hashing; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
-- `build/cross-check-build-confirm` 1.0.2: no-code decisions still owe non-waivable proof; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `build/cross-check-build-confirm` 1.0.3: `traceability` is now a checked `trace_map`; the proven/unproven column stays an ownership contract; previously no-code decisions still owe non-waivable proof; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
 - `qa-only` 1.0.4: dual-mode routing and session-pin admission; previously the read-only boundary reference states what the hook now denies,
   including index-only git commands, package-manager installs and writes with no named
   target.

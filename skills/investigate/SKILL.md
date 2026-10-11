@@ -9,7 +9,7 @@ description: >-
   a messy incident to one credible explanation — even when Admiral is never named.
   An already-reproduced failure with a known mechanism belongs to
   `build/debugger`.
-version: 1.0.2
+version: 1.0.3
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent, Task
 ---
 

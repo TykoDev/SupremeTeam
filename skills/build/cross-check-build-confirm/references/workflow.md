@@ -53,9 +53,10 @@ applicability record. Never quietly omit a decision nobody checked.
 
 `status` carries exactly two values, because that is what `../../../ownership.yaml`
 names for the `build-traceability` deliverable build-management authors from this
-matrix: "proven and unproven status per row". `gates.yaml` checks `traceability`
-for presence only — the key has no `evidence_types` entry — so the vocabulary is an
-ownership contract, not a machine check. What keeps it true is the same mechanism
+matrix: "proven and unproven status per row". `gates.yaml` types `traceability` as
+a `trace_map` — every approved `AC-<n>` traced to changes and tests, every changed
+file accounted for — but the `proven` / `unproven` vocabulary is not part of that
+record, so it stays an ownership contract, not a machine check. What keeps it true is the same mechanism
 `../../build-management/references/gate-evidence.md` cites for `traceability`: `build/gatekeeper-build` reads the matrix as
 judgment rather than as a validated record, and an `unproven` row that should read
 `proven`, or a third invented status, surfaces there as a `REVISE` to

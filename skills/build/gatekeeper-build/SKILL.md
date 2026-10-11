@@ -8,7 +8,7 @@ description: >-
   check build readiness, review build phase output, or challenge this build packet.
   Judges inside the build phase; the handoff between stages is `gatekeeper-admiral`,
   and a list of what is missing with no decision is `build/cross-check-build-confirm`.
-version: 1.2.0
+version: 1.3.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -77,7 +77,7 @@ decisions belong at the gate itself:
 
 - **`tests` and `runtime` cannot be satisfied by assertion.** They are the artifact-backed pair: each must name a path in the package's `artifact_hashes` map at any schema version, and at `schema_version: 2` each must additionally be a `probe` record at `result.status: pass`. `../../gates.yaml` `evidence_type_rules` fixes what each one is — `tests` is the test-runner log, `runtime` is the startup / entry-point smoke log, each a hashed file under `build/evidence/`. A passing count, a summary line, or a claim that the suite was green is not evidence; the executed log is.
 - **`runtime` is the key most often absent**, because a build that compiles is assumed to start. This gate does not grant that assumption.
-- **Only `security_evidence` accepts a waiver here**, as a typed applicability record naming reason, scope, and decided_by, for the exact reason `../../gates.yaml` `fallback_values` sanctions — no trust-boundary change, so `security-builder` was not engaged. On the other five an `{applicable: false, …}` record fails as `evidence not waivable: <key>`. Read "accepts no fallback" narrowly: it governs waiver *records*, not prose. A bare explanatory string in place of `approved_design_revision`, `implementation`, or `traceability` passes the validator at either schema version, because non-falsiness is all the mechanical check asks of them — which is why those three are judgment keys, not mechanical ones (`references/boundary-evidence.md` §4).
+- **Only `security_evidence` accepts a waiver here**, as a typed applicability record naming reason, scope, and decided_by, for the exact reason `../../gates.yaml` `fallback_values` sanctions — no trust-boundary change, so `security-builder` was not engaged. On the other five an `{applicable: false, …}` record fails as `evidence not waivable: <key>`. - **The build is bound to its source of truth, mechanically, at `schema_version: 2`.** `approved_design_revision` is a `{revision, verdict}` record: the hashed `design/verdict_design-to-build.cross-stage.json` must hold `gatekeeper-admiral`'s valid APPROVED judgment for that revision in this run, and the approved design manifest and every artifact it hashed must still hash as approved. `implementation` is a `change_set` whose files are re-hashed and named by the hashed diff. `traceability` is a `trace_map` that must cover every `AC-<n>` of the approved acceptance table with changes from `implementation` and tests named in the `tests` log, and account for every changed file. A bare string on any of the three fails (`references/boundary-evidence.md` §1).
 
 Ownership decides where a `REVISE` lands (`../../gates.yaml` `evidence_owners`):
 
@@ -177,15 +177,16 @@ non-falsy, that `tests` and `runtime` each name a correctly hashed path in
 `artifact_hashes`, and that no blocked phrase or broken local link is present.
 
 **The typed half runs only at `schema_version: 2`.** `tests` and `runtime` as
-`probe` records at `result.status: pass`, `approved_design_revision` as a
-`revision_ref`, `security_evidence` as a `findings` record — none of those shapes
+`probe` records at `result.status: pass`, `approved_design_revision` as a bound
+`revision_ref`, `implementation` as a `change_set`, `traceability` as a
+`trace_map`, `security_evidence` as a `findings` record — none of those shapes
 is enforced on a manifest that omits `schema_version`, which the engine reads as
 legacy schema 1. Schema 2 additionally requires `boundary` and `owner` in the
 manifest, and widens the hash rule to *every* path-shaped string in any evidence
-value. Submit at schema 2: at schema 1 four of the six keys — everything but
-`tests` and `runtime` — accept any non-empty string, and the record shapes above
-are documentation rather than enforcement. Schema 2 narrows that to three, since
-`security_evidence` becomes a checked `findings` record.
+value. Submit at schema 2 (inside a run it is required): at schema 1 the record
+shapes above are documentation rather than enforcement, and only the artifact
+backing of `approved_design_revision`, `implementation`, `tests` and `runtime` is
+checked. At schema 2 every one of the six keys is a checked record.
 
 A typed record is the submitter's own statement: the validator never compares an
 artifact's content with what its record claims and never re-runs a command (it reads `.md` and `.txt` artifacts only for blocked phrases and local links),
@@ -201,7 +202,7 @@ the left never reads as satisfaction of the right.
 
 | Shape key (`scripts/check.py`) | What it matches | Evidence-key counterpart |
 | --- | --- | --- |
-| `implementation` | an `*implementation*.md`, `deliverable_*build*.md`, or `diff` deliverable (`diff.md`, `diff-*.md`, `*-diff.md`) in the package directory | `implementation` — same name, different object: a required, untyped, non-falsy evidence value, not a file-presence fact |
+| `implementation` | an `*implementation*.md`, `deliverable_*build*.md`, or `diff` deliverable (`diff.md`, `diff-*.md`, `*-diff.md`) in the package directory | `implementation` — same name, different object: a `change_set` record whose files are re-hashed and named by the hashed diff, not a file-presence fact |
 | `tests` | a `*test*.md` deliverable — a written report | `tests` — same name, different object: a `probe` record whose artifact is the hashed test-runner log under `build/evidence/` |
 | `security` | a `*security*.md` deliverable; conditional, so its absence is `UNCHECKED` and names the waiver and the stage condition | `security_evidence` — the names differ, and so do the objects: a `findings` record `{items: [{id, severity, status, …}]}`, or the one sanctioned applicability record |
 | `completeness` | the cross-check-build-confirm certification file | none. A file-presence key of this script alone; the gate spec has no completeness key |
@@ -246,7 +247,7 @@ above).
 
 1. Confirm the submitted build revision, implementation scope, and that the declared `boundary` and `owner` match the `build-to-review` row — submitter `build-management`.
 2. Run `scripts/check.py`, after confirming the path resolves inside the expected working area, to verify the packet includes the implementation diff summary, test-builder evidence, security-builder outcome, cross-check-build-confirm certification, and gatekeeper-build lineage for the current revision.
-3. Run the boundary validator against `../../gates.yaml` for `build-to-review` and confirm the six required evidence keys are present, that `tests` and `runtime` resolve to hashed probe logs rather than claims, and that `approved_design_revision` names the design revision this build was actually authorised against. Read the required-evidence list from the spec, never from memory.
+3. Run the boundary validator against `../../gates.yaml` for `build-to-review` and confirm the six required evidence keys are present, that `tests` and `runtime` resolve to hashed probe logs rather than claims, that `approved_design_revision` binds the APPROVED `design-to-build` cross-stage verdict and an unchanged design, and that `implementation` and `traceability` parse as their records. Read the required-evidence list from the spec, never from memory.
 4. Cross-check hardening evidence and completeness claims against the actual changed modules, test reruns, unresolved findings, migrations, configuration edits, and any generated or third-party surfaces.
 5. Decide the narrowest justified verdict and return only the mandatory changes build-management must make before the packet can advance to review, grouped by the owner each failing key belongs to.
 6. Preserve verdict history across build resubmissions and flag any silent drift between the code surface, evidence set, and completeness certification.
@@ -257,6 +258,7 @@ above).
 - **Vendoring detection**: Detect generated, vendored, or third-party imported content and treat it with tighter review rules than first-party changes.
 - **Harness-doctrine citation**: When the package adds or changes a cross-cutting runtime intervention, check it against `../../harness-doctrine.md` §5 and cite the violated section by number in the verdict.
 - **Batched REVISE** (`../../gates.yaml` `revise_policy`): A `REVISE` carries every mechanical failure and every judgment finding from the pass, grouped by owner exactly as the boundary validator `../../harness/gatekeeper/check.py` reports them in `revise_packet.by_owner`; never return the first defect alone. On a resubmission run with `--prior`, re-judge only `changed_evidence` and carry the prior judgment on `unchanged_evidence`; the mechanical pass always covers the whole package. A package that fails mechanically was never eligible for submission (the submitter self-checks) and is returned without judgment. On a resubmission a new finding is raised only against `changed_evidence` or a defect the change introduced (`revise_policy.batch_fix`); a finding that could have been raised on unchanged evidence in the first pass is not raised now, because a gate that reveals its standard one finding per round is the slowest thing in the pipeline.
+- **Source-of-truth grounding** (`../../gates.yaml` `revise_policy.grounding`, `judgment_policy`): Judge the package against its source of truth and nothing else — the intake Decision Register (`D-<n>` ids, `../../grill-me-doctrine.md`), the plan's acceptance rows (`AC-<n>` ids), `../../gates.yaml`, and the catalog's doctrine and contract files. Every judgment finding names the required evidence key it concerns (or none for a crossing defect), a basis — `decision`, `acceptance`, `contract`, or `contradiction` — and, when Critical or Major, the hashed package artifacts it was read from. A requirement that is in none of those sources is not a finding. When the gate believes the source of truth itself lacks a decision the package needed, it returns `ESCALATE` to `admiral`, which owns intake, never a `REVISE` to the specialist who built on the record as written. A finding another gate already raised is this gate's own only when it carries this gate's own basis and anchors: agreeing with an earlier verdict is not evidence. Write the verdict and findings as the judgment record `judgment_policy.record` describes and pass it to `check.py --judgment`; a record it rejects is corrected — the ungrounded finding grounded or dropped — never stored or returned.
 
 ## Verdict Model
 
@@ -266,7 +268,7 @@ above).
 
 ## Evidence Standard
 
-- Tie every major and critical finding to a concrete file, artifact, or observable behavior.
+- Tie every Critical and Major finding to hashed package artifacts and to the source of truth it enforces — a `D-<n>` decision, an `AC-<n>` acceptance row, a section of a catalog contract, or two package artifacts that contradict each other — never to the gate's own preference (`../../gates.yaml` `judgment_policy`).
 - Reject claims of completion that are not backed by a visible deliverable.
 - Preserve contradictory evidence instead of normalizing it away.
 
@@ -281,7 +283,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | The completeness certification says the build is clean, but the attached tests or security evidence are missing or older than the implementation revision | Reject the package and require a coherent evidence set tied to the submitted code revision. |
 | `runtime` is absent because the build compiles and was assumed to start | Return `REVISE` to `health-check` and require the startup / entry-point smoke log as a hashed `probe` artifact under `build/evidence/`. Compiling and starting are different facts, and this is the key most often missing. |
 | `tests` or `runtime` is supplied as a claim — a passing count, a summary line, or "suite green" — rather than a hashed log | Return `REVISE` to the key's owner. `../../gates.yaml` `evidence_type_rules` makes the executed log the evidence; a claim cannot be re-read by review, and the artifact-backing check fails it before judgment begins. |
-| `approved_design_revision` is empty, a placeholder, or names a design revision with no approval record | Return `REVISE` to `build-management`. The key is a `revision_ref` and accepts no fallback; without it the build advances under a design nobody approved. |
+| `approved_design_revision` is empty, a bare string, or its `verdict` is not an APPROVED, valid, same-run, same-revision `gatekeeper-admiral` record, or the approved design changed after approval | Return `REVISE` to `build-management` (the validator names which). If the design changed after approval, the build has no approved design: route to `admiral` to re-gate `design-to-build` rather than rewriting the record. |
 | `security_evidence` carries a bare explanatory string where a record belongs | Return `REVISE` to `security-builder`. The only admissible waiver is the typed applicability record naming reason, scope, and decided_by for "no trust-boundary change - security-builder not engaged". At schema 2 *every* bare string fails: an unsanctioned one as `security_evidence must be a findings record with an items list at schema 2`, the sanctioned wording itself as `bare fallback string not accepted at schema 2: security_evidence (use an applicability record)`. At schema 1 no string fails at all, which is the reason to insist on schema 2. |
 | Either validator fails to run — Python unavailable, permission error, `<package-dir>` rejected by the containment guard, or exit code 2 | Treat the gate as NOT satisfied and return `ESCALATE`, naming which validator failed and why. An unrun pre-check is not a clean one, and a gate that fails open is worse than no gate. |
 | `scripts/check.py` fails a slot as `ARTIFACT_MISSING` and names a near miss — a file that lacks the slot's marker, or one already counted for another slot — or reports `LINK_ESCAPES_PACKAGE` | Return `REVISE` to `build/build-management`: each slot is its own file, a file that covers several slots fills one, and a link out of the package directory is replaced by the file itself. |
@@ -289,6 +291,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | A claimed build fix quietly widens scope beyond the approved design or implementation contract | Escalate the scope expansion instead of letting the build packet smuggle a design change downstream. |
 | The resubmission changes the code surface but leaves the revision delta or blocker summary unchanged | Treat the verdict as stale, require a fresh delta summary, and prevent silent re-gating. |
 | The package omits `schema_version`, so the boundary validator reports `manifest_schema_version: 1` | Return `REVISE` to `build-management` for a schema-2 manifest carrying `boundary` and `owner`. Exit 0 on a schema-1 package is a weaker fact than it looks: no typed record was checked, so `tests` and `runtime` were verified as hashed paths but never as passing probes. Do not read that exit 0 as the evidence contract being satisfied. |
+| `check.py --judgment` rejects the judgment record — a cited `D-` or `AC-` id the intake log or plan does not contain, a key or owner the spec does not name, an unhashed anchor, a REVISE with no grounded Critical or Major finding, or a new finding on unchanged evidence | The record is the gate's defect, not the package's. Ground each finding in the source of truth and the package's hashed artifacts, or drop it; if what the gate wanted is in no source of truth, return `ESCALATE` to `admiral` for an intake decision instead. Never store or return the rejected verdict. |
 
 ## Save Protocol
 
@@ -298,11 +301,11 @@ A gatekeeper writes exactly one path class: the durable verdict record at
 validator against `../../gates.yaml`:
 
 ```bash
-python skills/harness/gatekeeper/check.py --boundary build-to-review --package skillset-saves/runs/{run-id}/build/manifest.json --verdict-out skillset-saves/runs/{run-id}/build/verdict_build-to-review.json
+python skills/harness/gatekeeper/check.py --boundary build-to-review --package skillset-saves/runs/{run-id}/build/manifest.json --judgment skillset-saves/runs/{run-id}/build/verdict_build-to-review.judgment.json --verdict-out skillset-saves/runs/{run-id}/build/verdict_build-to-review.json
 ```
 
 It never modifies the submission, its evidence, or the run record;
-`build/build-management` records the semantic verdict in its next checkpoint.
+`build/build-management` records the semantic verdict in its next checkpoint, copied from the record's `judgment`, which is the gate's own account and the one every later reader trusts. The judgment record — this gate's verdict and every judgment finding with its basis and anchors — is written first as `verdict_<boundary>.judgment.json` beside the verdict (same `gate-verdict` class) and passed with `--judgment`; `check.py` embeds it in the verdict record under `judgment` and refuses to write a record whose judgment is ungrounded.
 `gatekeeper-admiral` later re-validates the same boundary with
 `--prior build/verdict_build-to-review.json` and writes its own record beside it
 as `verdict_build-to-review.cross-stage.json`. When persistence is inactive,

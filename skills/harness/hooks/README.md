@@ -50,7 +50,7 @@ The harness hooks operate at multiple lifecycle layers to ensure safety, traceab
 [Pending Action] ────► PreToolUse (pre_tool_use.py -> guard_hook.py) [Layer 3]
                               │  • Rule A: Dangerous shell patterns & allow_dangerous
                               │  • Rule B: Frozen & blocked globs (guard & freeze)
-                              │  • Rule C: Single-writer records (save_run, taste, guard)
+                              │  • Rule C: Single-writer records (save_run, taste, guard, gate verdicts)
                               │  • Rule D: Read-only run boundaries
                               │  • Rule E: Coverage destination advisory
                               │  • Rule F: Hook scripts and registration files
@@ -84,6 +84,7 @@ Every file in `skills/harness/hooks/` serves an explicit, non-overlapping archit
 | [`save_run.py`](save_run.py) | CLI / Utility | Persistence | Sole sanctioned writer for canonical run records (`_state.md`, `_lock.md`, `_audit-trail.md`, `_journal.json`, `_latest.md`). |
 | [`guard_state.py`](guard_state.py) | CLI / Utility | 3 | Sole sanctioned writer for `.harness-state/guard-state.json` (freeze, block, read-only, allow-dangerous). |
 | [`size_audit.py`](size_audit.py) | CLI / Sub-hook | Maintenance | Periodic bounded scanner reporting oversized files/directories (>= 256 MiB) under generated runtime roots. |
+| [`gate_watch.py`](gate_watch.py) | Sub-hook | Maintenance | Re-runs `harness/gatekeeper/check.py` when a run manifest or intake grilling log changes and reports what fails, advisory and bounded (`.harness-state/observations/gate-watch.json`). |
 | [`audit_improve.py`](audit_improve.py) | CLI / Sub-hook | Maintenance | Reads bounded, redacted failure telemetry and formats improvement handoffs for `audit-improve` and `skill-maker`. |
 | [`check_readiness.py`](check_readiness.py) | CLI / Diagnostic | - | Evaluates runtime prerequisites: Python version (>= 3.13), hook registration, observed firing, and save state. Read-only. |
 | [`verify_registration.py`](verify_registration.py) | CLI / Diagnostic | - | Non-mutating inspector checking whether hooks are configured, resolvable, and executable in host configs, whether their matchers cover the tools they need, and which interpreter they launch. |
@@ -120,6 +121,7 @@ Every file in `skills/harness/hooks/` serves an explicit, non-overlapping archit
 | [`test_installer_hooks.py`](test_installer_hooks.py) | Test Suite | - | `scripts/install_hooks.py` and the `--register-hooks` options of `install.sh` / `install.ps1`: non-UTF-8 files, the generated OpenCode plugin run under node, file modes, and the preview-and-ask step on a terminal. |
 | [`test_documented_flags.py`](test_documented_flags.py) | Test Suite | - | Checks every documented command line in `README.md`, `QUICK-START.md`, `Install.md` and this README against the argument parser of the script it runs. |
 | [`test_size_audit.py`](test_size_audit.py) | Test Suite | - | Traversal limits, threshold calculations, and throttle record tests for `size_audit.py`. |
+| [`test_gate_watch.py`](test_gate_watch.py) | Test Suite | - | Rule C's single writer for gate verdict records, and `gate_watch.py`: a failing manifest or intake log reported once per change, bounded per call. |
 | [`test_audit_improve.py`](test_audit_improve.py) | Test Suite | - | Telemetry analysis, correlation hashing, cooldown enforcement, and handoff formatting tests for `audit_improve.py`. |
 
 ---
@@ -169,6 +171,7 @@ Invoked by the host before any write-capable or shell tool executes. `pre_tool_u
    - `git restore --staged` (without `--worktree`) and a `git reset` that is not `--hard`, `--merge` or `--keep` only move the index: their pathspecs are not writes into a frozen tree. A `trap` handler is read as the command line it is, so what it writes is seen.
 
 3. **Rule C — Single-Writer Record Protection:**
+   - Gate verdict records (`skillset-saves/runs/<run>/<phase>/verdict_<boundary>.json` and `.cross-stage.json`) are written only by `harness/gatekeeper/check.py --verdict-out`, which checks the package and the gatekeeper's judgment first; an edit, redirect, copy, `sed -i` or removal is denied. The judgment draft `verdict_<boundary>[.cross-stage].judgment.json` is the gatekeeper's input to `--judgment` and stays writable. A later boundary's `revision_ref` binds to the cross-stage record, so this keeps every approval it reads one the checks produced.
    - Denies edit tools and mutating shell commands from modifying core run persistence files (`skillset-saves/_latest.md`, `runs/*/_state.md`, `_lock.md`, `_audit-trail.md`, `_journal.json`, `_history/`, and the writer mutex `skillset-saves/_write.lock`), which only `save_run.py` may update; the Taste records (`taste.json`, `taste.md`, `taste.journal.jsonl`, `taste.lock`), which only `skills/taste/taste_prefs.py` may update; and `.harness-state/guard-state.json`, which only `guard_state.py` may update.
    - Matching is case-insensitive and canonical. A script that is the sanctioned writer is exempt structurally, because a script's arguments are data and never write targets: `python save_run.py checkpoint ...` passes, while a redirect from the same command into a core file is still denied. Removing or moving the directories that hold these records (`.harness-state`, `skillset-saves`, `runs`, a run, `_history`, `preferences`) is denied too, and so is writing into them by a name the command does not fix: a sync or extract into one (`rsync -a x/ .harness-state/`, `tar -xf a.tar -C .harness-state`), a copy of a source that names no file (`cp -r x/. .harness-state`), the in-place editors `find -exec` aims at one, and `git clean` of one. A copy, link or install of a file into one is judged as the file it lands as, so `cp /tmp/guard-state.json .harness-state/`, `cp -t .harness-state /tmp/guard-state.json` and `ln -sf /tmp/_state.md skillset-saves/runs/r1/` are refused, while a file that is no record (`cp notes.md .harness-state/`) passes.
    - **Aimed at the project root (or above it) instead of at those directories**, a command is read for what it would remove or land there, and only while a record exists (`.harness-state/guard-state.json`, or `skillset-saves/` holding `_latest.md`, `_write.lock`, `runs` or `preferences`): `git clean -d` with `-x` or `-X`, or without them when the project's `.gitignore` or `.git/info/exclude` does not name the directory, is refused unless `-e`/`--exclude` leaves it; `rsync --delete` is refused unless `--exclude` leaves it; an archive extract is refused when a member lands in one of them (the guard lists a tar or zip archive on disk; one it cannot read, such as `curl ... | tar -xz` or a `.7z`, is refused); a contents copy or sync (`cp -r x/. .`, `cp -rT x .`, `rsync -a x/ ./`) is refused when the source holds one of them, or when its source is not on disk or is not named (`$SRC/.`, `host:path`); a `git stash` that takes untracked files with it is refused, `-a`/`--all` always and `-u`/`--include-untracked` when the project's ignore files do not name the directory, unless its pathspecs stay outside them (`git stash push -u -- src`), and whatever `-C` or `cd` says, because a stash without a pathspec takes the whole working tree; and a `find` with `-delete`, or an `-exec`/`-execdir`/`-ok` whose words name `rm`, `unlink`, `shred`, `rmdir`, `mv` or `truncate`, is refused when its expression could select a record for that action. The expression is evaluated for each record path (the directories, the record files, each run listed up to 256 and its `_history`): `-name`, `-iname`, `-path`, `-ipath`, `-wholename` and `-regex` are decided exactly (an Emacs-only regex construct is not), every other test may be true or false, and `!`, `-a`, `-o`, `,` and parentheses keep their meaning, so `find . -name guard-state.json -delete`, `find . -type f -delete`, `find . -not -name '*.pyc' -delete` and `find . -name '*.md' -exec rm {} +` are refused. `-prune` is not followed, so a pruned record directory is still read as reached. A command line that would test more than 100,000 record paths this way is refused rather than costed. Git magic and quoted wildcard pathspecs are read conservatively; an explicit pathspec can clean directories even without `-d`. The final `cd` directory governs root reach. An exclusion must match the whole record directory, not a descendant; negations, ordered rsync filters, and `--delete-excluded` are not proof that it survives. Archive inventories with links, special entries, absolute/traversing names or tar renaming/stripping modes are unproven and require staging outside the project. `git clean -fdx -e .harness-state -e skillset-saves`, `rsync -a site/ ./`, `unzip fixtures.zip`, `git stash`, `find . -name '*.pyc' -delete` and `find . -type d -name __pycache__ -exec rm -rf {} +` pass.
@@ -248,6 +251,7 @@ Invoked after tool execution completes. Watches for execution pathologies and in
 
 3. **Maintenance Scan Triggering:**
    - Checks if a 6-hour interval has elapsed since the last runtime size audit and invokes `size_audit.py`.
+   - Runs `gate_watch.py`: every run manifest (`skillset-saves/runs/<run>/<phase>/manifest.*`) or intake log (`.../intake/report_grilling.md`) whose size or modification time changed since the last call is checked with `harness/gatekeeper/check.py` (`--boundary`/`--package`, or `--intake-log`), at most two per call with a 20-second limit each, and its failures are reported as a hint. Advisory: `check.py` at the gate is the authority.
 
 4. **Heartbeat Refresh:**
    - Refreshes the active run's heartbeat in `_lock.md` (and the `_latest.md` pointer) via `save_run.py heartbeat`; `_state.md` is not rewritten.
@@ -514,6 +518,17 @@ SUPREMETEAM_SIZE_AUDIT_THRESHOLD_BYTES=104857600 SUPREMETEAM_SIZE_AUDIT_INTERVAL
 - **Protected Paths:** Core run files (`_state.md`, `_lock.md`, `guard-state.json`, `taste.*`) are never flagged as cleanup candidates.
 - **Throttling:** Enforced via `.harness-state/observations/size-audit.json` (6 hours default).
 
+### `gate_watch.py` (Maintenance — Gate Package Re-check)
+
+Runs from `post_tool_use.py`. A gate package that would fail its gate is named the
+moment its manifest or the run's intake log is written, rather than first at the
+gate: the decision-log tables, the typed source-of-truth records, and the binding
+of `approved_design_revision` / `approved_delivery` to an APPROVED upstream verdict
+over an unchanged package are all `check.py` checks. Pairs with Rule C, which
+denies any hand-written `verdict_<boundary>[.cross-stage].json`: verdict records
+come only from `check.py --verdict-out`, and the gatekeeper's judgment draft
+(`verdict_<boundary>.judgment.json`) stays writable.
+
 ### `audit_improve.py` (Maintenance — Telemetry Audit)
 
 Gathers bounded runtime failure telemetry and prepares structured improvement packets:
@@ -620,5 +635,6 @@ python -m unittest discover -s skills/harness/hooks -p "test_*.py"
 - **[`test_hooks_observed.py`](test_hooks_observed.py):** Tests the distinction between configured host configs and actual observed executions under `.harness-state/observations/`.
 - **[`test_guard_state.py`](test_guard_state.py):** `guard_state.py` CLI testing: owner authorization, authority-validated release, `allow_dangerous` duration bounds, and single-writer lockouts.
 - **[`test_registration_contract.py`](test_registration_contract.py):** Multi-host configuration syntax and schema validation across Claude Code, Codex, and GitHub Copilot.
+- **[`test_gate_watch.py`](test_gate_watch.py):** Rule C denies hand-written gate verdict records while `check.py --verdict-out` and the judgment draft stay allowed; `gate_watch.py` reports a failing manifest or intake log once per change and stays bounded.
 - **[`test_size_audit.py`](test_size_audit.py):** Directory tree traversal caps, entry limits, threshold calculations, throttle timestamps, and protected file exemptions.
 - **[`test_audit_improve.py`](test_audit_improve.py):** Telemetry aggregation limits, error classification, SHA-256 correlation key hashing, and improvement handoff payload generation.

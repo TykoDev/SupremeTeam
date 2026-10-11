@@ -8,7 +8,7 @@ description: >-
   the phase gate already passed, challenge the package boundary itself, or whether
   this can advance to the next stage. A single phase's own gate is its phase
   gatekeeper's. Reached cold, hand off to `admiral` first.
-version: 1.2.0
+version: 1.3.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -155,7 +155,7 @@ python skills/harness/gatekeeper/check.py --boundary <design-to-build|redesign-r
 It verifies, for the named boundary only:
 
 - every required key is present and non-falsy, and artifact-backed keys point at hashed files
-- typed records are shaped correctly, every artifact they name matches its sha256, and every `inputs` entry they carry still hashes as recorded (scan and render must carry `inputs`; a probe may not, and is then listed in `warnings`) — `scan`, `render`, `probe`, `findings`, `verdict`, `stack_lock`, `revision_ref`, `security_seed`, `human_go`, `variant_set`, `selection`, and the Taste records `preference_diff`, `confirmation`, `conflict_analysis`, `persistence_result`, `effective_profile`, `consumer_handoff`. `references/boundary-evidence.md` § 2 is the roster; read it there rather than from this line
+- typed records are shaped correctly, every artifact they name matches its sha256, and every `inputs` entry they carry still hashes as recorded (scan and render must carry `inputs`; a probe may not, and is then listed in `warnings`) — `scan`, `render`, `probe`, `findings`, `verdict`, `stack_lock`, `revision_ref`, `security_seed`, `human_go`, `variant_set`, `selection`, the source-of-truth records `decision_log`, `acceptance_table`, `interface_set`, `change_set`, `trace_map`, and the Taste records `preference_diff`, `confirmation`, `conflict_analysis`, `persistence_result`, `effective_profile`, `consumer_handoff`. `references/boundary-evidence.md` § 2 is the roster; read it there rather than from this line
 - the revision lineage holds one value, and the declared `owner` is the boundary's only permitted submitter
 - no blocked phrase and no broken local link is present
 
@@ -260,7 +260,7 @@ above).
 1. Classify the submission against `../gates.yaml`: one of the ten boundaries in the Boundary Contract above. Confirm the declared `boundary` and `owner` match the spec, and read the required-evidence list for that boundary from the spec rather than from memory.
 2. Run the boundary validator for that boundary, with `--prior` pointed at the phase gatekeeper's `verdict_<boundary>.json` when one exists.
 3. Run the package-shape validator against the `delivery/` phase directory, after confirming the path resolves inside the project.
-4. Judge what neither validator can, within `../gates.yaml` `revise_policy.cross_stage_scope`. At a boundary with a phase gatekeeper whose verdict is APPROVED and whose `--prior` comparison reports no `changed_evidence`, judge the crossing itself — lineage across revisions, boundary-to-package match, blocked phrases, the next-consumer contract, whether a contradiction across artifacts is real and whether a waiver reason is honest — and carry the phase gate's judgment of whether each artifact is substantively adequate. Re-judge a key's adequacy only where `changed_evidence` names it, where the phase verdict was not APPROVED, or at the six boundaries that have no phase gatekeeper, where this gate is the first independent reader of the package.
+4. Judge what neither validator can, within `../gates.yaml` `revise_policy.cross_stage_scope`. At a boundary with a phase gatekeeper whose verdict is APPROVED and whose `--prior` comparison reports no `changed_evidence`, judge the crossing itself — lineage across revisions, boundary-to-package match, blocked phrases, the next-consumer contract, whether a contradiction across artifacts is real and whether a waiver reason is honest — and carry the phase gate's judgment of whether each artifact is substantively adequate. Read that judgment from `prior_record.judgment` in the validator's result — the phase gatekeeper's own embedded record — never from the submitter's checkpoint or handoff; when it is absent or `valid` is not true, nothing is carried and this gate judges every key. Re-judge a key's adequacy only where `changed_evidence` names it, where the phase verdict was not APPROVED, or at the six boundaries that have no phase gatekeeper, where this gate is the first independent reader of the package.
 5. Decide `APPROVED`, `REVISE`, or `ESCALATE` with a handoff-specific rationale that names the missing package element, conflicting approval, or unresolved risk-acceptance question, grouped by the owner each failing key belongs to.
 6. Reuse an existing verdict only when it is this gate's own cross-stage record and the same submission id and package revision recur; otherwise record how the resubmission changed before another handoff is allowed. The phase gatekeeper's verdict is an input to compare against, never a verdict to reuse.
 
@@ -271,6 +271,7 @@ above).
 - **Harness-doctrine citation**: When a package adds or changes a cross-cutting runtime intervention, evaluate it against `../harness-doctrine.md` §5 and cite the violated section by number in the verdict. A doctrine violation is a `REVISE` (or `ESCALATE` when it needs a scope decision).
 - **Gate spec is authoritative**: `../gates.yaml` declares the required evidence subject to the independent safety floor in `../scripts/contract_floor.py`; the shipped loader and manifest validator refuse weakening. Explicit `--gates` experiments are non-shipped, never approval authority. It defines artifact-backed keys, sanctioned fallback values, typed record shapes, submitters, and the finding policy. Never accept an evidence key this file does not list for the boundary, and never invent a waiver reason it does not sanction.
 - **Batched REVISE** (`../gates.yaml` `revise_policy`): A `REVISE` carries every mechanical failure and every judgment finding from the pass, grouped by owner exactly as `check.py` reports them in `revise_packet.by_owner`; never return the first defect alone. On a resubmission run with `--prior` pointed at this gate's own earlier cross-stage record, re-judge only `changed_evidence` and carry that judgment on `unchanged_evidence`; at a phase-gated boundary the phase gate's APPROVED adequacy judgment is carried the same way (`revise_policy.cross_stage_scope`), while the crossing checks always run and the mechanical pass always covers the whole package. A package that fails mechanically was never eligible for submission (the submitter self-checks) and is returned without judgment. On a resubmission a new finding is raised only against `changed_evidence` or a defect the change introduced (`revise_policy.batch_fix`); a finding that could have been raised on unchanged evidence in the first pass is not raised now, because a gate that reveals its standard one finding per round is the slowest thing in the pipeline.
+- **Source-of-truth grounding** (`../gates.yaml` `revise_policy.grounding`, `judgment_policy`): Judge the package against its source of truth and nothing else — the intake Decision Register (`D-<n>` ids, `../grill-me-doctrine.md`), the plan's acceptance rows (`AC-<n>` ids), `../gates.yaml`, and the catalog's doctrine and contract files. Every judgment finding names the required evidence key it concerns (or none for a crossing defect), a basis — `decision`, `acceptance`, `contract`, or `contradiction` — and, when Critical or Major, the hashed package artifacts it was read from. A requirement that is in none of those sources is not a finding. When the gate believes the source of truth itself lacks a decision the package needed, it returns `ESCALATE` to `admiral`, which owns intake, never a `REVISE` to the specialist who built on the record as written. A finding another gate already raised is this gate's own only when it carries this gate's own basis and anchors: agreeing with an earlier verdict is not evidence. Write the verdict and findings as the judgment record `judgment_policy.record` describes and pass it to `check.py --judgment`; a record it rejects is corrected — the ungrounded finding grounded or dropped — never stored or returned.
 - **Finding policy**: A Critical finding blocks until it is verified or marked not-applicable with a reason. A Major finding blocks unless it is verified, not-applicable with a reason, or deferred with a named owner and a reopen trigger recorded in the findings record.
 - **Workflow protocol**: Every verdict names the transition it guards per `../contracts/workflow-protocol.md`. An invalid transition returns `ESCALATE` and is never silently coerced.
 
@@ -286,7 +287,7 @@ Apply `../contracts/evidence-standards.md`: a gate-affecting claim is `exact`
 plus `observed` or `corroborated`, and an unavailable check is a data gap, never
 approval. Concretely, at this gate:
 
-- Tie every major and critical finding to a concrete file, artifact, or observable behavior.
+- Tie every Critical and Major finding to hashed package artifacts and to the source of truth it enforces — a `D-<n>` decision, an `AC-<n>` acceptance row, a section of a catalog contract, or two package artifacts that contradict each other — never to the gate's own preference (`../gates.yaml` `judgment_policy`).
 - Reject claims of completion that are not backed by a visible deliverable.
 - Preserve contradictory evidence instead of normalizing it away.
 
@@ -308,6 +309,7 @@ Do not skip gate evaluation; only reuse a prior cross-stage verdict of this gate
 | `scripts/check.py` exits 2 because `<package-dir>` is missing, is not a directory, sits outside the project, or the project root cannot be located | Return `ESCALATE` and name the rejected path. The guard runs before the engine reads anything, so nothing was checked; an unrun pre-check is not a clean one. |
 | Evidence references a project file whose sha256 no longer matches (`input hash drift`) | Return `REVISE` to the evidence owner. The source changed after the evidence was captured, so the evidence no longer proves the claim. |
 | A required key carries a bare string that is not a sanctioned fallback value | Return `REVISE`. Only the exact reasons in `../gates.yaml` `fallback_values` are accepted, and at manifest schema 2 they must be typed applicability records naming reason, scope, and decided_by. |
+| `check.py --judgment` rejects the judgment record — a cited `D-` or `AC-` id the intake log or plan does not contain, a key or owner the spec does not name, an unhashed anchor, a REVISE with no grounded Critical or Major finding, or a new finding on unchanged evidence | The record is the gate's defect, not the package's. Ground each finding in the source of truth and the package's hashed artifacts, or drop it; if what the gate wanted is in no source of truth, return `ESCALATE` to `admiral` for an intake decision instead. Never store or return the rejected verdict. |
 
 ## Save Protocol
 
@@ -317,9 +319,19 @@ produced by `check.py --verdict-out` (`../save-ownership.yaml`, class
 `gate-verdict`).
 
 It lands beside the phase gatekeeper's `verdict_{boundary}.json`, which this gate
-consumes through `--prior` and never overwrites. It never modifies the
+consumes through `--prior` and never overwrites. This gate's judgment record is
+written first as `verdict_{boundary}.cross-stage.judgment.json` (same class) and
+passed with `--judgment`:
+
+```bash
+python skills/harness/gatekeeper/check.py --boundary <boundary> --package skillset-saves/runs/{run-id}/{phase}/manifest.json --prior skillset-saves/runs/{run-id}/{phase}/verdict_{boundary}.json --judgment skillset-saves/runs/{run-id}/{phase}/verdict_{boundary}.cross-stage.judgment.json --verdict-out skillset-saves/runs/{run-id}/{phase}/verdict_{boundary}.cross-stage.json
+```
+
+`check.py` embeds the judgment under `judgment` and refuses to write a record
+whose judgment is ungrounded. At the six boundaries with no phase gatekeeper,
+`--prior` is this gate's own earlier cross-stage record, if any. It never modifies the
 submission, its evidence, or the run record; the delegating orchestrator captures
-the semantic verdict in its handoff record. When persistence is inactive, return
+the semantic verdict in its handoff record, copied from the record's `judgment`. When persistence is inactive, return
 the verdict inline and preserve the run and revision.
 
 ## References

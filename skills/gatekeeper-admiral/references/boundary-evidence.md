@@ -24,16 +24,16 @@ string fails the artifact-backing check.
 
 | Boundary | Artifact-backed keys |
 | --- | --- |
-| `design-to-build` | `decisions` `architecture` `plan` `taste_snapshot` |
+| `design-to-build` | `decisions` `architecture` `interfaces` `plan` `acceptance` `taste_snapshot` |
 | `redesign-review` | `design_inventory` `taste_grilling` `taste_snapshot` `design_directions` `mock_set` `mock_parity` `mock_rendering` `selection` `selected_variant` `parity_evidence` `rendered_verification` |
-| `build-to-review` | `tests` `runtime` |
+| `build-to-review` | `approved_design_revision` `implementation` `tests` `runtime` |
 | `review-to-delivery` | `executed_probes` `rendered_verification` |
 | `security-review` | `threat_model` `denial_path_evidence` |
 | `investigation-review` | `reproduction` `evidence_chain` |
 | `qa-review` | `test_matrix` `executed_probes` |
 | `taste-review` | `preference_diff` `confirmation` `conflict_analysis` `persistence_result` `effective_profile` `taste_review_record` |
 | `skill-maker-to-delivery` | `link_report` `validation_report` |
-| `deploy-readiness` | `deploy_config` `verification_plan` `rollback_plan` |
+| `deploy-readiness` | `approved_delivery` `deploy_config` `verification_plan` `rollback_plan` |
 
 At manifest schema 2 the rule widens: *every* path-shaped string in an evidence
 value must be a correctly hashed artifact, so a free-text value that happens to
@@ -53,7 +53,12 @@ this table is untyped — required and non-falsy, nothing more.
 | `findings` | `findings` `security_evidence` `defects` `accessibility_evidence` | `{items: [{id, severity, status, …}]}` under the shared severity model and the finding policy |
 | `verdict` | `review_verdict` | APPROVED, or REVISE/ESCALATE with a challenge record naming `by` and `reason` |
 | `stack_lock` | `stack_lock` | `{slug, versions, overlay_sha256}` validated against `../../tech-stacks/registry.yaml` |
-| `revision_ref` | `approved_design_revision` `approved_delivery` | a non-empty approved upstream revision identifier |
+| `revision_ref` | `approved_design_revision` `approved_delivery` | `{revision, verdict}`: `verdict` is the hashed upstream cross-stage verdict record (`design-to-build` for build, `review-to-delivery` for release) with a valid APPROVED judgment by `gatekeeper-admiral` for that revision in this run, and the approved manifest beside it still fingerprints and hashes as approved |
+| `decision_log` | `decisions` | the intake grilling log parsed as four fixed tables (`../../grill-me-doctrine.md` Output): every cell filled, unique `D-<n>` ids, a sanctioned `Source`, at least one resolved decision |
+| `acceptance_table` | `acceptance` | an `Acceptance criteria` table with ID, Slice, Observable condition, Check that proves it, Acceptor; every cell filled; unique `AC-<n>` ids |
+| `interface_set` | `interfaces` | `{artifacts, change: changed\|none, items: [{id: IF-<n>, kind, name}]}`; each id stands in a hashed artifact |
+| `change_set` | `implementation` | `{artifacts: [diff], changed_files: [{path, sha256, status}]}`; every file named by the diff and still hashing as recorded |
+| `trace_map` | `traceability` | every approved `AC-<n>` (read from the bound design) traced to changes in the change set and to tests named in the tests log; every changed file traced or listed in `supporting` with a reason |
 | `security_seed` | `security_seed` | scoped assessment with boolean applicable and boundary/control records; assessed no-boundary requires an empty list, not a waiver |
 | `human_go` | `human_go_required` | decision go, named approver and approval reference, exact approved_delivery revision match, timezone-qualified ISO decided_at |
 | `variant_set` | `mock_set` `selected_variant` | exactly `evidence_type_params.<key>.required_count` entries (4 mocks, 1 selected variant) with unique ids, and the key's `file_fields` (`spec` / `tokens` / `components` / `mock` for a mock, `spec` / `tokens` / `components` / `app` for the built variant) hashed per entry |
@@ -154,12 +159,12 @@ failure as granting a waiver the boundary refuses — it routes a `REVISE` to
 
 ## 5. Reading a key that is neither artifact-backed nor typed
 
-Untyped keys — `interfaces`, `acceptance`, `ui_evidence`,
-`implementation`, `traceability`, `residual_risk`, `revision_lineage`, `scope`,
+Untyped keys — `ui_evidence`, `residual_risk`, `revision_lineage`, `scope`,
 `intent`, `mechanism`, `fix_path`, `recommendation`, `skills`,
 and the rest — are checked only for presence and non-falsiness. The validator
-cannot tell an adequate `acceptance` statement from an empty one that happens to
-contain words.
+cannot tell an adequate `residual_risk` statement from an empty one that happens
+to contain words. (`interfaces`, `acceptance`, `implementation` and `traceability`
+used to be read this way; they are typed records now, in the roster above.)
 
 That gap is the judgment half of this gate. For each untyped key, ask whether the
 next consumer could act on the value as written, and treat a value that only

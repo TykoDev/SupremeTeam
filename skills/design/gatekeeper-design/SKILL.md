@@ -8,7 +8,7 @@ description: >-
   readiness, or challenge the packet — even when they only ask "is the design
   done?". Defers the other gates to `build/gatekeeper-build`,
   `review/gatekeeper-code`, `gatekeeper-admiral`.
-version: 1.2.0
+version: 1.3.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -80,9 +80,13 @@ Confirm the declared boundary first.
 type, its artifact-backing, and the exact sanctioned waiver text. The decisions
 that belong at the gate itself are these:
 
-**At `design-to-build`**, four of the nine keys are artifact-backed and must name
-a path in `artifact_hashes`: `decisions`, `architecture`, `plan`, and
-`taste_snapshot`. Three accept a waiver — `stack_lock` (no new runtime or
+**At `design-to-build`**, six of the nine keys are artifact-backed and must name
+a path in `artifact_hashes`: `decisions`, `architecture`, `interfaces`, `plan`,
+`acceptance`, and `taste_snapshot`. Three of them are read, not only hashed:
+`decisions` as the intake log's four fixed tables (`decision_log`), `acceptance`
+as the plan's `AC-<n>` table (`acceptance_table`), and `interfaces` as `IF-<n>`
+items that stand in their artifact (`interface_set`) — this source of truth is
+what every later gate's findings and build's traceability are checked against. Three accept a waiver — `stack_lock` (no new runtime or
 framework), `ui_evidence` (no user-facing surface), `taste_snapshot` (no saved
 Taste profile available) — each only as a typed applicability record naming
 reason, scope, and decided_by. The other six accept no fallback.
@@ -269,7 +273,7 @@ the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 
 1. Classify the boundary from the submitted manifest's `boundary` and `owner` — `design-to-build` (submitter `commander`) or `redesign-review` (submitter `redesign`) — and read that row's required-evidence list from `../../gates.yaml` rather than from memory. The two sets share only `taste_snapshot`.
 2. Run the package-shape validator for that boundary: `scripts/check.py` at `design-to-build`, `scripts/check_redesign.py` at `redesign-review`. Treat its `UNCHECKED` findings as unresolved questions, not as passes.
-3. Run the boundary validator for that boundary. At `design-to-build`, confirm `decisions`, `architecture`, `interfaces`, `plan`, `acceptance`, `security_seed`, `stack_lock`, `taste_snapshot`, and `ui_evidence` are present and non-falsy, that `decisions`, `architecture`, `plan`, and `taste_snapshot` resolve to hashed artifacts, and that `stack_lock` validates against `../../tech-stacks/registry.yaml`. At `redesign-review`, confirm all fourteen keys in the Boundary Contract table, with only the last three unbacked. Read `selection` before judging the last six: its `decision` decides whether `selected_variant`, `parity_evidence`, `rendered_verification`, and `accessibility_evidence` owe evidence or carry their sanctioned wording, and whether `selected_variant.variants[0].id` must equal `selection.chosen`. Accept a waiver only as a typed applicability record carrying a sanctioned reason, and never for `mock_rendering` at `redesign-review`.
+3. Run the boundary validator for that boundary. At `design-to-build`, confirm `decisions`, `architecture`, `interfaces`, `plan`, `acceptance`, `security_seed`, `stack_lock`, `taste_snapshot`, and `ui_evidence` are present and non-falsy, that `decisions`, `architecture`, `interfaces`, `plan`, `acceptance`, and `taste_snapshot` resolve to hashed artifacts and the three source-of-truth records parse, and that `stack_lock` validates against `../../tech-stacks/registry.yaml`. At `redesign-review`, confirm all fourteen keys in the Boundary Contract table, with only the last three unbacked. Read `selection` before judging the last six: its `decision` decides whether `selected_variant`, `parity_evidence`, `rendered_verification`, and `accessibility_evidence` owe evidence or carry their sanctioned wording, and whether `selected_variant.variants[0].id` must equal `selection.chosen`. Accept a waiver only as a typed applicability record carrying a sanctioned reason, and never for `mock_rendering` at `redesign-review`.
 4. Judge what neither validator can. At `design-to-build`: whether stakeholder goals, system structure, frontend and backend decisions, deployment assumptions, YAGNI deferrals, and unresolved questions contradict each other. At `redesign-review`: whether the four directions are genuinely differentiated (`../../design-doctrine.md` §9), whether each of the four drafts actually stayed a mock rather than becoming an implementation the user had not yet asked for, whether the comparison is honest, whether the recommendation follows from it, and whether `selection.md` records a decision a person actually made rather than the recommendation restated.
 5. Check that migration/deprecation, proof-first testing, frontend state/API handoff, and threat-model surfaces are present when the design scope requires them.
 6. Decide the narrowest justified verdict and return only the mandatory changes the design owner must make, grouped by the owner each failing key belongs to.
@@ -284,6 +288,7 @@ the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 - **Harness-doctrine citation**: When the package adds or changes a cross-cutting runtime intervention, check it against `../../harness-doctrine.md` §5 and cite the violated section by number in the verdict.
 - **YAGNI and proof contract**: Reject packages that force speculative future commitments without current need, or that change behavior without a build-ready proof plan covering reproduction/contract tests, migration checks, and rollback evidence as applicable.
 - **Batched REVISE** (`../../gates.yaml` `revise_policy`): A `REVISE` carries every mechanical failure and every judgment finding from the pass, grouped by owner exactly as the boundary validator `../../harness/gatekeeper/check.py` reports them in `revise_packet.by_owner`; never return the first defect alone. On a resubmission run with `--prior`, re-judge only `changed_evidence` and carry the prior judgment on `unchanged_evidence`; the mechanical pass always covers the whole package. A package that fails mechanically was never eligible for submission (the submitter self-checks) and is returned without judgment. On a resubmission a new finding is raised only against `changed_evidence` or a defect the change introduced (`revise_policy.batch_fix`); a finding that could have been raised on unchanged evidence in the first pass is not raised now, because a gate that reveals its standard one finding per round is the slowest thing in the pipeline.
+- **Source-of-truth grounding** (`../../gates.yaml` `revise_policy.grounding`, `judgment_policy`): Judge the package against its source of truth and nothing else — the intake Decision Register (`D-<n>` ids, `../../grill-me-doctrine.md`), the plan's acceptance rows (`AC-<n>` ids), `../../gates.yaml`, and the catalog's doctrine and contract files. Every judgment finding names the required evidence key it concerns (or none for a crossing defect), a basis — `decision`, `acceptance`, `contract`, or `contradiction` — and, when Critical or Major, the hashed package artifacts it was read from. A requirement that is in none of those sources is not a finding. When the gate believes the source of truth itself lacks a decision the package needed, it returns `ESCALATE` to `admiral`, which owns intake, never a `REVISE` to the specialist who built on the record as written. A finding another gate already raised is this gate's own only when it carries this gate's own basis and anchors: agreeing with an earlier verdict is not evidence. Write the verdict and findings as the judgment record `judgment_policy.record` describes and pass it to `check.py --judgment`; a record it rejects is corrected — the ungrounded finding grounded or dropped — never stored or returned.
 
 ## Verdict Model
 
@@ -293,7 +298,7 @@ the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 
 ## Evidence Standard
 
-- Tie every major and critical finding to a concrete file, artifact, or observable behavior.
+- Tie every Critical and Major finding to hashed package artifacts and to the source of truth it enforces — a `D-<n>` decision, an `AC-<n>` acceptance row, a section of a catalog contract, or two package artifacts that contradict each other — never to the gate's own preference (`../../gates.yaml` `judgment_policy`).
 - Reject claims of completion that are not backed by a visible deliverable.
 - Preserve contradictory evidence instead of normalizing it away.
 
@@ -324,6 +329,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | `mock_parity` or `parity_evidence` is a probe record whose `inputs` are absent or do not bind by sha256 to the inventory and the mock or prototype files | Return `REVISE` to `design-mapper`. An unbound parity probe proves that something passed, not that the redesign matches the inventory it claims parity with. |
 | `mock_parity` fails a mock on a missing state, interaction, or flow | Return `REVISE` to `design-mapper`, not to the builder. Mock level scores routes and components only; those three lists are informational, and failing a mock on them asks its builder to implement before the selection stage has run. |
 | `mock_rendering` at `redesign-review` carries a purported fallback string or an applicability record, or the shape check's `UNCHECKED` on it is read as a waiver | Return `REVISE` to `design-qa` and require hashed captures across the required breakpoints and themes, bound by `inputs` to the rendered mocks. The boundary lists the key under `no_fallback`, and there is no global fallback for `mock_rendering`, and a conditional `UNCHECKED` from `check_redesign.py` is an unresolved question rather than permission. |
+| `check.py --judgment` rejects the judgment record — a cited `D-` or `AC-` id the intake log or plan does not contain, a key or owner the spec does not name, an unhashed anchor, a REVISE with no grounded Critical or Major finding, or a new finding on unchanged evidence | The record is the gate's defect, not the package's. Ground each finding in the source of truth and the package's hashed artifacts, or drop it; if what the gate wanted is in no source of truth, return `ESCALATE` to `admiral` for an intake decision instead. Never store or return the rejected verdict. |
 
 ## Save Protocol
 
@@ -341,14 +347,14 @@ same class; a single boundary never produces two:
 Each record is produced by the boundary validator against `../../gates.yaml`:
 
 ```bash
-python skills/harness/gatekeeper/check.py --boundary design-to-build --package skillset-saves/runs/{run-id}/design/manifest.json --verdict-out skillset-saves/runs/{run-id}/design/verdict_design-to-build.json
+python skills/harness/gatekeeper/check.py --boundary design-to-build --package skillset-saves/runs/{run-id}/design/manifest.json --judgment skillset-saves/runs/{run-id}/design/verdict_design-to-build.judgment.json --verdict-out skillset-saves/runs/{run-id}/design/verdict_design-to-build.json
 
-python skills/harness/gatekeeper/check.py --boundary redesign-review --package skillset-saves/runs/{run-id}/redesign/manifest.json --verdict-out skillset-saves/runs/{run-id}/redesign/verdict_redesign-review.json
+python skills/harness/gatekeeper/check.py --boundary redesign-review --package skillset-saves/runs/{run-id}/redesign/manifest.json --judgment skillset-saves/runs/{run-id}/redesign/verdict_redesign-review.judgment.json --verdict-out skillset-saves/runs/{run-id}/redesign/verdict_redesign-review.json
 ```
 
 It never modifies the submission, its evidence, or the run record. The boundary's
 submitter — `design/commander` at `design-to-build`, `design/redesign` at
-`redesign-review` — carries the semantic verdict into its next checkpoint.
+`redesign-review` — carries the semantic verdict into its next checkpoint, copied from the record's `judgment`, which is the gate's own account and the one every later reader trusts. The judgment record — this gate's verdict and every judgment finding with its basis and anchors — is written first as `verdict_<boundary>.judgment.json` beside the verdict (same `gate-verdict` class) and passed with `--judgment`; `check.py` embeds it in the verdict record under `judgment` and refuses to write a record whose judgment is ungrounded.
 `gatekeeper-admiral` later re-validates the same boundary with `--prior` pointed
 at the record above and writes its own beside it as
 `verdict_<boundary>.cross-stage.json`, which it never overwrites. When

@@ -1067,6 +1067,8 @@ DENIAL_REASONS = (
     ("C", {}, "Bash", "echo x > skillset-saves/runs/r1/_state.md", "save_run.py", "save_run.py"),
     ("C", {}, "Bash", "echo x > skillset-saves/preferences/taste.json", "taste_prefs.py", "taste_prefs.py"),
     ("C", {}, "Bash", "echo x > .harness-state/guard-state.json", "guard_state.py", "single writer"),
+    ("C", {}, "Bash", "echo x > skillset-saves/runs/r1/design/verdict_design-to-build.json", "check.py --verdict-out",
+     "check.py --verdict-out"),
     ("C", {}, "Bash", "git clean -fdx", "is aimed at the project root", "is aimed at the project root and would"),
     ("D", READ_ONLY, "Bash", "touch notes.md", "is recorded read-only", "read_only"),
     ("D", READ_ONLY, "Bash", "cat list | xargs rm", "name each target in the shell command itself", "target is not in the command"),
@@ -1108,7 +1110,7 @@ class DenialReasonProseTests(GuardCase):
         """A denial added to `guard_hook` without an entry here would have no documented place."""
         defined = {name for name in dir(guard_hook) if name.endswith("_REASON") and isinstance(getattr(guard_hook, name), str)}
         covered = {"_DANGEROUS_REASON", "_CORE_SAVE_REASON", "_TASTE_SAVE_REASON", "_GUARD_STATE_REASON", "_HARNESS_REASON", "_UNPLACED_REASON",
-                   "_UNNAMED_REASON", "_ROOT_RECORDS_REASON"}
+                   "_UNNAMED_REASON", "_ROOT_RECORDS_REASON", "_VERDICT_REASON"}
         self.assertEqual(defined, covered)
 
 

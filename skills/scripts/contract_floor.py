@@ -50,6 +50,12 @@ BOUNDARY_FALLBACKS = {
                      "consumer_handoff": ["preference management only - no downstream consumer"],
                      "residual_uncertainty": ["none observed"]},
 }
+#: Who may write a judgment at each boundary (gates.yaml judgment_policy): the
+#: phase gatekeeper where one exists, and gatekeeper-admiral everywhere. Never a
+#: submitter, so no package is judged by the skill that assembled it.
+PHASE_GATES = {"design-to-build": "gatekeeper-design", "redesign-review": "gatekeeper-design",
+               "build-to-review": "gatekeeper-build", "review-to-delivery": "gatekeeper-code"}
+CROSS_STAGE_GATE = "gatekeeper-admiral"
 TYPES = {
     **dict.fromkeys("tests runtime executed_probes reproduction evidence_chain test_matrix denial_path_evidence mock_parity parity_evidence".split(), "probe"),
     **dict.fromkeys("rendered_verification mock_rendering".split(), "render"),
@@ -83,6 +89,10 @@ def gate_floor_errors(spec: dict) -> list[str]:
     policy = spec.get("finding_policy", {})
     if not isinstance(policy, dict) or policy.get("critical") != "verified-before-gate" or policy.get("major_deferral") != "owner-and-reopen-trigger":
         errors.append("gate safety floor: finding policy weakened")
+    judgment = spec.get("judgment_policy", {})
+    if (not isinstance(judgment, dict) or judgment.get("phase_gates") != PHASE_GATES
+            or judgment.get("cross_stage_gate") != CROSS_STAGE_GATE):
+        errors.append("gate safety floor: judgment_policy gates changed")
     redesign = boundaries.get("redesign-review", {})
     if not isinstance(redesign, dict) or "mock_rendering" not in (redesign.get("no_fallback") or []):
         errors.append("gate safety floor: mock_rendering waiver bar removed")

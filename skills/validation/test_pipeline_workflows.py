@@ -37,6 +37,9 @@ import _catalog
 from _catalog import SKILLS
 from data_formats import content_sha256, parse_yaml
 
+sys.path.insert(0, str(SKILLS / "harness" / "gatekeeper"))
+import _fixtures
+
 # The specs are read the way the gate reads them, with data_formats, so this module
 # runs on a host without PyYAML instead of skipping the one end-to-end gate test.
 REPO = SKILLS.parent
@@ -52,7 +55,11 @@ REGISTRY = _catalog.load_spec("tech-stacks/registry.yaml")
 OVERLAY = REGISTRY["overlays"][0]
 
 ARTIFACT_REL = "phase/evidence.md"
-ARTIFACT_BODY = "# evidence\n\nSynthetic but real: this file is hashed.\n"
+#: One body every source-of-truth record can read: a grilling log, an acceptance
+#: table, an interface note, a diff naming this very file, and a test log.
+ARTIFACT_BODY = _fixtures.source_of_truth(ARTIFACT_REL)
+#: The upstream revision every revision_ref binds to, and that human_go repeats.
+UPSTREAM_REVISION = "r-3"
 
 
 def _digest_of(path: Path) -> str:
@@ -115,9 +122,6 @@ def _typed_record(kind: str, artifact: str, digest: str, key: str = "") -> objec
     if kind == "human_go":
         return {"decision": "go", "approver": "synthetic owner", "approval_reference": "GO-1",
                 "revision": "r-3", "decided_at": "2026-09-16T00:00:00Z"}
-    if kind == "revision_ref":
-        # A scalar identifier, not a record: it names an upstream revision.
-        return "r-3"
     if kind == "verdict":
         return {"recommendation": "APPROVED", "revision": 1}
     if kind == "stack_lock":
@@ -162,9 +166,23 @@ def build_package(boundary: str, root: Path) -> dict:
 
     artifact_backed = set(spec.get("artifact_evidence") or [])
     evidence = {}
+    hashes = {ARTIFACT_REL: digest}
+    source = _fixtures.records(ARTIFACT_REL, ARTIFACT_REL, digest)
+    params = GATES.get("evidence_type_params") or {}
     for key in spec["required_evidence"]:
         kind = types.get(key)
-        if kind:
+        if kind in source:
+            evidence[key] = source[kind]
+        elif kind == "revision_ref":
+            # The record binds the upstream cross-stage verdict, so the fixture
+            # writes an approved upstream package for the gate to re-hash.
+            upstream = root / "upstream"
+            verdict, verdict_digest = _fixtures.approved_upstream(
+                root, upstream, params[key]["upstream_boundary"], UPSTREAM_REVISION, "workflow-probe",
+                {f"../{ARTIFACT_REL}": artifact}, evidence={"acceptance": f"../{ARTIFACT_REL}"})
+            evidence[key] = {"revision": UPSTREAM_REVISION, "verdict": verdict}
+            hashes[verdict] = verdict_digest
+        elif kind:
             evidence[key] = _typed_record(kind, ARTIFACT_REL, digest, key)
         elif key in artifact_backed:
             evidence[key] = ARTIFACT_REL
@@ -179,7 +197,7 @@ def build_package(boundary: str, root: Path) -> dict:
         "submission_id": "workflow-probe-r1",
         "revision": 1,
         "revisions": [1],
-        "artifact_hashes": {ARTIFACT_REL: digest},
+        "artifact_hashes": hashes,
         "evidence": evidence,
     }
 

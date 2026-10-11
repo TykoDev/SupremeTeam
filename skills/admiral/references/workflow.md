@@ -47,7 +47,7 @@ file by hand and never creates a path outside its declared classes.
 3. Checkpoint through `session-memory` with `--set phase_state=<PHASE>_GATE_PENDING --evidence <that record>` before the gate submission.
 
 **On gatekeeper-admiral verdict**:
-1. Update the handoff record with the actual verdict, its `verdict_id`, and `submission_status: VERDICT_RECORDED`. The gatekeeper's own durable record is `<phase>/verdict_{boundary}.cross-stage.json`, written beside the phase gatekeeper's `verdict_{boundary}.json`.
+1. Update the handoff record with the actual verdict — `judgment.verdict` read from the gatekeeper's own durable record, `<phase>/verdict_{boundary}.cross-stage.json` (written beside the phase gatekeeper's `verdict_{boundary}.json` by `check.py --verdict-out`; no one else writes it, and the guard denies an edit) — its `verdict_id`, and `submission_status: VERDICT_RECORDED`. That record is also what the next boundary's `approved_design_revision` or `approved_delivery` names as its `verdict`.
 2. Route per verdict:
    - APPROVED: checkpoint into the next active state and advance to the next stage.
    - REVISE: checkpoint into the gate-revise state and forward the findings to the same sub-orchestrator.

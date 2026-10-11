@@ -74,8 +74,30 @@ Exit 0 for a mechanically clean package, 1 for a package defect, 2 for an engine
 or input failure (including an unknown `--boundary`, and any fault inside the
 engine itself, which emit the `engine_error` JSON envelope on stderr and print
 no result). A malformed submission, such as a list where a severity belongs, is
-a package defect: exit 1 with the failure in the result. The result carries
-`mechanical_only: true`; human judgment still owns semantic quality.
+a package defect: exit 1 with the failure in the result. Without `--judgment`
+the result carries `mechanical_only: true`; human judgment still owns semantic
+quality.
+
+**Judgment record (`--judgment`).** The gatekeeper writes its verdict and judgment
+findings as a record (`gates.yaml` `judgment_policy.record`) and passes it with
+`--judgment`. `check_judgment` does not decide whether a finding is right; it
+decides whether it could be checked. Each finding names a required evidence key
+or none, an owner equal to `evidence_owners` (the gate cannot reroute), a basis
+of kind `decision` (a `D-<n>` the package's `decisions` artifact contains),
+`acceptance` (an `AC-<n>` the `acceptance` or `plan` artifact contains),
+`contract` (an existing catalog file and a section) or `contradiction` (two
+hashed artifacts), and, when Critical or Major, hashed package artifacts or
+`manifest:evidence.<key>` anchors. The verdict must follow: no APPROVED over a
+mechanical failure or a blocking finding, no REVISE without one
+(`revise_threshold`), no ESCALATE without `{to, reason}`. Only the boundary's
+phase gatekeeper or `gatekeeper-admiral` may judge, never the submitter, and
+`contract_floor.py` pins that mapping. On a resubmission to the same gate, a new
+blocking finding on a key outside `changed_evidence` fails (`batch_fix`). A
+valid record is embedded under `judgment` (`mechanical_only: false`, and
+`revise_packet.judgment_by_owner`); a rejected one exits 1 and is never written
+to `--verdict-out`. With `--prior`, the prior gate's own judgment is reported as
+`prior_record.judgment`, which is what `gatekeeper-admiral` carries — never the
+submitter's checkpoint.
 
 **Evidence root.** Artifact paths are manifest-relative. Inside the canonical
 save layout (`skillset-saves/runs/<run-id>/<phase>/`) the authorised root is the
@@ -250,6 +272,14 @@ in `skills/scripts/contract_floor.py` is independent of gates.yaml and is checke
 by the shipped loader, shape-wrapper catalog loader and manifest validator. Explicit
 `--gates` experiments remain non-shipped inputs, never approval authority. The
 revision cap is declared/validated but counted by the orchestrator, not this engine.
+
+`test_gate_judgment.py` covers the judgment record: every basis kind in a
+grounded form, citations the intake log or plan does not contain, id prefixes,
+citations from a file that is not the package's own source of truth, contract
+sources that do not exist, anchors, invented keys and rerouted owners, the
+verdict rules, which gates may judge (and the floor that pins it, compared with
+each pipeline's phase-gate stage), the per-gate delta rule, and that a rejected
+record is never written.
 
 `test_quality_audit.py` covers project-input symlink containment (including linked
 parents of missing targets), UTF-8 BOM manifests, and confirmation ids compared

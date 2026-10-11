@@ -8,7 +8,7 @@ description: >-
   marketing, comms, or product-announcement launch. Owns the `deploy-readiness`
   gate; defers the merge-and-rollout to `land-and-deploy`, deploy config to
   `setup-deploy`, and notes to `document-release`.
-version: 1.0.3
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 ---
 
@@ -66,7 +66,7 @@ The first five entries below are the gate submission and its evidence keys, so t
 
 - **`deploy-readiness-package`** — the gate submission itself (`release/manifest.json`, schema 2, `boundary: deploy-readiness`, `owner: ship`), carrying the approved delivery revision, the human go decision requirement, and the hashed artifact set behind every evidence key in the boundary table below.
 - **`verification-plan`** — the post-release checks and their pass conditions as a hashed artifact, fixed before the gate so the checks are agreed in advance instead of chosen after the rollout already looks healthy.
-- **`approved_delivery`** — evidence key at `deploy-readiness`, owner `ship`: the approved upstream delivery revision identifier.
+- **`approved_delivery`** — evidence key at `deploy-readiness`, owner `ship`: `{revision, verdict}`, binding the approved delivery revision to the hashed `review-to-delivery` cross-stage verdict that approved it (`references/gate-submission.md`).
 - **`verification_plan`** — evidence key at `deploy-readiness`, owner `ship`: the verification-plan artifact above, named by its hashed path.
 - **`human_go_required`** — evidence key at `deploy-readiness`, owner `ship`: the go decision for this specific release at this specific time — named approver identity, approval reference, the exact revision approved, and the decision timestamp. Prerequisite checks, artifact validation, and CI status are readiness signals, not this decision, and `../gates.yaml` sanctions no fallback value for any of the three keys, so none can be waived by an applicability record. `references/gate-submission.md` carries each key's type, its artifact-backing rule, and the value shape the checker accepts.
 - Post-ship checklist identifying remaining verification steps, rollback triggers, and follow-up actions.
@@ -96,7 +96,7 @@ The `release` pipeline closes at the `deploy-readiness` boundary in `../gates.ya
 
 | Evidence key | Owning skill | Artifact-backed | Sanctioned fallback |
 | --- | --- | --- | --- |
-| `approved_delivery` | `ship` | no — typed `revision_ref` | none |
+| `approved_delivery` | `ship` | yes — typed `revision_ref`, its `verdict` the hashed upstream verdict | none |
 | `deploy_config` | `setup-deploy` | yes | none |
 | `verification_plan` | `ship` | yes | none |
 | `rollback_plan` | `setup-deploy` | yes | none |

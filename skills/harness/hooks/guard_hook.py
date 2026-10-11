@@ -1471,7 +1471,9 @@ def rule_single_writer(call: "Call") -> "str | None":
 _REGISTRATION = (".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".github/hooks.json")
 _USER_REGISTRATION = ("~/.claude/settings.json", "~/.claude/settings.local.json", "~/.codex/hooks.json",
                       "~/.config/github-copilot/hooks.json", "~/.cursor/plugins/local/supremeteam-hooks/**",
-                      "~/.config/opencode/plugins/supremeteam-hooks.js")
+                      "~/.config/opencode/plugins/supremeteam-hooks.js", "~/.pi/agent/extensions/supremeteam-guard.ts")
+# pi reads its agent directory from this variable when it is set (install_hooks.pi_extension_path).
+_PI_AGENT_ENV = "PI_CODING_AGENT_DIR"
 _HARNESS_REASON = (
     "Blocked by harness Action Realization layer: the hook scripts and the host files that register them are not "
     "edited while a run is pinned or a boundary is recorded, because an edit there would switch the guard off. "
@@ -1490,6 +1492,8 @@ def _harness_boundaries(root) -> list:
     scripts = [str(HOOK_DIR.parents[1] / "scripts" / name).replace("\\", "/") for name in _bootstrap.SCRIPT_FILES]
     globs = [str(HOOK_DIR).replace("\\", "/") + "/**", *scripts, *_REGISTRATION,
              *(os.path.expanduser(p) for p in _USER_REGISTRATION)]
+    if os.environ.get(_PI_AGENT_ENV):
+        globs.append(os.path.join(os.path.expanduser(os.environ[_PI_AGENT_ENV]), "extensions", "supremeteam-guard.ts"))
     return [_paths.Boundary(glob, root) for glob in globs]
 
 

@@ -16,9 +16,10 @@ Two classes of host:
   script re-reads the file and asks the harness verifier whether each command is
   actually *executable* - a Python launcher whose first positional argument is
   the hook script. It reports "registered" only when that holds.
-* **cursor, opencode** need a plugin package rather than a hook config entry.
-  Those are written too, but the harness verifier cannot inspect them, so they
-  are reported as ``verifiable: no``. Nothing here claims a hook will fire;
+* **cursor, opencode, pi** need a plugin package or extension rather than a hook
+  config entry. Those are written too, but the harness verifier cannot inspect
+  them, so they are reported as ``verifiable: no``. The pi extension reports
+  in the pi session itself, at every session start, whether it can run the hooks. Nothing here claims a hook will fire;
   whether the host actually invokes it is a host-observed fact.
 
 Writes are scoped, previewable, and recoverable: ``--scope`` picks exactly one
@@ -49,6 +50,7 @@ import argparse
 import difflib
 import importlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -63,7 +65,7 @@ EXIT_DECLINED = 3
 # Hosts whose registration this script can verify after writing it.
 NATIVE_HOSTS = ("codex", "claude", "copilot")
 # Hosts that need a plugin package the harness verifier cannot inspect.
-PLUGIN_HOSTS = ("cursor", "opencode")
+PLUGIN_HOSTS = ("cursor", "opencode", "pi")
 HOSTS = NATIVE_HOSTS + PLUGIN_HOSTS
 
 
@@ -251,6 +253,49 @@ def _js_string(value: str) -> str:
     return json.dumps(value)
 
 
+# The environment a bridge hands the hook interpreter. A host's whole environment is not
+# passed on: PYTHONPATH, PYTHONHOME or PYTHONSTARTUP inherited from the shell that
+# started the host would load other code into the guard before it decides anything.
+# What the hooks read is kept: the system and home directories, the temporary
+# directory, the data-root variables, the project-directory variables a command can
+# spell (``_state.PROJECT_ENV``), the pi agent directory Rule F protects, and every
+# ``SUPREMETEAM_`` setting the person who started the host chose.
+HOOK_ENV_NAMES = (
+    "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PROGRAMFILES", "PROGRAMDATA",
+    "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "USER", "USERNAME", "LOGNAME",
+    "TMPDIR", "TMP", "TEMP", "APPDATA", "LOCALAPPDATA", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+    "CODEX_HOME", "AGENTS_HOME", "PI_CODING_AGENT_DIR",
+)
+HOOK_ENV_PREFIXES = ("SUPREMETEAM_",)
+
+
+def hook_env_names(repair) -> list[str]:
+    """Every variable a bridge passes on by name, upper-cased (Windows names are case-insensitive)."""
+    names = [*HOOK_ENV_NAMES, *repair._state.PROJECT_ENV]
+    return sorted({name.upper() for name in names})
+
+
+def _hook_env_js(repair, typed: bool) -> str:
+    """The JavaScript (or, ``typed``, TypeScript) function that builds the hook interpreter's environment."""
+    def ts(annotation: str) -> str:
+        return annotation if typed else ""
+
+    return f"""const hookEnvNames{ts(": ReadonlySet<string>")} = new Set({json.dumps(hook_env_names(repair))});
+const hookEnvPrefixes{ts(": readonly string[]")} = {json.dumps(list(HOOK_ENV_PREFIXES))};
+
+function hookEnvironment(cwd{ts(": string")}){ts(": Record<string, string>")} {{
+  const env{ts(": Record<string, string>")} = {{}};
+  for (const [name, value] of Object.entries(process.env)) {{
+    const upper = name.toUpperCase();
+    if (value !== undefined && (hookEnvNames.has(upper) || hookEnvPrefixes.some((prefix) => upper.startsWith(prefix)))) {{
+      env[name] = value;
+    }}
+  }}
+  env.SUPREMETEAM_PROJECT_DIR = cwd;
+  return env;
+}}"""
+
+
 def opencode_plugin_source(python_command: str, hook_root: str, repair) -> str:
     """The OpenCode plugin. ``spawnSync`` takes an executable and its arguments apart,
     so a launcher such as ``py -3`` is split here and its arguments are passed on."""
@@ -265,6 +310,8 @@ const hookRoot = {_js_string(root)};
 
 let launchFailure = null;
 let launchFailureReported = false;
+
+{_hook_env_js(repair, typed=False)}
 
 function toToolName(name) {{
   const lower = String(name || "").toLowerCase();
@@ -281,7 +328,7 @@ function runHook(script, payload, cwd) {{
     {{
       input: JSON.stringify(payload),
       encoding: "utf8",
-      env: {{ ...process.env, SUPREMETEAM_PROJECT_DIR: cwd || process.cwd() }},
+      env: hookEnvironment(cwd || process.cwd()),
     }},
   );
   if (result.error) {{
@@ -368,12 +415,261 @@ def register_opencode(args: argparse.Namespace, repair) -> dict:
     }
 
 
+# Runs under the registered interpreter at every pi session start (``sys.argv``: hook root, floor, scripts):
+# prints the Python version, whether it meets the floor, and which hook scripts are missing.
+_PI_PROBE = (
+    "import json, os, sys; root, floor, scripts = sys.argv[1], sys.argv[2], sys.argv[3:]; "
+    "print(json.dumps({'version': '.'.join(map(str, sys.version_info[:3])), "
+    "'meets_floor': sys.version_info[:2] >= tuple(int(p) for p in floor.split('.')), "
+    "'missing': [s for s in scripts if not os.path.isfile(os.path.join(root, s))]}))"
+)
+
+
+def pi_extension_path(override: str | None = None) -> Path:
+    """Where pi loads a global extension from: ``$PI_CODING_AGENT_DIR/extensions``, else ``~/.pi/agent/extensions``."""
+    if override:
+        return Path(override).expanduser()
+    agent = os.environ.get("PI_CODING_AGENT_DIR")
+    base = Path(agent).expanduser() if agent else Path.home() / ".pi" / "agent"
+    return base / "extensions" / "supremeteam-guard.ts"
+
+
+def pi_extension_source(python_command: str, hook_root: str, repair, floor: str) -> str:
+    """The pi extension: a TypeScript module pi loads from its extensions directory.
+
+    It bridges pi's ``tool_call``, ``tool_result`` and ``input`` events to the three
+    hook scripts with the payload contract the other hosts use, so the decisions stay
+    the Python guard's. A deny becomes ``{ block: true, reason }``; anything that goes
+    wrong in the bridge (the interpreter cannot start, the hook exits non-zero or
+    prints something that is not JSON, an exception) fails open and is reported once
+    per session. Every hook call carries pi's own session id, the hook interpreter
+    gets ``hookEnvironment`` rather than pi's whole environment, and at each session
+    start a probe runs the interpreter and reports in the session whether the guard is
+    enforcing. The module is strictly typed against pi's published extension API.
+    """
+    command, *leading = repair.launcher_parts(python_command)
+    arguments = [*leading, *repair.utf8_flags(python_command)]
+    root = hook_root.replace("\\", "/")
+    scripts = [script for _, script in repair.verify.REQUIRED]
+    return f"""// Supreme Team guard for pi. Generated by scripts/install_hooks.py --target pi; re-run it to change this file.
+// The decisions are made by the Python hooks under hookRoot; this module only carries pi's events to them.
+import {{ spawnSync }} from "node:child_process";
+import type {{ ExtensionAPI, ExtensionContext }} from "@earendil-works/pi-coding-agent";
+
+const pythonCommand: string = {_js_string(command)};
+const pythonArgs: readonly string[] = {json.dumps(arguments)};
+const hookRoot: string = {_js_string(root)};
+const minimumPython: string = {_js_string(floor)};
+const hookScripts: readonly string[] = {json.dumps(scripts)};
+const service = "supremeteam-guard";
+const hookTimeoutMs = 60_000;
+const probeSource: string = {_js_string(_PI_PROBE)};
+
+{_hook_env_js(repair, typed=True)}
+
+interface HookOutput {{
+  hookSpecificOutput?: {{
+    permissionDecision?: string;
+    permissionDecisionReason?: string;
+    additionalContext?: string;
+  }};
+}}
+
+interface Probe {{
+  version: string;
+  meets_floor: boolean;
+  missing: string[];
+}}
+
+let failure: string | null = null;
+let failureReported = false;
+let pendingContext: string | null = null;
+
+function toToolName(name: string): string {{
+  const lower = name.toLowerCase();
+  if (lower === "bash") return "Bash";
+  if (lower === "edit") return "Edit";
+  if (lower === "write") return "Write";
+  return name;
+}}
+
+function sessionId(ctx: ExtensionContext): string {{
+  try {{
+    const id = ctx.sessionManager.getSessionId();
+    if (id) return `pi:${{id}}`;
+  }} catch {{
+    // An ephemeral or replaced session has no id; fall through to this process's own.
+  }}
+  return `pi:pid-${{process.pid}}`;
+}}
+
+function launch(args: readonly string[], input: string, cwd: string): {{ stdout: string; problem: string | null }} {{
+  const result = spawnSync(pythonCommand, [...pythonArgs, ...args], {{
+    input,
+    encoding: "utf8",
+    cwd,
+    env: hookEnvironment(cwd),
+    timeout: hookTimeoutMs,
+    windowsHide: true,
+  }});
+  if (result.error) return {{ stdout: "", problem: String(result.error.message || result.error) }};
+  const stdout = String(result.stdout || "");
+  if (result.status !== 0) {{
+    const stderr = String(result.stderr || "").trim().slice(0, 300);
+    return {{ stdout, problem: `exited with status ${{result.status ?? result.signal}}: ${{stderr}}` }};
+  }}
+  return {{ stdout, problem: null }};
+}}
+
+function runHook(script: string, payload: Record<string, unknown>, cwd: string): HookOutput | null {{
+  const {{ stdout, problem }} = launch([`${{hookRoot}}/${{script}}`], JSON.stringify(payload), cwd);
+  if (problem) failure = failure || `${{script}} ${{problem}}`;
+  if (!stdout.trim()) return null;
+  try {{
+    const parsed: unknown = JSON.parse(stdout);
+    return parsed && typeof parsed === "object" ? (parsed as HookOutput) : null;
+  }} catch {{
+    failure = failure || `${{script}} printed output that is not JSON`;
+    return null;
+  }}
+}}
+
+function reportFailure(ctx: ExtensionContext): void {{
+  if (!failure || failureReported) return;
+  failureReported = true;
+  ctx.ui.notify(`SupremeTeam guard is not enforcing (${{pythonCommand}}): ${{failure}}`, "warning");
+}}
+
+function bridgeFault(ctx: ExtensionContext, error: unknown): void {{
+  failure = failure || `bridge error: ${{error instanceof Error ? error.message : String(error)}}`;
+  reportFailure(ctx);
+}}
+
+function probe(ctx: ExtensionContext): void {{
+  const {{ stdout, problem }} = launch(["-c", probeSource, hookRoot, minimumPython, ...hookScripts], "", ctx.cwd);
+  let found: Probe | null = null;
+  try {{
+    found = problem ? null : (JSON.parse(stdout) as Probe);
+  }} catch {{
+    found = null;
+  }}
+  let fault: string | null = problem;
+  if (!fault && !found) fault = "the readiness probe printed no report";
+  if (!fault && found && !found.meets_floor) fault = `Python ${{found.version}} is below the ${{minimumPython}} floor`;
+  if (!fault && found && found.missing.length) fault = `missing under ${{hookRoot}}: ${{found.missing.join(", ")}}`;
+  if (fault) {{
+    failure = fault;
+    failureReported = false;
+    ctx.ui.setStatus(service, "SupremeTeam guard: off");
+    reportFailure(ctx);
+    return;
+  }}
+  failure = null;
+  failureReported = false;
+  ctx.ui.setStatus(service, "SupremeTeam guard: on");
+  ctx.ui.notify(`SupremeTeam guard active: Python ${{found?.version}} runs the hooks in ${{hookRoot}}`, "info");
+}}
+
+export default function supremeTeamGuard(pi: ExtensionAPI): void {{
+  pi.on("session_start", async (_event, ctx) => {{
+    try {{
+      probe(ctx);
+    }} catch (error) {{
+      bridgeFault(ctx, error);
+    }}
+  }});
+
+  pi.on("tool_call", async (event, ctx) => {{
+    try {{
+      const result = runHook(
+        "pre_tool_use.py",
+        {{ session_id: sessionId(ctx), cwd: ctx.cwd, tool_name: toToolName(event.toolName), tool_input: event.input }},
+        ctx.cwd,
+      );
+      reportFailure(ctx);
+      const hook = result?.hookSpecificOutput;
+      if (hook?.permissionDecision === "deny") {{
+        return {{ block: true, reason: hook.permissionDecisionReason || "Blocked by the SupremeTeam harness." }};
+      }}
+    }} catch (error) {{
+      bridgeFault(ctx, error);
+    }}
+    return undefined;
+  }});
+
+  pi.on("tool_result", async (event, ctx) => {{
+    try {{
+      const result = runHook(
+        "post_tool_use.py",
+        {{
+          session_id: sessionId(ctx),
+          cwd: ctx.cwd,
+          tool_name: toToolName(event.toolName),
+          tool_input: event.input,
+          tool_response: {{ content: event.content, details: event.details, is_error: event.isError }},
+        }},
+        ctx.cwd,
+      );
+      reportFailure(ctx);
+      const context = result?.hookSpecificOutput?.additionalContext;
+      if (context) return {{ content: [...event.content, {{ type: "text" as const, text: `[SupremeTeam] ${{context}}` }}] }};
+    }} catch (error) {{
+      bridgeFault(ctx, error);
+    }}
+    return undefined;
+  }});
+
+  pi.on("input", async (event, ctx) => {{
+    try {{
+      if (event.source !== "extension") {{
+        const result = runHook("user_prompt_submit.py", {{ session_id: sessionId(ctx), cwd: ctx.cwd, prompt: event.text }}, ctx.cwd);
+        reportFailure(ctx);
+        pendingContext = result?.hookSpecificOutput?.additionalContext || null;
+      }}
+    }} catch (error) {{
+      bridgeFault(ctx, error);
+    }}
+    return {{ action: "continue" as const }};
+  }});
+
+  pi.on("before_agent_start", async () => {{
+    const content = pendingContext;
+    pendingContext = null;
+    if (!content) return undefined;
+    return {{ message: {{ customType: service, content, display: false }} }};
+  }});
+}}
+"""
+
+
+def register_pi(args: argparse.Namespace, repair, verify) -> dict:
+    """Write the pi extension. pi loads TypeScript extensions from its agent directory, not a hook config entry."""
+    path = pi_extension_path(args.pi_extension)
+    source = pi_extension_source(args.python_command, str(args.hook_root), repair, verify.declared_minimum())
+    before = _read_text(path)
+    changed = before != source
+    if changed:
+        _write_text(path, before, source, args.dry_run, repair, private=True)
+    elif args.dry_run:
+        print(f"  (no change to {path})")
+    return {
+        "host": "pi",
+        "path": str(path),
+        "verifiable": False,
+        "added": [str(path)] if changed else [],
+        "applied": changed and not args.dry_run,
+        "registered": None,
+        "note": "pi loads a TypeScript extension; verify_registration.py cannot inspect it. "
+                "The next pi session reports 'SupremeTeam guard active' or why it is not enforcing.",
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Register Supreme Team harness hooks in a host's native configuration.",
         epilog=(
-            "codex, claude and copilot are verified after writing. cursor and opencode need a "
-            "plugin package the harness verifier cannot inspect."
+            "codex, claude and copilot are verified after writing. cursor, opencode and pi need a "
+            "plugin package or extension the harness verifier cannot inspect."
         ),
     )
     parser.add_argument("--target", action="append", choices=HOSTS, required=True,
@@ -398,6 +694,9 @@ def parse_args() -> argparse.Namespace:
                         default=str(Path.home() / ".cursor" / "plugins" / "local" / "supremeteam-hooks"))
     parser.add_argument("--opencode-plugin",
                         default=str(Path.home() / ".config" / "opencode" / "plugins" / "supremeteam-hooks.js"))
+    parser.add_argument("--pi-extension", default=None,
+                        help="override the pi extension path (default: $PI_CODING_AGENT_DIR/extensions, else "
+                             "~/.pi/agent/extensions, /supremeteam-guard.ts)")
     return parser.parse_args()
 
 
@@ -411,6 +710,8 @@ def _run_targets(args: argparse.Namespace, targets: list[str], verify, repair) -
                 result = register_native(args, host, verify, repair)
             elif host == "cursor":
                 result = register_cursor(args, repair)
+            elif host == "pi":
+                result = register_pi(args, repair, verify)
             else:
                 result = register_opencode(args, repair)
         except Refused as exc:

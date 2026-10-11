@@ -117,6 +117,15 @@ class EngagedByABoundaryTests(HarnessFileCase):
                 self.assertProtected(self.edit(f"{self.home}/{path}"))
                 self.assertProtected(self.shell(f"cp x ~/{path}"))
 
+    def test_the_pi_extension_is_protected_where_pi_loads_it(self):
+        self.assertProtected(self.edit(f"{self.home}/.pi/agent/extensions/supremeteam-guard.ts"))
+        self.assertProtected(self.shell("rm ~/.pi/agent/extensions/supremeteam-guard.ts"))
+        self.assertEqual(self.edit(f"{self.home}/.pi/agent/extensions/other.ts"), "")
+        agent = self.root / "pi-agent"
+        with mock.patch.dict(os.environ, {"PI_CODING_AGENT_DIR": str(agent)}):
+            self.assertProtected(self.edit(f"{agent}/extensions/supremeteam-guard.ts"))
+            self.assertProtected(self.shell(f"echo x > {agent}/extensions/supremeteam-guard.ts"))
+
     def test_reads_other_files_and_the_sanctioned_registration_writers_pass(self):
         for command in (
             f"cat {HOOK}/guard_hook.py", f"grep -n rule {HOOK}/guard_hook.py", f"ls {HOOK}", f"cp {HOOK}/guard_hook.py /tmp/copy.py",

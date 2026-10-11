@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import json
+import re
 import stat
 import sys
 from datetime import datetime, timezone
@@ -88,19 +89,41 @@ def launcher_token(python: str) -> str:
     """Quote an interpreter whose path contains spaces.
 
     A launcher that carries its own arguments (``py -3.13``, ``python -X utf8``) is
-    left alone: quoting it would collapse two tokens into one path that does not
-    exist. An unquoted ``C:/Program Files/Python313/python.exe`` would otherwise be
-    split into a launcher and a stray argument, and verify_registration would report
-    the hook as not executable.
+    not quoted whole: quoting it would collapse two tokens into one path that does
+    not exist. An unquoted ``C:/Program Files/Python313/python.exe`` would otherwise
+    be split into a launcher and a stray argument, and verify_registration would
+    report the hook as not executable. A spaced path that carries arguments
+    (``C:/Program Files/Python313/python.exe -X dev``) has only its path quoted.
 
     The test is the shape of the value, not whether the file exists here, so
     registering an interpreter for another machine behaves the same way.
     """
     if not python or '"' in python or " " not in python:
         return python
-    if any(part.startswith("-") for part in python.split(" ")[1:]):
-        return python
-    return '"' + python + '"'
+    parts = launcher_parts(python)
+    if len(parts) == 1:
+        return '"' + python + '"'
+    if " " in parts[0]:
+        return " ".join(['"' + parts[0] + '"', *parts[1:]])
+    return python
+
+
+# Wrappers whose first argument is the program they start, so `env python3 -E` is two tokens, not one path.
+_WRAPPERS = frozenset({"env", "env.exe", "nice", "nohup", "exec", "command"})
+
+
+def _spaced_path(head: list[str]) -> bool:
+    """Whether the words before a launcher's first option are one interpreter path that contains spaces.
+
+    ``C:/Program Files/Python313/python.exe -X dev`` splits into ``C:/Program`` and
+    ``Files/Python313/python.exe``: the last word continues a path (it holds a
+    separator) and names a Python, and the first word is not a wrapper that starts
+    the next one. ``/usr/bin/env python3 -E`` and ``py -3`` stay apart.
+    """
+    if len(head) < 2 or Path(head[0].replace("\\", "/")).name.lower() in _WRAPPERS:
+        return False
+    last = head[-1]
+    return ("/" in last or "\\" in last) and verify._python_launcher(last.replace("\\", "/"))
 
 
 def launcher_parts(python: str) -> list[str]:
@@ -108,13 +131,21 @@ def launcher_parts(python: str) -> list[str]:
 
     Uses the same shape test as ``launcher_token``, for hosts that start the
     interpreter without a shell and so need the command and its arguments apart.
+    A spaced interpreter path followed by options stays one command
+    (``_spaced_path``) rather than being cut at its first space.
     """
     if not python or " " not in python:
         return [python]
     if '"' in python:
         return verify._tokens(python)
-    parts = python.split()
-    return parts if any(part.startswith("-") for part in parts[1:]) else [python]
+    words = list(re.finditer(r"\S+", python))
+    parts = [word.group() for word in words]
+    first = next((i for i, part in enumerate(parts) if i and part.startswith("-")), None)
+    if first is None:
+        return [python]
+    if _spaced_path(parts[:first]):
+        return [python[words[0].start():words[first - 1].end()], *parts[first:]]
+    return parts
 
 
 def utf8_flags(python: str) -> list[str]:

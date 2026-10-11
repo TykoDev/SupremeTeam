@@ -7,6 +7,43 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ## [Unreleased]
 
+### pi host enforcement (`install_hooks.py --target pi`)
+
+- `scripts/install_hooks.py --target pi` writes `supremeteam-guard.ts` to pi's
+  global extensions directory (`~/.pi/agent/extensions/`, or
+  `$PI_CODING_AGENT_DIR/extensions/`; `--pi-extension` overrides it). The extension
+  carries pi's `tool_call`, `tool_result` and `input` events to the three hook
+  scripts with the payload contract the other hosts use, so every decision stays the
+  Python guard's: a deny becomes `{ block: true, reason }`, post-tool context is
+  appended to the tool result, and prompt context is injected before the agent starts.
+  A fault in the bridge fails open and is reported once per session.
+- Fixes from the pi delivery audit (run `pi-guard-01`):
+  - F-R2: `repair_registration.launcher_parts` and `launcher_token` cut an unquoted
+    spaced interpreter path that carries options (`C:/Program Files/Python313/python.exe -X dev`)
+    at its first space. It now stays one command, and only the path is quoted in a
+    registered command; `env python3 -E` and `py -3` still split. Shared by the
+    OpenCode plugin and the pi extension.
+  - F-R3: every pi hook call carries pi's own session id (`pi:<id>`), falling back to
+    the process id rather than one constant for every session.
+  - F-R5: the hook interpreter no longer inherits the host's whole environment. The
+    pi extension and the OpenCode plugin pass only what the hooks read
+    (`HOOK_ENV_NAMES`, `_state.PROJECT_ENV` and every `SUPREMETEAM_` variable), so a
+    `PYTHONPATH` or `PYTHONHOME` from the launching shell cannot load other code into
+    the guard.
+  - g-1: at every session start the extension runs the registered interpreter and
+    reports in pi `SupremeTeam guard active` with the Python version, or why it is
+    not enforcing, with a `SupremeTeam guard: on|off` status.
+  - F-R4 / g-3: the extension is strictly typed against pi's published API, and the
+    new CI job `pi-bridge` type-checks it with `tsc --strict` against pinned
+    `@earendil-works/pi-coding-agent`, `@types/node` and `typescript`, and runs the
+    pi tests under node 22.
+- Guard Rule F protects the pi extension as it protects the Cursor and OpenCode
+  plugins.
+- Tests: `PiRegistrationTests`, `PiExtensionTests` (including a live drive in
+  which the real guard blocks a force-push through the extension) and
+  `PiTypeCheckTests` in `test_installer_hooks.py`; launcher-splitting cases in
+  `test_registration_hardening.py`; the pi path in `test_guard_harness_files.py`.
+
 ### Gate judgment held to the source of truth
 
 - Audit of the design, build, review and release gates. The mechanical pass was

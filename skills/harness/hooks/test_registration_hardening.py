@@ -500,9 +500,22 @@ class InterpreterTests(Scratch):
         for launcher, parts in (
             ("python", ["python"]), ("py -3", ["py", "-3"]), ("C:/Program Files/Python313/python.exe", ["C:/Program Files/Python313/python.exe"]),
             ('"C:/Program Files/Python313/python.exe" -X dev', ["C:/Program Files/Python313/python.exe", "-X", "dev"]),
+            # F-R2: an unquoted spaced path that carries options was cut at its first space.
+            ("C:/Program Files/Python313/python.exe -X dev", ["C:/Program Files/Python313/python.exe", "-X", "dev"]),
+            ("C:\\Users\\Jo Smith\\Python313\\python.exe -E", ["C:\\Users\\Jo Smith\\Python313\\python.exe", "-E"]),
+            ("/opt/my python/bin/python3.13 -E", ["/opt/my python/bin/python3.13", "-E"]),
+            ("/usr/bin/env python3 -E", ["/usr/bin/env", "python3", "-E"]),
+            ("/usr/bin/env /opt/py/bin/python3 -E", ["/usr/bin/env", "/opt/py/bin/python3", "-E"]),
+            ("py -3.13 -X utf8", ["py", "-3.13", "-X", "utf8"]),
         ):
             with self.subTest(launcher=launcher):
                 self.assertEqual(repair.launcher_parts(launcher), parts)
+
+    def test_a_spaced_interpreter_path_with_options_quotes_only_the_path_and_verifies(self):
+        command = repair.command_for("pre_tool_use.py", "C:/Program Files/Python313/python.exe -X dev")
+        self.assertTrue(command.startswith('"C:/Program Files/Python313/python.exe" -X dev -X utf8 "'), command)
+        self.assertEqual(verify._tokens(command)[:3], ["C:/Program Files/Python313/python.exe", "-X", "dev"])
+        self.assertEqual(repair.launcher_token("/usr/bin/env python3 -E"), "/usr/bin/env python3 -E")
 
     def test_the_running_interpreter_is_read_without_being_launched(self):
         report = verify.interpreter_report(repair.command_for("pre_tool_use.py", sys.executable))

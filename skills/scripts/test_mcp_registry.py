@@ -20,7 +20,8 @@ class RegistryTests(unittest.TestCase):
 
     def cache(self, *, age=0, ttl=2, host="test-host", workspace=None):
         stamp = (self.now - timedelta(hours=age)).isoformat()
-        self.path.write_text(f'---\nlast_discovery_at: {stamp}\ndiscovery_ttl_hours: {ttl}\nhost: "{host}"\nworkspace: "{workspace or self.root}"\n---\n', encoding="utf-8")
+        # Single quotes: YAML's literal spelling, so a Windows path with backslashes round-trips unchanged.
+        self.path.write_text(f"---\nlast_discovery_at: {stamp}\ndiscovery_ttl_hours: {ttl}\nhost: {host!r}\nworkspace: '{workspace or self.root}'\n---\n", encoding="utf-8")
 
     def test_missing_and_shipped_blank_do_not_pause_intake(self):
         self.assertEqual(self.inspect()["status"], "undiscovered")

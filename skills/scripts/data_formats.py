@@ -114,7 +114,23 @@ def parse_scalar(value: str) -> Any:
                 raise DataFormatError(f"duplicate mapping key: {key!r}")
             result[key] = parse_scalar(item)
         return result
-    if (value[0] == value[-1]) and value[0] in "'\"":
+    if value[0] == value[-1] and value[0] in "'\"":
+        if value[0] == "'":
+            # YAML single quotes are literal: the only escape is a doubled quote. A path is written this way
+            # (''C:\\Users\\...'' is invalid), so backslashes reach the value untouched.
+            body = value[1:-1]
+            out = []
+            i = 0
+            while i < len(body):
+                if body[i] == "'":
+                    if body[i + 1:i + 2] != "'":
+                        raise DataFormatError("invalid quoted scalar")
+                    out.append("'")
+                    i += 2
+                else:
+                    out.append(body[i])
+                    i += 1
+            return "".join(out)
         try:
             return ast.literal_eval(value)
         except (SyntaxError, ValueError) as exc:

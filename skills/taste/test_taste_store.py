@@ -84,12 +84,15 @@ class ProcessProbeTests(unittest.TestCase):
         self.assertIs(taste.pid_alive(dead_pid()), False)
 
     def test_a_process_the_caller_may_not_signal_still_counts_as_alive(self):
-        with mock.patch.object(taste.os, "kill", side_effect=PermissionError):
+        """The signalling platforms' contract: PermissionError means the process is there. Probed with the platform
+        forced to one that signals, so the branch is pinned whatever host runs the suite (Windows never signals)."""
+        with mock.patch.object(taste.sys, "platform", "linux"), mock.patch.object(taste.os, "kill", side_effect=PermissionError):
             self.assertIs(taste.pid_alive(1), True)
 
     def test_a_platform_error_or_an_unrepresentable_pid_makes_no_claim(self):
         for error in (OSError("unsupported"), OverflowError("too large")):
-            with self.subTest(error=type(error).__name__), mock.patch.object(taste.os, "kill", side_effect=error):
+            with self.subTest(error=type(error).__name__), mock.patch.object(taste.sys, "platform", "linux"), \
+                    mock.patch.object(taste.os, "kill", side_effect=error):
                 self.assertIsNone(taste.pid_alive(1))
 
     def test_windows_makes_no_claim_and_never_signals(self):

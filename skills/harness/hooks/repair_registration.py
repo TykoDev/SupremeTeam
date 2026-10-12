@@ -36,9 +36,12 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import getpass
 import json
+import os
 import re
 import stat
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -116,12 +119,17 @@ def _spaced_path(head: list[str]) -> bool:
     """Whether the words before a launcher's first option are one interpreter path that contains spaces.
 
     ``C:/Program Files/Python313/python.exe -X dev`` splits into ``C:/Program`` and
-    ``Files/Python313/python.exe``: the last word continues a path (it holds a
-    separator) and names a Python, and the first word is not a wrapper that starts
-    the next one. ``/usr/bin/env python3 -E`` and ``py -3`` stay apart.
+    ``Files/Python313/python.exe``: the first word already begins a path (it holds a
+    separator or a drive), so the spaces are inside the path, and the first word is
+    not a wrapper that starts the next one. A non-Python interpreter in a spaced
+    directory (``C:\\Program Files\\nodejs\\node.exe --no-warnings``) is the same
+    shape and merges the same way. ``/usr/bin/env python3 -E`` and ``py -3`` stay
+    apart; so does a bare word that merely continues one (``python bin -E``).
     """
     if len(head) < 2 or Path(head[0].replace("\\", "/")).name.lower() in _WRAPPERS:
         return False
+    if "/" in head[0] or "\\" in head[0] or re.match(r"^[A-Za-z]:", head[0]):
+        return True
     last = head[-1]
     return ("/" in last or "\\" in last) and verify._python_launcher(last.replace("\\", "/"))
 
@@ -219,12 +227,25 @@ def link_warning(link: Path, target: Path) -> str:
             "so a file that is synced to other machines has to be registered on each of them")
 
 
+def _restrict_to_owner(path: Path) -> None:
+    """Owner-only on Windows, where chmod is only a read-only flag: drop inherited access and grant the current
+    user full control. Best effort — the write has already succeeded, and a lock-down the system denies leaves the
+    file no wider than before."""
+    try:
+        account = getpass.getuser()
+        subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"{account}:F"],
+                       capture_output=True, text=True, check=False, timeout=30)
+    except Exception:
+        pass
+
+
 def write_with_backup(path: Path, text: str, *, private: bool = False) -> Path | None:
     """Write ``text`` to ``path`` atomically, keeping a timestamped copy of the old file.
 
     An existing file keeps its permission bits and so does its backup, which is never
     wider than the original. A new file is owner-only when ``private`` (user-level host
     configuration, which can come to hold tokens) and gets the umask default otherwise.
+    On Windows "owner-only" is the access list, not the mode bits, and is set the same way.
     Returns the backup path when one was made.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -235,6 +256,8 @@ def write_with_backup(path: Path, text: str, *, private: bool = False) -> Path |
         backup = path.with_name(path.name + ".bak-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
         _fsutil.atomic_write(backup, path.read_bytes(), mode=mode, in_place=False)
     _fsutil.atomic_write(path, text.encode("utf-8"), mode=mode, in_place=False)
+    if private and os.name == "nt":
+        _restrict_to_owner(path)
     return backup
 
 

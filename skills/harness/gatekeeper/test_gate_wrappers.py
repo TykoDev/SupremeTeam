@@ -150,8 +150,19 @@ def _copy_catalog(dest: Path) -> Path:
 def _symlink(target: Path, link: Path) -> None:
     try:
         link.symlink_to(target, target_is_directory=target.is_dir())
+        return
     except (OSError, NotImplementedError) as exc:
-        raise unittest.SkipTest(f"symlinks are unavailable here: {exc}") from exc
+        first = exc
+    if os.name == "nt" and target.is_dir():
+        # A junction needs no privilege and resolves exactly as a directory symlink does.
+        try:
+            import _winapi
+
+            _winapi.CreateJunction(str(target), str(link))
+            return
+        except (OSError, ImportError):
+            pass
+    raise unittest.SkipTest(f"symlinks are unavailable here: {first}") from first
 
 
 class Layout(NamedTuple):
@@ -284,6 +295,9 @@ class PackageGuardTests(unittest.TestCase):
             self.assertIn("outside the project", done.stderr)
 
     def test_a_symlink_out_of_the_project_does_not_lead_out_of_it(self):
+        probe = self.base / "symlink-probe"
+        _symlink(self.outside, probe)  # decided before the loop: a skip inside it would strand a subTest generator
+        probe.unlink()
         for wrapper, script in self._each():
             link = self.project / "skillset-saves" / "runs" / uuid.uuid4().hex[:8] / wrapper.phase
             link.parent.mkdir(parents=True)

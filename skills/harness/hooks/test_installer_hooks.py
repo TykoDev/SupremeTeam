@@ -40,8 +40,13 @@ INSTALLER = REPO / "scripts" / "install_hooks.py"
 INSTALL_SH = REPO / "scripts" / "install.sh"
 INSTALL_PS1 = REPO / "scripts" / "install.ps1"
 NODE = shutil.which("node")
-# A directory whose node_modules holds typescript, @types/node and @earendil-works/pi-coding-agent (CI's pi job installs them).
-PI_TYPES = os.environ.get("SUPREMETEAM_PI_TYPES")
+# A directory whose node_modules holds typescript, @types/node and @earendil-works/pi-coding-agent (CI's pi job
+# installs them and points SUPREMETEAM_PI_TYPES at them; a provisioned checkout keeps them under the harness's
+# own test scratch so the type-check runs wherever npm has run once).
+PI_TYPES_ENV = os.environ.get("SUPREMETEAM_PI_TYPES")
+PI_TYPES_DEFAULT = HOOK_DIR.parents[2] / ".harness-state" / "test-work" / "pi-types"
+PI_TYPES = next((str(Path(candidate)) for candidate in (PI_TYPES_ENV, PI_TYPES_DEFAULT)
+                 if candidate and (Path(candidate) / "node_modules" / "typescript").is_dir()), None)
 
 
 def _node_strips_types() -> bool:
@@ -498,11 +503,21 @@ class PiRegistrationTests(InstallerCase):
         result = self.install("--target", "pi", "--dry-run", PI_CODING_AGENT_DIR=str(agent))
         self.assertIn(f"config: {agent / 'extensions' / 'supremeteam-guard.ts'}", result.stdout)
 
-    @unittest.skipUnless(POSIX, "permission bits are POSIX")
     def test_the_extension_is_owner_only(self):
         path = self.tmp / "ext" / "supremeteam-guard.ts"
         self.install("--target", "pi", "--pi-extension", str(path))
-        self.assertEqual(self.mode(path), 0o600)
+        if os.name == "nt":
+            # chmod is a read-only flag on Windows; owner-only there means the access list holds the current user
+            # and nothing inherited (repair_registration._restrict_to_owner).
+            import getpass
+            import subprocess as sp
+
+            listed = sp.run(["icacls", str(path)], capture_output=True, text=True, check=False, timeout=30).stdout
+            self.assertIn(getpass.getuser(), listed)
+            for granted in ("Everyone", "BUILTIN\\Users", "Authenticated Users"):
+                self.assertNotIn(granted, listed)
+        else:
+            self.assertEqual(self.mode(path), 0o600)
 
     def test_a_non_utf8_extension_is_refused(self):
         path = self.tmp / "supremeteam-guard.ts"
@@ -754,7 +769,13 @@ class ShellWrapperTests(unittest.TestCase):
         # install.sh looks for a Python 3.13 under the name python3 or python.
         cls.bin = cls.root / "bin"
         cls.bin.mkdir()
-        (cls.bin / "python3").symlink_to(sys.executable)
+        try:
+            (cls.bin / "python3").symlink_to(sys.executable)
+        except OSError:
+            # No symlink privilege here: a launcher script names the same interpreter for install.sh's probe.
+            shim = cls.bin / "python3"
+            shim.write_text(f'#!/bin/sh\nexec "{Path(sys.executable).as_posix()}" "$@"\n', encoding="utf-8")
+            shim.chmod(0o755)
 
     @classmethod
     def tearDownClass(cls):

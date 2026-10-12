@@ -1236,17 +1236,20 @@ class RepairWriteTests(Scratch):
         self.assertGreaterEqual(fsync.call_count, 2, "the backup and the new file are both synced")
 
     def test_the_config_and_its_backup_go_through_the_shared_write_with_their_original_mode(self):
-        """QR-PY-05: the private copy of the write is gone; the shared one is handed the mode and told to replace whole."""
+        """QR-PY-05: the private copy of the write is gone; the shared one is handed the mode and told to replace whole.
+        The expected mode is what this file system actually holds after the chmod: POSIX records 0o640, Windows folds
+        every write bit together, and either way the invariant is that the write is handed the file's own mode."""
         import _fsutil
 
         self.assertFalse(hasattr(repair, "_atomic_write"), "a private copy of the shared write is dead code")
         settings = self.claude_settings({"theme": "dark"})
         settings.chmod(0o640)
+        expected_mode = stat.S_IMODE(settings.stat().st_mode)
         with mock.patch("_fsutil.atomic_write", wraps=_fsutil.atomic_write) as writer:
             repair.write_with_backup(settings, '{"theme": "light"}\n')
         self.assertEqual(len(writer.call_args_list), 2)
         for call in writer.call_args_list:
-            self.assertEqual((call.kwargs.get("mode"), call.kwargs.get("in_place")), (0o640, False), call)
+            self.assertEqual((call.kwargs.get("mode"), call.kwargs.get("in_place")), (expected_mode, False), call)
         self.assertEqual(settings.read_text(encoding="utf-8"), '{"theme": "light"}\n')
 
     def test_a_rename_the_system_denies_is_refused_and_the_config_is_left_as_it_was(self):

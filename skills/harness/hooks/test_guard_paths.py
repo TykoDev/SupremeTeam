@@ -165,9 +165,15 @@ class GlobProblemTests(PathCase):
         self.assertIsNone(self.problem(f"/{first}/anything/**"))
         self.assertEqual(_paths.normalize_glob(f"/{first}/anything/**", self.root), f"/{first}/anything/**")
 
-    def test_windows_judges_no_leading_slash_path(self):
-        with mock.patch.object(_paths, "WINDOWS", True):
-            self.assertIsNone(self.problem(f"/{self.MISSING}/payments/**"))
+    def test_windows_judges_a_leading_slash_path_against_the_current_drive(self):
+        """Windows used to judge no leading-slash path at all, which left the SEC-04 refusal POSIX-only and a boundary
+        that enforced nothing recorded in silence here. ``/x`` names the root of the current drive on Windows, which is
+        as checkable as the file-system root, so it is judged the same way on every platform."""
+        real = os.path.isdir
+        with mock.patch("os.path.isdir", side_effect=lambda path: True if path == "/real-root-here" else real(path)), \
+                mock.patch.object(_paths, "WINDOWS", True):
+            self.assertIsNone(self.problem("/real-root-here/payments/**"))
+            self.assertIn(f"no directory /{self.MISSING} exists", self.problem(f"/{self.MISSING}/payments/**"))
 
 
 @unittest.skipIf(os.name == "nt", "a leading-slash path is a POSIX notion here")

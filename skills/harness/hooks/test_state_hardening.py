@@ -387,7 +387,9 @@ class OptionalRootTests(StateCase):
         with mock.patch.dict(os.environ, {name: f"/{name.lower()}" for name in names}):
             for name in names:
                 with self.subTest(winner=name):
-                    self.assertEqual(str(_state.project_root()), f"/{name.lower()}")
+                    # Compared as paths: Windows spells the same root with backslashes and the words of the
+                    # documented order are what this test pins.
+                    self.assertEqual(_state.project_root(), Path(f"/{name.lower()}"))
                     del os.environ[name]
 
 

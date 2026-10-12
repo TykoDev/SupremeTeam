@@ -7,6 +7,26 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ## [Unreleased]
 
+### run-audit 1.0.0 (`tools/run-audit/`)
+
+- New zero-dependency console (Python >= 3.13, standard library only) that audits
+  a checkout's saved-run history and harness observations: every run with its
+  revisions and terminal state, every gate verdict with its provenance, and every
+  `artifact_hashes` entry whose file no longer matches its recorded digest.
+  Writes `report.json` and a self-contained `report.html` (light/dark themes,
+  960/640 breakpoints, escaped output) under `--out`; exit policy `--fail-on
+  none|high|any` for CI use. It never writes under `skillset-saves/` or
+  `.harness-state/`.
+- Verified: 8 product tests (incl. tampered-evidence and hostile-input fixtures),
+  deployed-copy verification V1-V5, digest parity with `data_formats.content_sha256`
+  regression-tested, post-release re-scan consistent, 50-run synthetic history
+  scanned in 0.35 s (7 ms per run).
+- Known issues: report content is escaped but not redacted; visual verification
+  was structural only; the lint leg did not run on the build host.
+- Deliverables and gate record: run `pi-deploy-02`
+  (`skillset-saves/runs/pi-deploy-02/`), gated at `design-to-build`,
+  `build-to-review`, `review-to-delivery`, and `deploy-readiness`.
+
 ### pi host enforcement (`install_hooks.py --target pi`)
 
 - `scripts/install_hooks.py --target pi` writes `supremeteam-guard.ts` to pi's

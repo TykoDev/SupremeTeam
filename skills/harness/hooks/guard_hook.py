@@ -1484,14 +1484,14 @@ _HARNESS_REASON = (
 
 
 def _harness_boundaries(root) -> list:
-    """The hooks directory, the ``skills/scripts`` modules the hooks import (``_bootstrap.SCRIPT_FILES``: an edit to
-    one runs inside the guard as surely as an edit to the guard, and a ``raise SystemExit(0)`` there switched it off
-    with no fault counted) and the registration files."""
+    """The hooks directory and its harness parent (so removing or renaming either is refused), the ``skills/scripts``
+    modules the hooks import (``_bootstrap.SCRIPT_FILES``: an edit to one runs inside the guard as surely as an edit
+    to the guard, and a ``raise SystemExit(0)`` there switched it off with no fault counted) and the registration files."""
     import _bootstrap
 
     scripts = [str(HOOK_DIR.parents[1] / "scripts" / name).replace("\\", "/") for name in _bootstrap.SCRIPT_FILES]
-    globs = [str(HOOK_DIR).replace("\\", "/") + "/**", *scripts, *_REGISTRATION,
-             *(os.path.expanduser(p) for p in _USER_REGISTRATION)]
+    globs = [str(HOOK_DIR).replace("\\", "/") + "/**", str(HOOK_DIR.parent).replace("\\", "/") + "/**",
+             *scripts, *_REGISTRATION, *(os.path.expanduser(p) for p in _USER_REGISTRATION)]
     if os.environ.get(_PI_AGENT_ENV):
         globs.append(os.path.join(os.path.expanduser(os.environ[_PI_AGENT_ENV]), "extensions", "supremeteam-guard.ts"))
     return [_paths.Boundary(glob, root) for glob in globs]

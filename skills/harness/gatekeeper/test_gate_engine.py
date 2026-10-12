@@ -804,11 +804,14 @@ class PathReferenceTests(EngineCase):
                     "residual_risk": prose, "revision_lineage": [prose, "r1"]})
                 self.assertEqual([f for f in failures if "unhashed" in f], [])
 
-    def test_a_revision_ref_may_be_a_version_number(self):
-        package = self.package("build-to-review", {"approved_design_revision": "1.4.2"}, artifact_hashes={})
+    def test_a_revision_ref_revision_may_be_a_version_number(self):
+        """The revision field is an identifier; only the verdict field is a file reference."""
+        package = self.package("build-to-review", {"approved_design_revision": {"revision": "1.4.2", "verdict": "v.json"}},
+                               artifact_hashes={})
         package.check_artifacts()
         package.check_evidence()
-        self.assertFalse(any("approved_design_revision" in f and "path" in f for f in package.failures), package.failures)
+        self.assertFalse(any("1.4.2" in f for f in package.failures), package.failures)
+        self.assertIn("evidence references unhashed path: approved_design_revision -> v.json", package.failures)
 
     def test_a_declared_path_field_still_needs_a_hashed_artifact_whatever_it_looks_like(self):
         for ref in ("missing.md", "1.4.2", "api.example.com"):

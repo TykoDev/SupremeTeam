@@ -38,7 +38,8 @@ mirrors the file and is drift-tested against it.
 ## Evidence that has to be a file
 
 An artifact-backed key names a path in the package's `artifact_hashes` map:
-`decisions`, `architecture`, `plan`, `taste_snapshot`, `design_inventory`,
+`decisions`, `architecture`, `interfaces`, `plan`, `acceptance`, `taste_snapshot`,
+`approved_design_revision`, `implementation`, `approved_delivery`, `design_inventory`,
 `taste_grilling`, `design_directions`, `mock_set`, `mock_parity`,
 `mock_rendering`, `selection`, `selected_variant`, `parity_evidence`, `tests`,
 `runtime`, `executed_probes`, `rendered_verification`, `threat_model`,
@@ -75,7 +76,12 @@ for a schema-2 manifest instead of approving it.
 | `findings` | `findings`, `security_evidence`, `defects`, `accessibility_evidence` | Items with id, severity, status. Critical verified or not-applicable with a reason; Major verified, not-applicable, or deferred with owner and reopen trigger |
 | `verdict` | `review_verdict` | APPROVED, or REVISE/ESCALATE with a challenge record naming `by` and `reason` |
 | `stack_lock` | `stack_lock` | Registry slug, versions, overlay sha256, checked against the registry and the overlay file |
-| `revision_ref` | `approved_design_revision`, `approved_delivery` | A non-empty approved upstream revision |
+| `revision_ref` | `approved_design_revision`, `approved_delivery` | `{revision, verdict}`: the hashed upstream cross-stage verdict holds `gatekeeper-admiral`'s valid APPROVED judgment for that revision in this run, and the approved package still fingerprints and hashes as approved |
+| `decision_log` | `decisions` | The intake grilling log's four fixed tables: every cell filled, unique `D-<n>` ids, sanctioned sources |
+| `acceptance_table` | `acceptance` | The plan's `Acceptance criteria` table with unique `AC-<n>` ids and every cell filled |
+| `interface_set` | `interfaces` | `IF-<n>` items that stand in their hashed artifact, or `change: none` |
+| `change_set` | `implementation` | Every changed file re-hashed and named by the hashed diff |
+| `trace_map` | `traceability` | Every approved `AC-<n>` traced to changes and to tests in the tests log; every changed file traced |
 | `security_seed` | `security_seed` | `applicable`, `scope`, `decided_by`, `architecture_revision`, `reason`, `boundaries` with id and control |
 | `human_go` | `human_go_required` | `decision: go`, approver, approval reference, ISO timestamp, revision equal to `approved_delivery` |
 | `preference_diff`, `confirmation`, `conflict_analysis`, `persistence_result`, `effective_profile`, `consumer_handoff` | the Taste keys | The record shapes in [`taste-doctrine.md`](../skills/taste-doctrine.md) |
@@ -103,6 +109,18 @@ Both report facts and fail loud: package defect exit 1, engine error exit 2,
 never a pass. The gatekeeper adds judgment: whether an artifact is adequate,
 whether a contradiction is real, whether a waiver reason is honest, whether a
 scope change warrants ESCALATE.
+
+That judgment is held to the source of truth (`gates.yaml` `revise_policy.grounding`
+and `judgment_policy`). The gatekeeper writes its verdict and findings as a
+judgment record and passes it to `check.py --judgment`. Every finding names a basis
+that exists: a `D-<n>` decision in the intake grilling log, an `AC-<n>` row in the
+plan's acceptance table, a section of a catalog contract, or two package artifacts
+that contradict each other. A Critical or Major finding also names the hashed
+artifacts it was read from. A REVISE needs a grounded Critical or Major finding or
+a mechanical failure. Only the phase gatekeeper or `gatekeeper-admiral` may judge;
+a submitter never judges its own package. A requirement in no source of truth is
+an ESCALATE to `admiral`, not a REVISE. `check.py` refuses an ungrounded record and
+does not write it as a verdict.
 
 ## Verdicts
 
@@ -134,7 +152,8 @@ when `check.py --prior` reports `prior_reusable: true`. At delivery, re-run
 | `revise_threshold` | REVISE only for a mechanical failure, a Critical, or an unresolved Major; Minor and Info never cause one |
 | `batch_fix` | One revision per owner; a resubmission gets new findings only on changed evidence or a defect the change introduced |
 | `rerun_scope` | The lead re-runs only the stages the packet names or that depend on changed evidence; a key it authors itself is fixed in place |
-| `cross_stage_scope` | `gatekeeper-admiral` judges the crossing and carries the phase gate's adequacy judgment unless evidence changed or the phase verdict was not APPROVED; at the six boundaries with no phase gatekeeper it judges every key |
+| `cross_stage_scope` | `gatekeeper-admiral` judges the crossing and carries the phase gate's adequacy judgment, read from the phase verdict record's own `judgment`, unless evidence changed or the phase verdict was not APPROVED; at the six boundaries with no phase gatekeeper it judges every key |
+| `grounding` | Every judgment finding cites a decision, an acceptance row, a contract section or a contradiction, plus hashed anchors when it blocks; `check.py --judgment` checks it |
 | `cycle_cap` | Two rounds, then escalate |
 
 The phase verdict (`verdict_<boundary>.json`) and the cross-stage verdict

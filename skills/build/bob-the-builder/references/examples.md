@@ -90,6 +90,18 @@ implementation:
   revision: 3
 ```
 
+As the manifest carries it (`change_set`; one entry per changed path, the diff hashed in `artifact_hashes`):
+
+```json
+"implementation": {
+  "artifacts": ["evidence/impl.diff"],
+  "changed_files": [
+    {"path": "notifications/dispatcher.py", "sha256": "<sha256 of the file as submitted>", "status": "modified"},
+    {"path": "migrations/0042_notification_log.py", "sha256": "<sha256>", "status": "added"}
+  ]
+}
+```
+
 **Notes carried with it:**
 - Config drift found: `env.sample` was missing two required keys present in `settings.py`. The key names were added with values left to the environment; no credential value appears in either file or in this package.
 - Migration proof ran up and down on a disposable local schema that was dropped and rebuilt for the check. No shared or staging target was touched, and none was authorized.

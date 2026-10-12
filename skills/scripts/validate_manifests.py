@@ -315,7 +315,10 @@ def check_ci_declaration(runtime: dict[str, Any], errors: list[str]) -> None:
         return
     workflow = str(ci.get("workflow", "")).strip()
     location = Path(workflow)
-    if not workflow or location.is_absolute() or ".." in location.parts:
+    # Absolute in any host spelling: a leading separator or a drive prefix. Path.is_absolute alone says False for
+    # a POSIX-style "/etc/ci.yml" on Windows, where the path still names outside the repository.
+    spelled_absolute = workflow.startswith(("/", "\\")) or workflow[1:2] == ":"
+    if not workflow or spelled_absolute or location.is_absolute() or ".." in location.parts:
         errors.append("runtime-manifest.yaml: ci.workflow must be a relative path inside the repository")
     if _names(ci.get("pyyaml")) != CI_PYYAML_VARIANTS:
         errors.append("runtime-manifest.yaml: ci.pyyaml must name both with and without, so the stdlib fallback runs")

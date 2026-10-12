@@ -13,6 +13,11 @@ the doctrine's Principles heading — never from guessed intent):
   - empty-output streak (>= 3 consecutive empty results)
   - two-state oscillation (A,B,A,B over the last four steps)
 
+It also re-checks gate packages (`gate_watch.advisory`): a run manifest or intake
+grilling log that changed since the last call is run through
+`harness/gatekeeper/check.py`, and any failure is reported as a hint, so a package
+that would fail its gate is named the moment it is written.
+
 It also runs one mechanical repair after a command action: the coverage-residue
 sweep (see `_sweep_coverage_residue`). Coverage data belongs to the run's
 `evidence/coverage/`, so a step that leaves `.coverage`, `.coverage.*`,
@@ -486,6 +491,15 @@ def main() -> None:
             _pending_maintenance_hints.append(size_hint)
     except Exception as exc:
         _state.record_fault("PostToolUse", exc)  # advisory maintenance must never delay or block the host action
+    # A run manifest or intake log that changed is re-checked by check.py now, not first at the gate.
+    try:
+        import gate_watch
+
+        gate_hint = gate_watch.advisory()
+        if gate_hint:
+            _pending_maintenance_hints.append(gate_hint)
+    except Exception as exc:
+        _state.record_fault("PostToolUse", exc)
 
     text = _response_text(data)
     explicit = _explicit_failure(data)

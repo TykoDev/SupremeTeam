@@ -845,6 +845,16 @@ _GUARD_STATE_REASON = (
     "(freeze/block/release/allow-dangerous/revoke-dangerous/read-only). Editing it directly "
     "would lift an owned boundary with no owner check and no released_at trail."
 )
+# A gate verdict record is written only by check.py --verdict-out, which refuses to write one whose judgment is
+# ungrounded and records what it checked. A hand-written verdict_<boundary>.json (or .cross-stage.json) would be an
+# APPROVED nobody checked, and the next boundary's revision_ref binds to exactly that file. The gatekeeper's own
+# judgment draft, verdict_<boundary>[.cross-stage].judgment.json, is the input check.py reads and stays writable.
+_VERDICT_RECORD = re.compile(r"(?:^|/)skillset-saves/runs/[^/]+/[^/]+/verdict_(?!.*\.judgment\.json$)[^/]+\.json$", re.I)
+_VERDICT_REASON = (
+    "Blocked by harness Action Realization layer: gate verdict records are written only by "
+    "skills/harness/gatekeeper/check.py --verdict-out, which checks the package and the gatekeeper's judgment "
+    "before it writes one. Write the judgment draft as verdict_<boundary>.judgment.json and pass it with --judgment."
+)
 # The same files named anywhere inside a command that could not be tokenised.
 _CORE_SAVE_TOKEN = re.compile(
     r"skillset-saves/(?:_latest\.md|_write\.lock|runs/[^\s\"'/]+/(?:_state\.md|_lock\.md|_audit-trail\.md|_journal\.json|_history/))", re.I
@@ -863,6 +873,8 @@ def _protected_reason(target: "_paths.Target", above: bool = False) -> "str | No
             return _TASTE_SAVE_REASON
         if _GUARD_STATE_PATH.search(form):
             return _GUARD_STATE_REASON
+        if _VERDICT_RECORD.search(form):
+            return _VERDICT_REASON
     if above:
         for form in forms:
             if _PROTECTED_DIRS.search(form):
@@ -1459,7 +1471,9 @@ def rule_single_writer(call: "Call") -> "str | None":
 _REGISTRATION = (".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".github/hooks.json")
 _USER_REGISTRATION = ("~/.claude/settings.json", "~/.claude/settings.local.json", "~/.codex/hooks.json",
                       "~/.config/github-copilot/hooks.json", "~/.cursor/plugins/local/supremeteam-hooks/**",
-                      "~/.config/opencode/plugins/supremeteam-hooks.js")
+                      "~/.config/opencode/plugins/supremeteam-hooks.js", "~/.pi/agent/extensions/supremeteam-guard.ts")
+# pi reads its agent directory from this variable when it is set (install_hooks.pi_extension_path).
+_PI_AGENT_ENV = "PI_CODING_AGENT_DIR"
 _HARNESS_REASON = (
     "Blocked by harness Action Realization layer: the hook scripts and the host files that register them are not "
     "edited while a run is pinned or a boundary is recorded, because an edit there would switch the guard off. "
@@ -1470,14 +1484,16 @@ _HARNESS_REASON = (
 
 
 def _harness_boundaries(root) -> list:
-    """The hooks directory, the ``skills/scripts`` modules the hooks import (``_bootstrap.SCRIPT_FILES``: an edit to
-    one runs inside the guard as surely as an edit to the guard, and a ``raise SystemExit(0)`` there switched it off
-    with no fault counted) and the registration files."""
+    """The hooks directory and its harness parent (so removing or renaming either is refused), the ``skills/scripts``
+    modules the hooks import (``_bootstrap.SCRIPT_FILES``: an edit to one runs inside the guard as surely as an edit
+    to the guard, and a ``raise SystemExit(0)`` there switched it off with no fault counted) and the registration files."""
     import _bootstrap
 
     scripts = [str(HOOK_DIR.parents[1] / "scripts" / name).replace("\\", "/") for name in _bootstrap.SCRIPT_FILES]
-    globs = [str(HOOK_DIR).replace("\\", "/") + "/**", *scripts, *_REGISTRATION,
-             *(os.path.expanduser(p) for p in _USER_REGISTRATION)]
+    globs = [str(HOOK_DIR).replace("\\", "/") + "/**", str(HOOK_DIR.parent).replace("\\", "/") + "/**",
+             *scripts, *_REGISTRATION, *(os.path.expanduser(p) for p in _USER_REGISTRATION)]
+    if os.environ.get(_PI_AGENT_ENV):
+        globs.append(os.path.join(os.path.expanduser(os.environ[_PI_AGENT_ENV]), "extensions", "supremeteam-guard.ts"))
     return [_paths.Boundary(glob, root) for glob in globs]
 
 

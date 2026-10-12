@@ -162,19 +162,23 @@ class SharedResidueTests(PackagingCase):
         offenders = {self.concrete(name): "secrets" for name in residue["secrets"]}
         offenders.update({f"{name}/x.md": kind for kind in ("runtime-state", "save-state") for name in residue[kind]})
         offenders.update({name: "secrets" for name in self.SECRETS})
-        for offender in offenders:
-            path = self.root / "tree" / offender
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("x", encoding="utf-8")
-        # The distribution manifest leaves .env files out before the residue scan; select everything.
-        manifest = self.root / "select-everything.json"
-        manifest.write_text(json.dumps({"include": ["**/*"], "exclude": []}), encoding="utf-8")
-        process = subprocess.run(
-            [sys.executable, str(PACKAGE_CHECK), "--root", str(self.root / "tree"), "--manifest", str(manifest)],
-            capture_output=True, text=True, encoding="utf-8", check=False,
-        )
-        flagged = {row["path"]: row["class"] for row in json.loads(process.stdout)["violations"]}
-        self.assertEqual(offenders, {path: flagged.get(path) for path in offenders})
+        # One tree per offender: a file system that folds case cannot hold ".npmrc" and ".NPMRC" beside each
+        # other, and the case-folding property is pinned for each name on its own here and in package_check's suite.
+        for offender in sorted(offenders):
+            with self.subTest(offender=offender), tempfile.TemporaryDirectory() as tmp:
+                tree = Path(tmp) / "tree"
+                path = tree / offender
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("x", encoding="utf-8")
+                # The distribution manifest leaves .env files out before the residue scan; select everything.
+                manifest = Path(tmp) / "select-everything.json"
+                manifest.write_text(json.dumps({"include": ["**/*"], "exclude": []}), encoding="utf-8")
+                process = subprocess.run(
+                    [sys.executable, str(PACKAGE_CHECK), "--root", str(tree), "--manifest", str(manifest)],
+                    capture_output=True, text=True, encoding="utf-8", check=False,
+                )
+                flagged = {row["path"]: row["class"] for row in json.loads(process.stdout)["violations"]}
+                self.assertEqual({offender: offenders[offender]}, {offender: flagged.get(offender)})
 
     def test_a_list_that_cannot_be_read_stops_the_packager_instead_of_refusing_nothing(self):
         skill = make_skill(self.root, {"references/ok.md": "fine"})

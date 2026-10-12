@@ -29,16 +29,14 @@ checks none of this — it looks at filenames in the package directory.)
 | --- | --- | --- | --- | --- | --- |
 | `tests` | artifact | `probe` | present, and names a correctly hashed path in `artifact_hashes`, else `evidence not artifact-backed: tests` | a `probe` record at `result.status: pass`, else `tests must be a typed probe record at schema 2`, `tests record declares no artifacts`, or `tests result not passing: <status>`. The artifact is the test-runner log itself, a hashed file under `build/evidence/` | test-builder |
 | `runtime` | artifact | `probe` | the same, with `runtime` substituted in each string | the same, for the startup / entry-point smoke log. The key most often absent | health-check |
-| `approved_design_revision` | claim | `revision_ref` | present and non-falsy, so the empty string reads `missing evidence: approved_design_revision` | a non-empty, non-boolean scalar, else `approved_design_revision must name an approved upstream revision`. Whitespace-only is truthy, so it fails here, not as missing | build-management |
+| `approved_design_revision` | artifact (`verdict`) | `revision_ref` | present, and its `verdict` names a correctly hashed path | `{revision, verdict}`: the verdict is the `design-to-build` record, `pass: true`, with a valid APPROVED judgment by `gatekeeper-admiral` for the same revision and run; the approved manifest beside it still fingerprints as approved and every artifact it hashed still hashes. Failures read `approved_design_revision verdict is not a valid APPROVED judgment…`, `…approved manifest changed after approval`, `…approved artifact changed after approval: <path>` | build-management |
 | `security_evidence` | claim | `findings` | presence only — any non-empty string passes | `{items: [{id, severity, status, owner?, reopen_trigger?, reason?}]}` with each `severity` in Critical / Major / Minor / Info, or the one sanctioned applicability record. See §3 | security-builder |
-| `implementation` | claim | untyped | present and non-falsy | nothing further — `evidence_types` has no rule for this key | bob-the-builder |
-| `traceability` | claim | untyped | present and non-falsy. This is what maps each change back to the approved design item it satisfies | nothing further — `evidence_types` has no rule for this key | build-management |
+| `implementation` | artifact (diff) | `change_set` | present, and names the hashed diff | every `changed_files` entry re-hashed (`… hash drift`), named by the diff, listed once; a deleted file absent | bob-the-builder |
+| `traceability` | claim (read against other keys) | `trace_map` | present and non-falsy | every approved `AC-<n>` covered (`… leaves approved acceptance AC-<n> untraced`), no other id, every change in `implementation`, every changed file traced or in `supporting` with a reason, every test name in the `tests` log | build-management |
 
-Three of the six — `approved_design_revision`, `implementation`, `traceability` —
-accept any non-empty string at either schema version. "Accepts no fallback" on
-those keys means an `{applicable: false, …}` record is refused as
-`evidence not waivable: <key>`; it does not mean prose is refused. Reading them
-is §4's job, not the validator's.
+At schema 2 none of the six accepts prose: each is a checked record or a hashed
+artifact. "Accepts no fallback" means an `{applicable: false, …}` record is refused
+as `evidence not waivable: <key>` on every key but `security_evidence`.
 
 ## 2. What a `probe` record must contain
 
@@ -92,21 +90,16 @@ both schema versions, rather than as a bad reason. The distinction matters when
 routing the `REVISE`: the first is `security-builder` supplying a record, the
 second is a key that simply has to be produced.
 
-## 4. Reading the untyped keys
+## 4. What the source-of-truth records leave to judgment
 
-`implementation` and `traceability` are checked only for presence and
-non-falsiness, at every schema version — `evidence_types` assigns neither a
-record shape. `approved_design_revision` is barely stronger: at schema 2 it must
-be a non-empty scalar, which any sentence satisfies. The validator cannot tell an
-adequate traceability map from a paragraph that uses the word "traceability", and
-cannot tell an approved design revision from the words "the approved one".
+`implementation`, `traceability` and `approved_design_revision` are no longer
+untyped (§1): the change set is re-hashed, every approved acceptance id must be
+traced, and the approval is the APPROVED cross-stage verdict over an unchanged
+design. What the records cannot prove stays this gate's read:
 
-That gap is the judgment half of this gate:
-
-- For `implementation`, ask whether the described change set matches the code surface the package actually carries — every changed module accounted for, nothing in the diff that the summary omits.
-- For `traceability`, ask whether each change maps to an approved design item, and treat an unmapped change as scope the design never authorised.
-- For `approved_design_revision`, ask whether the named revision has an approval record — the sibling `design/verdict_design-to-build.json` under the same `skillset-saves/runs/{run-id}/`, at that revision. The validator checks that the field is a non-empty scalar and nothing more; whether anyone approved it is entirely this gate's read.
-- Treat a value that only restates the key name as absent.
+- For `implementation`, whether the diff is the whole change — a file edited but left out of `changed_files` and the diff is invisible to the record.
+- For `traceability`, whether a change really serves the criterion it is mapped to, and whether a `supporting` reason is honest rather than a place to park scope the design never authorised.
+- For a test name, whether the test actually exercises the criterion; the record proves only that the log names it.
 
 ## Cross-references
 

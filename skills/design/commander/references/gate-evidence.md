@@ -28,11 +28,11 @@ below state what each key must contain and what may stand in for it.
 
 | Key | Owner | Must contain | Artifact-backed | Typed record | Fallback |
 | --- | --- | --- | --- | --- | --- |
-| `decisions` | `admiral` | The intake grilling log, referenced manifest-relative as `../intake/report_grilling.md` from the design phase directory: every load-bearing decision resolved, every branch deferred with its reopen trigger | Yes | None | None |
+| `decisions` | `admiral` | The intake grilling log, referenced manifest-relative as `../intake/report_grilling.md` from the design phase directory: every load-bearing decision resolved, every branch deferred with its reopen trigger | Yes | `decision_log`: the four fixed tables of `../../../grill-me-doctrine.md` Output | None |
 | `architecture` | `design/architect` | The hashed architecture report: component boundaries, data flow, and the decisions the plan is sequenced against | Yes | None | None |
-| `interfaces` | `design/architect` | The API endpoint inventory and contracts for every surface the build must implement | No | None | None |
+| `interfaces` | `design/architect` | The API endpoint inventory and contracts for every surface the build must implement | Yes | `interface_set`: `IF-<n>` items that stand in the named artifact, or `change: none` | None |
 | `plan` | `design/planner` | The hashed delivery plan, sequenced against the approved architecture rather than beside it | Yes | None | None |
-| `acceptance` | `design/planner` | The criteria the build will be measured against at `build-to-review` | No | None | None |
+| `acceptance` | `design/planner` | The criteria the build will be measured against at `build-to-review` | Yes — the hashed plan | `acceptance_table`: the plan's `Acceptance criteria` table with unique `AC-<n>` ids | None |
 | `security_seed` | `build/security-builder` | The trust boundaries the design introduces or moves, and the control the build owes at each one | No | None | **None.** `fallback_values` carries no entry for this key, so it is not waivable here and no applicability record substitutes for it. With no trust boundary in scope, the value is the recorded determination — who decided there is no boundary movement, and on what basis — which satisfies the mechanical check as a plain statement |
 | `stack_lock` | `commander` | The `tech-stacks/registry.yaml` slug, the locked versions, and the overlay sha256, validated so the slug exists, the overlay digest matches both registry and file, and every declared version is one the registry entry offers | No | `stack_lock` | `no new runtime or framework - existing stack unchanged` |
 | `taste_snapshot` | `taste` | The immutable effective-profile snapshot: canonical digest, project and global source revisions, resolved and shadowed entries, unresolved conflicts, applicability decision | Yes | None | `no saved Taste profile available` |

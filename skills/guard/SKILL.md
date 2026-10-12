@@ -9,7 +9,7 @@ description: >-
   careful with prod and don't touch anything outside src/". Only one half:
   confirming intent alone is `careful`, locking a path alone is `freeze`, and
   lifting a lock is `unfreeze`.
-version: 1.5.0
+version: 1.6.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -67,6 +67,7 @@ This guard is the advisory expression of the Action Realization layer. When the 
 Four rules are load-bearing:
 
 - **The guard-state record has a single writer.** `.harness-state/guard-state.json` is written only by `../harness/hooks/guard_state.py`, and `pre_tool_use.py` denies direct edit-tool writes and mutating shell commands against that path, exactly as core run records are routed through `save_run.py` and durable project Taste state (`skillset-saves/preferences/`) through `../taste/taste_prefs.py`. The reason is structural: before the writer existed the guard could lift itself, because one write to that file cleared any freeze — or set `allow_dangerous`, globally disabling destructive-pattern blocking — with no owner check and no `released_at` trail.
+- **Gate verdict records have a single writer.** `skillset-saves/runs/<run>/<phase>/verdict_<boundary>.json` and its `.cross-stage.json` twin are written only by `../harness/gatekeeper/check.py --verdict-out`, which checks the package and the gatekeeper's grounded judgment before it writes; an edit, redirect, copy or removal is denied. The next boundary's `approved_design_revision` or `approved_delivery` binds to that record, so a hand-written APPROVED would release work nobody checked. The judgment draft `verdict_<boundary>.judgment.json` stays writable.
 - **`allow_dangerous` is a global kill-switch, not a scoped exception.** While it is lifted, every destructive pattern the hook knows passes for every command in the session — not only for the operation it was requested for. So it is never the default, never enabled silently, and revoked (`guard_state.py revoke-dangerous --requester <owner>`) the moment the operation completes rather than left to expire. An expired, malformed, or legacy bare `true` value leaves the block in force. **Size `--minutes` to the whole operation plus margin**, because a grant that lapses mid-sequence denies the *next* step and leaves the work half-done. `references/enforcement.md` § allow_dangerous override protocol carries the grant shapes, what the recorded confirmation does and does not prove, and what to do when a grant lapses mid-flight; read it before granting or trusting one.
 - **The hook is advisory-grade, not a hard security control.** Never treat it as the sole protection for secrets or production paths; for real isolation use OS/filesystem permissions or a sandbox. Its limits:
   - **It fails open** (harness-doctrine §3): an internal error, an unreadable path, or a host that never runs the hook lets the action proceed. Each fault is counted in `.harness-state/observations/<Event>.json` as `faults` and `last_fault`, by type and never by content. A record in an odd shape is read list by list so the destructive-command rule still runs; one that cannot be read at all names no boundary, which the hook counts as a `GuardStateUnreadable` fault and says in the call's context.

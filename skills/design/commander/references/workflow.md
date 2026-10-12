@@ -50,7 +50,7 @@ pointer and the two rules that decide path resolution. When persistence is activ
 
 1. **Before delegating** a specialist: checkpoint through `session-memory` (`save_run.py checkpoint --run-id {run-id} --owner admiral --expect-revision <n> --set phase_state=DESIGN_ACTIVE --set delegated_to=commander`; `--owner` is the run's lock holder, which is admiral in every Admiral run: `save_run.py` refuses any other owner with `lock is owned by 'admiral'`, so the phase lead records itself through `--set delegated_to=` and never through `--owner`) and include the canonical `### Save Context` block naming the specialist as `Owner` and its `reports/`, `artifacts/`, or `evidence/` destination as `Expected artifact`. Do not create per-specialist directories or phase-state files.
 2. **After specialist returns**: verify the named artifact exists at its destination (for example `reports/report_research.md` or `artifacts/taste-snapshot.json`), then checkpoint with `--evidence <path>` so its sha256 is registered.
-3. **After gatekeeper-design verdict**: the gatekeeper has written `design/verdict_design-to-build.json`; record the semantic verdict and next action in the next checkpoint (`--set phase_state=DESIGN_GATE_PENDING`, `DESIGN_GATE_REVISE`, or the next active state). Never edit the verdict record.
+3. **After gatekeeper-design verdict**: the gatekeeper has written `design/verdict_design-to-build.json`; record the semantic verdict — `judgment.verdict` and `revise_packet.judgment_by_owner` read from that record, never restated from the gatekeeper's prose — and the next action in the next checkpoint (`--set phase_state=DESIGN_GATE_PENDING`, `DESIGN_GATE_REVISE`, or the next active state). Never edit the verdict record.
 4. **On package consolidation**: write `design/reports/design-package.md` and `design/manifest.json` (schema 2) summarizing all phase outcomes with hashes; admiral submits that manifest to `gatekeeper-admiral`.
 
 ### Save Context Block Template
@@ -93,7 +93,7 @@ and return the deliverable inline.
 | Specialist delegation | The delegation block above, naming the specialist as `Owner`, the exact `reports/`, `artifacts/`, or `evidence/` destination as `Expected artifact`, and `design-to-build` as `Return boundary` |
 | Specialist return | Nothing new: the returned artifact is verified at its destination and its sha256 registered through a checkpoint (`--evidence <path>`) |
 | Gate submission | `design/manifest.json` (schema 2: `boundary: design-to-build`, `owner: commander`), referencing the run's intake grilling log manifest-relative (`../intake/report_grilling.md` from the design phase directory) as `decisions`, the hashed architecture and plan reports, and the hashed `taste_snapshot` artifact or its applicability record |
-| Phase-gate verdict | Nothing: `design/gatekeeper-design` writes `design/verdict_design-to-build.json` through `check.py --verdict-out`; commander records the semantic verdict in its next checkpoint |
+| Phase-gate verdict | Nothing: `design/gatekeeper-design` writes `design/verdict_design-to-build.json` through `check.py --verdict-out`; commander records the semantic verdict in its next checkpoint, copied from the record's embedded `judgment`; it never writes or edits a verdict record, which the guard denies |
 | Package consolidation | `design/reports/design-package.md` plus the manifest revision admiral submits to `gatekeeper-admiral` |
 
 ## Collaboration Notes

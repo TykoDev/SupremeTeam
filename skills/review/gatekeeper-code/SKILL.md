@@ -8,7 +8,7 @@ description: >-
   validate the review package, review delivery readiness, say whether the review is
   finished enough to deliver, gate the review output, or challenge this review
   packet. Whether work is ready to *enter* review is `build/gatekeeper-build`.
-version: 1.2.0
+version: 1.3.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -236,6 +236,7 @@ the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 - **CSO lens coverage**: When a review package claims security leadership signoff, accepted-risk readiness, release security posture, regulated-data governance, or operating-model control review, require a `review/cso` packet or an explicit scoped skip reason. The `review` pipeline in `../../pipelines.yaml` has no cso stage, so that packet can only come from the separate `security` pipeline, which `code-chief` reaches by escalating to `admiral`; it is never a lens `code-chief` runs.
 - **Harness-doctrine citation**: When the package adds or changes a cross-cutting runtime intervention, check it against `../../harness-doctrine.md` §5 and cite the violated section by number in the verdict.
 - **Batched REVISE** (`../../gates.yaml` `revise_policy`): A `REVISE` carries every mechanical failure and every judgment finding from the pass, grouped by owner exactly as `check.py` reports them in `revise_packet.by_owner`; never return the first defect alone. On a resubmission run with `--prior`, re-judge only `changed_evidence` and carry the prior judgment on `unchanged_evidence`; the mechanical pass always covers the whole package. A package that fails mechanically was never eligible for submission (the submitter self-checks) and is returned without judgment. On a resubmission a new finding is raised only against `changed_evidence` or a defect the change introduced (`revise_policy.batch_fix`); a finding that could have been raised on unchanged evidence in the first pass is not raised now, because a gate that reveals its standard one finding per round is the slowest thing in the pipeline.
+- **Source-of-truth grounding** (`../../gates.yaml` `revise_policy.grounding`, `judgment_policy`): Judge the package against its source of truth and nothing else — the intake Decision Register (`D-<n>` ids, `../../grill-me-doctrine.md`), the plan's acceptance rows (`AC-<n>` ids), `../../gates.yaml`, and the catalog's doctrine and contract files. Every judgment finding names the required evidence key it concerns (or none for a crossing defect), a basis — `decision`, `acceptance`, `contract`, or `contradiction` — and, when Critical or Major, the hashed package artifacts it was read from. A requirement that is in none of those sources is not a finding. When the gate believes the source of truth itself lacks a decision the package needed, it returns `ESCALATE` to `admiral`, which owns intake, never a `REVISE` to the specialist who built on the record as written. A finding another gate already raised is this gate's own only when it carries this gate's own basis and anchors: agreeing with an earlier verdict is not evidence. Write the verdict and findings as the judgment record `judgment_policy.record` describes and pass it to `check.py --judgment`; a record it rejects is corrected — the ungrounded finding grounded or dropped — never stored or returned.
 
 ## Verdict Model
 
@@ -245,7 +246,7 @@ the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 
 ## Evidence Standard
 
-- Tie every major and critical finding to a concrete file, artifact, or observable behavior.
+- Tie every Critical and Major finding to hashed package artifacts and to the source of truth it enforces — a `D-<n>` decision, an `AC-<n>` acceptance row, a section of a catalog contract, or two package artifacts that contradict each other — never to the gate's own preference (`../../gates.yaml` `judgment_policy`).
 - Reject claims of completion that are not backed by a visible deliverable.
 - Preserve contradictory evidence instead of normalizing it away.
 
@@ -269,6 +270,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | `executed_probes` or `rendered_verification` carries `inputs` whose sha256 no longer matches the source file (`input hash drift`) | Return REVISE to the key's owner — `code-chief` for probes, `design-qa` for renders. The source changed after the evidence was captured, so the evidence proves a state the package no longer ships. |
 | The boundary validator exits 2 — missing or malformed gate spec, unknown boundary, unreadable manifest | Return ESCALATE. An engine failure is never approval, and the gate spec is never bypassed to keep a run moving. |
 | `scripts/check.py` cannot run (Python unavailable, permission error, `<package-dir>` rejected by the containment guard) or exits with internal-error code 2 | Treat the gate as NOT satisfied — do not default to APPROVED. Surface the error, then choose ESCALATE (or REVISE) instead of a silent pass. A gate that fails open is worse than no gate; an unknown pre-check result is not evidence of readiness. |
+| `check.py --judgment` rejects the judgment record — a cited `D-` or `AC-` id the intake log or plan does not contain, a key or owner the spec does not name, an unhashed anchor, a REVISE with no grounded Critical or Major finding, or a new finding on unchanged evidence | The record is the gate's defect, not the package's. Ground each finding in the source of truth and the package's hashed artifacts, or drop it; if what the gate wanted is in no source of truth, return `ESCALATE` to `admiral` for an intake decision instead. Never store or return the rejected verdict. |
 
 ## Save Protocol
 
@@ -278,11 +280,11 @@ A gatekeeper writes exactly one path class: the durable verdict record at
 validator against `../../gates.yaml`:
 
 ```bash
-python skills/harness/gatekeeper/check.py --boundary review-to-delivery --package skillset-saves/runs/{run-id}/review/manifest.json --verdict-out skillset-saves/runs/{run-id}/review/verdict_review-to-delivery.json
+python skills/harness/gatekeeper/check.py --boundary review-to-delivery --package skillset-saves/runs/{run-id}/review/manifest.json --judgment skillset-saves/runs/{run-id}/review/verdict_review-to-delivery.judgment.json --verdict-out skillset-saves/runs/{run-id}/review/verdict_review-to-delivery.json
 ```
 
 It never modifies the submission, its evidence, or the run record;
-`review/code-chief` records the semantic verdict in its next checkpoint.
+`review/code-chief` records the semantic verdict in its next checkpoint, copied from the record's `judgment`, which is the gate's own account and the one every later reader trusts. The judgment record — this gate's verdict and every judgment finding with its basis and anchors — is written first as `verdict_<boundary>.judgment.json` beside the verdict (same `gate-verdict` class) and passed with `--judgment`; `check.py` embeds it in the verdict record under `judgment` and refuses to write a record whose judgment is ungrounded.
 `gatekeeper-admiral` later re-validates the same boundary with
 `--prior skillset-saves/runs/{run-id}/review/verdict_review-to-delivery.json` and writes its own record beside
 it as `verdict_review-to-delivery.cross-stage.json`. When persistence is

@@ -119,6 +119,20 @@ def _real(text: str) -> "str | None":
         return None
 
 
+def _is_link(candidate: str) -> bool:
+    """Whether an entry is a link a walk must follow: a symlink, or a junction on Windows."""
+    try:
+        if stat.S_ISLNK(os.lstat(candidate).st_mode):
+            return True
+    except (OSError, ValueError):
+        return False
+    isjunction = getattr(os.path, "isjunction", None)
+    try:
+        return bool(isjunction and isjunction(candidate))
+    except (OSError, ValueError):
+        return False
+
+
 class Resolver:
     """Link resolution for many paths that share a prefix: each directory is looked at once.
 
@@ -126,33 +140,43 @@ class Resolver:
     directory and a thousand writes in it cost a thousand walks of the whole directory. Here a
     path is its parent's resolution plus one component, and the parents are remembered. One
     resolver serves one tool call, never longer, so a link made afterwards is never missed.
-    Windows keeps ``realpath`` for every path: it also corrects case and expands short names."""
+    Windows resolves each directory the same way, through ``realpath`` so case and short names
+    are corrected per directory; a leaf that is not a link keeps its spelling, as on POSIX."""
 
     def __init__(self) -> None:
         self._known: dict = {"/": "/"}
 
     def real(self, text: str) -> "str | None":
         """What ``_real`` returns for ``text``: a normalised absolute path with no ``.``, ``..`` or doubled separators."""
-        if WINDOWS or not text.startswith("/"):
+        text = text.replace("\\", "/")
+        drive = _DRIVE.match(text)
+        if not drive and not text.startswith("/"):
             return _real(text)
+        anchor = (drive.group(0) if drive else "") + "/"
         known = self._known
+        if anchor not in known:
+            known[anchor] = _real(anchor) or anchor
+        resolved = known[anchor]
         chain = []
         node = text
         while node not in known:
             chain.append(node)
-            node = node.rpartition("/")[0] or "/"
-        resolved = known[node]
+            parent = node.rpartition("/")[0]
+            if not parent or (len(parent) == 2 and parent[1] == ":"):
+                break
+            node = parent
+        if node in known:
+            resolved = known[node]
         for node in reversed(chain):
             candidate = resolved.rstrip("/") + "/" + node.rpartition("/")[2]
-            try:
-                link = stat.S_ISLNK(os.lstat(candidate).st_mode)
-            except OSError:
-                link = False
-            except ValueError:
-                return None
-            resolved = (_real(candidate) or candidate) if link else candidate
+            if node == text and not _is_link(candidate):
+                resolved = candidate
+            elif WINDOWS:
+                resolved = _real(candidate) or candidate
+            else:
+                resolved = (_real(candidate) or candidate) if _is_link(candidate) else candidate
             known[node] = resolved
-        return known[text]
+        return known[text] if text in known else _real(text)
 
 
 def _fold(text: str, fold: bool) -> str:
@@ -244,7 +268,9 @@ def glob_problem(glob: str, root: "str | Path | None" = None) -> "str | None":
     project under a top-level directory that does not exist here, which is what ``/src/payments/**``
     is when it was meant relative to the project root. An absolute path under a directory that
     exists is a real boundary outside the project (``/etc/**``) and stays one; so does a drive
-    path, which a host on another system reports, and on Windows no leading-slash path is judged."""
+    path, which a host on another system reports. A leading-slash path is judged wherever the
+    machine can say the directory is missing: on Windows it names the root of the current drive,
+    which is as checkable as the file-system root is on POSIX."""
     text = clean(str(glob).strip())
     if text.startswith("!"):
         return "a leading '!' is gitignore negation, which a boundary does not have, so nothing can match it; record the paths to protect"
@@ -255,7 +281,7 @@ def glob_problem(glob: str, root: "str | Path | None" = None) -> "str | None":
         return None
     if re.fullmatch(r"(?:[A-Za-z]:/?|/)", normal):
         return "it names the root of a drive or of the file system, which no path is compared against; to freeze the whole project record '**'"
-    if not WINDOWS and normal.startswith("/"):
+    if normal.startswith("/"):
         first = normal.split("/")[1]
         if not _WILDCARD.search(first) and not os.path.isdir("/" + first):
             return (f"it names the absolute path /{first}/..., and no directory /{first} exists on this machine, so it can never match; "

@@ -32,43 +32,34 @@ behavior.
 
 ## Enforcement status
 
-This doctrine is a protocol for a conversation, so nearly all of it is
-judgement. Exactly one thing is mechanical: that a hashed artifact backs the
-`decisions` key at `design-to-build`, and the `taste_grilling` key at
-`redesign-review`. That check knows nothing about what the artifact contains.
+This doctrine is a protocol for a conversation, so most of it is judgement. Two
+things are mechanical: that a hashed artifact backs the `decisions` key at
+`design-to-build` (and the `taste_grilling` key at `redesign-review`), and that
+the `decisions` artifact has the shape [Output](#output) fixes — four tables,
+every cell filled, unique `D-<n>` ids, sanctioned sources. What the answers say,
+and whether the interview happened, stays judgement.
 
 | Statement | Status | What actually checks it |
 | --- | --- | --- |
 | `decisions` is present at `design-to-build` and references a correctly hashed artifact in the package | machine-checked | `skills/harness/gatekeeper/check.py`, `decisions` listed in both `required_evidence` and `artifact_evidence` for that boundary in [gates.yaml](gates.yaml) |
 | `taste_grilling` is present at `redesign-review` and references a correctly hashed artifact | machine-checked | `check.py`, the same two lists on that boundary |
-| The submitted artifact is a grilling log, and carries the four sections [Output](#output) requires | **judgement** | nothing — see below |
+| The submitted artifact is a grilling log, and carries the four sections [Output](#output) requires | **machine-checked** | `check.py`, `decisions` typed `decision_log` in [gates.yaml](gates.yaml): each section, its table columns, every cell, unique `D-<n>` ids, a sanctioned `Source`, at least one resolved decision. `check.py --intake-log` runs the same check on its own, and the `gate_watch` hook runs it whenever the log is written |
 | The grilling actually happened before the deliverable was produced | judgement | nothing; the log is written by the same run that would have skipped it |
 | Rules 1 to 7, and the whole decision prompt contract | judgement | nothing |
 | One decision per prompt, recommendation first, two or three exclusive options | judgement | nothing |
-| That a deferral carries a real owner and a real reopen trigger | judgement | nothing at this boundary; a `findings` record enforces owner-and-reopen-trigger for deferred Majors, which is a different key |
+| Every log entry carries a stable `D-<n>` id | **machine-checked** | the `decision_log` check refuses a row whose ID is not `D-<n>` or repeats; `check.py --judgment` fails a gate finding whose `D-<n>` the log does not contain |
+| That a deferral carries an owner and a reopen trigger | **machine-checked for presence**; judgement for whether they are real | the `decision_log` check refuses an empty Owner, Reopen phase or Reopen trigger cell (a dash, `n/a`, `none`, `tbd` or `?` counts as empty) |
 | The taste grilling walked all eleven categories in the declared order | judgement | nothing |
 | That a grilling answer became a Taste entry only after confirmation | judgement here; machine-checked at `taste-review` | the typed `confirmation` record required at `taste-review` ([taste-doctrine.md](taste-doctrine.md) §6) |
-| This document itself | **partial structural coverage; semantic judgement** | Catalog prose scans inspect doctrine text, not the quality or timing of an interview. The two mechanical rows above are properties of [gates.yaml](gates.yaml) and `check.py`, which know only that a hashed artifact backs a key. `team-manifest.yaml` `intake_doctrine` names this doctrine, and nothing resolves that name to a file (its own `authority.unchecked_keys` records the same gap), so pointer resolution is not guaranteed by that declaration. |
+| This document itself | **partial structural coverage; semantic judgement** | Catalog prose scans inspect doctrine text, not the quality or timing of an interview. The mechanical rows above are properties of [gates.yaml](gates.yaml) and `check.py`, which read the log's structure and never its meaning. `team-manifest.yaml` `intake_doctrine` names this doctrine, and nothing resolves that name to a file (its own `authority.unchecked_keys` records the same gap), so pointer resolution is not guaranteed by that declaration. |
 
-**Why the four-section requirement is not mechanical, and what would make it
-so.** `check.py` verifies that the `decisions` key names a path, that the path is
-in the package, and that its sha256 matches the registered hash. Any hashed file
-satisfies that. Separately, `skills/harness/gatekeeper/_gatecheck.py` supports
-exactly the check that is missing: an `ArtifactSpec` matches a file by filename
-glob and, optionally, by a `content_marker` regex that must appear inside it,
-and a required spec whose marker never matches fails as a Major defect. The
-design gatekeeper's `MANIFEST` in
-`skills/design/gatekeeper-design/scripts/check.py` already uses that mechanism
-for six of its eight artifact specs (the two conditional ones, `api_contracts`
-and `ui_handoff`, carry no marker) — `taste_snapshot`, for instance, requires one of
-`canonical digest`, `source revisions`, `resolved entries`, or `applicability`
-to appear in the file. It carries no spec for the grilling log. Adding one, with
-a `*grilling*.md` pattern and a `content_marker` over the four section names
-below, is what would convert this clause from judgement to machine-checked.
-Until that exists, a reviewer reading the log is the only check, and the claim
-that a package whose decisions are not backed by this artifact "fails the gate
-mechanically" is true only of the artifact's existence and hash, never of its
-content.
+**What the mechanical check reads.** `check.py` parses the `decisions` artifact as
+Markdown: each of the four headings below (any level, case and spacing folded),
+the first table under it, its header row, and its data rows. Fenced code is
+blanked first, so a template quoted in a fence is never read as the log. Extra
+columns and prose around the tables are allowed. The parse is deterministic and
+knows nothing about whether an answer is wise, so a log that passes it can still
+be a poor interview — that part is the reviewer's.
 
 ## Rules
 
@@ -151,12 +142,11 @@ Write the result as the grilling log at
 artifact behind the `decisions` evidence key at `design-to-build`
 ([gates.yaml](gates.yaml)), owned there by `admiral`. A package whose `decisions`
 key names no artifact, names a path that is not in the package, or names one
-whose hash does not match fails the gate mechanically. A package that submits a
-different hashed document under that key passes the machine and is caught only
-by the reviewer, which is why the four sections below are a judgement
-requirement rather than a checked one.
+whose hash does not match fails the gate mechanically, and so does one whose log
+lacks the fixed tables below ([gates.yaml](gates.yaml) `decision_log`).
 
-The log carries:
+The log carries, every entry under a stable id `D-<n>` that is unique in the log
+and never reused for a different decision across revisions:
 
 - Resolved decisions with source (`user`, `codebase`, `prior-artifact`, or
   `delegated-default`) and the chosen option.
@@ -165,9 +155,49 @@ The log carries:
 - Rejected options for material tradeoffs, with one-line rationale.
 - Non-goals and YAGNI deferrals with the trigger that reopens each.
 
-All four are required. A log missing any of them is an incomplete log, and the
-reviewer at the boundary rejects it on that basis even though the mechanical
-pass reported no defect.
+All four are required, each as a `##` section holding one table with at least
+these columns (a section with no entries keeps its header row and has no data
+rows; Resolved decisions needs at least one row):
+
+```markdown
+## Resolved decisions
+
+| ID | Decision | Chosen | Source |
+| --- | --- | --- | --- |
+| D-1 | API style | REST | user |
+
+## Deferred decisions
+
+| ID | Decision | Why deferral is safe | Owner | Reopen phase |
+| --- | --- | --- | --- | --- |
+| D-2 | Pagination | one page fits every tenant today | API lead | build |
+
+## Rejected options
+
+| ID | Option | Rationale |
+| --- | --- | --- |
+| D-3 | GraphQL | no client needs it |
+
+## Non-goals and YAGNI deferrals
+
+| ID | Non-goal | Reopen trigger | Owner |
+| --- | --- | --- | --- |
+| D-4 | Bulk export | a tenant asks for it | product owner |
+```
+
+`Source` is one of `user`, `codebase`, `prior-artifact`, `delegated-default`. Every
+listed cell is filled; `-`, `n/a`, `none`, `tbd` and `?` count as empty. A log
+that misses any of this fails `check.py` at `design-to-build`, and the `gate_watch`
+hook reports it as soon as the log is written.
+
+The ids are what make this log the source of truth a gate can be held to. A
+gatekeeper finding grounded in an intake decision cites it as
+`{kind: decision, ref: D-<n>, artifact: <this log>}`, and
+`harness/gatekeeper/check.py --judgment` refuses the finding when the log the
+package's `decisions` key names does not contain that id
+([gates.yaml](gates.yaml) `judgment_policy`). A requirement the gate believes the
+log should hold and does not is an `ESCALATE` to `admiral`, which owns this
+interview, never a `REVISE` to the specialist who built on the log as written.
 
 ## Taste grilling
 

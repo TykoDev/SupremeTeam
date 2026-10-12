@@ -8,7 +8,7 @@ description: >-
   owner, not directly, even when the request is only "build it". Defers test
   authoring to `build/test-builder`, hardening to `build/security-builder`, and
   failure diagnosis to `build/debugger`.
-version: 1.0.2
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -61,7 +61,7 @@ Everything below returns to `build/build-management`, the only skill
 Bob-the-builder submits nothing itself; it owns the `implementation` key inside
 that submission (`../../gates.yaml`, `evidence_owners.build-to-review`).
 
-- The `implementation` evidence for `build-to-review`: the changed artifact set with a sha256 per path, plus the explicit statement that no placeholder or unowned follow-up marker remains — the two evidence lines `../../ownership.yaml` attaches to the `implementation` artifact.
+- The `implementation` evidence for `build-to-review`: the changed artifact set with a sha256 per path, plus the explicit statement that no placeholder or unowned follow-up marker remains — the two evidence lines `../../ownership.yaml` attaches to the `implementation` artifact. At the gate it is a typed `change_set` record — `{artifacts: [the hashed diff], changed_files: [{path, sha256, status}]}` — and `check.py` re-hashes every listed file and requires the diff to name it (`references/workflow.md`).
 - Executed-validation logs, one file per check, each naming the command, the exit code, and the surface it proves, written to the phase `evidence/` directory the handoff assigns.
 - Change-list amendments and escalations naming any surface the approved list does not cover, any non-first-party file touched, and any residual risk the gate must weigh.
 

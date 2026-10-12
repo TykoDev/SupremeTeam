@@ -40,6 +40,24 @@ INSTALLER = REPO / "scripts" / "install_hooks.py"
 INSTALL_SH = REPO / "scripts" / "install.sh"
 INSTALL_PS1 = REPO / "scripts" / "install.ps1"
 NODE = shutil.which("node")
+# A directory whose node_modules holds typescript, @types/node and @earendil-works/pi-coding-agent (CI's pi job
+# installs them and points SUPREMETEAM_PI_TYPES at them; a provisioned checkout keeps them under the harness's
+# own test scratch so the type-check runs wherever npm has run once).
+PI_TYPES_ENV = os.environ.get("SUPREMETEAM_PI_TYPES")
+PI_TYPES_DEFAULT = HOOK_DIR.parents[2] / ".harness-state" / "test-work" / "pi-types"
+PI_TYPES = next((str(Path(candidate)) for candidate in (PI_TYPES_ENV, PI_TYPES_DEFAULT)
+                 if candidate and (Path(candidate) / "node_modules" / "typescript").is_dir()), None)
+
+
+def _node_strips_types() -> bool:
+    """Whether this node can import a .ts module (type stripping, node 22.6 and later)."""
+    if not NODE:
+        return False
+    done = subprocess.run([NODE, "--experimental-strip-types", "--no-warnings", "-e", ""], capture_output=True, check=False)
+    return done.returncode == 0
+
+
+NODE_TS = _node_strips_types()
 BASH = shutil.which("bash")
 POSIX = os.name == "posix"
 _STRIP = ("CLAUDE", "CODEX_", "COPILOT", "GITHUB_COPILOT", "SUPREMETEAM_", "GITHUB_WORKSPACE")
@@ -345,7 +363,7 @@ class OpenCodePluginTests(InstallerCase):
 
     FAKE = """const fs = require("fs");
 const args = process.argv.slice(2);
-fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ args, cwd: process.env.SUPREMETEAM_PROJECT_DIR }) + "\\n");
+fs.appendFileSync(process.env.SUPREMETEAM_FAKE_LOG, JSON.stringify({ args, cwd: process.env.SUPREMETEAM_PROJECT_DIR }) + "\\n");
 const payload = JSON.parse(fs.readFileSync(0, "utf8") || "{}");
 const script = args[args.length - 1];
 if (script.endsWith("pre_tool_use.py") && payload.tool_input && payload.tool_input.command === "danger") {
@@ -383,7 +401,7 @@ console.log(JSON.stringify(result));
     def drive(self, plugin: Path, command: str = "danger") -> dict:
         log = self.tmp / "fake.log"
         done = subprocess.run([NODE, str(plugin.parent / "driver.mjs"), command], text=True, capture_output=True, cwd=str(plugin.parent),
-                              env=self.env(FAKE_LOG=str(log)), check=False)
+                              env=self.env(SUPREMETEAM_FAKE_LOG=str(log)), check=False)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         return json.loads(done.stdout)
 
@@ -445,6 +463,286 @@ console.log(JSON.stringify(result));
         self.assertEqual(done.returncode, 0, done.stderr)
 
 
+def _installer_module():
+    spec = importlib.util.spec_from_file_location("install_hooks_under_test", INSTALLER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class PiRegistrationTests(InstallerCase):
+    """``--target pi`` writes one TypeScript extension where pi loads global extensions."""
+
+    def test_a_dry_run_previews_and_writes_nothing(self):
+        path = self.tmp / "ext" / "supremeteam-guard.ts"
+        result = self.install("--target", "pi", "--pi-extension", str(path), "--dry-run")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("(proposed)", result.stdout)
+        self.assertIn('from "@earendil-works/pi-coding-agent"', result.stdout)
+        self.assertFalse(path.exists())
+
+    def test_it_writes_once_and_a_second_run_changes_nothing(self):
+        path = self.tmp / "ext" / "supremeteam-guard.ts"
+        first = self.install("--target", "pi", "--pi-extension", str(path), "--json")
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        self.assertIn("written, but not machine-verifiable", first.stdout)
+        self.assertIn("SupremeTeam guard active", first.stdout, "the operator is told what the next session shows")
+        report = json.loads(first.stdout.split("JSON_REPORT: ", 1)[1])
+        self.assertEqual(report["hosts"][0]["host"], "pi")
+        self.assertIsNone(report["hosts"][0]["registered"])
+        self.assertIn(str(HOOK_DIR).replace("\\", "/"), path.read_text(encoding="utf-8"))
+        second = self.install("--target", "pi", "--pi-extension", str(path))
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        self.assertIn("no changes: already registered", second.stdout)
+        self.assertEqual(list(path.parent.glob("*.bak-*")), [])
+
+    def test_the_default_path_is_pis_global_extension_directory(self):
+        result = self.install("--target", "pi", "--dry-run")
+        self.assertIn(f"config: {self.home / '.pi' / 'agent' / 'extensions' / 'supremeteam-guard.ts'}", result.stdout)
+        agent = self.tmp / "pi-agent"
+        result = self.install("--target", "pi", "--dry-run", PI_CODING_AGENT_DIR=str(agent))
+        self.assertIn(f"config: {agent / 'extensions' / 'supremeteam-guard.ts'}", result.stdout)
+
+    def test_the_extension_is_owner_only(self):
+        path = self.tmp / "ext" / "supremeteam-guard.ts"
+        self.install("--target", "pi", "--pi-extension", str(path))
+        if os.name == "nt":
+            # chmod is a read-only flag on Windows; owner-only there means the access list holds the current user
+            # and nothing inherited (repair_registration._restrict_to_owner).
+            import getpass
+            import subprocess as sp
+
+            listed = sp.run(["icacls", str(path)], capture_output=True, text=True, check=False, timeout=30).stdout
+            self.assertIn(getpass.getuser(), listed)
+            for granted in ("Everyone", "BUILTIN\\Users", "Authenticated Users"):
+                self.assertNotIn(granted, listed)
+        else:
+            self.assertEqual(self.mode(path), 0o600)
+
+    def test_a_non_utf8_extension_is_refused(self):
+        path = self.tmp / "supremeteam-guard.ts"
+        path.write_bytes(b"\xff\xfe//")
+        result = self.install("--target", "pi", "--pi-extension", str(path))
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(path.read_bytes(), b"\xff\xfe//")
+
+    def test_launchers_are_split_for_a_shell_free_spawn(self):
+        module = _installer_module()
+        for launcher, command, args in (
+            ("py -3", "py", ["-3", "-X", "utf8"]),
+            # F-R2: a spaced interpreter path that carries options is one command, not two words.
+            ("C:/Program Files/Python313/python.exe -X dev", "C:/Program Files/Python313/python.exe", ["-X", "dev", "-X", "utf8"]),
+            ("C:/Program Files/Python313/python.exe", "C:/Program Files/Python313/python.exe", ["-X", "utf8"]),
+        ):
+            with self.subTest(launcher=launcher):
+                source = module.pi_extension_source(launcher, "C:\\hooks", repair, "3.13")
+                self.assertIn(f"const pythonCommand: string = {json.dumps(command)};", source)
+                self.assertIn(f"const pythonArgs: readonly string[] = {json.dumps(args)};", source)
+                self.assertIn('const hookRoot: string = "C:/hooks";', source)
+
+    def test_the_environment_list_covers_what_the_hooks_read(self):
+        names = _installer_module().hook_env_names(repair)
+        for name in ("PATH", "SYSTEMROOT", "HOME", "USERPROFILE", "TMPDIR", "TEMP", "LOCALAPPDATA", "PI_CODING_AGENT_DIR",
+                     *repair._state.PROJECT_ENV):
+            self.assertIn(name, names)
+        self.assertFalse([name for name in names if name.startswith("PYTHON")])
+
+
+@unittest.skipUnless(NODE_TS, "needs node 22.6 or later (type stripping) to load the TypeScript extension")
+class PiExtensionTests(InstallerCase):
+    """The generated extension, loaded by node the way pi's loader would and driven through pi's event shapes."""
+
+    FAKE = r"""const fs = require("fs");
+const args = process.argv.slice(2);
+const log = process.env.SUPREMETEAM_FAKE_LOG;
+if (args.includes("-c")) {
+  fs.appendFileSync(log, JSON.stringify({ probe: args.slice(args.indexOf("-c") + 2) }) + "\n");
+  const version = process.env.SUPREMETEAM_FAKE_VERSION || "3.13.9";
+  process.stdout.write(JSON.stringify({ version, meets_floor: !process.env.SUPREMETEAM_FAKE_VERSION, missing: [] }));
+  process.exit(0);
+}
+const payload = JSON.parse(fs.readFileSync(0, "utf8") || "{}");
+const script = args[args.length - 1].split("/").pop();
+fs.appendFileSync(log, JSON.stringify({ script, args, payload, env: Object.keys(process.env), project: process.env.SUPREMETEAM_PROJECT_DIR }) + "\n");
+if (script === "pre_tool_use.py" && payload.tool_input && payload.tool_input.command === "danger") {
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: "nope" } }));
+} else if (script === "post_tool_use.py") {
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { additionalContext: "careful" } }));
+} else if (script === "user_prompt_submit.py") {
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { additionalContext: "route through admiral" } }));
+}
+"""
+    # Stands in for pi: collects the handlers the extension registers and fires the events a script lists.
+    DRIVER = r"""import guard from "./supremeteam-guard.ts";
+const handlers = {};
+guard({ on: (name, handler) => { (handlers[name] ||= []).push(handler); } });
+const notes = [];
+const status = {};
+const ui = { notify: (message, type) => notes.push({ message, type }), setStatus: (key, text) => { status[key] = text; } };
+const context = (session, cwd) => ({
+  cwd,
+  ui,
+  sessionManager: { getSessionId: () => { if (session === null) throw new Error("no session"); return session; } },
+});
+const results = [];
+for (const step of JSON.parse(process.argv[2])) {
+  let result;
+  for (const handler of handlers[step.event] || []) result = await handler(step.payload, context("session" in step ? step.session : "s1", step.cwd || process.cwd()));
+  results.push(result === undefined ? null : result);
+}
+console.log(JSON.stringify({ results, notes, status, events: Object.keys(handlers).sort() }));
+"""
+
+    def build(self, python_command: str) -> Path:
+        path = self.tmp / "work" / "supremeteam-guard.ts"
+        path.parent.mkdir(exist_ok=True)
+        (path.parent / "package.json").write_text('{"type": "module"}\n', encoding="utf-8")
+        result = self.install("--target", "pi", "--pi-extension", str(path), "--python-command", python_command)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        (path.parent / "driver.mjs").write_text(self.DRIVER, encoding="utf-8")
+        return path
+
+    def fake(self) -> str:
+        path = self.tmp / "work" / "fake.cjs"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(self.FAKE, encoding="utf-8")
+        return f"{NODE} --no-warnings {path}"
+
+    def drive(self, extension: Path, steps: list, cwd: Path | None = None, **env: str) -> dict:
+        done = subprocess.run([NODE, "--experimental-strip-types", "--no-warnings", str(extension.parent / "driver.mjs"), json.dumps(steps)],
+                              text=True, capture_output=True, cwd=str(cwd or extension.parent),
+                              env=self.env(SUPREMETEAM_FAKE_LOG=str(self.tmp / "fake.log"), **env), check=False, timeout=300)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        return json.loads(done.stdout.strip().splitlines()[-1])
+
+    def calls(self) -> list[dict]:
+        log = self.tmp / "fake.log"
+        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.is_file() else []
+
+    @staticmethod
+    def bash(command: str, session: str | None = "s1") -> dict:
+        return {"event": "tool_call", "session": session, "payload": {"type": "tool_call", "toolCallId": "t", "toolName": "bash", "input": {"command": command}}}
+
+    def test_it_subscribes_to_the_events_it_bridges(self):
+        result = self.drive(self.build(self.fake()), [])
+        self.assertEqual(result["events"], ["before_agent_start", "input", "session_start", "tool_call", "tool_result"])
+
+    def test_a_denied_call_is_blocked_with_the_guard_reason_and_an_allowed_one_passes(self):
+        result = self.drive(self.build(self.fake()), [self.bash("danger"), self.bash("ls")])
+        self.assertEqual(result["results"], [{"block": True, "reason": "nope"}, None])
+        pre = [call for call in self.calls() if call.get("script") == "pre_tool_use.py"]
+        self.assertEqual(pre[0]["payload"]["tool_name"], "Bash")
+        self.assertEqual(pre[0]["payload"]["tool_input"], {"command": "danger"})
+        self.assertEqual(pre[0]["args"][-3:-1], ["-X", "utf8"])
+
+    def test_every_call_carries_pis_own_session_id(self):
+        """F-R3: the session identity was one constant for every pi session."""
+        self.drive(self.build(self.fake()), [self.bash("ls", "alpha"), self.bash("ls", "beta"), self.bash("ls", None)])
+        ids = [call["payload"]["session_id"] for call in self.calls() if call.get("script") == "pre_tool_use.py"]
+        self.assertEqual(ids[:2], ["pi:alpha", "pi:beta"])
+        self.assertRegex(ids[2], r"^pi:pid-\d+$", "a session with no id falls back to this process, never a shared constant")
+
+    def test_the_hook_gets_a_filtered_environment_and_the_project_directory(self):
+        """F-R5: the hook interpreter inherited pi's whole environment, PYTHONPATH included."""
+        project = self.tmp / "work"
+        self.drive(self.build(self.fake()), [self.bash("ls")], cwd=project,
+                   PYTHONPATH=str(self.tmp / "planted"), PYTHONHOME=str(self.tmp), SOME_API_TOKEN="secret",
+                   SUPREMETEAM_SAMPLE="1", CLAUDE_PROJECT_DIR=str(project))
+        call = self.calls()[0]
+        for name in ("PYTHONPATH", "PYTHONHOME", "SOME_API_TOKEN"):
+            self.assertNotIn(name, call["env"])
+        for name in ("SUPREMETEAM_SAMPLE", "CLAUDE_PROJECT_DIR", "HOME"):
+            self.assertIn(name, call["env"])
+        self.assertEqual(call["project"], str(project))
+
+    def test_post_tool_context_is_appended_to_the_result_the_model_sees(self):
+        step = {"event": "tool_result", "payload": {"type": "tool_result", "toolCallId": "t", "toolName": "bash", "input": {"command": "ls"},
+                                                    "content": [{"type": "text", "text": "a.txt"}], "details": None, "isError": False}}
+        result = self.drive(self.build(self.fake()), [step])
+        self.assertEqual(result["results"][0]["content"], [{"type": "text", "text": "a.txt"}, {"type": "text", "text": "[SupremeTeam] careful"}])
+        post = [call for call in self.calls() if call.get("script") == "post_tool_use.py"][0]
+        self.assertEqual(post["payload"]["tool_response"]["content"], [{"type": "text", "text": "a.txt"}])
+
+    def test_prompt_context_is_injected_before_the_agent_starts_once(self):
+        steps = [{"event": "input", "payload": {"type": "input", "text": "build me a thing", "source": "interactive"}},
+                 {"event": "before_agent_start", "payload": {"type": "before_agent_start", "prompt": "build me a thing"}},
+                 {"event": "before_agent_start", "payload": {"type": "before_agent_start", "prompt": "again"}},
+                 {"event": "input", "payload": {"type": "input", "text": "from an extension", "source": "extension"}}]
+        result = self.drive(self.build(self.fake()), steps)
+        self.assertEqual(result["results"][0], {"action": "continue"})
+        self.assertEqual(result["results"][1], {"message": {"customType": "supremeteam-guard", "content": "route through admiral", "display": False}})
+        self.assertIsNone(result["results"][2])
+        prompts = [call["payload"]["prompt"] for call in self.calls() if call.get("script") == "user_prompt_submit.py"]
+        self.assertEqual(prompts, ["build me a thing"])
+
+    def test_session_start_reports_that_the_guard_is_enforcing(self):
+        """g-1: whether the guard fires in pi was only observable by trying a denied call."""
+        result = self.drive(self.build(self.fake()), [{"event": "session_start", "payload": {"type": "session_start", "reason": "startup"}}])
+        self.assertEqual(result["status"], {"supremeteam-guard": "SupremeTeam guard: on"})
+        self.assertEqual(result["notes"][0]["type"], "info")
+        self.assertIn("SupremeTeam guard active: Python 3.13.9", result["notes"][0]["message"])
+        self.assertEqual(self.calls()[0]["probe"][:2], [str(HOOK_DIR).replace("\\", "/"), verify.declared_minimum()])
+
+    def test_session_start_names_an_interpreter_below_the_floor(self):
+        result = self.drive(self.build(self.fake()), [{"event": "session_start", "payload": {}}], SUPREMETEAM_FAKE_VERSION="3.11.2")
+        self.assertEqual(result["status"], {"supremeteam-guard": "SupremeTeam guard: off"})
+        self.assertIn(f"Python 3.11.2 is below the {verify.declared_minimum()} floor", result["notes"][0]["message"])
+        self.assertEqual(result["notes"][0]["type"], "warning")
+
+    def test_an_interpreter_that_cannot_start_never_blocks_and_is_reported_once_per_session(self):
+        extension = self.build(str(self.tmp / "no-such" / "python"))
+        result = self.drive(extension, [{"event": "session_start", "payload": {}}, self.bash("danger"), self.bash("danger")])
+        self.assertEqual(result["results"], [None, None, None])
+        self.assertEqual(result["status"], {"supremeteam-guard": "SupremeTeam guard: off"})
+        warnings = [note for note in result["notes"] if "not enforcing" in note["message"]]
+        self.assertEqual(len(warnings), 1, result["notes"])
+        self.assertIn("ENOENT", warnings[0]["message"])
+
+    def test_a_fault_in_the_bridge_fails_open_and_is_reported(self):
+        result = self.drive(self.build(self.fake()), [{"event": "tool_call", "payload": {"type": "tool_call", "input": {}}}])
+        self.assertEqual(result["results"], [None])
+        self.assertIn("bridge error", result["notes"][0]["message"])
+
+    def test_the_real_guard_blocks_through_the_extension(self):
+        """The live drive: the real interpreter and the real pre_tool_use.py, in a scratch project."""
+        project = self.project
+        result = self.drive(self.build(sys.executable), [
+            {"event": "session_start", "cwd": str(project), "payload": {}},
+            {**self.bash("git push --force origin main"), "cwd": str(project)},
+            {**self.bash("ls"), "cwd": str(project)},
+            {"event": "tool_result", "cwd": str(project), "payload": {"type": "tool_result", "toolCallId": "t", "toolName": "bash",
+                                                                     "input": {"command": "ls"}, "content": [], "isError": False}},
+            {"event": "input", "cwd": str(project), "payload": {"type": "input", "text": "hello", "source": "interactive"}},
+        ])
+        self.assertIn("SupremeTeam guard active", result["notes"][0]["message"])
+        blocked = result["results"][1]
+        self.assertIs(blocked["block"], True)
+        self.assertIn("force-push", blocked["reason"])
+        self.assertIsNone(result["results"][2])
+        self.assertFalse([note for note in result["notes"] if "not enforcing" in note["message"]], result["notes"])
+
+
+@unittest.skipUnless(PI_TYPES, "set SUPREMETEAM_PI_TYPES to a directory whose node_modules holds typescript, @types/node "
+                               "and @earendil-works/pi-coding-agent (the CI pi job does)")
+class PiTypeCheckTests(InstallerCase):
+    """F-R4: the extension was only transpiled and run, never type-checked against pi's API."""
+
+    def test_the_extension_type_checks_strictly_against_pis_published_types(self):
+        types = Path(PI_TYPES).resolve()
+        tsc = types / "node_modules" / "typescript" / "bin" / "tsc"
+        self.assertTrue(tsc.is_file(), f"{tsc} is missing")
+        self.assertTrue((types / "node_modules" / "@earendil-works" / "pi-coding-agent").is_dir())
+        # tsc resolves the pi import from the file's own directory upwards, so the file is checked beside node_modules.
+        path = types / f"supremeteam-guard-{os.getpid()}.ts"
+        self.addCleanup(lambda: path.unlink(missing_ok=True))
+        result = self.install("--target", "pi", "--pi-extension", str(path), "--python-command", "py -3")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        done = subprocess.run([NODE or "node", str(tsc), "--noEmit", "--strict", "--target", "es2022", "--module", "nodenext",
+                               "--moduleResolution", "nodenext", "--skipLibCheck", "--types", "node", str(path)],
+                              text=True, capture_output=True, cwd=str(types), check=False, timeout=300)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+
 @unittest.skipUnless(BASH and INSTALL_SH.is_file(), "needs bash and scripts/install.sh")
 class ShellWrapperTests(unittest.TestCase):
     """install.sh forwards the scope and confirmation options to install_hooks.py.
@@ -471,7 +769,13 @@ class ShellWrapperTests(unittest.TestCase):
         # install.sh looks for a Python 3.13 under the name python3 or python.
         cls.bin = cls.root / "bin"
         cls.bin.mkdir()
-        (cls.bin / "python3").symlink_to(sys.executable)
+        try:
+            (cls.bin / "python3").symlink_to(sys.executable)
+        except OSError:
+            # No symlink privilege here: a launcher script names the same interpreter for install.sh's probe.
+            shim = cls.bin / "python3"
+            shim.write_text(f'#!/bin/sh\nexec "{Path(sys.executable).as_posix()}" "$@"\n', encoding="utf-8")
+            shim.chmod(0o755)
 
     @classmethod
     def tearDownClass(cls):

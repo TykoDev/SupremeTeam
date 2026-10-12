@@ -34,7 +34,7 @@ the sequence, the verdict rules, and the checklist a verdict is written against.
 
 - The declared boundary and `owner` match the spec row being judged.
 - All six `build-to-review` evidence keys are present and non-falsy, and `tests` and `runtime` are backed by hashed probe logs at `result.status: pass`.
-- `approved_design_revision` names the design revision this build was actually authorised against, and an approval record exists for it.
+- `approved_design_revision` binds the APPROVED `design-to-build` cross-stage verdict for the revision this build implements, over a design that still hashes as approved; `implementation` and `traceability` pass as `change_set` and `trace_map`.
 - Any `security_evidence` waiver is the typed applicability record carrying the one sanctioned reason, and its reason is true of the diff.
 - Implementation package and evidence point to the same submitted revision.
 - Test and security results are current for the submitted change set.

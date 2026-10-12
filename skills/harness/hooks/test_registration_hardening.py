@@ -500,9 +500,22 @@ class InterpreterTests(Scratch):
         for launcher, parts in (
             ("python", ["python"]), ("py -3", ["py", "-3"]), ("C:/Program Files/Python313/python.exe", ["C:/Program Files/Python313/python.exe"]),
             ('"C:/Program Files/Python313/python.exe" -X dev', ["C:/Program Files/Python313/python.exe", "-X", "dev"]),
+            # F-R2: an unquoted spaced path that carries options was cut at its first space.
+            ("C:/Program Files/Python313/python.exe -X dev", ["C:/Program Files/Python313/python.exe", "-X", "dev"]),
+            ("C:\\Users\\Jo Smith\\Python313\\python.exe -E", ["C:\\Users\\Jo Smith\\Python313\\python.exe", "-E"]),
+            ("/opt/my python/bin/python3.13 -E", ["/opt/my python/bin/python3.13", "-E"]),
+            ("/usr/bin/env python3 -E", ["/usr/bin/env", "python3", "-E"]),
+            ("/usr/bin/env /opt/py/bin/python3 -E", ["/usr/bin/env", "/opt/py/bin/python3", "-E"]),
+            ("py -3.13 -X utf8", ["py", "-3.13", "-X", "utf8"]),
         ):
             with self.subTest(launcher=launcher):
                 self.assertEqual(repair.launcher_parts(launcher), parts)
+
+    def test_a_spaced_interpreter_path_with_options_quotes_only_the_path_and_verifies(self):
+        command = repair.command_for("pre_tool_use.py", "C:/Program Files/Python313/python.exe -X dev")
+        self.assertTrue(command.startswith('"C:/Program Files/Python313/python.exe" -X dev -X utf8 "'), command)
+        self.assertEqual(verify._tokens(command)[:3], ["C:/Program Files/Python313/python.exe", "-X", "dev"])
+        self.assertEqual(repair.launcher_token("/usr/bin/env python3 -E"), "/usr/bin/env python3 -E")
 
     def test_the_running_interpreter_is_read_without_being_launched(self):
         report = verify.interpreter_report(repair.command_for("pre_tool_use.py", sys.executable))
@@ -1223,17 +1236,20 @@ class RepairWriteTests(Scratch):
         self.assertGreaterEqual(fsync.call_count, 2, "the backup and the new file are both synced")
 
     def test_the_config_and_its_backup_go_through_the_shared_write_with_their_original_mode(self):
-        """QR-PY-05: the private copy of the write is gone; the shared one is handed the mode and told to replace whole."""
+        """QR-PY-05: the private copy of the write is gone; the shared one is handed the mode and told to replace whole.
+        The expected mode is what this file system actually holds after the chmod: POSIX records 0o640, Windows folds
+        every write bit together, and either way the invariant is that the write is handed the file's own mode."""
         import _fsutil
 
         self.assertFalse(hasattr(repair, "_atomic_write"), "a private copy of the shared write is dead code")
         settings = self.claude_settings({"theme": "dark"})
         settings.chmod(0o640)
+        expected_mode = stat.S_IMODE(settings.stat().st_mode)
         with mock.patch("_fsutil.atomic_write", wraps=_fsutil.atomic_write) as writer:
             repair.write_with_backup(settings, '{"theme": "light"}\n')
         self.assertEqual(len(writer.call_args_list), 2)
         for call in writer.call_args_list:
-            self.assertEqual((call.kwargs.get("mode"), call.kwargs.get("in_place")), (0o640, False), call)
+            self.assertEqual((call.kwargs.get("mode"), call.kwargs.get("in_place")), (expected_mode, False), call)
         self.assertEqual(settings.read_text(encoding="utf-8"), '{"theme": "light"}\n')
 
     def test_a_rename_the_system_denies_is_refused_and_the_config_is_left_as_it_was(self):

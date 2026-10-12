@@ -175,11 +175,11 @@ def package_skill(skill_path, output_dir=None):
             continue
         arcname = file_path.relative_to(skill_path.parent)
         if should_exclude(arcname):
-            print(f"  Skipped: {arcname}")
+            print(f"  Skipped: {arcname.as_posix()}")
             continue
         reason = "symlink" if link else refusal_class(arcname, residue)
         if reason:
-            refused.append(f"{arcname} ({reason})")
+            refused.append(f"{arcname.as_posix()} ({reason})")
         else:
             to_add.append((file_path, arcname))
 
@@ -195,7 +195,7 @@ def package_skill(skill_path, output_dir=None):
         with zipfile.ZipFile(skill_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for file_path, arcname in to_add:
                 zipf.write(file_path, arcname)
-                print(f"  Added: {arcname}")
+                print(f"  Added: {arcname.as_posix()}")
 
         print(f"\nOK: Successfully packaged skill to: {skill_filename}")
         return skill_filename

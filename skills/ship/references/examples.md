@@ -20,7 +20,7 @@
 
 | Evidence key | Value in the manifest | Backing |
 | --- | --- | --- |
-| `approved_delivery` | `rev-8f21c0a` | Typed `revision_ref` — no artifact, no fallback |
+| `approved_delivery` | `{"revision": "rev-8f21c0a", "verdict": "../review/verdict_review-to-delivery.cross-stage.json"}` | Typed `revision_ref` — the hashed upstream verdict, re-checked for an APPROVED judgment and an unchanged review package; no fallback |
 | `deploy_config` | `artifacts/deploy-config.yaml` | Hashed file, owned by `setup-deploy` |
 | `verification_plan` | `artifacts/verification-plan.md` | Hashed file, owned by `ship` |
 | `rollback_plan` | `artifacts/rollback-plan.md` | Hashed file, owned by `setup-deploy` |

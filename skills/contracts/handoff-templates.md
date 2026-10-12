@@ -145,7 +145,8 @@ artifact_hashes:
 Typed records (`scan`, `render`, `probe`, `findings`, `verdict`,
 `stack_lock`, `revision_ref`, `security_seed`, `human_go`, and the Taste records `preference_diff`,
 `confirmation`, `conflict_analysis`, `persistence_result`, `effective_profile`,
-`consumer_handoff`, `variant_set`, and `selection`) and the finding policy are defined in
+`consumer_handoff`, `variant_set`, `selection`, and the source-of-truth records
+`decision_log`, `acceptance_table`, `interface_set`, `change_set`, and `trace_map`) and the finding policy are defined in
 [`../gates.yaml`](../gates.yaml); destinations for reports, artifacts, evidence,
 and packages in [`../save-ownership.yaml`](../save-ownership.yaml). Resolve every
 destination with `python skills/scripts/output_paths.py` rather than composing

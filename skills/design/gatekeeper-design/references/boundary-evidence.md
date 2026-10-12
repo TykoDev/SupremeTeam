@@ -17,17 +17,17 @@ disagree, the spec wins and this file is the defect.
 
 ## 1. `design-to-build`, key by key
 
-Submitter `commander`. Nine required keys; four artifact-backed.
+Submitter `commander`. Nine required keys; six artifact-backed.
 
 | Key | Backing | Record type | What the validator enforces |
 | --- | --- | --- | --- |
-| `decisions` | artifact | untyped | a path in `artifact_hashes`. Backed by the intake grilling report, so a package whose decisions trace to nothing fails mechanically rather than on judgment |
+| `decisions` | artifact | `decision_log` | a path in `artifact_hashes` to the intake grilling log, parsed as the four fixed tables of `../../../grill-me-doctrine.md` Output: every cell filled, unique `D-<n>` ids, a sanctioned `Source`, at least one resolved decision |
 | `architecture` | artifact | untyped | a path in `artifact_hashes` |
 | `plan` | artifact | untyped | a path in `artifact_hashes` |
 | `taste_snapshot` | artifact | untyped | a path in `artifact_hashes`, or a sanctioned applicability record |
 | `stack_lock` | claim | `stack_lock` | `{slug, versions, overlay_sha256}` checked against `../../../tech-stacks/registry.yaml`: the slug exists, the overlay digest matches both the registry and the file, and every declared version is one the registry entry offers |
-| `interfaces` | claim | untyped | present and non-falsy |
-| `acceptance` | claim | untyped | present and non-falsy. This is the criteria build will be measured against, so an empty-but-wordy value is a judgment failure the validator cannot see |
+| `interfaces` | artifact | `interface_set` | `{artifacts, change: changed\|none, items: [{id: IF-<n>, kind, name}]}`; every id stands in a named hashed artifact |
+| `acceptance` | artifact | `acceptance_table` | the hashed plan's `Acceptance criteria` table: ID, Slice, Observable condition, Check that proves it, Acceptor; every cell filled; unique `AC-<n>` ids. Build's `traceability` must later cover every id |
 | `security_seed` | claim | untyped | present and non-falsy. The threat-model seed `security-builder` answers at build |
 | `ui_evidence` | claim | untyped | present and non-falsy, or a sanctioned applicability record |
 

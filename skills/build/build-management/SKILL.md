@@ -9,7 +9,7 @@ description: >-
   specification into code — even when Admiral is never named. Defers to
   `admiral` when reached cold; reviewing the finished code belongs to
   `review/code-chief`.
-version: 1.1.0
+version: 1.2.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 ---
 
@@ -77,8 +77,8 @@ Three decisions live here; `references/gate-evidence.md` carries the full per-ke
 table with the must-contain, artifact-backing, typed-record, and fallback
 columns.
 
-- **What build-management authors**: `approved_design_revision`, read from the `design-to-build` verdict rather than restated from memory, and `traceability`, the design-decision-to-changed-artifact mapping with proven or unproven status per row. A gap in either is its own to close, not a specialist's.
-- **Which keys are hashed files**: `tests` and `runtime` only. Both are typed `probe` records whose executed logs live under `build/evidence/`; a count or a claim of passing is not evidence for either.
+- **What build-management authors**: `approved_design_revision`, a `{revision, verdict}` record naming the hashed `design/verdict_design-to-build.cross-stage.json` (never a revision restated from memory: `check.py` requires `gatekeeper-admiral`'s valid APPROVED judgment there and re-hashes the approved design), and `traceability`, a `trace_map` that covers every `AC-<n>` of the approved acceptance table with changes from `implementation` and tests named in the `tests` log, and accounts for every changed file. A gap in either is its own to close, not a specialist's.
+- **Which keys are hashed files**: `tests` and `runtime`, typed `probe` records whose executed logs live under `build/evidence/` (a count or a claim of passing is not evidence for either); `implementation`, whose `change_set` names the hashed diff; and the upstream verdict `approved_design_revision` names.
 - **Which key may be waived**: `security_evidence` alone, and only when no trust boundary moved, carried as an applicability record for the sanctioned value `no trust-boundary change - security-builder not engaged`. `approved_design_revision`, `implementation`, `tests`, `runtime`, and `traceability` accept nothing but their evidence.
 
 ## Execution Contract

@@ -130,6 +130,10 @@ class _Redirect:
 _BREAK_BASH = frozenset(" \t\r\n;&|()<>")
 _BREAK_PS = frozenset(" \t\r\n;&|()>")
 _RUN_BASH = re.compile(r"[^\s;&|()<>'\"\\$`*?\[{]+")
+# The same run for a word that begins as a Windows path (``C:\x`` or a UNC ``\\host\share``): a backslash there is
+# a separator, not an escape, so the spelling survives to the path canonicaliser whole.
+_RUN_BASH_WIN = re.compile(r"[^\s;&|()<>'\"$`*?\[{]+")
+_WINDOWS_WORD = re.compile(r"[A-Za-z]:[\\/]")
 _RUN_PS = re.compile(r"[^\s;&|()>'\"`$*?\[]+")
 _REDIR_BASH = re.compile(r"(?:&>>|&>)|\d*(?:>>|>\||>&|>|<<<|<<-|<<|<&|<>|<)")
 _REDIR_PS = re.compile(r"(?:\d+|\*)?(?:>>|>&|>)")
@@ -385,6 +389,9 @@ class _Lexer:
         """Lex one word starting at ``i``, append it as a token, and return the index after it."""
         text, ps, n = self.text, self.ps, self.n
         run = _RUN_PS if ps else _RUN_BASH
+        windows_word = (not ps) and (text[i:i + 2] == "\\\\" or bool(_WINDOWS_WORD.match(text, i)))
+        if windows_word:
+            run = _RUN_BASH_WIN
         parts: list = []
         lit: list = []
         glob = False
@@ -417,7 +424,7 @@ class _Lexer:
                 plain = False
                 _flush(lit, parts)
                 i = self._dquote(i + 1, parts)
-            elif c == "\\" and not ps:
+            elif c == "\\" and not ps and not windows_word:
                 plain = False
                 nxt = text[i + 1:i + 2]
                 if nxt == "\n":
@@ -613,13 +620,16 @@ _TEMP_VARS = frozenset({"TMPDIR", "TMP", "TEMP"})
 
 def _lookup(name: str, ctx: _Ctx) -> "str | None":
     key = name.lower() if ctx.ps else name
-    if ctx.ps and key.startswith("env:"):
+    explicit_env = ctx.ps and key.startswith("env:")
+    if explicit_env:
         key = key[4:]
     if key in ctx.vars:
         return ctx.vars[key]
     if key == "HOME" or (ctx.ps and key in ("home", "userprofile")):
         return _home()
-    if key in _TEMP_VARS or (ctx.ps and key in ("tmpdir", "tmp", "temp")):
+    # The temporary-directory variables a shell line may spell; in PowerShell only the ``$env:`` form names an
+    # environment variable at all (``$tmp`` is an ordinary variable the line defines, so it stays unresolved).
+    if (not ctx.ps and key in _TEMP_VARS) or (ctx.ps and explicit_env and key in ("tmpdir", "tmp", "temp")):
         # The host's temporary directory, read from the hook's own environment as HOME is. Unset, the word stays
         # unresolved: the shell would expand it to nothing, and a bare `/out.log` is not what the command meant.
         return os.environ.get(key.upper()) or None

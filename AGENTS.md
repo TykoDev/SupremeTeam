@@ -231,6 +231,7 @@ Not skills. These are the files the skills are checked against.
 | **guard_state.py** | `skills/harness/hooks/guard_state.py` | The only writer of the guard record (`.harness-state/guard-state.json`) that `guard`, `freeze` and `unfreeze` request |
 | **post_tool_use.py** | `skills/harness/hooks/post_tool_use.py` | `PostToolUse`: records trajectory degeneration, refreshes the run heartbeat, sweeps project-root coverage residue into the run |
 | **size_audit.py** | `skills/harness/hooks/size_audit.py` | Periodic bounded report of oversized runtime files and directories |
+| **gate_watch.py** | `skills/harness/hooks/gate_watch.py` | Re-runs `harness/gatekeeper/check.py` when a run manifest or intake log changes; advisory, bounded |
 | **audit_improve.py** | `skills/harness/hooks/audit_improve.py` | Bounded read-only audit of saved failures and a skill-maker handoff |
 | **user_prompt_submit.py** | `skills/harness/hooks/user_prompt_submit.py` | `UserPromptSubmit`: advisory entry-routing and session-pin reminder |
 | **save_run.py** | `skills/harness/hooks/save_run.py` | The only writer of the run record |

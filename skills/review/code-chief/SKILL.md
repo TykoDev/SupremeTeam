@@ -10,7 +10,7 @@ description: >-
   merge, or pressure-test this project — even when the user only says review the
   code. Defers to `admiral` when cold; security governance to
   `review/cso`.
-version: 1.1.0
+version: 1.1.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent, Task
 ---
 

@@ -112,7 +112,7 @@ register     python skills/harness/hooks/save_run.py checkpoint \
 this matrix unchanged — the `proven` / `unproven` vocabulary is exactly what
 `../../../ownership.yaml` names for `build-traceability`, "proven and unproven
 status per row", so no translation step sits between the matrix and the manifest.
-`gates.yaml` checks `traceability` for presence only.
+`gates.yaml` checks `traceability` as a `trace_map` (every approved `AC-<n>` and every changed file traced); the proven/unproven column rides along unchecked.
 
 ## Example 5 — Correctly waived package
 

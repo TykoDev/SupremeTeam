@@ -25,11 +25,12 @@ class ProjectRootError(Exception):
 
 
 def configure_stdout() -> None:
-    """Write UTF-8 to stdout and stderr, so a cp1252 Windows pipe cannot raise on a path or model text."""
+    """Write UTF-8 with LF line endings to stdout and stderr, so a cp1252 Windows pipe cannot raise on a path or
+    model text and the bytes a run captures are the same on every host."""
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(encoding="utf-8", errors="replace")
-        except (AttributeError, OSError):
+            stream.reconfigure(encoding="utf-8", errors="replace", newline="\n")
+        except (AttributeError, OSError, ValueError):
             pass
 
 
@@ -94,7 +95,7 @@ def find_project_root(explicit: Path | None = None, start: Path | None = None) -
     current = (start or Path.cwd()).resolve()
     for candidate in (current, *current.parents):
         if candidate == home or candidate == candidate.parent:
-            continue
+            break  # the search ends here: home and the file-system root never count, and nothing above home is the project
         if any((candidate / marker).exists() for marker in PROJECT_MARKERS):
             return candidate
     raise ProjectRootError(

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import copy
 import datetime as dt
+import errno
 import getpass
 import hashlib
 import json
@@ -227,18 +228,35 @@ def validate(record: Any, expected_scope: str) -> dict[str, Any]:
 
 def load(project_root: Path, scope: str) -> tuple[dict[str, Any], bool]:
     target = paths(project_root, scope)["json"]
-    if not target.exists():
-        return blank(project_root, scope), False
     recovery = "repair or move the file explicitly before retrying"
-    try:
-        record = json.loads(target.read_text(encoding="utf-8"))
-        return validate(record, scope), True
-    except TasteError as exc:
-        # The doctrine refuses an unreadable record and one that fails validation alike; the
-        # specific validation code stays in `reason` for whoever repairs the file.
-        raise TasteError("corrupt_record", "canonical record failed validation; original bytes were preserved", path=str(target), reason=exc.code, detail=exc.message, recovery=recovery) from exc
-    except Exception as exc:
-        raise TasteError("corrupt_record", "canonical record is unreadable; original bytes were preserved", path=str(target), recovery=recovery) from exc
+    delay = 0.05
+    for attempt in range(8):
+        try:
+            if not target.exists():
+                return blank(project_root, scope), False
+            text = target.read_text(encoding="utf-8")
+        except OSError:
+            # A writer's replace or rollback can cross this read (a reader holds the file open without
+            # delete sharing and the rename then fails the other way): the state is transient while a
+            # commit lands, never a corrupt store. If it outlasts the retries the writer is told so and
+            # the call is retryable, which is what `locked` means everywhere else in this module.
+            if attempt == 7:
+                raise TasteError("locked", "the store is being written by another writer; retry", path=str(target)) from None
+            time.sleep(delay)
+            delay = min(delay * 2, 0.4)
+            continue
+        except Exception as exc:
+            raise TasteError("corrupt_record", "canonical record is unreadable; original bytes were preserved", path=str(target), recovery=recovery) from exc
+        try:
+            record = json.loads(text)
+            return validate(record, scope), True
+        except TasteError as exc:
+            # The doctrine refuses an unreadable record and one that fails validation alike; the
+            # specific validation code stays in `reason` for whoever repairs the file.
+            raise TasteError("corrupt_record", "canonical record failed validation; original bytes were preserved", path=str(target), reason=exc.code, detail=exc.message, recovery=recovery) from exc
+        except Exception as exc:
+            raise TasteError("corrupt_record", "canonical record is unreadable; original bytes were preserved", path=str(target), recovery=recovery) from exc
+    raise TasteError("locked", "the store is being written by another writer; retry", path=str(target))
 
 
 def render(record: dict[str, Any]) -> str:
@@ -337,7 +355,15 @@ def unlink_with_retry(path: Path) -> None:
 def take(path: Path) -> str:
     """Create the lock file exclusively, record the holder in it, and return the token that proves it is ours."""
     token = uuid.uuid4().hex
-    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except PermissionError:
+        # Windows reports a lock file another writer already holds as PermissionError (a sharing violation),
+        # where POSIX reports FileExistsError; the contention path handles both. A permission problem with no
+        # lock file behind it is not contention and is surfaced unchanged.
+        if path.exists():
+            raise FileExistsError(errno.EEXIST, "lock file is held", str(path)) from None
+        raise
     try:
         os.write(fd, json.dumps({"pid": os.getpid(), "host": host_id(), "created_at": now(), "token": token}).encode())
     except BaseException:
@@ -383,13 +409,15 @@ class Held:
         removed = None
         try:
             token = take(path)
-        except FileExistsError:
+        except (FileExistsError, PermissionError):
+            # POSIX reports a held lock as FileExistsError and Windows as a sharing-violation PermissionError;
+            # both are contention, and ``reclaim`` judges the lock by its content and age before it frees it.
             removed = reclaim(path)
             if removed is None:
                 raise busy(path) from None
             try:
                 token = take(path)
-            except FileExistsError:  # another writer took the freed lock first
+            except (FileExistsError, PermissionError):  # another writer took the freed lock first
                 raise busy(path) from None
         self.locks.append((path, token))
         if removed:

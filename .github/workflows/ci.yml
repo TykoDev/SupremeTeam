@@ -5,7 +5,7 @@
 # step per command listed under `ci.commands`. skills/scripts/validate_manifests.py
 # fails when this file stops covering that declaration, so change the two together.
 #
-# Supply chain: the two actions below are GitHub's own and are pinned to a major
+# Supply chain: the three actions below are GitHub's own and are pinned to a major
 # version tag, not a commit. That is a deliberate, conservative choice: the job
 # holds a read-only token and no secrets, and a moving major tag still gets
 # security fixes. Nothing is cached, so a poisoned cache cannot reach a later run.
@@ -132,3 +132,35 @@ jobs:
 
       - name: ruff
         run: ruff check .
+
+  # The pi extension install_hooks.py generates is TypeScript that pi loads as is, so
+  # it is type-checked here against pi's published extension API. Not a runtime
+  # command either: it needs node and npm, which the catalog itself never does.
+  # Every package is pinned exactly, for the reason the ruff pin gives.
+  pi-bridge:
+    name: pi extension (types)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # 22.6 or later loads the extension's TypeScript directly, so PiExtensionTests run instead of skipping.
+      - name: Set up node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install pi's types and the compiler
+        run: npm install --prefix "$RUNNER_TEMP/pi-types" --no-audit --no-fund --ignore-scripts @earendil-works/pi-coding-agent@1.1.0 @types/node@22.20.5 typescript@5.9.3
+
+      - name: pi extension
+        run: SUPREMETEAM_PI_TYPES="$RUNNER_TEMP/pi-types" python -m unittest -v test_installer_hooks.PiRegistrationTests test_installer_hooks.PiExtensionTests test_installer_hooks.PiTypeCheckTests
+        working-directory: skills/harness/hooks

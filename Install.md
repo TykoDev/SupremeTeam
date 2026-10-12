@@ -220,7 +220,8 @@ python3 scripts/install_hooks.py --target codex --hook-root "$HOME/.agents/skill
 ```
 
 `--host` / `--target` take `codex`, `claude`, or `copilot` for native JSON config;
-`cursor` and `opencode` load a plugin package that is not machine-verifiable.
+`cursor`, `opencode` and `pi` load a plugin package or extension that is not
+machine-verifiable; pi reports in each new session whether the guard is enforcing.
 Registration edits these files, by default the global (`user`) ones:
 
 | Host | `user` scope (default) | `project` / `local` scope |
@@ -230,6 +231,7 @@ Registration edits these files, by default the global (`user`) ones:
 | GitHub Copilot | `~/.config/github-copilot/hooks.json` | `.github/hooks.json` |
 | Cursor | `~/.cursor/plugins/local/supremeteam-hooks/` | not scoped |
 | OpenCode | `~/.config/opencode/plugins/supremeteam-hooks.js` | not scoped |
+| pi | `~/.pi/agent/extensions/supremeteam-guard.ts` (`$PI_CODING_AGENT_DIR/extensions/` when set) | not scoped |
 
 `--scope project|local` (`--hooks-scope`, `-HooksScope` on the installers) means the
 project around the directory you run it from. A `project` file is usually committed
@@ -309,7 +311,7 @@ python3 scripts/install_hooks.py --target claude --hook-root "$HOME/.agents/skil
 ```
 
 Swap `--target` for your host (`codex`, `claude`, `copilot`; `cursor`/`opencode`
-write a plugin package). Add `--dry-run` first to see the change, and note that the
+write a plugin package, `pi` an extension). Add `--dry-run` first to see the change, and note that the
 default `--scope user` edits your global host config. Skip the hook line to leave
 routing and guards advisory.
 
@@ -323,7 +325,7 @@ stops calling scripts you are about to delete.
    entries (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`) whose `command` runs
    `pre_tool_use.py`, `post_tool_use.py` and `user_prompt_submit.py`, or restore the
    newest `<file>.bak-<timestamp>` kept beside it if nothing else in the file has
-   changed since. For Cursor and OpenCode delete the plugin package or file. Restart
+   changed since. For Cursor, OpenCode and pi delete the plugin package or file. Restart
    the host; `verify_registration.py --host auto` then reports `MISSING`.
 2. **Remove the skills.** In each target from [Where it goes](#where-it-goes) that
    holds an install, delete every item named on an `item <name>` line of its

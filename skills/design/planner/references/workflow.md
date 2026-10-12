@@ -27,7 +27,8 @@ migration/deprecation template, and the acceptance checklist.
 3. Break the work into tracks, dependency chains, and decision gates instead of a
    flat chronological list.
 4. Write the acceptance row for every slice — condition, check, acceptor — before
-   the plan is packaged. This is the `acceptance` evidence key, and it has no
+   the plan is packaged. This is the `acceptance` evidence key: the manifest names
+   the hashed plan, `check.py` parses the table below from it, and it has no
    sanctioned fallback at the gate.
 5. Check the rollout path for prerequisite risks: vendor work, migrations,
    staffing bottlenecks, environment dependencies, support coverage.
@@ -81,10 +82,19 @@ gate can challenge the right part of the plan}
 ## Acceptance Criteria Table
 
 The `acceptance` evidence key in table form. Three fields, all required; a slice
-missing one is not yet planned.
+missing one is not yet planned. Every row carries a stable id, `AC-<n>`, unique in
+the plan and never reused for a different criterion across revisions: it is what
+build traceability, review findings and every gatekeeper cite, and
+`harness/gatekeeper/check.py --judgment` refuses a gate finding that cites an
+`AC-` id the plan does not contain (`../../../gates.yaml` `judgment_policy`).
 
-| Slice | Observable condition | Check that proves it | Acceptor |
-| ----- | -------------------- | -------------------- | -------- |
+| ID | Slice | Observable condition | Check that proves it | Acceptor |
+| -- | ----- | -------------------- | -------------------- | -------- |
+
+The heading is exactly `Acceptance criteria` and the five column names are exactly
+these; `check.py` (`acceptance_table`) refuses a missing section, a missing column,
+an empty cell (`-`, `n/a`, `none`, `tbd`, `?` count as empty), and an id that is not
+a unique `AC-<n>`.
 
 - **Observable condition** — what is true in the world when the slice is done,
   stated so two people would agree whether it holds. Not "the API is finished".

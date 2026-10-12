@@ -28,13 +28,14 @@ One JSON file at the run's `release/` phase destination, resolved with
   "revisions": [2],
   "revision": 2,
   "evidence": {
-    "approved_delivery": "rev-8f21c0a",
+    "approved_delivery": {"revision": "rev-8f21c0a", "verdict": "../review/verdict_review-to-delivery.cross-stage.json"},
     "deploy_config": "artifacts/deploy-config.yaml",
     "verification_plan": "artifacts/verification-plan.md",
     "rollback_plan": "artifacts/rollback-plan.md",
     "human_go_required": {"decision": "go", "approver": "release-owner", "approval_reference": "GO-2026-04-19-01", "revision": "rev-8f21c0a", "decided_at": "2026-04-19T20:05:00Z"}
   },
   "artifact_hashes": {
+    "../review/verdict_review-to-delivery.cross-stage.json": "<sha256>",
     "artifacts/deploy-config.yaml": "<sha256>",
     "artifacts/verification-plan.md": "<sha256>",
     "artifacts/rollback-plan.md": "<sha256>"
@@ -42,13 +43,16 @@ One JSON file at the run's `release/` phase destination, resolved with
 }
 ```
 
-Three keys are artifact-backed and must name a path present in `artifact_hashes`, hashed to
-match the file on disk. Paths are manifest-relative and stay inside the run's own directory;
+Four keys are artifact-backed and must name a path present in `artifact_hashes`, hashed to
+match the file on disk: the three plans and the upstream verdict `approved_delivery` names. Paths are manifest-relative and stay inside the run's own directory;
 `..` traversal, another run, and absolute, drive-qualified, or UNC paths are rejected, which is
 why every destination is composed with `output_paths.py` rather than by hand.
 
-`approved_delivery` is typed `revision_ref`: a non-empty approved upstream revision identifier,
-not artifact-backed. `human_go_required` is typed `human_go`: decision `go`, non-blank
+`approved_delivery` is typed `revision_ref`: `{revision, verdict}`, where `verdict` is the
+hashed `review/verdict_review-to-delivery.cross-stage.json`. `check.py` requires it to hold
+`gatekeeper-admiral`'s valid APPROVED judgment for that revision in this run, and re-fingerprints
+the approved review manifest beside it and re-hashes every artifact it hashed, so a review
+package edited after approval cannot be released. `human_go_required` is typed `human_go`: decision `go`, non-blank
 approver, approval_reference, revision and timezone-qualified ISO decided_at. Its revision
 must equal approved_delivery. Identity and freshness are still verified by the owner. `../../gates.yaml` sanctions **no** fallback
 value for any of the five, so no applicability record waives any of them — this boundary has no
@@ -65,7 +69,7 @@ Per-key detail, in the order the boundary lists them:
 
 | Key | Type | Backing | Value shape the checker accepts |
 | --- | --- | --- | --- |
-| `approved_delivery` | `revision_ref` | none | A non-empty approved upstream revision identifier from the approved review or delivery package |
+| `approved_delivery` | `revision_ref` | artifact (`verdict`) | `{revision, verdict}` bound to the approved `review-to-delivery` cross-stage verdict, whose package must still hash as approved |
 | `deploy_config` | plain | artifact | A path present in `artifact_hashes`, hashed to match the file |
 | `verification_plan` | plain | artifact | A path present in `artifact_hashes`, hashed to match the file |
 | `rollback_plan` | plain | artifact | A path present in `artifact_hashes`, hashed to match the file |

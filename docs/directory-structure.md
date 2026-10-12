@@ -95,6 +95,7 @@ SupremeTeam/
     │   │   ├── _fsutil.py                # The shared atomic write and OS advisory lock
     │   │   ├── _bootstrap.py             # sys.path setup, done once; lists the files a hook runs to decide
     │   │   ├── size_audit.py             # Bounded report of oversized runtime files
+    │   │   ├── gate_watch.py             # Re-runs check.py when a run manifest or intake log changes
     │   │   ├── audit_improve.py          # Read-only audit of saved failures
     │   │   ├── verify_registration.py    # Inspects host hook config without changing it
     │   │   ├── repair_registration.py    # Previews or applies a registration repair
@@ -103,7 +104,7 @@ SupremeTeam/
     │   │   ├── README.md                 # Rules, limits, fault trace, and a manifest of every file here
     │   │   ├── .gitignore                # Runtime observations and bytecode caches
     │   │   └── test_*.py                 # The hooks suite, listed under The test suites
-    │   └── gatekeeper/                   # check.py (gate spec), _gatecheck.py (shape), README.md, test_*.py
+    │   └── gatekeeper/                   # check.py (gate spec), _gatecheck.py (shape), _fixtures.py (test support), README.md, test_*.py
     ├── admiral/                          # The front door
     │   ├── references/                   # workflow, routing, contracts, failure-modes, examples
     │   ├── intake-brief.yaml, stub-contract.md
@@ -146,9 +147,10 @@ are in [CONTRIBUTING.md](../CONTRIBUTING.md#run-the-suites).
   - registration and readiness: `test_registration_contract.py`,
     `test_registration_hardening.py`, `test_installer_hooks.py`, `test_documented_flags.py`
   - maintenance audits: `test_size_audit.py`, `test_audit_improve.py`,
-    `test_audit_improve_parts.py`
+    `test_audit_improve_parts.py`, `test_gate_watch.py`
 - **Gates**, `skills/harness/gatekeeper/`: `test_gatecheck.py`, `test_gate_engine.py`,
-  `test_gate_manifests.py`, `test_gate_run_layout.py`, `test_gate_revise.py`,
+  `test_gate_manifests.py`, `test_gate_run_layout.py`, `test_gate_revise.py`, `test_gate_judgment.py`,
+  `test_gate_source_of_truth.py`,
   `test_gate_wrappers.py`, `test_quality_audit.py`
 - **Validation**, `skills/validation/`: `test_catalog_contracts.py`, `test_orchestration.py`,
   `test_pipeline_contracts.py`, `test_pipeline_workflows.py`, `test_save_contracts.py`,

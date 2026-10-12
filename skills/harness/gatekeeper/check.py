@@ -9,6 +9,15 @@ Inputs (CLI flags):
   --gates        optional override path to the gate spec (default: skills/gates.yaml).
   --verdict-out  optional path; the result JSON is also written there as the
                  durable verdict record for later --prior comparisons.
+  --intake-log   check one intake grilling log against the decision_log tables
+                 on its own (no --boundary or --package); the gate_watch hook runs
+                 it when the log is written.
+  --judgment     optional path to the gatekeeper's judgment record (its verdict
+                 and judgment findings). It is checked for grounding - each
+                 finding cites a source of truth that exists and hashed package
+                 artifacts, and the verdict follows from the findings - and is
+                 embedded in the verdict record; an ungrounded record fails the
+                 run and is never written to --verdict-out.
 
 The boundary table is not hardcoded here: skills/gates.yaml is the single
 source of truth for required evidence keys, artifact-backed evidence keys,
@@ -110,7 +119,38 @@ VARIANT_FILES = ("spec", "tokens", "components", "app")
 EVIDENCE_KINDS = frozenset({
     "scan", "render", "probe", "findings", "verdict", "stack_lock", "revision_ref",
     "preference_diff", "confirmation", "conflict_analysis", "persistence_result", "effective_profile",
-    "consumer_handoff", "variant_set", "selection", "security_seed", "human_go"})
+    "consumer_handoff", "variant_set", "selection", "security_seed", "human_go",
+    "decision_log", "acceptance_table", "interface_set", "change_set", "trace_map"})
+#: What a gatekeeper's judgment finding may stand on (gates.yaml judgment_policy).
+#: There is deliberately no kind for the gate's own preference: a requirement
+#: that is in none of these sources is not the gate's to impose.
+JUDGMENT_BASIS_KINDS = frozenset({"decision", "acceptance", "contract", "contradiction"})
+#: The id shape each source-of-truth basis kind cites, and the evidence key whose
+#: artifacts the cited file must be when the boundary carries that key.
+JUDGMENT_REF_SHAPES = {"decision": re.compile(r"D-\d+"), "acceptance": re.compile(r"AC-\d+")}
+JUDGMENT_SOURCE_KEYS = {"decision": ("decisions",), "acceptance": ("acceptance", "plan")}
+BLOCKING_SEVERITIES = frozenset({"Critical", "Major"})
+MANIFEST_ANCHOR = re.compile(r"manifest:evidence\.([A-Za-z0-9_]+)")
+#: The intake grilling log (grill-me-doctrine.md Output): four level-2 sections,
+#: each holding one Markdown table with at least these columns, and the fewest
+#: data rows each may carry. Every row's ID is a D-<n> unique across the log.
+DECISION_SECTIONS = (
+    ("Resolved decisions", ("ID", "Decision", "Chosen", "Source"), 1),
+    ("Deferred decisions", ("ID", "Decision", "Why deferral is safe", "Owner", "Reopen phase"), 0),
+    ("Rejected options", ("ID", "Option", "Rationale"), 0),
+    ("Non-goals and YAGNI deferrals", ("ID", "Non-goal", "Reopen trigger", "Owner"), 0),
+)
+DECISION_SOURCES = frozenset({"user", "codebase", "prior-artifact", "delegated-default"})
+#: The plan's acceptance table (design/planner references/workflow.md).
+ACCEPTANCE_SECTION = ("Acceptance criteria", ("ID", "Slice", "Observable condition", "Check that proves it", "Acceptor"))
+DECISION_ID = re.compile(r"D-\d+")
+ACCEPTANCE_ID = re.compile(r"AC-\d+")
+INTERFACE_ID = re.compile(r"IF-\d+")
+CHANGE_STATUSES = frozenset({"added", "modified", "deleted"})
+HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+TABLE_RULE = re.compile(r"^:?-+:?$")
+#: A cell that names nothing.
+EMPTY_CELLS = frozenset({"", "-", "--", "—", "n/a", "na", "none", "tbd", "?"})
 
 
 class Engine(ValueError):
@@ -209,7 +249,7 @@ def evidence_strings(value: object) -> list[str]:
         return [item for item in value if isinstance(item, str)]
     if isinstance(value, dict):
         found: list[str] = []
-        for key in ("artifacts", "artifact", "path", "paths", "captures", "report"):
+        for key in ("artifacts", "artifact", "path", "paths", "captures", "report", "verdict"):
             found.extend(evidence_strings(value.get(key)))
         return found
     return []
@@ -283,6 +323,117 @@ def strip_code(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(">"))
 
 
+def _norm(text: str) -> str:
+    return " ".join(text.strip().lower().split())
+
+
+def _cells(line: str) -> list[str]:
+    """The cells of one Markdown table row; an escaped pipe stays inside its cell."""
+    body = line.strip()
+    body = body[1:] if body.startswith("|") else body
+    body = body[:-1] if body.endswith("|") and not body.endswith("\\|") else body
+    return [cell.replace("\\|", "|").strip() for cell in re.split(r"(?<!\\)\|", body)]
+
+
+def md_section(text: str, title: str) -> list[str] | None:
+    """The lines under the heading named ``title`` (any level), up to the next heading of the same or a higher level."""
+    lines = strip_fences(text).splitlines()
+    wanted = _norm(title)
+    for index, line in enumerate(lines):
+        match = HEADING.match(line)
+        if match and _norm(match.group(2)) == wanted:
+            level = len(match.group(1))
+            body = []
+            for following in lines[index + 1:]:
+                nxt = HEADING.match(following)
+                if nxt and len(nxt.group(1)) <= level:
+                    break
+                body.append(following)
+            return body
+    return None
+
+
+def md_table(lines: list[str]) -> tuple[list[str], list[list[str]]] | None:
+    """The first Markdown table in ``lines``: its normalised header and its data rows, or None."""
+    for index, line in enumerate(lines):
+        if not line.strip().startswith("|") or index + 1 >= len(lines):
+            continue
+        rule = _cells(lines[index + 1])
+        if not rule or not all(TABLE_RULE.match(cell.replace(" ", "")) for cell in rule):
+            continue
+        header = [_norm(cell) for cell in _cells(line)]
+        rows = []
+        for row in lines[index + 2:]:
+            if not row.strip().startswith("|"):
+                break
+            rows.append(_cells(row))
+        return header, rows
+    return None
+
+
+def strip_fences(text: str) -> str:
+    """Text with fenced code blocks blanked, so a template quoted in a fence is not read as the table itself."""
+    return FENCED.sub(lambda match: "\n" * match.group(0).count("\n"), text)
+
+
+def table_records(text: str, title: str, columns: tuple[str, ...], label: str) -> tuple[list[dict], list[str]]:
+    """Rows of the table under ``title`` as {column: cell} for the required ``columns``, and every defect found."""
+    section = md_section(text, title)
+    if section is None:
+        return [], [f"{label} lacks the section '{title}'"]
+    table = md_table(section)
+    if table is None:
+        return [], [f"{label} section '{title}' holds no table"]
+    header, rows = table
+    missing = [column for column in columns if _norm(column) not in header]
+    if missing:
+        return [], [f"{label} section '{title}' table lacks the columns {missing}"]
+    positions = {column: header.index(_norm(column)) for column in columns}
+    records, defects = [], []
+    for number, row in enumerate(rows, start=1):
+        record = {column: (row[pos] if pos < len(row) else "") for column, pos in positions.items()}
+        blank = [column for column, cell in record.items() if _norm(cell) in EMPTY_CELLS]
+        if blank:
+            defects.append(f"{label} '{title}' row {number} leaves {blank} empty")
+        records.append(record)
+    return records, defects
+
+
+def decision_log_defects(text: str, label: str) -> list[str]:
+    """Every way ``text`` falls short of the intake grilling log's fixed tables (gates.yaml decision_log)."""
+    failures: list[str] = []
+    seen: dict[str, str] = {}
+    for title, columns, least in DECISION_SECTIONS:
+        rows, defects = table_records(text, title, columns, label)
+        failures.extend(defects)
+        if not defects and len(rows) < least:
+            failures.append(f"{label} '{title}' needs at least {least} row")
+        for row in rows:
+            ident = row["ID"].strip()
+            if not DECISION_ID.fullmatch(ident):
+                failures.append(f"{label} '{title}' id {ident!r} is not D-<n>")
+            elif ident in seen:
+                failures.append(f"{label} id {ident} repeats (first in '{seen[ident]}')")
+            else:
+                seen[ident] = title
+            source = _norm(row.get("Source", ""))
+            if "Source" in row and source not in DECISION_SOURCES and source not in EMPTY_CELLS:
+                failures.append(f"{label} {ident} source {row['Source']!r} is not one of {sorted(DECISION_SOURCES)}")
+    return failures
+
+
+def intake_log_main(path: Path) -> int:
+    """--intake-log: check one grilling log on its own, before any design package names it."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        print(json.dumps({"intake_log": str(path), "engine_error": str(exc)}, indent=2), file=sys.stderr)
+        return 2
+    failures = decision_log_defects(text, path.name)
+    print(json.dumps({"intake_log": str(path), "pass": not failures, "failures": failures}, indent=2))
+    return 0 if not failures else 1
+
+
 class Package:
     def __init__(self, manifest_path: Path, data: dict, boundary_name: str, spec: dict) -> None:
         self.manifest_path = manifest_path
@@ -312,6 +463,10 @@ class Package:
         self.hashed_ok: set[str] = set()
         #: Hashed artifacts that are zero bytes or whitespace only.
         self.blank_artifacts: set[str] = set()
+        #: Upstream packages bound by a revision_ref record: key -> (manifest data, manifest directory).
+        self.upstream: dict[str, tuple[dict, Path]] = {}
+        #: Per upstream manifest directory, the artifacts it hashed that still verify.
+        self.upstream_hashed: dict[str, set[str]] = {}
 
     # ------------------------------------------------------------- identity
     def _schema_version(self) -> int:
@@ -561,6 +716,8 @@ class Package:
             for key in required:
                 if types.get(key) == "selection":
                     self.check_selection_dependencies(key)
+                elif types.get(key) == "trace_map" and evidence.get(key):
+                    self.check_trace_map(key, evidence.get(key))
         return missing
 
     def check_blank_references(self, key: str, kind: str | None, value: object) -> None:
@@ -590,10 +747,17 @@ class Package:
         elif kind == "stack_lock":
             self.check_stack_lock(key, value)
         elif kind == "revision_ref":
-            # An upstream approved revision is recorded, not necessarily equal to
-            # this package's own revision; it must be a non-empty scalar identifier.
-            if isinstance(value, bool) or not isinstance(value, (str, int)) or not str(value).strip():
-                self.failures.append(f"{key} must name an approved upstream revision")
+            self.check_upstream(key, value)
+        elif kind == "decision_log":
+            self.check_decision_log(key, value)
+        elif kind == "acceptance_table":
+            self.acceptance_ids(key, value, self, label=key)
+        elif kind == "interface_set":
+            self.check_interface_set(key, value)
+        elif kind == "change_set":
+            self.check_change_set(key, value)
+        elif kind == "trace_map":
+            pass  # cross-key: check_trace_map runs once every key it reads has been checked
         elif kind in {"preference_diff", "confirmation", "conflict_analysis",
                       "persistence_result", "effective_profile", "consumer_handoff"}:
             self.check_taste_record(key, kind, value)
@@ -637,8 +801,287 @@ class Package:
         if not timestamp_valid(value.get("decided_at")):
             self.failures.append(f"{key} decided_at must be a timezone-qualified ISO timestamp")
         delivery = self.data.get("evidence", {}).get("approved_delivery")
-        if filled(delivery) and value.get("revision") != delivery:
+        if isinstance(delivery, dict):
+            delivery = delivery.get("revision")
+        if (filled(delivery) or isinstance(delivery, int)) and identity_token(value.get("revision")) != identity_token(delivery):
             self.failures.append(f"{key} revision must match approved_delivery")
+
+    # ------------------------------------------------- source-of-truth records
+    def artifact_texts(self, key: str, value: object) -> dict[str, str]:
+        """The correctly hashed artifacts a value names, read as text; a missing one is already a failure."""
+        texts = {}
+        for ref in evidence_strings(value):
+            if ref in self.hashed_ok:
+                path = self.contain(ref, key)
+                if path is not None:
+                    texts[ref] = path.read_text(encoding="utf-8", errors="replace")
+        return texts
+
+    def check_decision_log(self, key: str, value: object) -> None:
+        """The intake grilling log, read as the four fixed tables grill-me-doctrine.md Output defines."""
+        texts = self.artifact_texts(key, value)
+        if not texts:
+            self.failures.append(f"{key} names no readable hashed decision log")
+            return
+        for ref, text in texts.items():
+            self.failures.extend(decision_log_defects(text, f"{key} {ref}"))
+
+    def acceptance_ids(self, key: str, value: object, owner: "Package", label: str, base: Path | None = None) -> list[str]:
+        """The AC ids of the acceptance table the value names, recording each defect on ``owner``.
+
+        ``base`` reads an upstream package's artifact (already re-hashed by check_upstream) instead of this one's."""
+        if base is None:
+            texts = self.artifact_texts(key, value)
+        else:
+            texts = {}
+            hashed = owner.upstream_hashed.get(str(base), set())
+            for ref in evidence_strings(value):
+                path = Path(os.path.normpath(base / ref))
+                if ref in hashed and path.is_file():
+                    texts[ref] = path.read_text(encoding="utf-8", errors="replace")
+        if not texts:
+            owner.failures.append(f"{label} names no readable hashed acceptance table")
+            return []
+        ids: list[str] = []
+        found = False
+        for ref, text in texts.items():
+            if md_section(text, ACCEPTANCE_SECTION[0]) is None:
+                continue
+            found = True
+            rows, defects = table_records(text, ACCEPTANCE_SECTION[0], ACCEPTANCE_SECTION[1], f"{label} {ref}")
+            owner.failures.extend(defects)
+            if not defects and not rows:
+                owner.failures.append(f"{label} {ref} acceptance table has no criteria")
+            for row in rows:
+                ident = row["ID"].strip()
+                if not ACCEPTANCE_ID.fullmatch(ident):
+                    owner.failures.append(f"{label} {ref} acceptance id {ident!r} is not AC-<n>")
+                elif ident in ids:
+                    owner.failures.append(f"{label} acceptance id {ident} repeats")
+                else:
+                    ids.append(ident)
+        if not found:
+            owner.failures.append(f"{label} names no artifact with a '{ACCEPTANCE_SECTION[0]}' section")
+        return ids
+
+    def check_interface_set(self, key: str, value: object) -> None:
+        """{artifacts, change: changed|none, items: [{id: IF-<n>, kind, name}]}; each id stands in an artifact."""
+        if not isinstance(value, dict):
+            self.failures.append(f"{key} must be an interface_set record at schema 2")
+            return
+        change = value.get("change")
+        if change not in ("changed", "none"):
+            self.failures.append(f"{key} change must be 'changed' or 'none'")
+        items = value.get("items")
+        if not isinstance(items, list):
+            self.failures.append(f"{key} requires an items list")
+            return
+        if change == "changed" and not items:
+            self.failures.append(f"{key} change 'changed' requires at least one item")
+        if change == "none" and items:
+            self.failures.append(f"{key} change 'none' must list no items")
+        text = "\n".join(self.artifact_texts(key, value).values())
+        seen: set[str] = set()
+        for index, item in enumerate(items):
+            if not isinstance(item, dict) or not all(filled(item.get(f)) for f in ("id", "kind", "name")):
+                self.failures.append(f"{key}.items[{index}] requires id, kind and name")
+                continue
+            ident = item["id"].strip()
+            if not INTERFACE_ID.fullmatch(ident):
+                self.failures.append(f"{key}.items[{index}] id {ident!r} is not IF-<n>")
+            elif ident in seen:
+                self.failures.append(f"{key} id {ident} repeats")
+            elif not _cites(text, ident):
+                self.failures.append(f"{key} {ident} appears in none of its artifacts")
+            seen.add(ident)
+
+    def check_change_set(self, key: str, value: object) -> None:
+        """{artifacts: [diff], changed_files: [{path, sha256, status}]}: each file re-hashed and named by the diff."""
+        if not isinstance(value, dict):
+            self.failures.append(f"{key} must be a change_set record at schema 2")
+            return
+        files = value.get("changed_files")
+        if not isinstance(files, list) or not files:
+            self.failures.append(f"{key} requires a non-empty changed_files list")
+            return
+        text = "\n".join(self.artifact_texts(key, value).values())
+        seen: set[str] = set()
+        for index, entry in enumerate(files):
+            if not isinstance(entry, dict) or not filled(entry.get("path")):
+                self.failures.append(f"{key}.changed_files[{index}] requires path")
+                continue
+            path = entry["path"].strip()
+            status = entry.get("status", "modified")
+            if path in seen:
+                self.failures.append(f"{key} lists {path} twice")
+            seen.add(path)
+            if not _one_of(status, CHANGE_STATUSES):
+                self.failures.append(f"{key} {path} status must be one of {sorted(CHANGE_STATUSES)}")
+                continue
+            if path not in text:
+                self.failures.append(f"{key} {path} does not appear in the diff artifact")
+            target = self.project_path(path, key)
+            if target is None:
+                continue
+            if status == "deleted":
+                if target.exists():
+                    self.failures.append(f"{key} {path} is marked deleted but exists")
+            elif not is_sha256(entry.get("sha256")):
+                self.failures.append(f"{key} {path} requires sha256")
+            elif not target.is_file():
+                self.failures.append(f"{key} {path} is missing")
+            elif digest(target) != entry["sha256"].lower():
+                self.failures.append(f"{key} {path} hash drift: the file changed after the build evidence was taken")
+
+    def changed_paths(self) -> set[str]:
+        evidence = self.data.get("evidence", {})
+        types = self.spec.get("evidence_types", {})
+        paths: set[str] = set()
+        for key in self.boundary["required_evidence"]:
+            value = evidence.get(key)
+            if types.get(key) == "change_set" and isinstance(value, dict) and isinstance(value.get("changed_files"), list):
+                paths |= {e["path"].strip() for e in value["changed_files"] if isinstance(e, dict) and filled(e.get("path"))}
+        return paths
+
+    def check_trace_map(self, key: str, value: object) -> None:
+        """Every approved AC id is traced to changes and to tests the test log names, and every change is traced."""
+        if not isinstance(value, dict) or not isinstance(value.get("items"), list):
+            self.failures.append(f"{key} must be a trace_map record with an items list at schema 2")
+            return
+        evidence = self.data.get("evidence", {})
+        types = self.spec.get("evidence_types", {})
+        required = self.boundary["required_evidence"]
+        upstream_key = next((k for k in required if types.get(k) == "revision_ref"), None)
+        approved: list[str] = []
+        if upstream_key and upstream_key in self.upstream:
+            data, base = self.upstream[upstream_key]
+            source = (self.type_params(upstream_key, "revision_ref").get("acceptance_key") or "acceptance")
+            approved = self.acceptance_ids(source, (data.get("evidence") or {}).get(source), self,
+                                           label=f"{key} upstream {source}", base=base)
+        if not approved:
+            self.failures.append(f"{key} cannot be checked: no approved acceptance ids reached through {upstream_key}")
+        changed = self.changed_paths()
+        # The tests log is the one place a test name proves it ran (evidence_type_rules.probe).
+        log = "\n".join(self.artifact_texts("tests", evidence.get("tests")).values()) if "tests" in required else ""
+        covered: set[str] = set()
+        traced: set[str] = set()
+        for index, item in enumerate(value["items"]):
+            label = f"{key}.items[{index}]"
+            if not isinstance(item, dict):
+                self.failures.append(f"{label} must be a mapping")
+                continue
+            ac = item.get("acceptance")
+            if not filled(ac) or (approved and ac.strip() not in approved):
+                self.failures.append(f"{label} acceptance {ac!r} is not an approved acceptance id")
+            else:
+                covered.add(ac.strip())
+            changes = item.get("changes")
+            if not isinstance(changes, list) or not changes or not all(filled(c) for c in changes):
+                self.failures.append(f"{label} requires a non-empty changes list")
+                changes = []
+            for change in changes:
+                if change.strip() not in changed:
+                    self.failures.append(f"{label} change {change} is not in the implementation change set")
+                traced.add(change.strip())
+            tests = item.get("tests")
+            if not isinstance(tests, list) or not tests or not all(filled(t) for t in tests):
+                self.failures.append(f"{label} requires a non-empty tests list")
+                tests = []
+            for test in tests:
+                if test.strip() not in log:
+                    self.failures.append(f"{label} test {test.strip()!r} does not appear in the tests log")
+        for ac in approved:
+            if ac not in covered:
+                self.failures.append(f"{key} leaves approved acceptance {ac} untraced")
+        supporting = value.get("supporting", [])
+        if not isinstance(supporting, list):
+            self.failures.append(f"{key} supporting must be a list")
+            supporting = []
+        for index, entry in enumerate(supporting):
+            if not isinstance(entry, dict) or not filled(entry.get("path")) or not filled(entry.get("reason")):
+                self.failures.append(f"{key}.supporting[{index}] requires path and reason")
+                continue
+            if entry["path"].strip() not in changed:
+                self.failures.append(f"{key}.supporting[{index}] {entry['path']} is not in the implementation change set")
+            traced.add(entry["path"].strip())
+        for path in sorted(changed - traced):
+            self.failures.append(f"{key} leaves changed file {path} untraced")
+
+    def check_upstream(self, key: str, value: object) -> None:
+        """Bind an approved upstream revision to the cross-stage verdict that approved it, and prove the
+        approved package is unchanged: its manifest fingerprint and every artifact it hashed still match."""
+        if not isinstance(value, dict):
+            self.failures.append(f"{key} must be a {{revision, verdict}} record binding the upstream verdict at schema 2")
+            return
+        revision = value.get("revision")
+        if isinstance(revision, bool) or not isinstance(revision, (str, int)) or not str(revision).strip():
+            self.failures.append(f"{key} must name an approved upstream revision")
+        ref = value.get("verdict")
+        if not filled(ref):
+            self.failures.append(f"{key} requires verdict: the path of the upstream cross-stage verdict record")
+            return
+        if ref not in self.hashed_ok:
+            self.failures.append(f"{key} verdict {ref} is not a correctly hashed artifact of this package")
+            return
+        path = self.contain(ref, key)
+        if path is None:
+            return
+        params = self.type_params(key, "revision_ref")
+        boundary = params.get("upstream_boundary")
+        gate = (self.spec.get("judgment_policy", {}) or {}).get("cross_stage_gate", "gatekeeper-admiral")
+        try:
+            record = load_data(path)
+        except DataFormatError:
+            record = None
+        if not isinstance(record, dict):
+            self.failures.append(f"{key} verdict {ref} is not a verdict record")
+            return
+        judgment = record.get("judgment") if isinstance(record.get("judgment"), dict) else {}
+        if boundary and record.get("boundary") != boundary:
+            self.failures.append(f"{key} verdict is for {record.get('boundary')!r}, not {boundary!r}")
+        if record.get("pass") is not True:
+            self.failures.append(f"{key} verdict records mechanical failures")
+        if judgment.get("gate") != gate or judgment.get("verdict") != "APPROVED" or judgment.get("valid") is not True:
+            self.failures.append(f"{key} verdict is not a valid APPROVED judgment by {gate} "
+                                 f"(gate {judgment.get('gate')!r}, verdict {judgment.get('verdict')!r})")
+        if identity_token(record.get("revision")) != identity_token(revision):
+            self.failures.append(f"{key} revision {revision!r} is not the approved revision {record.get('revision')!r}")
+        run_id = self.data.get("run_id")
+        if run_id is not None and record.get("run_id") != run_id:
+            self.failures.append(f"{key} verdict belongs to run {record.get('run_id')!r}, not {run_id!r}")
+        if record.get("gate_spec_is_shipped") is not True:
+            self.warnings.append(f"{key} verdict was not produced against the shipped gate spec")
+        name = record.get("manifest") if filled(record.get("manifest")) else "manifest.json"
+        manifest = path.parent / Path(name).name
+        root = Path(os.path.normpath(self.root))
+        try:
+            Path(os.path.realpath(manifest)).relative_to(Path(os.path.realpath(root)))
+        except ValueError:
+            self.failures.append(f"{key} approved manifest escapes the evidence root via link")
+            return
+        try:
+            upstream = load_data(manifest)
+        except (DataFormatError, OSError):
+            upstream = None
+        if not isinstance(upstream, dict):
+            self.failures.append(f"{key} approved manifest {manifest.name} beside the verdict is unreadable")
+            return
+        if fingerprint(upstream) != record.get("package_fingerprint"):
+            self.failures.append(f"{key} approved manifest changed after approval (fingerprint mismatch)")
+        hashes = upstream.get("artifact_hashes") if isinstance(upstream.get("artifact_hashes"), dict) else {}
+        for rel, expected in hashes.items():
+            target = Path(os.path.normpath(manifest.parent / str(rel)))
+            try:
+                target.relative_to(root)
+                Path(os.path.realpath(target)).relative_to(Path(os.path.realpath(root)))
+            except ValueError:
+                self.failures.append(f"{key} approved artifact escapes the evidence root: {rel}")
+                continue
+            if not target.is_file() or not is_sha256(expected) or digest(target) != str(expected).lower():
+                self.failures.append(f"{key} approved artifact changed after approval: {rel}")
+            else:
+                self.upstream_hashed.setdefault(str(manifest.parent), set()).add(str(rel))
+        self.upstream[key] = (upstream, manifest.parent)
 
     def type_params(self, key: str, kind: str) -> dict:
         """Typed-record parameters, read by evidence key first and kind second.
@@ -1231,6 +1674,195 @@ def revise_packet(failures: list[str], required: list[str], owners: dict, submit
     }
 
 
+def _cites(text: str, ref: str) -> bool:
+    """True when ``ref`` (an id such as D-3 or AC-12) stands in ``text`` as a whole id, so D-3 is not found in D-30."""
+    return re.search(r"(?<![A-Za-z0-9_-])" + re.escape(ref) + r"(?![A-Za-z0-9_])", text) is not None
+
+
+def _catalog_file(source: object) -> Path | None:
+    """A catalog-relative contract file (gates.yaml, design-doctrine.md, contracts/...) that exists, else None."""
+    if not filled(source):
+        return None
+    raw = str(source).strip().removeprefix("skills/")
+    rel = Path(raw)
+    if rel.is_absolute() or rel.drive or ".." in rel.parts or rel.suffix not in {".md", ".yaml"}:
+        return None
+    candidate = (SKILLS_ROOT / rel).resolve()
+    try:
+        candidate.relative_to(SKILLS_ROOT.resolve())
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def _one_of(value: object, allowed: frozenset | set) -> bool:
+    """Membership for a value read from a record: a list or mapping is never a member, and never a TypeError."""
+    return isinstance(value, str) and value in allowed
+
+
+def check_judgment(package: "Package", record: object, mechanical: list[str], spec: dict,
+                   prior: dict | None, changed_evidence: list[str] | None) -> tuple[dict, list[str]]:
+    """Validate a gatekeeper's judgment record against the package it judges.
+
+    The mechanical pass proves what the package holds; this proves what the gate
+    says about it is grounded (gates.yaml judgment_policy). Every finding names a
+    required evidence key or none, stands on a source of truth that exists - a
+    decision id in the intake log, an acceptance id in the plan, a section of a
+    catalog contract, or two package artifacts that contradict each other - and,
+    when it can block, points at hashed artifacts in the package. The verdict
+    must follow from the findings and the mechanical result (revise_threshold),
+    the owner is the spec's and never the gate's choice, and on a resubmission to
+    the same gate a new blocking finding may name only changed evidence
+    (batch_fix). Returns the normalised judgment and its failures; it never reads
+    whether a finding is right, only whether it could be checked.
+    """
+    failures: list[str] = []
+    boundary = package.boundary_name
+    required = list(package.boundary["required_evidence"])
+    owners = (spec.get("evidence_owners", {}) or {}).get(boundary, {}) or {}
+    submitter = str(package.boundary.get("submitter", ""))
+    policy = spec.get("judgment_policy", {}) or {}
+    if not isinstance(record, dict):
+        return {"valid": False}, ["judgment record must be a mapping"]
+
+    if record.get("boundary") != boundary:
+        failures.append(f"judgment boundary {record.get('boundary')!r} is not {boundary!r}")
+    for field in ("submission_id", "revision"):
+        if identity_token(record.get(field)) != identity_token(package.data.get(field)):
+            failures.append(f"judgment {field} {record.get(field)!r} does not match the package's {package.data.get(field)!r}")
+    gate = record.get("gate")
+    allowed_gates = {str(policy.get("cross_stage_gate", "gatekeeper-admiral"))}
+    phase_gate = (policy.get("phase_gates", {}) or {}).get(boundary)
+    if phase_gate:
+        allowed_gates.add(str(phase_gate))
+    if not _one_of(gate, allowed_gates) or gate == submitter:
+        failures.append(f"judgment gate {gate!r} may not judge {boundary} (allowed: {sorted(allowed_gates - {submitter})})")
+    verdict = record.get("verdict")
+    if not _one_of(verdict, VERDICTS):
+        failures.append(f"judgment verdict must be one of {sorted(VERDICTS)}")
+
+    findings = record.get("findings", [])
+    if not isinstance(findings, list):
+        failures.append("judgment findings must be a list")
+        findings = []
+    evidence = package.data.get("evidence", {}) if isinstance(package.data.get("evidence"), dict) else {}
+    texts: dict[str, str] = {}
+
+    def text_of(relative: str) -> str:
+        if relative not in texts:
+            path = package.contain(relative, "judgment basis")
+            try:
+                texts[relative] = path.read_text(encoding="utf-8", errors="replace") if path else ""
+            except OSError:
+                texts[relative] = ""
+        return texts[relative]
+
+    normalised: list[dict] = []
+    seen: set[str] = set()
+    for index, item in enumerate(findings):
+        label = f"judgment finding [{index}]"
+        if not isinstance(item, dict):
+            failures.append(f"{label} must be a mapping")
+            continue
+        ident = item.get("id")
+        if not filled(ident):
+            failures.append(f"{label} requires id")
+        else:
+            label = f"judgment finding {ident.strip()}"
+            if ident.strip() in seen:
+                failures.append(f"{label} duplicate id")
+            seen.add(ident.strip())
+        severity = item.get("severity")
+        if not _one_of(severity, FINDING_SEVERITIES):
+            failures.append(f"{label} severity must be one of {sorted(FINDING_SEVERITIES)}")
+        if not filled(item.get("statement")):
+            failures.append(f"{label} requires statement")
+        key = item.get("key")
+        if key is not None and not _one_of(key, set(required)):
+            # A gate never invents an evidence key the spec does not require here.
+            failures.append(f"{label} key {key!r} is not required evidence at {boundary}")
+            key = None
+        owner = str(owners.get(key) or submitter) if key else submitter
+        if item.get("owner") is not None and item.get("owner") != owner:
+            failures.append(f"{label} owner {item.get('owner')!r} is not the spec owner {owner!r}")
+
+        anchors = item.get("evidence", [])
+        if not isinstance(anchors, list) or any(not isinstance(a, str) for a in anchors):
+            failures.append(f"{label} evidence must be a list of paths")
+            anchors = []
+        for anchor in anchors:
+            manifest_key = MANIFEST_ANCHOR.fullmatch(anchor)
+            if manifest_key:
+                if manifest_key.group(1) not in required or manifest_key.group(1) not in evidence:
+                    failures.append(f"{label} anchor {anchor} names no evidence in this manifest")
+            elif anchor not in package.artifact_hashes:
+                failures.append(f"{label} anchor is not a hashed package artifact: {anchor}")
+            elif anchor not in package.hashed_ok:
+                failures.append(f"{label} anchor is a defective artifact: {anchor}")
+        if _one_of(severity, BLOCKING_SEVERITIES) and not anchors:
+            failures.append(f"{label} {severity} requires at least one evidence anchor")
+
+        basis = item.get("basis")
+        if not isinstance(basis, dict) or not _one_of(basis.get("kind"), JUDGMENT_BASIS_KINDS):
+            failures.append(f"{label} basis.kind must be one of {sorted(JUDGMENT_BASIS_KINDS)}")
+        else:
+            kind = basis["kind"]
+            ref = basis.get("ref")
+            if kind in JUDGMENT_REF_SHAPES:
+                artifact = basis.get("artifact")
+                if not filled(ref) or not JUDGMENT_REF_SHAPES[kind].fullmatch(ref.strip()):
+                    failures.append(f"{label} {kind} basis ref must be an id like {JUDGMENT_REF_SHAPES[kind].pattern}")
+                elif not filled(artifact) or artifact not in package.hashed_ok:
+                    failures.append(f"{label} {kind} basis artifact is not a correctly hashed package artifact: {artifact!r}")
+                else:
+                    sources = [k for k in JUDGMENT_SOURCE_KEYS[kind] if k in required and evidence.get(k)]
+                    named = {s for k in sources for s in evidence_strings(evidence.get(k))}
+                    if sources and artifact not in named:
+                        failures.append(f"{label} {kind} basis artifact {artifact} is not the package's {'/'.join(sources)} evidence")
+                    elif not _cites(text_of(artifact), ref.strip()):
+                        failures.append(f"{label} cites {ref.strip()}, which {artifact} does not contain")
+            elif kind == "contract":
+                if _catalog_file(basis.get("source")) is None:
+                    failures.append(f"{label} contract basis source must be an existing catalog file: {basis.get('source')!r}")
+                if not filled(ref):
+                    failures.append(f"{label} contract basis requires ref (the section or rule)")
+            elif len({a for a in anchors if a in package.hashed_ok}) < 2:
+                failures.append(f"{label} contradiction basis requires two hashed artifacts that disagree")
+        normalised.append({**item, "key": key, "owner": owner})
+
+    blocking = [f for f in normalised if _one_of(f.get("severity"), BLOCKING_SEVERITIES)]
+    if verdict == "APPROVED" and mechanical:
+        failures.append("judgment APPROVED over mechanical failures")
+    if verdict == "APPROVED" and blocking:
+        failures.append("judgment APPROVED with a Critical or Major finding")
+    if verdict == "REVISE" and not mechanical and not blocking:
+        failures.append("judgment REVISE without a mechanical failure or a grounded Critical or Major finding "
+                        "(revise_threshold)")
+    if verdict == "ESCALATE":
+        escalation = record.get("escalation")
+        if not isinstance(escalation, dict) or not filled(escalation.get("reason")) or not filled(escalation.get("to")):
+            failures.append("judgment ESCALATE requires escalation {to, reason}")
+
+    prior_judgment = prior.get("judgment") if isinstance(prior, dict) else None
+    if (isinstance(prior_judgment, dict) and prior_judgment.get("gate") == gate
+            and changed_evidence is not None):
+        carried = {str(f.get("id", "")).strip() for f in prior_judgment.get("findings", []) or [] if isinstance(f, dict)}
+        for item in blocking:
+            key, ident = item.get("key"), str(item.get("id", "")).strip()
+            if key and key not in changed_evidence and ident not in carried:
+                failures.append(f"judgment finding {ident} is new on unchanged evidence {key} (batch_fix)")
+
+    by_owner: dict[str, list[str]] = {}
+    for item in blocking:
+        by_owner.setdefault(item["owner"], []).append(str(item.get("id", "")).strip())
+    summary = {
+        "gate": gate, "verdict": verdict, "findings": normalised,
+        "by_owner": {owner: sorted(ids) for owner, ids in sorted(by_owner.items())},
+        "escalation": record.get("escalation"), "valid": not failures,
+    }
+    return summary, sorted(set(failures))
+
+
 def same_content(path: Path, other: Path) -> bool:
     """True when both files exist and hold the same content, line endings folded."""
     try:
@@ -1283,13 +1915,19 @@ def prior_check(prior_path: Path, data: dict, current_fingerprint: str, spec_dig
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--boundary", required=True)
-    parser.add_argument("--package", required=True)
+    parser.add_argument("--boundary")
+    parser.add_argument("--package")
+    parser.add_argument("--intake-log")
     parser.add_argument("--prior")
     parser.add_argument("--gates", default=str(GATE_SPEC_PATH))
     parser.add_argument("--verdict-out")
+    parser.add_argument("--judgment")
     parser.add_argument("--registry", default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.intake_log:
+        return intake_log_main(Path(args.intake_log).resolve())
+    if not args.boundary or not args.package:
+        parser.error("--boundary and --package are required (or --intake-log alone)")
     manifest_path = Path(args.package).resolve()
     try:
         spec_path = Path(args.gates).resolve()
@@ -1334,11 +1972,25 @@ def main() -> int:
         packet = revise_packet(failures, list(boundaries[args.boundary]["required_evidence"]),
                                (spec.get("evidence_owners", {}) or {}).get(args.boundary, {}) or {},
                                str(boundaries[args.boundary].get("submitter", "")))
+        # The prior gate's semantic verdict is read from the gate's own record,
+        # never from the submitter's checkpoint, so a carried judgment is the
+        # gate's and not the judged party's account of it.
+        prior_data = load_mapping(Path(args.prior).resolve(), "prior record") if args.prior else None
+        prior_judgment = prior_data.get("judgment") if prior_data else None
+        if prior_record is not None and isinstance(prior_judgment, dict):
+            prior_record["judgment"] = {"gate": prior_judgment.get("gate"), "verdict": prior_judgment.get("verdict"),
+                                        "valid": prior_judgment.get("valid") is True}
+        judgment, judgment_failures = None, []
+        if args.judgment:
+            judgment, judgment_failures = check_judgment(
+                package, load_mapping(Path(args.judgment).resolve(), "judgment record"), failures, spec,
+                prior_data, changed_evidence)
+            packet["judgment_by_owner"] = judgment.get("by_owner", {})
         verdict_id = hashlib.sha256("|".join([
             args.boundary, spec_digest, str(data.get("submission_id")), str(data.get("revision")), current_fingerprint,
         ]).encode()).hexdigest()
         result = {
-            "boundary": args.boundary, "pass": not failures, "failures": failures,
+            "boundary": args.boundary, "pass": not failures, "failures": failures, "manifest": manifest_path.name,
             "missing": missing, "mixed_revisions": mixed, "idempotency_drift": drift,
             "prior_reusable": prior_reusable,
             "submission_id": data.get("submission_id"), "revision": data.get("revision"),
@@ -1355,16 +2007,21 @@ def main() -> int:
             "changed_evidence": changed_evidence, "unchanged_evidence": unchanged_evidence,
             "revise_packet": packet,
             "checked_at": datetime.now(timezone.utc).isoformat(),
-            "mechanical_only": True,
+            "mechanical_only": judgment is None,
+            "judgment": judgment, "judgment_failures": judgment_failures,
         }
-        if args.verdict_out:
+        if args.verdict_out and judgment_failures:
+            # An ungrounded judgment is never put on record: a stored REVISE or
+            # APPROVED is what the next reader carries, so it must be checkable.
+            print("judgment record rejected; verdict not written: " + "; ".join(judgment_failures), file=sys.stderr)
+        elif args.verdict_out:
             out = Path(args.verdict_out)
             out.parent.mkdir(parents=True, exist_ok=True)
             tmp = out.with_suffix(out.suffix + ".tmp")
             tmp.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
             os.replace(tmp, out)
         print(json.dumps(result, indent=2, sort_keys=True))
-        return 0 if not failures else 1
+        return 0 if not failures and not judgment_failures else 1
     except Exception as exc:  # fail loud: an engine fault is exit 2, never a bare traceback or a hidden pass
         message = str(exc) if isinstance(exc, (OSError, ValueError)) else f"internal error: {type(exc).__name__}: {exc}"
         print(json.dumps({"boundary": args.boundary, "engine_error": message}, indent=2), file=sys.stderr)

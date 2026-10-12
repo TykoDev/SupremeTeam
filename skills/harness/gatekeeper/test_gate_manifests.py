@@ -180,14 +180,15 @@ class BoundaryManifestTests(unittest.TestCase):
             "scope": "docs only", "decided_by": "security-builder"}
         p["evidence"]["tests"] = {"artifacts": [ARTIFACT], "result": {"status": "pass"}}
         p["evidence"]["runtime"] = {"artifacts": [ARTIFACT], "result": {"status": "pass"}}
-        p["evidence"]["approved_design_revision"] = "r0"
         r = self.run_check("build-to-review", p)
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertTrue(any(f.startswith("applicability reason not sanctioned: security_evidence")
                             for f in json.loads(r.stdout)["failures"]), r.stdout)
         p["evidence"]["security_evidence"]["reason"] = sanctioned
         r = self.run_check("build-to-review", p)
-        self.assertEqual(r.returncode, 0, r.stdout)
+        # The other keys still owe their typed source-of-truth records here; the
+        # sanctioned waiver itself is no longer among the failures.
+        self.assertEqual([f for f in json.loads(r.stdout)["failures"] if "security_evidence" in f], [], r.stdout)
 
     def test_non_waivable_key_rejects_an_applicability_record(self):
         p = self.package("build-to-review", {

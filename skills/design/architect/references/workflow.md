@@ -85,7 +85,9 @@ delivery guarantee}
 ## Interfaces
 
 {endpoint inventory per api-endpoint-design.md, or the internal interface list:
-name, caller, callee, request shape, response shape, error taxonomy}
+name, caller, callee, request shape, response shape, error taxonomy. Give every
+interface a stable id IF-<n>; the manifest's `interfaces` record lists the same
+ids, and check.py refuses one this section does not name}
 
 ## Trust boundaries
 

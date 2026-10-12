@@ -25,7 +25,8 @@ import audit_improve as subject  # noqa: E402
 
 def write(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(value if isinstance(value, str) else json.dumps(value), encoding="utf-8")
+    # newline="\n": the audit reads byte tails, so the fixture's records must hold the same bytes on every platform.
+    path.write_text(value if isinstance(value, str) else json.dumps(value), encoding="utf-8", newline="\n")
 
 
 def build_everything(root: Path) -> None:

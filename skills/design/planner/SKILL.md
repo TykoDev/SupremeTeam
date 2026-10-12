@@ -9,7 +9,7 @@ description: >-
   `design/commander`. Planning the work is this skill; releasing is `ship`. Defers requirements to
   `design/researcher`, architecture to `design/architect`, and the spec to
   `design/engineer`.
-version: 1.0.0
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -74,7 +74,7 @@ delegating owner for the design boundary.
 ## Outputs
 
 - Delivery plan with milestones, decision gates, dependency map, and rollout strategy.
-- Acceptance criteria per delivery slice: the observable condition, the check that proves it, and the named acceptor.
+- Acceptance criteria per delivery slice, each with a stable `AC-<n>` id: the observable condition, the check that proves it, and the named acceptor.
 - Decision Register capturing open choices, recommended defaults, owners, and escalation timing.
 - Migration/deprecation path when applicable, including replacement readiness, consumer/usage discovery, advisory vs compulsory posture, and removal criteria.
 - Planning packet for `design/commander` and `design/engineer` that names the delivery slices, their dependency order, and the decision gates the implementation spec must satisfy — that spec is `design/engineer`'s artifact and is never authored here.
@@ -87,7 +87,7 @@ submits the boundary, but neither key can be assembled unless it is produced her
 | Key | Content | Backing | Fallback |
 |-----|---------|---------|----------|
 | `plan` | The delivery plan: milestones and delivery slices, rollout and rollback shape, and risk handling — the three evidence lines `../../ownership.yaml` requires of the `plan` artifact. | **Artifact-backed** — a hashed plan report, not a summary in the manifest | None sanctioned; a design package without a plan cannot pass |
-| `acceptance` | The acceptance criteria each delivery slice is judged against: the observable condition that makes a slice done, the check that proves it, and who accepts it. Written per slice so the build phase inherits a testable target rather than an intention. | Narrative | None sanctioned |
+| `acceptance` | The acceptance criteria each delivery slice is judged against: the observable condition that makes a slice done, the check that proves it, and who accepts it. Written per slice, each row with a stable `AC-<n>` id, so the build phase inherits a testable target rather than an intention and every later gate finding can cite the row it enforces. | **Artifact-backed and typed** (`acceptance_table`) — the value names the hashed plan; `check.py` reads its `Acceptance criteria` table: columns ID, Slice, Observable condition, Check that proves it, Acceptor, every cell filled, unique `AC-<n>` ids. At `build-to-review` the same table is read again, through the approved design, as the set `traceability` must cover | None sanctioned |
 
 `acceptance` is the key most often missed, because a plan reads complete without
 it. Workflow step 4 exists to produce it, and the acceptance table in

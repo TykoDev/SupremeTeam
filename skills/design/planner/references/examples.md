@@ -31,12 +31,12 @@ gates rather than assuming an outcome.
 
 ## Acceptance criteria
 
-| Slice | Observable condition | Check that proves it | Acceptor |
-| ----- | -------------------- | -------------------- | -------- |
-| tenancy model | No row in `orders`, `users`, or `audit_log` exists without a tenant id | `SELECT count(*) … WHERE tenant_id IS NULL` returns 0 on staging after backfill | data owner |
-| orders API | A token scoped to tenant A cannot read tenant B's orders | Contract test `test_cross_tenant_read_is_404` green against staging | API owner |
-| admin UI | A dispatcher reassigns a job in two interactions from the queue | Scripted walkthrough at 1024 and 1440 px, both themes, recorded | product owner |
-| reporting | Every report figure reconciles to the event log for the same window | Reconciliation job reports zero variance across a 7-day sample | finance reviewer |
+| ID | Slice | Observable condition | Check that proves it | Acceptor |
+| -- | ----- | -------------------- | -------------------- | -------- |
+| AC-1 | tenancy model | No row in `orders`, `users`, or `audit_log` exists without a tenant id | `SELECT count(*) … WHERE tenant_id IS NULL` returns 0 on staging after backfill | data owner |
+| AC-2 | orders API | A token scoped to tenant A cannot read tenant B's orders | Contract test `test_cross_tenant_read_is_404` green against staging | API owner |
+| AC-3 | admin UI | A dispatcher reassigns a job in two interactions from the queue | Scripted walkthrough at 1024 and 1440 px, both themes, recorded | product owner |
+| AC-4 | reporting | Every report figure reconciles to the event log for the same window | Reconciliation job reports zero variance across a 7-day sample | finance reviewer |
 
 ## Rollout and rollback shape
 

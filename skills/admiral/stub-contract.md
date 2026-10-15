@@ -34,7 +34,7 @@ Admiral owns stage selection, cross-stage gate routing, persistence-aware resume
 - Every handoff record must capture approval state, revision count, and the current package revision identifier.
 - Verdict vocabulary is limited to APPROVED, REVISE, and ESCALATE.
 - Skill-creation verdicts map: SHIP → APPROVED, ITERATE → REVISE, BLOCKED → ESCALATE.
-- Maximum revisions per cross-stage handoff: 2.
+- Maximum revisions per cross-stage handoff: 3.
 
 ## Delivery Contract
 

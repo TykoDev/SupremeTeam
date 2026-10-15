@@ -113,7 +113,7 @@ A clean pass still produces the `rendered_verification` record: the captures are
 
 ## REVISE Rounds
 
-`../../gates.yaml` `revise_policy.parallel_fix` delegates the design-qa group of a REVISE packet straight to this lens, in parallel with the other owners, under a `cycle_cap` of 2. A REVISE round is a delta pass, not a fresh review:
+`../../gates.yaml` `revise_policy.parallel_fix` delegates the design-qa group of a REVISE packet straight to this lens, in parallel with the other owners, under a `cycle_cap` of 3. A REVISE round is a delta pass, not a fresh review:
 
 1. Re-capture and re-judge only the screens, states, and tiers named in `changed_evidence` for this group, plus any view whose layout depends on them. Unchanged captures keep their prior judgment, mirroring how the gatekeeper re-judges under `delta_review`.
 2. Re-hash every capture that was re-taken and update the `rendered_verification` record accordingly, because a stale hash fails the artifact-backing check even when the image looks right.

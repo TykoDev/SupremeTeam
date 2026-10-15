@@ -42,7 +42,7 @@ through 12 are conditional: they run only when a variant was selected.
 ## Gate Contract
 
 - Redesign is the only owner that submits `redesign-review`.
-- Maximum revisions per stage: 2 (`gates.yaml` `revise_policy.cycle_cap`); every revision delegation batches all findings for one owner.
+- Maximum revisions per stage: 3 (`gates.yaml` `revise_policy.cycle_cap`); every revision delegation batches all findings for one owner.
 - Exactly four mocks; `mock_set` is validated mechanically for count, unique ids, and hashed files. Exactly one selected variant when the decision is `variant`; `selected_variant` is validated the same way at a count of one.
 - Required evidence: `design_inventory`, `taste_grilling`, `taste_snapshot`, `design_directions`, `mock_set`, `mock_parity`, `mock_rendering`, `selection`, `selected_variant`, `parity_evidence`, `rendered_verification`, `accessibility_evidence`, `recommendation`, `residual_risk`. All but the last three are artifact-backed.
 - `mock_rendering` is listed under `no_fallback` at this boundary, so it accepts neither a fallback string nor an applicability record; a browserless host returns an `inferred` render record labelled `INFERRED - no browser available`. `taste_snapshot` accepts only the sanctioned no-profile record.

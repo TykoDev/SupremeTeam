@@ -52,7 +52,7 @@ under `evidence/coverage/` is. The per-runner flags are in
 - Stabilization requires the targeted defects to not reproduce across at least 3 consecutive runs with no new regressions introduced.
 - Never perform destructive or irreversible operations; stop and hand off if a fix exceeds QA scope.
 - An unavailable browser, host, or fixture produces a not-run record with its reason; an unavailable check is a data gap, never a pass, and never an outcome inferred from an adjacent layer.
-- A second `REVISE` on the same package hits `cycle_cap: 2` and escalates with both packets; it does not start a third cycle.
+- A second `REVISE` on the same package hits `cycle_cap: 3` and escalates with both packets; it does not start a third cycle.
 
 ## Acceptance Checklist
 

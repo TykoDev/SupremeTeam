@@ -114,7 +114,7 @@ A clean pass asserts the interface was exercised and held, which is a stronger c
 | `review-to-delivery` | None. Every key resolves to `code-chief` or `design-qa` | `code-chief` receives the group and sub-delegates the part this lens owns |
 | `redesign-review` | `accessibility_evidence`, the one key `evidence_owners` assigns to frontier | `redesign` submits and delegates that group straight to this lens, for the selected variant only |
 
-Either way the `cycle_cap` is 2. `revise_policy.parallel_fix` is what lets that sub-delegation run alongside the other lenses rather than in sequence. A REVISE round is a delta pass, not a fresh review:
+Either way the `cycle_cap` is 3. `revise_policy.parallel_fix` is what lets that sub-delegation run alongside the other lenses rather than in sequence. A REVISE round is a delta pass, not a fresh review:
 
 1. Re-exercise only the flows, components, and keys named in `changed_evidence` for this group, plus any view whose behavior depends on them. Unchanged evidence keeps its prior judgment, mirroring how the gatekeeper re-judges under `delta_review`.
 2. Re-measure rather than re-reason. A performance or accessibility fix is verified by a new run at the same tier and input mode as the original observation; a re-read of the diff is not verification of a runtime claim.

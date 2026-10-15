@@ -149,7 +149,7 @@ and the self-check command.
 
 - Record the boundary before requesting a verdict, and name the revision the package carries.
 - Reuse a prior verdict only when the boundary, submission, revision, package fingerprint, and gate spec digest are all unchanged.
-- Treat a `REVISE` as one packet: address every failure in `revise_packet.by_owner` in one pass, then resubmit once with `--prior` so the gate re-judges only `changed_evidence`. `revise_policy.cycle_cap` is 2; a third cycle escalates instead of resubmitting.
+- Treat a `REVISE` as one packet: address every failure in `revise_packet.by_owner` in one pass, then resubmit once with `--prior` so the gate re-judges only `changed_evidence`. `revise_policy.cycle_cap` is 3; a third cycle escalates instead of resubmitting.
 
 ## Skip Rule
 
@@ -170,7 +170,7 @@ these rows.
 | --- | --- |
 | The incident cannot be reproduced and key logs or traces have already aged out | Bound the uncertainty explicitly in `residual_uncertainty`, preserve the evidence that still exists, and request the next capture opportunity. `reproduction` accepts no fallback, so an unreproducible failure returns `ESCALATE` rather than a package missing its artifact. |
 | Access limitations hide one critical evidence source, such as production logs or a managed-service metric stream | Escalate the missing evidence boundary, scope the conclusion to what can actually be observed, and name the observation that would close the gap. |
-| The gate returns `REVISE` a second time, exhausting `../gates.yaml` `revise_policy.cycle_cap` of 2 | Stop resubmitting and escalate to the delegating orchestrator with both revise packets, both verdicts, and the unclosed keys named. There is no second owner to route to here, so a second failure on the same keys means the evidence does not reach the standard the boundary sets — which is a finding about the investigation, not a formatting defect to retry. |
+| The gate returns `REVISE` a second time, exhausting `../gates.yaml` `revise_policy.cycle_cap` of 3 | Stop resubmitting and escalate to the delegating orchestrator with both revise packets, both verdicts, and the unclosed keys named. There is no second owner to route to here, so a second failure on the same keys means the evidence does not reach the standard the boundary sets — which is a finding about the investigation, not a formatting defect to retry. |
 | The request arrives without a symptom boundary, an expected healthy behavior, or the phase that owns the affected code; or a resume package carries an unparsable manifest or an evidence chain spanning two revisions | Execute no reproduction yet. Without the expected behavior there is no failure to define, and without an owning phase the fix path has no destination, so name the missing field and resolve it before the first stage writes. A resume whose manifest does not parse or whose links span revisions is rebuilt from the earliest provable observation rather than reused. |
 | A required capability is unavailable: no command execution to run the reproduction, no access to the failing environment, or no Python for the gate self-check | Report the capability by name and scope the conclusion to what can actually be observed. A reproduction that could not be executed is not a `reproduction`: the key accepts no fallback, so the outcome is `ESCALATE` with the gap in `residual_uncertainty` and the observation that would close it. Without Python the self-check did not run, so the package is submitted as unverified rather than described as passing. |
 

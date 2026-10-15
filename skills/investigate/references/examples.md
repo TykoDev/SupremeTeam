@@ -81,4 +81,4 @@ it never writes, so every example ends with a handoff rather than a change.
 - Packet contents: one mechanical failure — the chain artifact's hash no longer matches the manifest after the trace was extended — and one judgment finding, that two links are labelled observations but cite the same capture.
 - Resolution in one pass: all six keys have the same owner, so there is no fan-out. The trace is re-captured, the second link is relabelled as inference and removed from the link count, the artifact is re-hashed, and the manifest is updated.
 - Resubmission: once, with `--prior <verdict.json>`, so `changed_evidence` names `evidence_chain` and the gatekeeper carries its prior judgment on the five unchanged keys.
-- Cap: `revise_policy.cycle_cap` is 2. If the second cycle also returns `REVISE`, the packet escalates with both verdicts rather than being resubmitted a third time.
+- Cap: `revise_policy.cycle_cap` is 3. If the second cycle also returns `REVISE`, the packet escalates with both verdicts rather than being resubmitted a third time.

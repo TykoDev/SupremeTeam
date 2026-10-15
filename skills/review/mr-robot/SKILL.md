@@ -148,7 +148,7 @@ A clean pass is the strongest claim this lens makes and the easiest to overstate
 | `review-to-delivery` | None. Every key resolves to `code-chief` or `design-qa` | `code-chief` receives the group and sub-delegates the part this lens owns |
 | `security-review` | `denial_path_evidence`, the one key `evidence_owners` assigns to mr-robot | `cso` submits and delegates that group straight to this lens |
 
-Either way the `cycle_cap` is 2. `revise_policy.parallel_fix` is what lets that sub-delegation run alongside the other lenses rather than in sequence. A REVISE round is a delta pass, not a fresh engagement:
+Either way the `cycle_cap` is 3. `revise_policy.parallel_fix` is what lets that sub-delegation run alongside the other lenses rather than in sequence. A REVISE round is a delta pass, not a fresh engagement:
 
 1. Re-work only the boundaries and keys named in `changed_evidence` for this group, plus any chain whose remaining links run through them. Unchanged evidence keeps its prior judgment, mirroring how the gatekeeper re-judges under `delta_review`.
 2. Re-probe rather than re-argue. A hardening fix at a boundary that was probed is verified by re-running that probe class and recording the new denial; a reading of the patch is not evidence that the boundary now refuses.

@@ -103,7 +103,7 @@ A clean pass asserts the surface was examined and held. When the surface itself 
 
 ## REVISE Rounds
 
-`check.py` groups a REVISE packet by evidence key and routes each group to that key's owner in `../../gates.yaml` `evidence_owners`. At `review-to-delivery` every key belongs to `code-chief` or `design-qa`, so no group is addressed to this lens directly: `code-chief` receives the group and sub-delegates the part this lens owns, under a `cycle_cap` of 2. `revise_policy.parallel_fix` is what lets that sub-delegation run alongside the other lenses rather than in sequence. A REVISE round is a delta pass, not a fresh review:
+`check.py` groups a REVISE packet by evidence key and routes each group to that key's owner in `../../gates.yaml` `evidence_owners`. At `review-to-delivery` every key belongs to `code-chief` or `design-qa`, so no group is addressed to this lens directly: `code-chief` receives the group and sub-delegates the part this lens owns, under a `cycle_cap` of 3. `revise_policy.parallel_fix` is what lets that sub-delegation run alongside the other lenses rather than in sequence. A REVISE round is a delta pass, not a fresh review:
 
 1. Re-review only the files and keys named in `changed_evidence` for this group, plus any path whose correctness depends on them. Unchanged evidence keeps its prior judgment, mirroring how the gatekeeper re-judges under `delta_review`.
 2. Carry prior finding ids forward. A resolved defect returns with status `verified` and the evidence that verifies it; an unresolved one returns under its original id and severity, never renumbered.

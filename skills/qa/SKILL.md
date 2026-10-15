@@ -118,7 +118,7 @@ A bare pass rate is not evidence: `test_matrix` and `executed_probes` must refer
 files under the run's `evidence/` destination, resolved with `skills/scripts/output_paths.py`.
 `references/gate-package.md` carries the manifest shape, the evidence-path rules, and the
 `REVISE` mechanics — one packet, parallel owner groups, one resubmission with `--prior`, and
-the `cycle_cap: 2` that turns a second `REVISE` into an escalation.
+the `cycle_cap: 3` that turns a second `REVISE` into an escalation.
 
 ## Workflow
 
@@ -168,7 +168,7 @@ Skip only when the requested surface, tool, or environment does not exist and a 
 | The product surface, acceptance criteria, or environment specification is missing, empty, or self-contradictory | Refuse to start the sweep and name the missing or conflicting input with the smallest clarification that unblocks it. A matrix designed against a guessed scope produces evidence for a surface nobody asked about, and the gate cannot tell the difference. |
 | The environment, test data, or account setup is incomplete for a critical workflow | Stop the affected test path, record the missing prerequisite, and continue only with the flows that can still be tested honestly. |
 | The browser surface is under test but `open-browser` cannot supply one, or another required tool or environment is unavailable | Run the flows that do not need it, record every dependent probe as not-run with its reason rather than inferring an outcome, and carry the untested surface into `residual_risk`. An unavailable check is a data gap, never a pass. |
-| `check.py` returns `REVISE` twice on the same package | Stop resubmitting. `../gates.yaml` `revise_policy` sets `cycle_cap: 2`, so the second `REVISE` escalates: return `ESCALATE` carrying both packets, the `changed_evidence` and `unchanged_evidence` from the `--prior` comparison, and the specific keys that did not converge, and hand the decision to the delegating owner rather than opening a third cycle. |
+| `check.py` returns `REVISE` twice on the same package | Stop resubmitting. `../gates.yaml` `revise_policy` sets `cycle_cap: 3`, so the second `REVISE` escalates: return `ESCALATE` carrying both packets, the `changed_evidence` and `unchanged_evidence` from the `--prior` comparison, and the specific keys that did not converge, and hand the decision to the delegating owner rather than opening a third cycle. |
 | A defect reproduces intermittently and cannot yet be tied to one trigger | Record the unstable reproduction boundary, preserve the evidence gathered so far, and avoid claiming the fix is verified. |
 | Several failing tests appear to share one root cause | Collapse them into one blocker and rerun the dependent paths after the first credible fix instead of applying scattered changes. |
 | A scoped fix lands on a path an active `freeze` or `blocked_globs` record covers, and the hook denies the write | Do not work around it, and do not hand-edit the guard record — the hook denies that too. The defect stays recorded with its reproduction and its fix direction; only the *landing* is blocked. Two routes are open, and the boundary's owner chooses: have them lift the boundary with `unfreeze` and re-run the fix inside the reopened area, or hand the fix direction to the owner of the frozen surface and record the defect as `open` with the blocking boundary named. Either way `fixes_applied` reports what was actually applied, never what would have been; a defect whose fix the guard refused is not a fixed defect. |

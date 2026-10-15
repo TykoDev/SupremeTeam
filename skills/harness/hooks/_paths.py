@@ -148,7 +148,7 @@ class Resolver:
 
     def real(self, text: str) -> "str | None":
         """What ``_real`` returns for ``text``: a normalised absolute path with no ``.``, ``..`` or doubled separators."""
-        text = text.replace("\\", "/")
+        text = _normalise(text.replace("\\", "/"))
         drive = _DRIVE.match(text)
         if not drive and not text.startswith("/"):
             return _real(text)

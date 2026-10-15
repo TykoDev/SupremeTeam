@@ -59,7 +59,7 @@ example assumes an active Admiral handoff; a cold invocation hands off to
 **User request:** (continuation) the gate came back REVISE again on interfaces and acceptance
 
 **Output:**
-- Cycle state: this is the second `REVISE` on `design-to-build`, which exhausts `../../../gates.yaml` `revise_policy.cycle_cap` of 2.
+- Cycle state: this is the second `REVISE` on `design-to-build`, which exhausts `../../../gates.yaml` `revise_policy.cycle_cap` of 3.
 - Action: stop resubmitting. Escalate to Admiral with both revise packets, both verdict records, and the unclosed keys named with their owners (`interfaces` → `design/architect`, `acceptance` → `design/planner`).
 - Why the cap exists: two failed cycles on the same keys indicate disagreement about the requirement rather than a defect in the artifact, and a third submission would spend the gatekeeper's judgment on the same dispute.
 - What Admiral receives: the dispute, the recommended default for each key, and the evidence preserved at both revisions rather than overwritten into one history.

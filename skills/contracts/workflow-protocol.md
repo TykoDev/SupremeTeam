@@ -202,7 +202,7 @@ Where a reader needs the exact guarded transition for a gate decision,
 Phase and cross-stage gatekeepers share one owner-maintained counter per boundary:
 count REVISE **rounds**, identified by submitted revision, not tool calls. Two
 verdicts on the same revision count as one round. The second REVISE round reaches
-`cycle_cap: 2` and returns ESCALATE with both packets; a third silent retry is
+`cycle_cap: 3` and returns ESCALATE with both packets; a third silent retry is
 forbidden. Submitter mechanical self-checks do not increment the counter. Only an
 explicit user-authorized reopen starts a new cycle, recorded in the run audit.
 `check.py` checks package facts and lineage, not this live counter; the declared
@@ -248,7 +248,7 @@ evidence-incomplete, enter `ESCALATE` or `BLOCKED` and preserve the diagnosis.
 | A boundary's required evidence is present, artifact-backed, and hash-matched before approval | Machine-checked by [`../harness/gatekeeper/check.py`](../harness/gatekeeper/check.py) at submission. |
 | Mixed or stale revisions invalidate dependent verdicts | Machine-checked: `check.py` reports `mixed_revisions` and `stale verdict revision` and exits non-zero. |
 | An unchanged revision whose artifact hashes moved is drift | Machine-checked: `check.py` reports `idempotency_drift`. |
-| A `REVISE` is one packet with a cycle cap of two | Partly machine-checked: `validate_manifests.py` requires `revise_policy` to declare `self_check`, `one_packet`, `parallel_fix`, `delta_review`, and `cycle_cap: 2`; the `revise_threshold`, `batch_fix`, `rerun_scope` and `cross_stage_scope` entries, and whether a given run honors the packet discipline, are judgement. |
+| A `REVISE` is one packet with a cycle cap of three | Partly machine-checked: `validate_manifests.py` requires `revise_policy` to declare `self_check`, `one_packet`, `parallel_fix`, `delta_review`, and `cycle_cap: 3`; the `revise_threshold`, `batch_fix`, `rerun_scope` and `cross_stage_scope` entries, and whether a given run honors the packet discipline, are judgement. |
 | One run pointer, one lock, one owner, monotonic revisions on resume | Machine-checked by `../harness/hooks/save_run.py` and exercised in `../validation/test_save_contracts.py`: a revision conflict, a competing session pin, a wrong owner, and an interrupted checkpoint are all refused. |
 | The state table and the allowed-transition sets | Partly machine-checked: `../validation/test_orchestration.py` `GuardedTransitionTests` parses this table and requires every `gates.yaml` `guards` string to name only states it declares and to walk only edges it allows. Whether a *run* takes an allowed edge is still judgement. |
 | The approval, release, and safety edges | Judgement. No parser reads that prose, and an invalid transition is caught only by the owner applying this contract. |

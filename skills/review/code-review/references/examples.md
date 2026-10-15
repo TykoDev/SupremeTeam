@@ -84,5 +84,5 @@ The round after Example 1. `review/code-chief` sub-delegates the part of the
   - `CR-02` | Minor | verified | `flags/evaluate.ts:71` | the predicate was extracted in the same change, as the r1 finding directed.
   - `CR-03` | Minor | open | `flags/tests/test_evaluate.ts:40` | **out-of-delta** — the new table test asserts on the evaluation result but not on the fallback branch it also exercises, so a regression there would pass. Inside `changed_evidence` by path, outside the two findings the round was opened for; reported as out-of-delta rather than treated as a new blocker. `review/code-chief` decides the cycle.
 - Open risks: unchanged from r1 — the rollout plan is still absent, so coexistence in production remains outside what the diff can answer.
-- Next action: merge is unblocked from this lens's side. `review/code-chief` rules on `CR-03`; cycle 1 of a `cycle_cap` of 2 is spent.
+- Next action: merge is unblocked from this lens's side. `review/code-chief` rules on `CR-03`; cycle 1 of a `cycle_cap` of 3 is spent.
 - Revision: r2 <- r1.

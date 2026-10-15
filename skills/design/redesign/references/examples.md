@@ -66,7 +66,7 @@ first.
 **User request:** (continuation) the gate came back REVISE again on `design_directions` and `mock_set`
 
 **Output:**
-- Cycle state: this is the second `REVISE` on `redesign-review`, which exhausts `../../../gates.yaml` `revise_policy.cycle_cap` of 2.
+- Cycle state: this is the second `REVISE` on `redesign-review`, which exhausts `../../../gates.yaml` `revise_policy.cycle_cap` of 3.
 - Action: stop resubmitting. Escalate to Admiral with both revise packets, both verdict records, and the unclosed keys named with their owners (`design_directions` → `design/architect`, `mock_set` → `design/prototyper`).
 - Why the cap exists: two failed cycles on the same keys mean the disagreement is about the requirement — where the differentiation bar sits, what the mock parity contract covers — rather than about the artifact.
 - What Admiral receives: the dispute, the recommended default for each key, and both revisions preserved as evidence rather than overwritten into one history.

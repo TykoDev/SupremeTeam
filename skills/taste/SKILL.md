@@ -200,10 +200,14 @@ operation; repeated single-entry calls are not a way to evade that rule.
 - `references/examples.md` — routing, confirmation, promotion, and accessibility-conflict examples.
 - `taste_prefs.py` — the sole sanctioned writer for durable Taste records (standard-library only); every documented command invokes it, and `../harness/hooks/pre_tool_use.py` Rule C denies any other write to the project store — an edit-tool write or a shell redirect alike — while a write to the global store, outside the checkout, is not seen and so not denied.
 - `test_taste_prefs.py` — the command-surface tests for `taste_prefs.py`: every subcommand and its refusals, scope and revision handling, the record's digest chain, history, journal, and rendered view, corrupt-record refusal, lock reclaim, and commit rollback.
+- `test_lock_contracts.py` — the lock's contention contract: POSIX `FileExistsError` and
+  Windows sharing-violation `PermissionError` judged by the lock's content and age (the
+  six-writer behaviour it produces is held by the concurrency suite). Run it with the two
+  suites below.
 - `test_taste_store.py` — the engine and safety unit tests: process probing and lock staleness, lock races, the commit helpers, global root resolution, owner identity, the secret and field-name validators, proposal validation, and the checks that keep the writer equal to `../taste-doctrine.md`. Run both suites (`python -m unittest discover -s skills/taste -p "test_*.py"`) after any change to the writer or its documented commands.
 - `intake-brief.yaml` — the intake contract (scopes, inputs, confirmation triggers, outputs, acceptance).
 - `stub-contract.md` — the ownership, persistence, confirmation, handoff, and gate boundary in brief.
 
 ## Packaging Notes
 
-Package `SKILL.md`, `references/workflow.md`, `references/examples.md`, `intake-brief.yaml`, `stub-contract.md`, `taste_prefs.py`, `test_taste_prefs.py`, and `test_taste_store.py` together — the writer and its tests ship with the skill because the documented commands depend on them. `taste-review/` is a separate skill with its own owner and is not packaged here. Keep resolved snapshots, handoffs, and generated records under the run's save path, not inside the skill directory; durable Taste records live in the writer's own roots (`skillset-saves/preferences/` for project scope, the user-data root for global), never in the skill.
+Package `SKILL.md`, `references/workflow.md`, `references/examples.md`, `intake-brief.yaml`, `stub-contract.md`, `taste_prefs.py`, `test_taste_prefs.py`, `test_taste_store.py`, and `test_lock_contracts.py` together — the writer and its tests ship with the skill because the documented commands depend on them. `taste-review/` is a separate skill with its own owner and is not packaged here. Keep resolved snapshots, handoffs, and generated records under the run's save path, not inside the skill directory; durable Taste records live in the writer's own roots (`skillset-saves/preferences/` for project scope, the user-data root for global), never in the skill.

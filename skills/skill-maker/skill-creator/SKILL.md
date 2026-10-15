@@ -1,14 +1,7 @@
 ---
 name: skill-creator
 description: >-
-  Drafts and revises skill content for `skill-maker`, which owns the pipeline and
-  delegates each mode: Create writes the SKILL.md and supporting files, Improve
-  applies a reviewer's scorecard to fix reviewer findings, Eval runs behavioral evals
-  against real queries, Optimize tunes the description's trigger surface, and Package
-  produces the `.skill` bundle. Use when skill-maker delegates drafting, findings to
-  apply, an eval run, a description optimization, or packaging. An internal
-  specialist, never the front door: a cold "write me a skill" belongs to
-  `skill-maker`.
+  Drafts and revises skill content for `skill-maker`, which delegates each mode: Create writes the SKILL.md and supporting files, Improve applies a reviewer's scorecard to fix reviewer findings, Eval runs behavioral evals against real queries, Optimize tunes the description's trigger surface, and Package produces the `.skill` bundle. Use when skill-maker delegates drafting, findings to apply, an eval run, a description optimization, or packaging — even when only the mode is named. An internal specialist, never the front door: a cold "write me a skill" belongs to `skill-maker`.
 version: 1.1.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
@@ -276,8 +269,8 @@ python -m scripts.package_skill <path/to/skill-folder> <absolute-output-director
 The working directory is `skill-creator/` after the `cd` above, so a relative path resolves
 there and not in the project: `skillset-saves/runs/<run-id>/skill-creation/packages` would land
 beside this source instead of in the run, and the packager refuses to write anywhere inside
-`skill-creator/`. Pass the run's `packages/` directory as an absolute path, the project root
-you started in joined with `skillset-saves/runs/<run-id>/skill-creation/packages`.
+`skill-creator/`. Pass the run's `packages/` directory as an absolute path, the invoking shell's
+project root joined with `skillset-saves/runs/<run-id>/skill-creation/packages`.
 
 Outside a run, omit the directory: the `.skill` ZIP goes to `<project>/.harness-state/packages/`,
 `<project>` being the nearest ancestor of the working directory holding `.claude`, `.git`,

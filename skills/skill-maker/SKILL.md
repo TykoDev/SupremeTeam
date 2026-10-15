@@ -186,7 +186,8 @@ Delegate to **skill-creator** in Create mode.
 
 **Expected return:**
 - Draft SKILL.md with frontmatter
-- Supporting files (references/, scripts/, agents/, examples/ as needed)
+- Supporting files the skill needs, plus a supporting-file inventory naming each file's path,
+  its purpose, the consumer or reference that reads it, and the packaging location it ships in
 - Behavioral eval results (if Track A evals were run)
 - Skill directory path
 

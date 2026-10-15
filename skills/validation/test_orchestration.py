@@ -766,7 +766,7 @@ class RevisionCapTests(unittest.TestCase):
     `test_catalog_contracts.py` already checks the one phrasing
     "Maximum revisions per phase/stage/boundary". This reads every phrasing the
     catalog actually uses, including `cycle_cap` of/is/`:`, the bare
-    "`cycle_cap` 2" of a cycle-count line, the spelled-out "a cycle cap of two",
+    "`cycle_cap` 3" of a cycle-count line, the spelled-out "a cycle cap of three",
     and "Maximum revisions per cross-stage handoff" - which the narrower pattern
     does not match.
     """
@@ -820,14 +820,14 @@ class RevisionCapTests(unittest.TestCase):
     def test_the_cap_detector_reads_every_phrasing_the_catalog_uses(self):
         """Each string is a real sentence; the negatives each broke an earlier pattern."""
         for text, expected in [
-            ("exhausting `../gates.yaml` `revise_policy.cycle_cap` of 2", [2]),
-            ("`revise_policy.cycle_cap` is 2; a third cycle escalates", [2]),
-            ("- Maximum revisions per boundary: 2 (`gates.yaml` `revise_policy.cycle_cap`)", [2]),
-            ("- Maximum revisions per cross-stage handoff: 2.", [2]),
-            ("- Cycle count: 1 of `revise_policy.cycle_cap` 2. A third cycle escalates.", [2]),
-            ("`revise_policy` sets `cycle_cap: 2`. A second `REVISE` ends the cycle", [2]),
-            ("| A `REVISE` is one packet with a cycle cap of two |", [2]),
-            ("Either way the `cycle_cap` is 2.", [2]),
+            ("exhausting `../gates.yaml` `revise_policy.cycle_cap` of 3", [3]),
+            ("`revise_policy.cycle_cap` is 3; a third cycle escalates", [3]),
+            ("- Maximum revisions per boundary: 3 (`gates.yaml` `revise_policy.cycle_cap`)", [3]),
+            ("- Maximum revisions per cross-stage handoff: 3.", [3]),
+            ("- Cycle count: 1 of `revise_policy.cycle_cap` 3. A third cycle escalates.", [3]),
+            ("`revise_policy` sets `cycle_cap: 3`. A second `REVISE` ends the cycle", [3]),
+            ("| A `REVISE` is one packet with a cycle cap of three |", [3]),
+            ("Either way the `cycle_cap` is 3.", [3]),
         ]:
             with self.subTest(kind="phrasing", text=text[:45]):
                 self.assertEqual(self.stated_caps(text), expected)

@@ -37,7 +37,7 @@ release: [ship, setup-deploy, land-and-deploy, document-release]
 safety: [careful, freeze, guard, unfreeze]
 browser: [browse, open-browser, setup-browser-cookies, pair-agent]
 testing: [qa, qa-only, benchmark]
-hosts: [codex, claude-code, copilot, cursor, opencode]
+hosts: [codex, claude-code, copilot, cursor, opencode, pi]
 state_root: skillset-saves
 verdicts: [APPROVED, REVISE, ESCALATE]
 authority:

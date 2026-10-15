@@ -22,6 +22,9 @@ This shipped file is a blank discovery template, not a live inventory. The epoch
 and empty tables mean **undiscovered**, not an expired confirmed cache and not a
 reason to pause every fresh installation. Actual availability comes from the
 active host's exposed tools; never fabricate a browser or MCP server from a row.
+`protocol_version` versions this template's own field set: `mcp_registry.py` never
+gates on it — freshness is `last_discovery_at` against `discovery_ttl_hours` — so an
+older template's cache stays readable and a newer value never blocks intake.
 
 `admiral` owns the project cache at `.harness-state/mcp-tools.md`, declared in
 `save-ownership.yaml`. Its `workspace` is the resolved project-root path and its

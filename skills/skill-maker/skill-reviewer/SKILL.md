@@ -5,7 +5,8 @@ description: >-
   dimensions, audits its SKILL.md and supporting files, and returns a prioritized
   findings report plus the `link_report` evidence the delivery gate requires. Use when
   skill-maker delegates a review, or the user says "score this skill", "audit my
-  skill", or asks whether a skill is production-ready. Reviews skill definitions, not
+  skill", or asks whether a skill is production-ready — even when the request is only
+  "is this good enough to ship?". Reviews skill definitions, not
   application code — a codebase goes to `review/code-chief`. Reports findings; never
   applies fixes.
 version: 1.0.2

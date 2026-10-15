@@ -249,7 +249,7 @@ at the destination the delegation names. Gatekeepers write verdict records but
 never modify submissions.
 
 The authoritative, machine-readable path policy is
-[save-ownership.yaml](save-ownership.yaml): one writer per path class. Sixteen
+[save-ownership.yaml](save-ownership.yaml): one writer per path class. Eighteen
 are declared; the run-facing ones are the core run record, grilling log, phase
 manifest, reports, artifacts, evidence, packages, gate verdict, harness guards,
 harness trajectories, and harness observations, with the preference store, test

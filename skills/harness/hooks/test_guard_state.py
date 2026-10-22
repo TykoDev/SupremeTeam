@@ -7,47 +7,48 @@ authority-checked and preserves the record, and lifting destructive-pattern
 blocking is bounded by an expiry rather than a permanent flag.
 """
 
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-HOOKS = Path(__file__).resolve().parent
-GUARD = HOOKS / "guard_state.py"
-PRE_TOOL = HOOKS / "pre_tool_use.py"
-GUARD_HOOK = HOOKS / "guard_hook.py"
+import _fsutil
+import _testkit as kit
+import guard_state
+
+GUARD = Path(guard_state.__file__)
 
 
-class GuardStateTests(unittest.TestCase):
+class GuardStateCase(unittest.TestCase):
+    """A scratch project with a state directory: the writer runs there as its owner runs it, and the hook as a host runs it."""
+
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.project = Path(self._tmp.name)
-        (self.project / ".harness-state").mkdir(parents=True, exist_ok=True)
-        self.addCleanup(self._tmp.cleanup)
-
-    def _env(self):
-        env = dict(os.environ)
-        env["SUPREMETEAM_PROJECT_DIR"] = str(self.project)
-        return env
+        self.project = self.enterContext(kit.project())
+        (self.project / ".harness-state").mkdir()
 
     def run_guard(self, *args):
-        return subprocess.run([sys.executable, str(GUARD), *args],
-                              capture_output=True, text=True, env=self._env(), cwd=self.project)
+        return kit.run_cli(GUARD, *args, env=kit.clean_env(self.project), cwd=self.project)
 
     def record(self):
         path = self.project / ".harness-state" / "guard-state.json"
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
-    def pre_tool(self, payload, script=PRE_TOOL):
-        proc = subprocess.run([sys.executable, str(script)], input=json.dumps(payload),
-                              capture_output=True, text=True, env=self._env(), cwd=self.project)
+    def write_record(self, state):
+        kit.write_guard(self.project, state)
+
+    def pre_tool(self, payload, script="pre_tool_use.py"):
+        proc = kit.run_hook(script, payload, self.project, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout
 
+
+class GuardStateTests(GuardStateCase):
     # --- recording -------------------------------------------------------
 
     def test_freeze_records_an_owner_so_release_authority_is_checkable(self):
@@ -238,7 +239,7 @@ class GuardStateTests(unittest.TestCase):
         recorded = self.run_guard("freeze", "--glob", "src/payments/**", "--owner", "ops")
         self.assertEqual(recorded.returncode, 0, recorded.stderr)
         out = self.pre_tool({"tool_name": "Edit",
-                             "tool_input": {"file_path": "src/payments/charge.py"}}, GUARD_HOOK)
+                             "tool_input": {"file_path": "src/payments/charge.py"}}, "guard_hook.py")
         self.assertIn('"permissionDecision": "deny"', out)
 
     def test_apply_patch_cannot_cross_frozen_or_single_writer_boundaries(self):
@@ -293,35 +294,18 @@ class GuardStateTests(unittest.TestCase):
         self.assertEqual(out, "")
 
 
-class GuardStateHardeningTests(unittest.TestCase):
+class GuardStateHardeningTests(GuardStateCase):
     """SEC-04, SEC-14, BUGH-24, QR-PY-05: globs are normalised or refused when recorded, grants are capped, writes are serialised."""
 
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.project = Path(self._tmp.name).resolve()
-        (self.project / ".harness-state").mkdir(parents=True, exist_ok=True)
-        self.addCleanup(self._tmp.cleanup)
-
-    def _env(self):
-        env = dict(os.environ)
-        env["SUPREMETEAM_PROJECT_DIR"] = str(self.project)
-        return env
-
-    def run_guard(self, *args):
-        return subprocess.run([sys.executable, str(GUARD), *args], capture_output=True, text=True, env=self._env(), cwd=self.project)
-
-    def record(self):
-        path = self.project / ".harness-state" / "guard-state.json"
-        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-
-    def write_record(self, state):
-        (self.project / ".harness-state" / "guard-state.json").write_text(json.dumps(state), encoding="utf-8")
-
-    def pre_tool(self, payload):
-        proc = subprocess.run([sys.executable, str(PRE_TOOL)], input=json.dumps(payload), capture_output=True, text=True,
-                              env=self._env(), cwd=self.project)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        return proc.stdout
+    def guard_here(self, *args: str) -> tuple[int, str]:
+        """The writer's own entry point, run in this process: its exit code and what it wrote to stderr."""
+        err = io.StringIO()
+        with kit.in_project(self.project), redirect_stdout(io.StringIO()), redirect_stderr(err):
+            try:
+                code = guard_state.main(list(args))
+            except SystemExit as exc:
+                code = exc.code
+        return code, err.getvalue()
 
     # --- globs ---------------------------------------------------------
 
@@ -437,18 +421,19 @@ class GuardStateHardeningTests(unittest.TestCase):
 
     def test_a_boundary_list_in_another_shape_is_refused_by_the_writer_and_read_as_empty_by_the_hook(self):
         """RR3-guard-4: a record that parses but holds a list as a mapping or a string names no boundary to the hook, with no
-        fault and no note, so the writer is where the owner is told; the README says both."""
+        fault and no note, so the writer is where the owner is told; the README says both. Both run in this process, as
+        nine records read by four commands and the hook would take 45 interpreters."""
+        command = {"freeze": ("--glob", "a/**", "--owner", "ops"), "status": (), "release": ("--glob", "a/**", "--requester", "ops"),
+                   "read-only": ("--run-id", "r", "--owner", "o", "--allow", "x/**")}
         for shape in ({"glob": "src/payments/**"}, "src/payments/**", 5):
             for key in ("frozen_globs", "blocked_globs", "read_only"):
                 with self.subTest(shape=shape, key=key):
                     self.write_record({key: shape})
-                    command = {"freeze": ("--glob", "a/**", "--owner", "ops"), "status": (), "release": ("--glob", "a/**", "--requester", "ops"),
-                               "read-only": ("--run-id", "r", "--owner", "o", "--allow", "x/**")}
                     for name, args in command.items():
-                        proc = self.run_guard(name, *args)
-                        self.assertEqual(proc.returncode, 1, (name, proc.stdout))
-                        self.assertIn(f"'{key}' must be a list", proc.stderr)
-                    self.assertEqual(self.pre_tool({"tool_name": "Bash", "tool_input": {"command": "touch src/payments/a.py"}}), "")
+                        code, err = self.guard_here(name, *args)
+                        self.assertEqual(code, 1, (name, err))
+                        self.assertIn(f"'{key}' must be a list", err)
+                    self.assertEqual(kit.decide(kit.bash("touch src/payments/a.py"), self.project), "")
 
     def test_status_says_why_an_unmatchable_record_already_on_disk_enforces_nothing(self):
         self.write_record({"frozen_globs": [{"glob": f"/{self.MISSING}/payments/**", "owner": "ops"}, {"glob": "!x/**", "owner": "ops"},
@@ -527,9 +512,6 @@ class GuardStateHardeningTests(unittest.TestCase):
     # --- serialised writers --------------------------------------------
 
     def test_a_writer_waits_for_the_lock_and_refuses_when_another_holds_it_too_long(self):
-        sys.path.insert(0, str(HOOKS))
-        import _fsutil
-
         lock = self.project / ".harness-state" / "guard-state.json.lock"
         with _fsutil.AdvisoryLock(lock, 5.0):
             proc = self.run_guard("--lock-timeout", "0.2", "freeze", "--glob", "a/**", "--owner", "ops")
@@ -539,7 +521,7 @@ class GuardStateHardeningTests(unittest.TestCase):
         self.assertEqual(self.run_guard("--lock-timeout", "0.2", "freeze", "--glob", "a/**", "--owner", "ops").returncode, 0)
 
     def test_concurrent_writers_do_not_lose_each_others_records(self):
-        env = self._env()
+        env = kit.clean_env(self.project)
         procs = [subprocess.Popen([sys.executable, str(GUARD), "freeze", "--glob", f"zone{n}/**", "--owner", "ops"],
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env, cwd=self.project) for n in range(8)]
         for proc in procs:

@@ -58,8 +58,11 @@ leg whose interpreter disagrees, so a broken install cannot turn tests into
 skips. Leave it unset on your machine.
 
 The validation tests read the catalog with `skills/scripts/data_formats.py`, the
-parser production uses, through `skills/validation/_catalog.py`. A test that
-needs PyYAML says so in its skip message.
+parser production uses, through `skills/validation/_catalog.py`. It also holds
+the other readers the test modules share: a document's sections, the
+routing-class table, the advertised triggers, the roster, the gatekeepers, counts
+spelled as words, the checkout check and the PreToolUse hook's answer. A test
+that needs PyYAML says so in its skip message.
 
 ## Continuous integration
 

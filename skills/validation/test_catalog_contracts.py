@@ -9,11 +9,15 @@ its ownership entry forbids" — was unenforced and had silently drifted.
 
 These tests close that gap. Each derives its expectation from the machine specs,
 so the specs stay the single source of truth and the assertions cannot rot
-independently of them.
+independently of them. The exceptions are the five wording classes from
+`AuthorizationControlTests` to `ReviewerExampleTests`, whose rules no spec
+states: they keep out the phrases a repair removed, keep in the requirements it
+added, and keep a worked example in agreement with itself.
 """
 
 import ast
 import re
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -47,7 +51,7 @@ def _contract_bound() -> set:
 
 def _clauses() -> list:
     """The six numbered clauses, verbatim, from the canonical section."""
-    section = CONTRACT.split("## Canonical clauses", 1)[1].split("\n## ", 1)[0]
+    section = _catalog.section(CONTRACT, "Canonical clauses")
     clauses = re.findall(r"^\d\.\s+(.*?)(?=^\d\.\s|\Z)", section, re.S | re.M)
     return [" ".join(c.split()) for c in clauses]
 
@@ -353,11 +357,6 @@ class ToolSurfaceTests(unittest.TestCase):
                 no_edit.add(writer)
         return no_edit
 
-    def test_every_skill_declares_a_tool_surface(self):
-        missing = [name for name, d in SKILL_DIRS.items()
-                   if "allowed-tools" not in (skill_front(d / "SKILL.md") or {})]
-        self.assertEqual(missing, [], "every skill declares allowed-tools: " + ", ".join(missing))
-
     def test_tools_are_drawn_from_the_documented_vocabulary(self):
         known = {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite", "Agent", "Task"}
         bad = []
@@ -399,9 +398,10 @@ class PerDocumentConsistencyTests(unittest.TestCase):
     """A supporting document must not contradict the spec its SKILL.md follows.
 
     The other comparators in this file are corpus-level — they accept a fact
-    stated anywhere in the skill's tree. That let two documents drift while the
+    stated anywhere in the skill's tree. That let documents drift while the
     tests stayed green: a stub-contract omitting a mandatory stage, and two
-    stating a revision cap the gate spec does not allow.
+    stating a revision cap the gate spec does not allow, which
+    `test_orchestration.RevisionCapTests` now reads in every document.
     """
 
     def _supporting_docs(self, directory: Path):
@@ -413,21 +413,6 @@ class PerDocumentConsistencyTests(unittest.TestCase):
                          for p in path.parents if p != directory and p.is_relative_to(directory))
             if not nested:
                 yield path
-
-    def test_no_document_states_a_revision_cap_the_gate_spec_forbids(self):
-        cap = (GATES.get("revise_policy") or {}).get("cycle_cap")
-        self.assertIsInstance(cap, int, "gates.yaml must declare revise_policy.cycle_cap")
-        pattern = re.compile(r"[Mm]aximum revisions? per (?:phase|stage|boundary)[^\n]*?(\d+)")
-        violations = []
-        for directory in SKILL_DIRS.values():
-            for path in [directory / "SKILL.md", *self._supporting_docs(directory)]:
-                for match in pattern.finditer(path.read_text(encoding="utf-8", errors="replace")):
-                    if int(match.group(1)) != cap:
-                        violations.append(
-                            f"{path.relative_to(SKILLS).as_posix()} states a cap of "
-                            f"{match.group(1)}; gates.yaml revise_policy.cycle_cap is {cap}")
-        self.assertEqual(violations, [],
-                         "revision caps must match the gate spec:\n  " + "\n  ".join(violations))
 
     def test_a_stated_phase_order_includes_every_unconditional_stage(self):
         """A document that enumerates the mandatory order may not drop a stage.
@@ -501,60 +486,19 @@ class PerDocumentConsistencyTests(unittest.TestCase):
 
 
 class DeclaredCoverageTests(unittest.TestCase):
-    """Two mirrors that nothing compared, each of which had already drifted.
+    """A mirror that nothing compared, and that had already drifted.
 
-    `save-ownership.yaml` states "one writer per path class", but four kinds the
-    resolver offers had no class at all. `responsibility-matrix.md` mirrors the
-    team manifest by hand. Both were corrected in this pass; these keep them so.
+    `responsibility-matrix.md` mirrors the team manifest's specialists by hand.
+    It was corrected in this pass; this keeps it so. The matrix's Owner column
+    and Gate coverage table are `test_contract_mirrors.py`'s, and the resolver
+    kinds' writer classes are `test_save_taxonomy.py`'s.
     """
-
-    @staticmethod
-    def _resolver_kinds() -> set:
-        """Project kinds `output_paths.py` will resolve, read from its own parser."""
-        source = (SKILLS / "scripts" / "output_paths.py").read_text(encoding="utf-8")
-        match = re.search(r"--kind[\"'].*?choices=\(([^)]*)\)", source, re.S)
-        if not match:
-            match = re.search(r"KINDS\s*=\s*\{([^}]*)\}", source, re.S)
-        self_kinds = set(re.findall(r"[\"']([a-z_]+)[\"']", match.group(1))) if match else set()
-        return self_kinds
-
-    def test_every_resolver_kind_has_a_declared_writer(self):
-        """A sanctioned destination with no declared class is a policy gap.
-
-        Global and per-user destinations live outside the project-relative glob
-        policy by design, so they are exempt; everything else must be covered.
-        """
-        classes = SAVE_OWNERSHIP.get("classes") or []
-        self.assertTrue(classes, "save-ownership.yaml declares no classes")
-        # Match against class ids as well as patterns: `guards` is covered by the
-        # class `harness-guards`, `trajectory` by `.harness-state/trajectories/`.
-        haystack = " ".join(
-            [str(c.get("id", "")) for c in classes]
-            + [str(p) for c in classes for p in (c.get("patterns") or [])]).lower()
-
-        exempt = {"global_preferences", "product", "core"}
-        kinds = self._resolver_kinds()
-        self.assertGreater(len(kinds), 8, "could not read the resolver's kind list")
-
-        uncovered = []
-        for kind in sorted(kinds - exempt):
-            # Compare on the kind's significant token, de-pluralised, so
-            # `standalone_packages` matches `standalone-packages` and
-            # `trajectory` matches `trajectories`.
-            token = kind.split("_")[-1][:7]  # prefix stem: trajectory ~ trajectories
-            if token not in haystack:
-                uncovered.append(f"{kind} (looked for '{token}')")
-        self.assertEqual(uncovered, [],
-                         "every resolver kind needs a declared writer class:\n  "
-                         + "\n  ".join(uncovered))
 
     def test_responsibility_matrix_specialists_match_the_manifest(self):
         """The matrix mirrors team-manifest.yaml by hand; nothing compared them."""
         path = SKILLS / "contracts" / "responsibility-matrix.md"
-        text = path.read_text(encoding="utf-8")
-        section = text.split("## Specialists", 1)
-        self.assertEqual(len(section), 2, "responsibility-matrix.md has no Specialists section")
-        block = section[1].split("\n## ", 1)[0]
+        block = _catalog.section(path.read_text(encoding="utf-8"), "Specialists")
+        self.assertIsNotNone(block, "responsibility-matrix.md has no Specialists section")
 
         declared = [s for s in (TEAM.get("specialists") or []) if isinstance(s, str)]
         self.assertTrue(declared, "team-manifest.yaml declares no specialists")
@@ -563,30 +507,14 @@ class DeclaredCoverageTests(unittest.TestCase):
                          "the Specialists section must name every manifest specialist:\n  "
                          + "\n  ".join(missing))
 
-        ones = ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
-        words = {"twenty": 20, **{f"twenty-{word}": 20 + n for n, word in enumerate(ones, 1)}}
-        spelled = "|".join(sorted(words, key=len, reverse=True))
-        stated = re.search(rf"\b({spelled}|\d+)\s+specialists\b", block, re.I)
+        stated = re.search(rf"\b({_catalog.NUMBER})\s+specialists\b", block, re.I)
         self.assertIsNotNone(stated, "the Specialists section states no count the comparator can read")
-        value = int(stated.group(1)) if stated.group(1).isdigit() else words[stated.group(1).lower()]
+        value = _catalog.number_value(stated.group(1))
         self.assertEqual(
             value, len(declared),
             f"the matrix says {stated.group(1)} specialists; the manifest declares "
             f"{len(declared)}")
 
-    def test_release_layer_owner_matches_the_pipeline_and_the_gate(self):
-        """The RELEASE row named the stage writer, not the pipeline owner."""
-        text = (SKILLS / "contracts" / "responsibility-matrix.md").read_text(encoding="utf-8")
-        row = next((line for line in text.splitlines()
-                    if line.startswith("| RELEASE ")), None)
-        self.assertIsNotNone(row, "responsibility-matrix.md has no RELEASE row")
-        owner = PIPELINES["pipelines"]["release"]["owner"]
-        submitter = GATES["boundaries"]["deploy-readiness"]["submitter"]
-        self.assertEqual(owner, submitter,
-                         "pipelines.yaml and gates.yaml disagree on who owns release")
-        cells = [c.strip() for c in row.split("|")]
-        self.assertIn(owner, cells,
-                      f"the RELEASE row must name '{owner}' as the layer owner; row was: {row}")
 
 class GuardWriterTests(unittest.TestCase):
     """The guard boundary record has a single writer, like every other durable class."""
@@ -600,13 +528,10 @@ class GuardWriterTests(unittest.TestCase):
         self.assertTrue((SKILLS / "harness" / "hooks" / "guard_state.py").is_file())
 
     def test_pre_tool_hook_protects_the_guard_record(self):
-        hooks = SKILLS / "harness" / "hooks"
-        entry = (hooks / "pre_tool_use.py").read_text(encoding="utf-8")
-        guard = (hooks / "guard_hook.py").read_text(encoding="utf-8")
-        self.assertIn("import guard_hook", entry)
-        self.assertIn("guard_hook.main()", entry)
-        self.assertIn("guard-state.json", guard)
-        self.assertIn("guard_state.py", guard,
+        """The registered hook refuses an edit-tool write to the record and names the sanctioned writer."""
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = _catalog.run_hook(Path(tmp), "Write", Path(tmp) / ".harness-state" / "guard-state.json")
+        self.assertIn("guard_state.py", _catalog.deny_reason(proc.stdout),
                       "the guard hook must route writes to the sanctioned writer")
 
 
@@ -746,6 +671,130 @@ class EvidenceVocabularyTests(unittest.TestCase):
         self.assertEqual([], silent, "\n".join(silent))
 
 
+def _text(relative: str) -> str:
+    return (SKILLS / relative).read_text(encoding="utf-8")
+
+
+class AuthorizationControlTests(unittest.TestCase):
+    """Approval-control instructions must not authorise a bypass.
+
+    `ship` once let a general affirmative prompt stand in for the human go
+    decision `deploy-readiness` requires, and `setup-deploy` applied drift repairs
+    without the owner-approved diff. The phrases that did it stay gone, and the
+    requirements that replaced them stay stated.
+    """
+
+    def test_ship_has_no_generic_affirmation_bypass(self):
+        text = _text("ship/SKILL.md")
+        self.assertNotIn(
+            "bypass the wait state", text,
+            "ship/SKILL.md must not treat a general affirmative prompt as the "
+            "human go decision the deploy-readiness gate requires",
+        )
+        # The concrete requirement stays: approver, reference, revision, timestamp.
+        self.assertIn("human_go_required", text)
+        self.assertIn("exact revision", text)
+        self.assertIn("approver", text)
+
+    def test_ship_still_names_the_no_go_decision_failure(self):
+        self.assertIn("No owner go-decision is present", _text("ship/SKILL.md"))
+
+    def test_setup_deploy_has_no_automatic_drift_repair(self):
+        for relative in ("setup-deploy/SKILL.md", "setup-deploy/references/workflow.md"):
+            self.assertNotIn(
+                "Automatically apply", _text(relative),
+                f"{relative} must not apply drift repairs without the owner-approved diff",
+            )
+
+    def test_setup_deploy_requires_a_named_owner_and_an_approved_diff(self):
+        text = _text("setup-deploy/SKILL.md")
+        self.assertIn("named owner", text)
+        self.assertIn("approval", text)
+
+
+class SetupDeployPreviewTests(unittest.TestCase):
+    """A deploy config `setup-deploy` cannot parse is never echoed back verbatim.
+
+    It may hold secrets, so the owner is shown its path, hash and parser error
+    after a redaction pass, and nothing changes until that owner approves.
+    """
+
+    def test_no_verbatim_quote_escape_hatch(self):
+        for relative in ("setup-deploy/SKILL.md", "setup-deploy/references/workflow.md"):
+            text = _text(relative)
+            self.assertNotIn("quoted verbatim", text, relative)
+            self.assertNotIn("verbatim so the owner sees", text, relative)
+            self.assertIn("never echoed verbatim", text, relative)
+
+    def test_replacement_preview_carries_path_hash_and_parse_error(self):
+        text = _text("setup-deploy/SKILL.md")
+        self.assertIn("path, its sha256, and the parser error", text)
+        self.assertIn("redaction pass", text)
+        self.assertIn("stays unchanged until that named owner approves", text)
+
+
+class RepairedWordingTests(unittest.TestCase):
+    """Wording defects that were repaired stay repaired."""
+
+    ABSENT = (
+        ("freeze/SKILL.md", "you like"),
+        ("freeze/SKILL.md", "what you will"),
+        ("guard/SKILL.md", "what you need"),
+        ("guard/SKILL.md", "what you expect"),
+        ("gatekeeper-admiral/SKILL.md", "leaves to you"),
+        ("design/gatekeeper-design/SKILL.md", "for you to act on"),
+        ("skill-maker/skill-creator/SKILL.md", "you started in"),
+        ("skill-maker/SKILL.md", "examples/ as needed"),
+        ("build/gatekeeper-build/SKILL.md",
+         "is not waived at schema 2. - **The build is bound"),
+    )
+
+    def test_repaired_phrases_are_absent(self):
+        for relative, phrase in self.ABSENT:
+            self.assertNotIn(phrase, _text(relative), f"{relative}: `{phrase}`")
+
+    def test_prototyper_command_templates_have_no_nested_backticks(self):
+        text = _text("design/prototyper/SKILL.md")
+        self.assertNotIn("`relative`", text)
+        self.assertEqual(text.count('<the resolver' + chr(39) + 's "relative" value>'), 2)
+
+    def test_mcp_template_documents_protocol_version(self):
+        text = _text("mcp-tools.md")
+        self.assertIn("protocol_version", text)
+        self.assertRegex(
+            text, r"protocol_version[^\n]*\b(versions|schema)\b",
+            "protocol_version must be defined where it is declared",
+        )
+
+
+class SkillMakerInventoryTests(unittest.TestCase):
+    """skill-maker asks for an inventory of the supporting files, not blanket packaging rules."""
+
+    def test_expected_return_names_an_inventory(self):
+        text = _text("skill-maker/SKILL.md")
+        self.assertIn("supporting-file inventory", text)
+        for field in ("path,", "purpose,", "consumer or reference", "packaging location"):
+            self.assertIn(field, text)
+        self.assertNotIn("sits one level deep", text)
+        self.assertNotIn("ships non-empty", text)
+
+
+class ReviewerExampleTests(unittest.TestCase):
+    """The skill reviewer's worked example agrees with itself.
+
+    Its finding deducts one point from progressive disclosure, so the finding, its
+    stated impact and the scorecard row all have to say the same thing. The
+    check_parity examples the design skills document are run in
+    `scripts/test_check_parity.py`.
+    """
+
+    def test_reviewer_toc_example_matches_its_stated_deduction(self):
+        text = _text("skill-maker/skill-reviewer/references/examples.md")
+        self.assertIn("deducts D5 −1", text)
+        self.assertIn("D5 9 → 10", text)
+        self.assertIn("Progressive disclosure   | 9/10", text)
+
+
 class FrontmatterBudgetTests(unittest.TestCase):
     """Frontmatter limits that have regressed silently more than once.
 
@@ -757,22 +806,23 @@ class FrontmatterBudgetTests(unittest.TestCase):
     so it should not need a reviewer.
     """
 
-    #: Anthropic's published ceiling for the frontmatter description field.
+    #: The catalog's own budget for the description, tighter than the 1,024
+    #: characters the specification allows and `skill-creator/scripts/quick_validate.py` enforces.
     MAX_DESCRIPTION = 600
     MAX_SKILL_LINES = 500
     NAVIGATION_THRESHOLD = 400
 
     @staticmethod
     def _frontmatter(text):
-        if not text.startswith("---"):
-            return None
-        end = text.find("\n---", 3)
-        if end == -1:
+        """The frontmatter mapping, or None when it is missing, does not parse, or is not a mapping."""
+        match = _catalog.FRONTMATTER.match(text)
+        if not match:
             return None
         try:
-            return parse_yaml(text[3:end]) or {}
-        except Exception:
+            parsed = parse_yaml(match.group(1))
+        except (ValueError, RecursionError):
             return None
+        return parsed if isinstance(parsed, dict) else None
 
     def test_every_skill_has_parseable_frontmatter(self):
         unparseable = []
@@ -792,6 +842,15 @@ class FrontmatterBudgetTests(unittest.TestCase):
                     f"(budget {self.MAX_DESCRIPTION})"
                 )
         self.assertEqual([], over, "\n".join(over))
+
+    def test_repaired_descriptions_fit_the_budget_and_keep_the_cue(self):
+        """Three descriptions were cut to fit the budget; each kept its "even when" cue."""
+        for relative in ("review/cso/SKILL.md", "skill-maker/skill-creator/SKILL.md",
+                         "skill-maker/skill-reviewer/SKILL.md"):
+            with self.subTest(skill=relative):
+                description = str(skill_front(SKILLS / relative).get("description", ""))
+                self.assertLessEqual(len(description), self.MAX_DESCRIPTION, f"{relative} is {len(description)} chars")
+                self.assertIn("even when", description, relative)
 
     def test_every_skill_declares_allowed_tools(self):
         missing = []
@@ -866,7 +925,8 @@ class EvidenceKeyMatchTests(unittest.TestCase):
 
     Nineteen of the gate's keys are ordinary English words. A word-boundary search
     accepted `scope` or `tests` anywhere in an owner's tree, so deleting the
-    documentation of those keys left the suite green.
+    documentation of those keys left the suite green. `EvidenceOwnershipTests`
+    holds every owner on the real catalog to this strict form.
     """
 
     def test_a_bare_word_is_not_a_mention_of_the_key(self):
@@ -880,13 +940,6 @@ class EvidenceKeyMatchTests(unittest.TestCase):
 
     def test_a_longer_key_does_not_satisfy_a_shorter_one(self):
         self.assertFalse(mentions_key("Returns `scope_note`.", "scope"))
-
-    def test_every_owner_documents_each_key_it_owns_as_a_key(self):
-        """The strict form holds on the real catalog, so the check above is not decorative."""
-        for boundary, owners in GATES["evidence_owners"].items():
-            for key, owner in owners.items():
-                with self.subTest(boundary=boundary, key=key):
-                    self.assertTrue(mentions_key(CORPUS[owner], key), f"{owner} never names `{key}` as a key")
 
 
 class ParserParityTests(unittest.TestCase):

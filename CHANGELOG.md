@@ -59,7 +59,7 @@ changes are message strings.
   and three phase gatekeepers, not 31 specialists (`routing-doctrine.md`,
   `AGENTS.md`, `Install.md`). `AGENTS.md` lists `Test-Guide.md`, `tools/` and the
   dotfiles among the checkout-only files and says the standalone tools sit directly
-  under `skills/`; the hooks README manifest lists `test_path_contracts.py`.
+  under `skills/`.
 - `Install.md`: `--register-hooks` on a machine with no detected host prints no
   banner, only `Hook registration: skipped (no host detected)`.
 - `design/architect`: the Taste snapshot is not a start condition. `pipelines.yaml`
@@ -124,12 +124,104 @@ changes are message strings.
   degrades in those words. On Windows it was reported as `permission denied`, and a
   junction there was read as a record this account may not read, so as a possible
   held run. On Windows a write to one fails at once instead of retrying the replace
-  for about three seconds. A live run beside a directory at its journal still blocks a second
-  run, as before.
+  for about three seconds. A live run beside a directory at its journal still blocks
+  a second run, as before.
 - `status` JSON gains `held_runs` (`run_id`, `state`, `fresh`, `interrupted`,
   `directory_at`); `status --run-id` reports `interrupted` only for a journal that is
   a file; the `stale` next step says `recover --reason` reclaims only once the run is
   the only held one.
+
+### Test suites and scripts consolidated (`skills/harness/hooks/`, `skills/scripts/`, `skills/validation/`)
+
+Fixed:
+
+- Hook tests could write into a real project. Their hand-written runners kept
+  `SUPREMETEAM_PROJECT_DIR`, so with it set in the shell the suite wrote into that
+  project, and one test registered hooks in its `.claude/settings.json`. Every runner
+  now goes through one clean environment in `_testkit.py`.
+- `test_documented_flags` took WSL's `bash` on Windows when started from PowerShell or
+  cmd.
+- Guard: inline Python that only calls string, list or dict methods
+  (`'s'.replace('a','b')`, `lst.remove('a')`, `{}.copy()`) was refused in a read-only
+  run or under a freeze, read as a file operation; so were `copy.copy(x)` and a
+  `replace` with no target, such as `datetime.now().replace(tzinfo=None)`. In the
+  other direction, a file function imported by name (`from shutil import rmtree as
+  r`), used as a value (`f = os.remove`) or reached through `getattr`, and Python
+  3.14's `Path.copy_into` and `move_into`, reached a frozen path. They are now read
+  as the functions they are, and a use the reader cannot place fails closed, so a few
+  harmless uses such as `help(os.remove)` are refused under a freeze or in a
+  read-only run. Shell commands launched through a function imported by name
+  (`from subprocess import run`, `from os import system as s`) or held in a variable,
+  a file function reached through a namespace (`vars(os)['remove']`), `exec` reached
+  under another name, `os.renames`, `os.mkfifo`, `os.mknod` and a temporary file made
+  with `dir=` are now read the same way. A write after `chdir`, or from a launcher
+  given a computed `cwd=`, cannot be placed and is refused there too. The hooks README
+  lists what the reader does not follow.
+- `save_run.py`: on POSIX the audit append followed a symbolic link at
+  `_audit-trail.md`, a dangling one included, and wrote elsewhere. It now refuses the
+  append (`degraded`, `<path> is a link, not a file`).
+- `verify_registration.py` hashed the test helper `_testkit.py`, so editing it read
+  as an enforcement change. An older record that lists it is not reported.
+- Six tests that could not fail now can; each was shown failing against a mutation.
+- `package_check.py`:
+  - on Windows a junction let files from outside the root into the archive. It now
+    refuses every link (a symlink, a junction or another name-surrogate reparse
+    point); cloud placeholders such as OneDrive files are packaged as before;
+  - a directory it cannot list exits 2 instead of passing;
+  - required assets are matched by their exact name;
+  - with `--out`, a file it cannot read exits 2 with an `engine_error` and leaves an
+    existing archive as it was, where it stopped with a traceback and a partial zip.
+- `check_parity.py` reads an inventory that starts with a byte-order mark (Windows
+  PowerShell 5.1 writes one) or is in the YAML subset, refuses duplicate JSON keys,
+  and leaves no `<out>.tmp` behind when the record cannot be moved into place; its
+  write errors read like `scan_record.py`'s.
+- `mcp_registry.py`: a workspace path containing `---` broke the cache's
+  frontmatter, so a fresh cache read as `mismatch`.
+- `check_runtime.py`:
+  - a script error in a nested `package.json` was blamed on the root `package.json`.
+    It is reported once, under its own path, and `"scripts": null` is a package with
+    no scripts;
+  - package scripts and Makefile recipes share one command vocabulary. A recipe that
+    starts a server with `fastapi`, `django`, `nest`, `ng serve`, or `python -m` with
+    uvicorn, gunicorn, flask, django or fastapi, now counts toward the
+    classification and is offered as a start command, and a package script that runs
+    `fastapi` is a backend signal. A FastAPI service started from a Makefile read as
+    `library/CLI`, so commander's `stack_lock` input changes for such projects.
+- `validate_manifests.py` failed the documented post-install check on a team-subset
+  install (`--team review`). In an installed copy it now reads the installer's record,
+  `.supremeteam-manifest`, and checks the recorded items: a skill whose item is
+  installed but whose `SKILL.md` is missing fails, and the skills of the items left
+  out are listed under `not_installed`. A checkout, and an installed copy with no
+  record or one it cannot read, are checked in full.
+
+Removed:
+
+- `scaffold_scan.py` and `check_runtime.py --scan-scaffold`, with their 29 tests. No
+  skill, document, manifest, CI step or hook used them.
+
+Changed:
+
+- The seven suites hold 2,556 tests where they held 2,586, and the three
+  reworked suites run faster: hooks in about 7.5 minutes instead of 10, scripts in
+  69 seconds instead of 85, validation in 29 instead of 40.
+  - hooks: the files named after audit rounds are merged into the files for their
+    subject; `test_hooks*` is re-cut by hook script (`test_post_tool_use.py`,
+    `test_user_prompt_submit.py`, `test_run_heartbeat.py`); the runners and
+    environments live in `_testkit.py`; the table-driven guard tests take a fast path;
+    the unused `_saves.classify_saves` and `_state._ROOT_MARKERS` are gone;
+  - scripts: one reader, atomic writer and link check in the new `file_safety.py`,
+    shared fixtures in `_runtime_fixtures.py`, the detection tests split by subject,
+    and `test_output_paths.py` for the path resolver;
+  - validation: a test that repeated another suite's check is removed only after the
+    test kept in its place was shown failing on the same mutation;
+    `test_repaired_findings.py` is split by subject; the revision-cap phrases are
+    computed from `gates.yaml`; pinned phrases became checks of the facts they state;
+    `_catalog.py` is the one shared reader and takes its checkout test from
+    `validate_manifests.py`; tests of a single program moved next to that program.
+- Upgrading: `verify_registration.py` and `check_readiness.py` report the hook files
+  this release changes as changed since registration. Record them with
+  `repair_registration.py --host <host> --record-hashes`, or reinstall with
+  `--register-hooks`.
 
 ### REVISE cycle cap of three, stated everywhere (`gates.yaml` `revise_policy.cycle_cap`)
 

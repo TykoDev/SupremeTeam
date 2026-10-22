@@ -16,20 +16,16 @@ from __future__ import annotations
 import errno
 import json
 import re
-import subprocess
-import sys
 import tempfile
 import unittest
-from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
+
+import _saves
+import _testkit as kit
 
 HOOK_DIR = Path(__file__).resolve().parent
-SAVE_RUN = HOOK_DIR / "save_run.py"
-sys.path.insert(0, str(HOOK_DIR))
-import _saves  # noqa: E402
-from test_run_state import SYSTEMS, directory_kinds, read_as, refusing, unsearchable  # noqa: E402
-
 NOW = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
 
 
@@ -223,11 +219,16 @@ class HasActiveRunTests(unittest.TestCase):
     and the session-pin reminder both read it, so the saving is in what is read, not in what is decided."""
 
     def setUp(self):
+        self.project = self.closed_runs(40)
+
+    def closed_runs(self, count: int) -> SavedProject:
+        """A save root holding ``count`` complete runs, ``closed-00`` onwards, on the real clock."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.project = SavedProject(Path(tmp.name).resolve(), now=datetime.now(timezone.utc))
-        for index in range(40):
-            self.project.run(f"closed-{index:02d}", status="complete", heartbeat=-600 - index)
+        project = SavedProject(Path(tmp.name).resolve(), now=datetime.now(timezone.utc))
+        for index in range(count):
+            project.run(f"closed-{index:02d}", status="complete", heartbeat=-600 - index)
+        return project
 
     def classified_runs(self) -> int:
         """How many run directories the call classified in full."""
@@ -256,7 +257,8 @@ class HasActiveRunTests(unittest.TestCase):
         """Each case is judged against the full classification of the same directory: a held run whose lock is fresh
         anywhere, whatever the pointer says, or a record this account cannot read. Beside a damaged pointer (`corrupt`) or a
         second held run (`conflicting`) the answer was no, and so it was for a run mid-publish or beside a directory where
-        its journal belongs, so the hook-file gate and the pin reminder went quiet for a live run."""
+        its journal belongs, so the hook-file gate and the pin reminder went quiet for a live run. Each case stands beside four
+        closed runs, the one two cases point at among them: the forty above are for counting what is read."""
         def malformed(p: SavedProject) -> None:
             (p.root / "skillset-saves" / "_latest.md").write_text("{", encoding="utf-8")
 
@@ -306,12 +308,12 @@ class HasActiveRunTests(unittest.TestCase):
         }
         for label, (build, expected) in cases.items():
             with self.subTest(label):
-                self.setUp()
-                build(self.project)
-                full = self.project.classify()
+                project = self.closed_runs(4)
+                build(project)
+                full = project.classify()
                 found = any(run["fresh"] for run in full.get("held_runs", ())) or bool(full.get("access_denied"))
                 self.assertEqual(found, expected, full)
-                self.assertEqual(_saves.has_active_run(self.project.root), expected, full)
+                self.assertEqual(_saves.has_active_run(project.root), expected, full)
 
 
 class RefusedRecordTests(unittest.TestCase):
@@ -335,7 +337,7 @@ class RefusedRecordTests(unittest.TestCase):
             with self.subTest(label):
                 self.project.run("a")
                 self.project.pointer("a")
-                with refusing(tail):
+                with kit.refusing(tail):
                     result = self.project.classify()
                     self.assertEqual(_saves.has_active_run(self.project.root), True)
                 self.assertEqual((result["status"], result["access_denied"], result["run_id"]), ("corrupt", [path], run_id), result)
@@ -346,15 +348,29 @@ class RefusedRecordTests(unittest.TestCase):
     def test_a_refused_lock_is_a_possible_pin_even_when_the_run_may_be_closed(self):
         self.project.run("done", status="complete")
         self.project.pointer("done")
-        with refusing("runs/done/_lock.md"):
+        with kit.refusing("runs/done/_lock.md"):
             result = self.project.classify()
             self.assertTrue(_saves.has_active_run(self.project.root))
         self.assertEqual((result["status"], result["access_denied"]), ("corrupt", ["skillset-saves/runs/done/_lock.md"]))
 
+    def test_stale_or_unreadable_pinned_lock_is_not_coherent_handoff_proof(self):
+        root = self.project.root
+        self.assertEqual(kit.save(root, "run-1", "create", "--evidence", "README.md")[0], 0)
+        path = root / "skillset-saves" / "runs" / "run-1" / "_lock.md"
+        lock = json.loads(path.read_text(encoding="utf-8"))
+        lock["heartbeat"] = (datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat()
+        path.write_text(json.dumps(lock), encoding="utf-8")
+        self.assertTrue(lock["session_pin"])
+        self.assertEqual(_saves.inspect_saves(root)["status"], "stale")
+        self.assertFalse(_saves.has_active_run(root))
+        with mock.patch.object(_saves, "inspect_saves", return_value={"status": "corrupt", "access_denied": ["lock"]}):
+            # A lock this account cannot read may hold the pin, so the run counts as held.
+            self.assertTrue(_saves.has_active_run(root))
+
     def test_a_readable_released_lock_is_a_closed_run_whatever_else_is_refused(self):
         self.project.run("done", status="complete")
         self.project.pointer("done")
-        with refusing("runs/done/_state.md"):
+        with kit.refusing("runs/done/_state.md"):
             result = self.project.classify()
             self.assertFalse(_saves.has_active_run(self.project.root))
         self.assertEqual(result["status"], "corrupt")
@@ -378,7 +394,7 @@ class RefusedRecordTests(unittest.TestCase):
             with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
                 project = SavedProject(Path(tmp).resolve(), now=datetime.now(timezone.utc))
                 build(project)
-                with refusing(tail):
+                with kit.refusing(tail):
                     result = project.classify()
                     self.assertEqual(_saves.has_active_run(project.root), pinning, result)
                 self.assertEqual(result["status"], "corrupt", result)
@@ -397,7 +413,7 @@ class RefusedRecordTests(unittest.TestCase):
             with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
                 project = SavedProject(Path(tmp).resolve(), now=datetime.now(timezone.utc))
                 build(project)
-                with refusing(tail):
+                with kit.refusing(tail):
                     result = project.classify()
                     self.assertEqual(result["status"], status, result)
                     self.assertTrue(_saves.has_active_run(project.root))
@@ -418,7 +434,7 @@ class RefusedRecordTests(unittest.TestCase):
         under such a directory as no run. The refused stat is simulated in `os.stat`, which both of them call."""
         self.project.run("a")
         self.project.pointer("a")
-        with unsearchable("skillset-saves/runs"):
+        with kit.unsearchable("skillset-saves/runs"):
             result = self.project.classify()
             self.assertTrue(_saves.has_active_run(self.project.root))
             single = _saves.inspect_run(self.project.root, "a", now=self.project.now)
@@ -439,7 +455,7 @@ class RefusedRecordTests(unittest.TestCase):
             with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
                 project = SavedProject(Path(tmp).resolve(), now=datetime.now(timezone.utc))
                 build(project)
-                with unsearchable("docs/private"):
+                with kit.unsearchable("docs/private"):
                     result = project.classify()
                     single = _saves.inspect_run(project.root, "a", now=project.now)
                     self.assertEqual(_saves.has_active_run(project.root), held, result)
@@ -458,7 +474,7 @@ class RefusedRecordTests(unittest.TestCase):
                          (True, True, False, False))
         self.assertFalse(_saves.path_is_dir(there / "_state.md"))
         self.assertFalse(_saves.path_exists(runs / "a" / "_state.md" / "below a file"), "a file on the way is not a refusal")
-        with unsearchable("skillset-saves/runs"):
+        with kit.unsearchable("skillset-saves/runs"):
             for probe in (_saves.path_exists, _saves.path_is_dir):
                 with self.assertRaises(PermissionError):
                     probe(there)
@@ -475,7 +491,7 @@ class RefusedRecordTests(unittest.TestCase):
         pointer = self.project.root / "skillset-saves" / "_latest.md"
         pointer.unlink()
         pointer.mkdir()
-        with refusing("skillset-saves/_latest.md"):
+        with kit.refusing("skillset-saves/_latest.md"):
             result = self.project.classify()
             self.assertTrue(_saves.has_active_run(self.project.root))
         self.assertEqual((result["status"], result["detail"]), ("corrupt", "skillset-saves/_latest.md is a directory, not a file"),
@@ -485,7 +501,7 @@ class RefusedRecordTests(unittest.TestCase):
 
     def test_one_run_is_classified_corrupt_with_the_path_when_its_record_is_refused(self):
         self.project.run("a")
-        with refusing("runs/a/_state.md"):
+        with kit.refusing("runs/a/_state.md"):
             result = _saves.inspect_run(self.project.root, "a", now=self.project.now)
         self.assertEqual((result["state"], result["access_denied"]), ("corrupt", ["skillset-saves/runs/a/_state.md"]), result)
         self.assertIn("cannot read it (permission denied)", result["detail"])
@@ -510,7 +526,7 @@ class RefusedRecordTests(unittest.TestCase):
                 for index in range(10):
                     project.run(f"closed-{index:02d}", status="complete", heartbeat=-600 - index)
                 build(project)
-                with refusing(tail):
+                with kit.refusing(tail):
                     full = project.classify()
                     self.assertEqual(_saves.has_active_run(project.root), expected, full)
                     self.assertEqual(full["status"] in {"active", "orphaned"} or bool(full.get("access_denied")), expected, full)
@@ -588,8 +604,8 @@ class DamagedPointerTests(unittest.TestCase):
         run whose record is refused, or a listing refused before the run the pointer names could be read, stops at the
         refusal, as it always has. Either way the next step is the one the writer refuses with, not the damage step."""
         refusals = {
-            "the lock": (lambda p: refusing("runs/a/_lock.md"), "skillset-saves/runs/a/_lock.md", {"revision mismatch"}),
-            "the state": (lambda p: refusing("runs/a/_state.md"), "skillset-saves/runs/a/_state.md", {"revision mismatch"}),
+            "the lock": (lambda p: kit.refusing("runs/a/_lock.md"), "skillset-saves/runs/a/_lock.md", {"revision mismatch"}),
+            "the state": (lambda p: kit.refusing("runs/a/_state.md"), "skillset-saves/runs/a/_state.md", {"revision mismatch"}),
             "the listing of runs": (lambda p: mock.patch.object(Path, "iterdir", side_effect=PermissionError(
                 errno.EACCES, "Permission denied", str(p.runs))), "skillset-saves/runs", {"incoherent target", "revision mismatch"}),
         }
@@ -614,7 +630,7 @@ class DamagedPointerTests(unittest.TestCase):
         project.run("b")
         project.run("c")
         project.pointer("a")
-        with refusing("runs/c/_lock.md"):
+        with kit.refusing("runs/c/_lock.md"):
             result = project.classify()
             held = _saves.has_active_run(project.root)
         self.assertEqual((result["status"], result["detail"]), ("conflicting", "multiple coherent held runs: a, b"), result)
@@ -636,8 +652,8 @@ class DirectoryWhereARecordBelongsTests(unittest.TestCase):
 
     def test_each_is_corrupt_in_the_same_words_and_never_access_denied(self):
         for record in self.RECORDS:
-            for kind, make in directory_kinds().items():
-                for system in SYSTEMS:
+            for kind, make in kit.directory_kinds().items():
+                for system in kit.SYSTEMS:
                     with self.subTest(record=record, kind=kind, read_as=system), tempfile.TemporaryDirectory() as tmp:
                         project = SavedProject(Path(tmp).resolve(), now=datetime.now(timezone.utc))
                         project.run("a")
@@ -645,7 +661,7 @@ class DirectoryWhereARecordBelongsTests(unittest.TestCase):
                         path = project.root / "skillset-saves" / record
                         path.unlink(missing_ok=True)
                         make(path)
-                        with read_as(system, record):
+                        with kit.read_as(system, record):
                             result = project.classify()
                             single = _saves.inspect_run(project.root, "a", now=project.now)
                             held = _saves.has_active_run(project.root)
@@ -684,10 +700,18 @@ class AccessDeniedProseTests(unittest.TestCase):
     def test_the_hooks_readme_does_not_say_has_active_run_is_true_only_for_a_readable_lock(self):
         """RR3-state-8: since a record this account cannot read counts as held, "only when a coherent lock exists" was false."""
         text = " ".join((HOOK_DIR / "README.md").read_text(encoding="utf-8").split())
-        bullet = re.search(r"- `has_active_run\(project_root\)`:(.*?)- `read_latest_pointer", text).group(1)
+        bullet = re.search(r"- `has_active_run\(project_root\)`:(.*?)- `pointed_heartbeat", text).group(1)
         self.assertNotIn("only when", bullet)
         self.assertIn("a record this account cannot read", bullet)
         self.assertIn("which may be a held run", bullet)
+
+    def test_every_function_the_hooks_readme_lists_for_the_reader_is_one_it_has(self):
+        """The list named `read_latest_pointer`, which the reader does not have, and the test above anchored on it."""
+        text = (HOOK_DIR / "README.md").read_text(encoding="utf-8")
+        section = text.split("### `_saves.py`", 1)[1].split("\n#", 1)[0]
+        named = re.findall(r"^- `(\w+)\(", section, re.M)
+        self.assertGreaterEqual(len(named), 3, section)
+        self.assertEqual([name for name in named if not callable(getattr(_saves, name, None))], [])
 
     def test_the_documents_say_which_refused_records_carry_access_denied(self):
         """RR3-state-9: a refused state beside a readable released lock is `corrupt` without it, which the documents had said
@@ -754,9 +778,7 @@ class VocabularyTests(unittest.TestCase):
                 seen.add(project.classify()["status"])
                 if label == "active":
                     (project.runs / "r1" / "_journal.json").write_text("{}", encoding="utf-8")
-                    proc = subprocess.run([sys.executable, str(SAVE_RUN), "status", "--project-root", tmp, "--run-id", "r1"],
-                                          text=True, capture_output=True, check=False)
-                    seen.add(json.loads(proc.stdout)["status"])
+                    seen.add(kit.save(project.root, "r1", "status")[1]["status"])
         return seen
 
     def test_every_documented_classification_is_emitted_and_none_besides(self):
@@ -798,9 +820,19 @@ class StatusReportsTheRequestedRunTests(unittest.TestCase):
         (self.root / "README.md").write_text("# fixture\n", encoding="utf-8")
 
     def save(self, run_id: str, *args: str) -> tuple[int, dict]:
-        proc = subprocess.run([sys.executable, str(SAVE_RUN), *args, "--project-root", str(self.root), "--run-id", run_id],
-                              text=True, capture_output=True, check=False)
-        return proc.returncode, json.loads((proc.stdout or proc.stderr)[(proc.stdout or proc.stderr).index("{"):])
+        return kit.save(self.root, run_id, *args)
+
+    def test_status_without_a_run_id_classifies_before_creating_any_files(self):
+        def status() -> tuple[int, dict]:
+            proc = kit.run_cli("save_run.py", "status", "--project-root", str(self.root), env=kit.clean_env(self.root))
+            return proc.returncode, json.loads(proc.stdout)
+
+        code, out = status()
+        self.assertEqual((code, out["status"]), (0, "missing"), out)
+        self.assertFalse((self.root / "skillset-saves").exists())
+        self.assertEqual(self.save("run-1", "create", "--evidence", "README.md")[0], 0)
+        code, out = status()
+        self.assertEqual((out["status"], out["owner"], out["run_id"]), ("active", "admiral", "run-1"), out)
 
     def test_the_documented_intake_then_create_order_never_reads_corrupt(self):
         report = self.root / "skillset-saves" / "runs" / "r1" / "intake" / "report_grilling.md"

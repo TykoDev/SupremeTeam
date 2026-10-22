@@ -9,15 +9,14 @@ false. Both sides, the target and the boundary, now go through ``_paths`` first.
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+import _paths
+
 HOOK_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(HOOK_DIR))
-import _paths  # noqa: E402
 
 
 class PathCase(unittest.TestCase):
@@ -136,7 +135,12 @@ class GlobProblemTests(PathCase):
             with self.subTest(raw=raw):
                 reason = self.problem(raw)
                 self.assertIn(f"no directory /{self.MISSING} exists", reason)
-                self.assertIn(f"{self.MISSING}/payments/**", reason.split("relative to the project root it is ")[1])
+                self.assertIn(f"relative to the project root it is {self.MISSING}/payments/**", reason)
+
+    def test_every_leading_slash_spelling_of_a_missing_directory_is_refused(self):
+        for spelling in (f"/{self.MISSING}/x/**", f"\\{self.MISSING}\\x\\**", f"//{self.MISSING}/x/**", f"/{self.MISSING}"):
+            with self.subTest(spelling=spelling):
+                self.assertIn(f"no directory /{self.MISSING} exists", self.problem(spelling))
 
     def test_the_spelling_the_review_names_is_refused_where_the_top_level_directory_is_missing(self):
         real = os.path.isdir
@@ -351,6 +355,35 @@ class AllowMatchTests(PathCase):
         (allowed / "out").symlink_to(self.root / "src", target_is_directory=True)
         self.assertFalse(self.allow("skillset-saves/runs/r1/investigation/out/app.py", self.ALLOW))
         self.assertTrue(self.allow("skillset-saves/runs/r1/investigation/real.md", self.ALLOW))
+
+
+class ResolverWithoutLinksTests(PathCase):
+    """The shared resolver agrees with realpath on this platform, in one look per directory, where no link is involved."""
+
+    def test_the_cached_walk_agrees_with_realpath_for_every_spelling(self):
+        deep = self.root / "a" / "b" / "c" / "d.txt"
+        deep.parent.mkdir(parents=True)
+        deep.write_text("x", encoding="utf-8")
+        resolver = _paths.Resolver()
+        spellings = (deep, self.root / "a" / "b" / "." / "c" / "d.txt", self.root / "a" / "b" / "b" / ".." / "c" / "d.txt")
+        for spelling in spellings:
+            with self.subTest(spelling=str(spelling)):
+                self.assertEqual(resolver.real(str(spelling)), _paths._real(str(spelling)))
+
+    def test_many_paths_in_one_directory_cost_one_look_per_directory(self):
+        base = self.root / "deep" / "chain"
+        base.mkdir(parents=True)
+        for index in range(40):
+            (base / f"f{index}.txt").write_text("x", encoding="utf-8")
+        resolver = _paths.Resolver()
+        with mock.patch("os.lstat", wraps=os.lstat) as lstat:
+            for index in range(40):
+                resolver.real(str(base / f"f{index}.txt"))
+        # One walk of the chain plus one look per leaf, never one walk per leaf.
+        self.assertLess(lstat.call_count, 40 * 3)
+
+    def test_a_relative_path_is_left_to_the_caller(self):
+        self.assertIsNone(_paths.Resolver().real("src/a.py"))
 
 
 @unittest.skipUnless(hasattr(os, "symlink") and os.name != "nt", "needs POSIX symlinks")

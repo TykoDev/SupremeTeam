@@ -3,17 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
-import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-HOOKS = Path(__file__).resolve().parent
-sys.path.insert(0, str(HOOKS))
-import audit_improve as subject  # noqa: E402
+import _testkit as kit
+import audit_improve as subject
 
 
 class AuditImproveTests(unittest.TestCase):
@@ -132,15 +128,13 @@ class AuditImproveTests(unittest.TestCase):
         self.assertIsNone(report)
         self.assertFalse((self.root / ".harness-state" / "observations" / "audit-improve.json").exists())
 
+    @unittest.skipUnless(kit.can_link(), kit.NO_LINKS)
     def test_cooldown_never_writes_through_observations_symlink(self):
         self.seed()
         outside = self.root / "outside"
         outside.mkdir()
         link = self.root / ".harness-state" / "observations"
-        try:
-            link.symlink_to(outside, target_is_directory=True)
-        except (OSError, NotImplementedError):
-            self.skipTest("directory symlinks unavailable on this host")
+        link.symlink_to(outside, target_is_directory=True)
         report = subject.maybe_audit(self.root, now=1000)
         self.assertIsNotNone(report)
         self.assertFalse((outside / "audit-improve.json").exists())
@@ -157,14 +151,15 @@ class AuditImproveTests(unittest.TestCase):
 
     def test_explicit_hook_trigger_only(self):
         self.seed()
-        env = os.environ.copy()
-        command = [sys.executable, str(HOOKS / "audit_improve.py"), "--project-root", str(self.root)]
-        silent = subprocess.run(command, input=json.dumps({"prompt": "please review code"}),
-                                text=True, capture_output=True, env=env, check=False)
+
+        def hook(prompt: str):
+            return kit.run_cli("audit_improve.py", "--project-root", str(self.root), env=kit.clean_env(self.root),
+                               input=json.dumps({"prompt": prompt}))
+
+        silent = hook("please review code")
         self.assertEqual(silent.returncode, 0)
         self.assertEqual(silent.stdout, "")
-        triggered = subprocess.run(command, input=json.dumps({"prompt": "/audit-improve now"}),
-                                   text=True, capture_output=True, env=env, check=False)
+        triggered = hook("/audit-improve now")
         self.assertEqual(triggered.returncode, 0)
         output = json.loads(triggered.stdout)["hookSpecificOutput"]
         self.assertEqual(output["hookEventName"], "UserPromptSubmit")
@@ -173,20 +168,14 @@ class AuditImproveTests(unittest.TestCase):
 
     def test_registered_prompt_and_post_hooks_surface_the_audit(self):
         self.seed()
-        env = os.environ.copy()
-        env["CLAUDE_PROJECT_DIR"] = str(self.root)
-        prompt = subprocess.run([sys.executable, str(HOOKS / "user_prompt_submit.py")],
-                                input=json.dumps({"prompt": "/audit-improve", "session_id": "s1"}),
-                                text=True, capture_output=True, env=env, check=False)
+        prompt = kit.run_hook("user_prompt_submit.py", {"prompt": "/audit-improve", "session_id": "s1"}, self.root, text=True)
         self.assertEqual(prompt.returncode, 0, prompt.stderr)
         self.assertIn("audit-improve trigger", prompt.stdout)
         failure = {"tool_name": "Bash", "tool_input": {"command": "test-failure"},
                    "tool_response": {"exit_code": 1, "stderr": "fixture failure"}, "session_id": "s1"}
         outputs = []
         for _ in range(3):
-            proc = subprocess.run([sys.executable, str(HOOKS / "post_tool_use.py")],
-                                  input=json.dumps(failure), text=True, capture_output=True,
-                                  env=env, check=False)
+            proc = kit.run_hook("post_tool_use.py", failure, self.root, text=True)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             outputs.append(proc.stdout)
         self.assertIn("audit-improve trigger", outputs[-1])
@@ -199,8 +188,7 @@ class AuditImproveTests(unittest.TestCase):
         (self.root / "README.md").write_text("fixture\n", encoding="utf-8")
 
         def save(*args: str) -> int:
-            return subprocess.run([sys.executable, str(HOOKS / "save_run.py"), *args, "--project-root", str(self.root),
-                                   "--run-id", "r1"], text=True, capture_output=True, check=False).returncode
+            return kit.save(self.root, "r1", *args)[0]
 
         self.assertEqual(save("create", "--evidence", "README.md"), 0)
         self.assertEqual(save("checkpoint", "--expect-revision", "9"), 1)
@@ -239,12 +227,8 @@ class AuditImproveTests(unittest.TestCase):
     def test_reads_records_written_by_canonical_save_writer(self):
         self.run.rmdir()
         (self.root / "README.md").write_text("fixture\n", encoding="utf-8")
-        proc = subprocess.run([
-            sys.executable, str(HOOKS / "save_run.py"), "create",
-            "--project-root", str(self.root), "--run-id", "r1",
-            "--evidence", "README.md",
-        ], text=True, capture_output=True, check=False)
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        code, out = kit.save(self.root, "r1", "create", "--evidence", "README.md")
+        self.assertEqual(code, 0, out)
         report = subject.audit(self.root)
         self.assertEqual(report["run_statuses"], {"active": 1})
         self.assertNotIn("unreadable_records", {f["code"] for f in report["findings"]})

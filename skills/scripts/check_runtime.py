@@ -17,10 +17,6 @@ from project_inspection import inspect_project
 from redaction import add_error
 from redaction import redact_value as _redact_value
 
-# Private names this module exported before the inspector moved out; the test suites import them from here.
-from redaction import redact as _redact  # noqa: F401
-from stack_detection import load_registry as _load_registry  # noqa: F401
-
 
 OPTIONAL_MODULES = {"PyYAML": "yaml"}
 
@@ -134,7 +130,6 @@ def check(
     project_root: Path | None = None,
     detect_project: bool = False,
     detect_start_command: bool = False,
-    scan_scaffold: bool = False,
 ) -> dict:
     requested_root = catalog_root.expanduser().absolute()
     if has_reparse_ancestor(requested_root):
@@ -170,13 +165,12 @@ def check(
         "ok": python_ok and not errors,
         "errors": sorted(set(errors + ([] if python_ok else [f"Python {sys.version_info.major}.{sys.version_info.minor} is below required {minimum_value}"]))),
     }
-    if detect_project or detect_start_command or scan_scaffold:
+    if detect_project or detect_start_command:
         inspection = inspect_project(
             catalog_root,
             project_root if project_root is not None else Path("."),
             detect_project=detect_project,
             detect_start_command=detect_start_command,
-            scan_scaffold=scan_scaffold,
         )
         report["project_inspection"] = inspection
         if inspection["errors"]:
@@ -204,7 +198,6 @@ def main() -> int:
     )
     parser.add_argument("--detect-project", action="store_true", help="detect project evidence and registered stacks")
     parser.add_argument("--detect-start-command", action="store_true", help="record package start-command candidates without running them")
-    parser.add_argument("--scan-scaffold", action="store_true", help="scan conservative scaffold markers without changing files")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--require-optional", action="store_true", help="fail when an optional dependency is unavailable")
     args = parser.parse_args()
@@ -213,7 +206,6 @@ def main() -> int:
         project_root=Path(args.project_root) if args.project_root else None,
         detect_project=args.detect_project,
         detect_start_command=args.detect_start_command,
-        scan_scaffold=args.scan_scaffold,
     )
     if args.require_optional and any(not item["available"] for item in report.get("optional_dependencies", [])):
         report["ok"] = False
@@ -233,8 +225,7 @@ def main() -> int:
                 "Inspection: "
                 f"{inspection.get('classification') or 'not classified'}; "
                 f"stacks={stacks}; "
-                f"start candidates={len(inspection.get('start_commands', []))}; "
-                f"scaffold markers={len(inspection.get('scaffold_markers', []))}"
+                f"start candidates={len(inspection.get('start_commands', []))}"
             )
             for candidate in inspection.get("start_commands", []):
                 print(f"Candidate {candidate['source']}: {candidate['command']}")

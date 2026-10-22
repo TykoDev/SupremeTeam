@@ -1,22 +1,34 @@
 """Regression coverage for package_check.py: what it names as residue and how it fails.
 
 The residue checks were name-only and case-sensitive on POSIX, a tracked symlink
-was zipped with its target's bytes under an innocent name, common credential files
-passed, and a manifest that was not a mapping ended in a traceback instead of the
-documented exit 2.
+was zipped with its target's bytes under an innocent name, a Windows junction was
+walked into and the files beyond it archived, common credential files passed, and
+a manifest that was not a mapping ended in a traceback instead of the documented
+exit 2. So did a file the archive could not read, which also left half an archive
+at ``--out``. The shipped manifest's excludes drop runtime state and interpreter
+caches before the residue scan, and the repository this suite runs in packages clean.
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
-from package_check import REQUIRED_ASSET_GLOBS, RESIDUE_CLASSES, matches
+import package_check
+from _runtime_fixtures import junction_or_skip, symlink_or_skip, unreadable_or_skip
+from data_formats import load_data
+from package_check import REQUIRED_ASSET_GLOBS, RESIDUE_CLASSES, manifest_globs, matches
 
 SCRIPTS = Path(__file__).resolve().parent
 SKILLS_DIR = SCRIPTS.parent
@@ -26,6 +38,22 @@ PACKAGE_CHECK = SCRIPTS / "package_check.py"
 def residue_class(relative: str) -> str | None:
     """The class a file name lands in, in the order the checker tries them."""
     return next((klass for klass, patterns in RESIDUE_CLASSES.items() if matches(relative, patterns)), None)
+
+
+@contextlib.contextmanager
+def reparse_tag_on(target: Path, tag: int):
+    """``os.lstat`` reports ``target`` as a reparse point carrying ``tag``; every other path reads as it is."""
+    real_lstat = os.lstat
+
+    def lstat(path, *args, **kwargs):
+        status = real_lstat(path, *args, **kwargs)
+        if os.fspath(path) != os.fspath(target):
+            return status
+        attributes = getattr(status, "st_file_attributes", 0) | stat.FILE_ATTRIBUTE_REPARSE_POINT
+        return SimpleNamespace(st_mode=status.st_mode, st_file_attributes=attributes, st_reparse_tag=tag)
+
+    with mock.patch.object(os, "lstat", lstat):
+        yield
 
 
 class HelpTests(unittest.TestCase):
@@ -69,6 +97,19 @@ class ResidueClassTests(unittest.TestCase):
             with self.subTest(relative=relative):
                 self.assertEqual(residue_class(relative), "runtime-state")
 
+    def test_coverage_residue_never_packages(self):
+        """package_check.py rejects the residue classes so a stray tree cannot ship."""
+        patterns = RESIDUE_CLASSES["coverage-residue"]
+        for relative in (".coverage", ".coverage.host.123.abc", ".coverage/nested/a.json",
+                         "htmlcov/index.html", ".nyc_output/out.json", "app/.coverage",
+                         "app/htmlcov/index.html"):
+            with self.subTest(relative=relative):
+                self.assertTrue(matches(relative, patterns), relative)
+        for relative in ("skills/scripts/output_paths.py", "docs/coverage-notes.md",
+                         "src/coverage/report.ts", "README.md"):
+            with self.subTest(relative=relative):
+                self.assertFalse(matches(relative, patterns), relative)
+
     def test_a_git_file_is_not_a_repository_and_is_not_residue(self):
         """A worktree or a submodule keeps a `.git` file pointing at its repository."""
         for relative in (".git", "vendor/.git", ".claude/worktrees/agent-1/.git", "docs/git-notes.md", ".gitignore",
@@ -105,7 +146,7 @@ class SharedResidueListTests(unittest.TestCase):
         base = Path(holder.name).resolve()
         scripts = base / "skills" / "scripts"
         scripts.mkdir(parents=True)
-        for name in ("package_check.py", "data_formats.py"):
+        for name in ("package_check.py", "data_formats.py", "file_safety.py"):
             shutil.copy(SCRIPTS / name, scripts / name)
         if shared_text is not None:
             listing = base / "skills" / "skill-maker" / "skill-creator" / "scripts" / "residue-classes.json"
@@ -178,11 +219,16 @@ class PackageRootCase(unittest.TestCase):
     def symlink(self, link: str, target: Path, directory: bool = False) -> Path:
         path = self.root / link
         path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            path.symlink_to(target, target_is_directory=directory)
-        except (OSError, NotImplementedError) as exc:
-            self.skipTest(f"cannot create a symlink here: {exc}")
+        symlink_or_skip(self, target, path, directory=directory)
         return path
+
+    def outside_directory(self) -> Path:
+        """A directory beside the root holding one file, removed after the test."""
+        target = self.root.parent / f"{self.root.name}-outside-dir"
+        target.mkdir()
+        (target / "leak.txt").write_text("leak\n", encoding="utf-8")
+        self.addCleanup(lambda: (target / "leak.txt").unlink() or target.rmdir())
+        return target
 
 
 class EnumerationTests(PackageRootCase):
@@ -190,6 +236,34 @@ class EnumerationTests(PackageRootCase):
         code, report, _ = self.run_check("--out", str(self.root / "dist" / "p.zip"))
         self.assertEqual(code, 0, report)
         self.assertTrue((self.root / "dist" / "p.zip").is_file())
+        self.assertEqual(["p.zip"], [path.name for path in (self.root / "dist").iterdir()], "no temporary file is left")
+
+    def test_residue_is_reported_and_clean_root_builds_archive(self):
+        self.write(".harness-state/guard-state.json", "{}")
+        self.write("skills/__pycache__/x.pyc")
+        self.write("skills/deploy.pem", "PRIVATE")
+        code, report, _ = self.run_check()
+        self.assertEqual(code, 1, report)
+        classes = {v["class"] for v in report["violations"]}
+        self.assertIn("secrets", classes)
+        self.assertNotIn("runtime-state", classes, "manifest exclude must drop .harness-state before residue scan")
+        self.assertNotIn("interpreter-cache", classes, "manifest exclude must drop caches before residue scan")
+        (self.root / "skills" / "deploy.pem").unlink()
+        code, report, _ = self.run_check("--out", str(self.root / "dist" / "supremeteam.zip"))
+        self.assertEqual(code, 0, report)
+        self.assertTrue((self.root / "dist" / "supremeteam.zip").exists())
+
+    def test_package_contains_root_docs_and_excludes_root_secrets(self):
+        for relative in ("Install.md", ".env", ".env.local"):
+            self.write(relative, "fixture")
+        archive = self.root / "distribution.zip"
+        code, report, stderr = self.run_check("--out", str(archive))
+        self.assertEqual(code, 0, (report, stderr))
+        with zipfile.ZipFile(archive) as package:
+            self.assertIn("README.md", package.namelist())
+            self.assertIn("Install.md", package.namelist())
+            self.assertNotIn(".env", package.namelist())
+            self.assertNotIn(".env.local", package.namelist())
 
     def test_new_secret_names_fail_the_check_and_write_no_archive(self):
         self.write("skills/id_rsa")
@@ -237,14 +311,73 @@ class EnumerationTests(PackageRootCase):
         self.assertFalse((self.root / "dist" / "p.zip").exists())
 
     def test_a_symlinked_directory_is_a_violation_too(self):
-        target = self.root.parent / f"{self.root.name}-outside-dir"
-        target.mkdir()
-        (target / "leak.txt").write_text("leak\n", encoding="utf-8")
-        self.addCleanup(lambda: (target / "leak.txt").unlink() or target.rmdir())
-        self.symlink("docs/linked", target, directory=True)
+        self.symlink("docs/linked", self.outside_directory(), directory=True)
         code, report, _ = self.run_check()
         self.assertEqual(code, 1, report)
         self.assertEqual(report["violations"], [{"path": "docs/linked", "class": "symlink"}])
+
+    def test_a_junction_is_a_violation_and_what_it_points_at_is_never_archived(self):
+        """``is_symlink()`` does not report a junction, so the walk entered it and archived the files beyond."""
+        (self.root / "docs").mkdir()
+        junction_or_skip(self, self.outside_directory(), self.root / "docs" / "linked")
+        code, report, _ = self.run_check("--out", str(self.root / "dist" / "p.zip"))
+        self.assertEqual(code, 1, report)
+        self.assertEqual(report["violations"], [{"path": "docs/linked", "class": "symlink"}])
+        self.assertFalse((self.root / "dist" / "p.zip").exists())
+
+    def test_a_reparse_point_is_a_link_only_when_its_tag_names_another_path(self):
+        """Every reparse point was refused, so a repository in a OneDrive folder could not be packaged.
+
+        OneDrive keeps a file that is not downloaded yet as a cloud placeholder, and an
+        app execution alias is a reparse point too; neither tag names another path.
+        The tag is put on a real file through ``os.lstat``, so this runs on every
+        platform; the junction test above takes the same decision on a real junction.
+        """
+        entry = self.write("docs/entry.md")
+        out = tempfile.TemporaryDirectory()
+        self.addCleanup(out.cleanup)
+        for tag, kind, refused in ((0x9000001A, "cloud placeholder", False), (0x8000001B, "app execution alias", False),
+                                   (0xA000001D, "WSL symlink", True), (0xA0000003, "junction", True)):
+            with self.subTest(kind):
+                archive = Path(out.name) / f"{tag:x}.zip"
+                argv = ["package_check.py", "--root", str(self.root), "--out", str(archive)]
+                with reparse_tag_on(entry, tag), mock.patch.object(sys, "argv", argv), \
+                        contextlib.redirect_stdout(io.StringIO()) as stdout:
+                    code = package_check.main()
+                report = json.loads(stdout.getvalue())
+                if refused:
+                    self.assertEqual((code, report["violations"]), (1, [{"path": "docs/entry.md", "class": "symlink"}]))
+                    self.assertFalse(archive.exists())
+                else:
+                    self.assertEqual((code, report["violations"]), (0, []), report)
+                    with zipfile.ZipFile(archive) as package:
+                        self.assertIn("docs/entry.md", package.namelist())
+
+    def test_a_directory_that_cannot_be_listed_is_an_engine_error_and_never_a_pass(self):
+        """A tree that was not read in full cannot be called clean."""
+        locked = self.write("docs/locked/notes.md").parent
+        real_scandir = os.scandir
+
+        def scandir(path="."):
+            if Path(path) == locked:
+                raise PermissionError(13, "Permission denied", str(path))
+            return real_scandir(path)
+
+        argv = ["package_check.py", "--root", str(self.root)]
+        with mock.patch.object(os, "scandir", scandir), mock.patch.object(sys, "argv", argv), \
+                contextlib.redirect_stdout(io.StringIO()) as stdout:
+            code = package_check.main()
+        report = json.loads(stdout.getvalue())
+        self.assertEqual((code, report["ok"]), (2, False), report)
+        self.assertTrue(report["engine_error"].startswith(f"cannot enumerate {self.root}: "), report)
+
+    def test_a_required_asset_is_matched_by_its_exact_name(self):
+        """The catalog opens skills/gates.yaml by that name, and a case-sensitive file system does not fold it."""
+        (self.root / "skills" / "gates.yaml").unlink()
+        self.write("skills/GATES.yaml", "fixture\n")
+        code, report, _ = self.run_check()
+        self.assertEqual(code, 1, report)
+        self.assertEqual(report["missing_required"], ["skills/gates.yaml"])
 
     def test_a_symlink_the_manifest_excludes_is_not_reported(self):
         """An excluded path is out of the delivery set whatever it is, so it cannot ship."""
@@ -259,30 +392,73 @@ class EnumerationTests(PackageRootCase):
         self.assertEqual([v["path"] for v in report["violations"]], ["skills/a.pem", "skills/m.key", "skills/z.pem"])
 
 
+class ArchiveWriteTests(PackageRootCase):
+    """``--out`` replaces the archive only with a complete one; any failure is an engine error, exit 2."""
+
+    def out_path(self) -> Path:
+        """Where --out points: a fresh directory outside the root, removed after the test."""
+        holder = tempfile.TemporaryDirectory()
+        self.addCleanup(holder.cleanup)
+        return Path(holder.name).resolve() / "supremeteam.zip"
+
+    def test_a_file_that_cannot_be_read_is_an_engine_error_and_the_old_archive_stays(self):
+        """The archive was written in place: a file it could not read ended in a traceback, exit 1 and half a zip."""
+        unreadable_or_skip(self, self.write("docs/locked.md"))
+        out = self.out_path()
+        out.write_bytes(b"the previous archive")
+        code, report, stderr = self.run_check("--out", str(out))
+        self.assertEqual((code, report.get("ok")), (2, False), stderr[-2000:])
+        self.assertNotIn("Traceback", stderr)
+        self.assertTrue(report["engine_error"].startswith(f"cannot write the archive {out}: cannot read docs/locked.md: "),
+                        report)
+        self.assertEqual(b"the previous archive", out.read_bytes())
+        self.assertEqual(["supremeteam.zip"], [path.name for path in out.parent.iterdir()])
+
+    def test_an_archive_that_cannot_be_moved_into_place_leaves_no_temporary_file(self):
+        """--out names a directory, which the finished archive cannot replace."""
+        out = self.out_path()
+        out.mkdir()
+        code, report, stderr = self.run_check("--out", str(out))
+        self.assertEqual((code, report.get("ok")), (2, False), stderr[-2000:])
+        self.assertTrue(report["engine_error"].startswith(f"cannot write the archive {out}: "), report)
+        self.assertEqual([out], list(out.parent.iterdir()))
+        self.assertEqual([], list(out.iterdir()))
+
+
 class ManifestErrorTests(PackageRootCase):
+    """A manifest the checker cannot use is an engine error, exit 2, never a pass or a traceback.
+
+    The shapes are checked in-process through manifest_globs(), which main() calls on
+    what load_data() read; one command-line run pins that a refused shape becomes
+    the documented exit 2.
+    """
+
     def manifest(self, text: str) -> Path:
         path = self.root / "custom-manifest.yaml"
         path.write_text(text, encoding="utf-8")
         return path
 
-    def assert_engine_error(self, text: str, needle: str) -> None:
-        code, report, stderr = self.run_check(manifest=self.manifest(text))
-        self.assertEqual(code, 2, (report, stderr))
-        self.assertNotIn("Traceback", stderr)
-        self.assertFalse(report["ok"])
-        self.assertIn(needle, report["engine_error"])
+    def assert_refused(self, text: str, needle: str) -> None:
+        with self.assertRaises(ValueError) as raised:
+            manifest_globs(load_data(self.manifest(text)))
+        self.assertIn(needle, str(raised.exception))
 
     def test_a_manifest_that_is_not_a_mapping_is_an_engine_error(self):
         for text in ('["include"]', "- a\n- b\n", '"text"', "42"):
             with self.subTest(text=text):
-                self.assert_engine_error(text, "root must be a mapping")
+                self.assert_refused(text, "root must be a mapping")
+        code, report, stderr = self.run_check(manifest=self.manifest('["include"]'))
+        self.assertEqual(code, 2, (report, stderr))
+        self.assertNotIn("Traceback", stderr)
+        self.assertFalse(report["ok"])
+        self.assertIn("root must be a mapping", report["engine_error"])
 
     def test_include_and_exclude_must_be_lists_of_non_empty_strings(self):
         for key in ("include", "exclude"):
             for value in ('"**/*"', "7", '{"a": 1}', "[1, 2]", '["ok", ""]', "[null]"):
                 with self.subTest(key=key, value=value):
-                    self.assert_engine_error(json.dumps({"schema_version": 1}) [:-1] + f', "{key}": {value}' + "}",
-                                             f"{key} must be a list of non-empty strings")
+                    self.assert_refused(json.dumps({"schema_version": 1}) [:-1] + f', "{key}": {value}' + "}",
+                                        f"{key} must be a list of non-empty strings")
 
     def test_an_unreadable_manifest_is_an_engine_error(self):
         code, report, stderr = self.run_check(manifest=self.root / "no-such-manifest.yaml")
@@ -293,6 +469,15 @@ class ManifestErrorTests(PackageRootCase):
         code, report, _ = self.run_check(manifest=self.manifest('{"schema_version": 1}'))
         self.assertEqual(code, 0, report)
         self.assertEqual(report["selected_count"], len(REQUIRED_ASSET_GLOBS) + 2, "the assets, README.md, and the manifest")
+
+
+class RepositoryTests(unittest.TestCase):
+    """The checkout this suite runs in, under the shipped manifest."""
+
+    def test_repository_package_enumeration_is_clean(self):
+        proc = subprocess.run([sys.executable, str(PACKAGE_CHECK), "--root", str(SKILLS_DIR.parent)],
+                              capture_output=True, text=True, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
 
 if __name__ == "__main__":

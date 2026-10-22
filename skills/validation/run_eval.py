@@ -50,7 +50,6 @@ import tempfile
 from pathlib import Path
 
 SKILLS = Path(__file__).resolve().parent.parent
-REPO = SKILLS.parent
 
 #: A small plausible project for both sessions to start in. Nothing in it hints
 #: at any skill.

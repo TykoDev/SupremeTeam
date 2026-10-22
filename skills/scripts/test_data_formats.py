@@ -1,20 +1,38 @@
-"""Regression coverage for the YAML subset reader: block scalars keep their own lines.
+"""Regression coverage for data_formats.py: the YAML subset reader and the line-ending-agnostic hash.
 
 The parser dropped comment-looking lines, stripped a `` #`` tail and collapsed blank
 lines before it knew it was inside a block scalar, where all three are content.
 SKILL.md frontmatter descriptions are folded block scalars parsed through it, so a
-description mentioning an issue number was validated as truncated text.
+description mentioning an issue number was validated as truncated text. A Windows
+path written in YAML lost its backslashes to a Python-literal reader. Every sha256
+the catalog records folds text to LF first, so an LF and a CRLF checkout verify
+alike, and content_hash.py, the command specialists report hashes with, agrees.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import subprocess
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
-from data_formats import DataFormatError, parse_frontmatter, parse_scalar, parse_yaml
+from data_formats import (
+    DataFormatError,
+    content_sha256,
+    normalize_line_endings,
+    parse_frontmatter,
+    parse_scalar,
+    parse_yaml,
+)
 
 try:
     import yaml
 except ModuleNotFoundError:  # pragma: no cover - environment without PyYAML
     yaml = None
+
+SCRIPTS = Path(__file__).resolve().parent
 
 
 class NumberSpellingTests(unittest.TestCase):
@@ -112,6 +130,76 @@ class BlockScalarTests(unittest.TestCase):
         for text in samples:
             with self.subTest(text=text):
                 self.assertEqual(parse_yaml(text), trimmed(yaml.safe_load(text)))
+
+
+class QuotedScalarTests(unittest.TestCase):
+    """YAML quotes: single is literal, double escapes. A path survives both spellings."""
+
+    def test_a_single_quoted_scalar_keeps_its_backslashes(self):
+        for text, expected in ((r"'C:\Users\Jo Smith\proj'", r"C:\Users\Jo Smith\proj"),
+                               ("'C:/Program Files/x'", "C:/Program Files/x"),
+                               (r"'\\host\share\file'", r"\\host\share\file")):
+            with self.subTest(text=text):
+                self.assertEqual(parse_scalar(text), expected)
+
+    def test_a_doubled_quote_is_the_only_single_quote_escape(self):
+        self.assertEqual(parse_scalar("'it''s here'"), "it's here")
+        self.assertEqual(parse_scalar("'a''''b'"), "a''b")
+
+    def test_an_unpaired_quote_inside_single_quotes_is_refused(self):
+        with self.assertRaises(DataFormatError):
+            parse_scalar("'it's here'")
+
+    def test_a_backslashed_path_round_trips_through_a_mapping(self):
+        parsed = parse_yaml("workspace: 'C:\\Users\\Jo\\proj'\nhost: 'test-host'\n")
+        self.assertEqual(parsed, {"workspace": "C:\\Users\\Jo\\proj", "host": "test-host"})
+
+    def test_double_quoted_text_still_escapes(self):
+        self.assertEqual(parse_scalar('"a\\nb"'), "a\nb")
+
+
+class LineEndingAgnosticHashTests(unittest.TestCase):
+    """The catalog must work on an LF and a CRLF checkout alike: every recorded
+    sha256 folds text to LF first, binary is untouched, and the CLI that
+    specialists use to report hashes agrees with the gate."""
+
+    TEXT = "line one\nline two\n\nend\n"
+
+    def test_text_hashes_agree_across_line_endings(self):
+        lf = self.TEXT.encode("utf-8")
+        crlf = self.TEXT.replace("\n", "\r\n").encode("utf-8")
+        self.assertEqual(normalize_line_endings(crlf), lf)
+        self.assertEqual(normalize_line_endings(lf), lf)
+        with tempfile.TemporaryDirectory() as directory:
+            a = Path(directory) / "a.md"
+            a.write_bytes(lf)
+            b = Path(directory) / "b.md"
+            b.write_bytes(crlf)
+            self.assertEqual(content_sha256(a), content_sha256(b))
+            self.assertEqual(content_sha256(a), hashlib.sha256(lf).hexdigest())
+
+    def test_binary_content_is_hashed_byte_for_byte(self):
+        payload = b"PK\x03\x04\r\n\x00\x00binary\r\n"
+        self.assertEqual(normalize_line_endings(payload), payload)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "archive.zip"
+            path.write_bytes(payload)
+            self.assertEqual(content_sha256(path), hashlib.sha256(payload).hexdigest())
+
+    def test_content_hash_cli_matches_the_gate_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            path = root / "evidence.md"
+            path.write_bytes(self.TEXT.replace("\n", "\r\n").encode("utf-8"))
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "content_hash.py"), str(path), "--project-root", str(root)],
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            out = json.loads(proc.stdout)
+            self.assertEqual(out["hashes"], {"evidence.md": hashlib.sha256(self.TEXT.encode("utf-8")).hexdigest()})
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "content_hash.py"), str(root / "missing.md")],
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 1)
+            self.assertFalse(json.loads(proc.stdout)["ok"])
 
 
 if __name__ == "__main__":

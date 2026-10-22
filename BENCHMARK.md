@@ -5,7 +5,7 @@ on Windows 10. Only results re-measured on this tree are listed.
 
 | Measure | Result |
 |---|---|
-| Test suites | 7 of 7 pass: 2,586 tests, 0 failures, 166 skipped |
+| Test suites | 7 of 7 pass: 2,556 tests, 0 failures, 168 skipped |
 | Validators | 3 of 3 pass |
 | Lint | `ruff check .` clean at the CI pin, ruff 0.16.9 |
 | Gate boundaries | 10 of 10 accept a well-formed package |
@@ -14,10 +14,10 @@ on Windows 10. Only results re-measured on this tree are listed.
 
 | Suite | Tests | Skipped | Command |
 |---|---:|---:|---|
-| hooks | 1,084 | 88 | `python -m unittest discover -s skills/harness/hooks -p "test_*.py"` |
+| hooks | 1,093 | 90 | `python -m unittest discover -s skills/harness/hooks -p "test_*.py"` |
 | gates | 323 | 9 | `python -m unittest discover -s skills/harness/gatekeeper -p "test_*.py"` |
-| validation | 297 | 1 | `python -m unittest discover -s skills/validation -p "test_*.py"` |
-| scripts | 410 | 8 | `python -m unittest discover -s skills/scripts -p "test_*.py"` |
+| validation | 268 | 1 | `python -m unittest discover -s skills/validation -p "test_*.py"` |
+| scripts | 400 | 8 | `python -m unittest discover -s skills/scripts -p "test_*.py"` |
 | taste | 222 | 4 | `python -m unittest discover -s skills/taste -p "test_*.py"` |
 | installers | 79 | 44 | `python -m unittest discover -s scripts -p "test_*.py"` |
 | skill_creator | 171 | 12 | `python -m unittest discover -s skills/skill-maker/skill-creator -p "test_*.py"` |

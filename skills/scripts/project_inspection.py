@@ -24,9 +24,8 @@ from project_files import (
     walk_project,
 )
 from redaction import add_error, add_warning, redact
-from scaffold_scan import find_scaffold_markers
 from script_commands import makefile_recipe
-from stack_detection import classify_project, detect_stacks, load_registry, read_package, validate_package_scripts
+from stack_detection import classify_project, detect_stacks, load_registry, read_package
 
 
 START_SCRIPT_ORDER = ("dev", "start")
@@ -35,7 +34,6 @@ SPRING_BOOT_RE = re.compile(r"(?i)spring[-.]?boot|org\.springframework\.boot")
 
 
 def _start_commands(
-    package: dict[str, Any],
     errors: list[str],
     warnings: list[str],
     *,
@@ -44,24 +42,16 @@ def _start_commands(
     text_cache: dict[Path, str | None],
     packages: list[tuple[Path, dict[str, Any]]] | None = None,
 ) -> list[dict[str, str]]:
-    package_records = packages if packages is not None else [(root / "package.json", package)]
     candidates: list[dict[str, str]] = []
-    for package_path, package_value in package_records:
-        scripts = package_value.get("scripts", {})
-        if scripts is None:
+    for package_path, package_value in packages or []:
+        # read_package has already reported a scripts field or a command of the wrong type.
+        scripts = package_value.get("scripts")
+        if not isinstance(scripts, dict):
             continue
         package_relative = relative_path(package_path, root)
-        if not isinstance(scripts, dict):
-            add_error(errors, f"{package_relative}: scripts must be an object")
-            continue
         for name in START_SCRIPT_ORDER:
-            if name not in scripts:
-                continue
-            command = scripts[name]
-            if not isinstance(command, str):
-                add_error(errors, f"{package_relative}:scripts.{name}: command must be a string")
-                continue
-            if command.strip():
+            command = scripts.get(name)
+            if isinstance(command, str) and command.strip():
                 candidates.append(
                     {
                         "source": f"{package_relative}:scripts.{name}",
@@ -176,7 +166,6 @@ def inspect_project(
     *,
     detect_project: bool,
     detect_start_command: bool,
-    scan_scaffold: bool,
 ) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -197,7 +186,6 @@ def inspect_project(
             "configs": [],
             "stacks": [],
             "start_commands": [],
-            "scaffold_markers": [],
             "ambiguities": [],
             "errors": sorted(set(errors)),
             "warnings": [],
@@ -211,7 +199,6 @@ def inspect_project(
         "configs": [],
         "stacks": [],
         "start_commands": [],
-        "scaffold_markers": [],
         "ambiguities": [],
         "errors": errors,
         "warnings": warnings,
@@ -229,7 +216,6 @@ def inspect_project(
         inspection["manifests"] = manifests
         inspection["configs"] = configs
         text_cache: dict[Path, str | None] = {}
-        package: dict[str, Any] = {}
         package_records: list[tuple[Path, dict[str, Any]]] = []
         if detect_project or detect_start_command:
             package_paths = sorted(
@@ -239,18 +225,13 @@ def inspect_project(
                 and classify_path(relative_path(path, project_root)) == "production"
             )
             for path in package_paths:
-                package_value = read_package(path, project_root, errors, text_cache)
-                validate_package_scripts(package_value, errors)
-                package_records.append((path, package_value))
-                if path.parent == project_root:
-                    package = package_value
+                package_records.append((path, read_package(path, project_root, errors, text_cache)))
         if detect_project:
             registry = load_registry(catalog_root, errors)
             stacks = detect_stacks(
                 registry,
                 files,
                 project_root,
-                package,
                 text_cache,
                 errors,
                 packages=package_records or None,
@@ -270,7 +251,6 @@ def inspect_project(
             inspection["ambiguities"] = ambiguities
         if detect_start_command:
             inspection["start_commands"] = _start_commands(
-                package,
                 errors,
                 warnings,
                 files=files,
@@ -278,13 +258,7 @@ def inspect_project(
                 text_cache=text_cache,
                 packages=package_records or None,
             )
-        if scan_scaffold:
-            inspection["scaffold_markers"] = find_scaffold_markers(files, project_root, errors)
-        if (
-            (detect_project or detect_start_command)
-            and not errors
-            and not (manifests or configs or inspection["stacks"] or inspection["start_commands"])
-        ):
+        if not errors and not (manifests or configs or inspection["stacks"] or inspection["start_commands"]):
             add_warning(
                 warnings,
                 "no project evidence found: no manifests, configuration files or registered stacks "

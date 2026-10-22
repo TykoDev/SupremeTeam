@@ -11,24 +11,19 @@ among them). Each check below fails when one side moves without the other.
 from __future__ import annotations
 
 import fnmatch
-import json
-import os
 import re
-import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-HOOKS = ROOT / "harness" / "hooks"
-sys.path.insert(0, str(ROOT / "scripts"))
-sys.path.insert(0, str(HOOKS))
-import save_taxonomy as taxonomy  # noqa: E402
-from data_formats import load_data  # noqa: E402
-from output_paths import KINDS, PHASES, resolve  # noqa: E402
+import _catalog
 
-POLICY = load_data(ROOT / "save-ownership.yaml")
+sys.path.insert(0, str(_catalog.HOOKS))
+import save_taxonomy as taxonomy
+from output_paths import KINDS, PHASES, resolve
+
+POLICY = _catalog.load_spec("save-ownership.yaml")
 CLASSES = {entry["id"]: entry for entry in POLICY["classes"]}
 
 # Each phase-scoped kind and the class that owns what it resolves.
@@ -194,13 +189,13 @@ class RestatedTaxonomyStillAgreesTests(unittest.TestCase):
 
     def test_the_pre_tool_hook_guards_every_core_run_file_and_not_a_report(self):
         with tempfile.TemporaryDirectory() as tmp:
-            env = {**os.environ, "CLAUDE_PROJECT_DIR": tmp}
             for path in (*self.CORE_PATHS, "skillset-saves/runs/r1/design/reports/report_plan.md"):
                 with self.subTest(path=path):
-                    payload = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(Path(tmp) / path)}})
-                    proc = subprocess.run([sys.executable, str(HOOKS / "pre_tool_use.py")], input=payload, text=True,
-                                          capture_output=True, env=env, check=False)
-                    self.assertEqual("save_run.py" in proc.stdout, path in self.CORE_PATHS, proc.stdout)
+                    proc = _catalog.run_hook(Path(tmp), "Write", Path(tmp) / path)
+                    if path in self.CORE_PATHS:
+                        self.assertIn("save_run.py", _catalog.deny_reason(proc.stdout))
+                    else:
+                        self.assertEqual("", proc.stdout.strip())
 
     def test_the_size_audit_never_offers_a_core_run_file_for_removal(self):
         import size_audit

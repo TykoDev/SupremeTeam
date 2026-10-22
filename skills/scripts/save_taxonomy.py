@@ -3,7 +3,7 @@
 
 ``save-ownership.yaml`` is the policy; this module is the code's copy of the
 parts programs need. The resolver, the run-record writer, and the reader import
-these names instead of restating them, and ``validation/test_save_contracts.py``
+these names instead of restating them, and ``validation/test_save_taxonomy.py``
 fails when this module and the policy disagree. Stdlib only and no I/O: the hooks
 import it on every host event.
 """

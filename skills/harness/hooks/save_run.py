@@ -110,6 +110,8 @@ WRITER_LOCK_TIMEOUT = 10.0
 HOOK_LOCK_WAIT = 0.25
 # Non-fatal write degradations observed during one invocation (reported in the result).
 WRITE_NOTES: list[str] = []
+# A link where the audit trail belongs, said as plainly as a directory there (``NOT_A_FILE``).
+IS_A_LINK = "is a link, not a file"
 
 
 class Refused(Exception):
@@ -197,6 +199,12 @@ def owner_only():
         yield
     finally:
         os.umask(previous)
+
+
+def _not_through_a_link(path: str, flags: int) -> int:
+    """The opener of the audit append: owner-only, and where the system has ``O_NOFOLLOW``, refusing a link at the trail
+    itself, so one planted after ``append_audit`` looked fails the open instead of being followed."""
+    return os.open(path, flags | getattr(os, "O_NOFOLLOW", 0), 0o600)
 
 
 def atomic_write(path: Path, data: str | bytes) -> None:
@@ -413,14 +421,20 @@ class RunStore:
         line = json.dumps({"at": now_iso(), "event": event, **payload}, sort_keys=True)
         try:
             self.run_dir.mkdir(parents=True, exist_ok=True)
-            with owner_only(), open(self.audit_path, "a", encoding="utf-8", newline="\n") as handle:
+            # A link where the trail belongs, dangling or not, would take the event (and create a file) wherever it
+            # leads: it is refused, like a directory there.
+            if os.path.islink(self.audit_path):
+                raise OSError(errno.ELOOP, IS_A_LINK, str(self.audit_path))
+            with owner_only(), open(self.audit_path, "a", encoding="utf-8", newline="\n", opener=_not_through_a_link) as handle:
                 handle.write(line + "\n")
-            # A trail an earlier writer created is not replaced, so it is narrowed here (on POSIX; on Windows
-            # chmod changes only the read-only flag, and the trail keeps the access list it has).
-            with contextlib.suppress(OSError):
-                self.audit_path.chmod(0o600)
+                # A trail an earlier writer created is not replaced, so it is narrowed here, through the file it opened
+                # (on POSIX; on Windows chmod changes only the read-only flag, and the trail keeps the access list it has).
+                with contextlib.suppress(OSError):
+                    if os.chmod in os.supports_fd:
+                        os.chmod(handle.fileno(), 0o600)
         except OSError as exc:
-            why = f"{self.rel(self.audit_path)} {NOT_A_FILE}" if not_a_file(self.audit_path) else _why(exc)
+            what = NOT_A_FILE if not_a_file(self.audit_path) else IS_A_LINK if os.path.islink(self.audit_path) else ""
+            why = f"{self.rel(self.audit_path)} {what}" if what else _why(exc)
             raise Degraded(f"audit append failed: {why}") from exc
 
     def note_failure(self, event: str, operation: str, owner: str, reason: str) -> None:

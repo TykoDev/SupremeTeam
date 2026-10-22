@@ -9,26 +9,38 @@ optionally writes the archive.
     python skills/scripts/package_check.py --root . [--out .harness-state/packages/supremeteam.zip]
 
 Matching is case-insensitive on every host, so ``.ENV`` is the same secret as
-``.env``. A symlink is a violation, never a file: the archive would carry the
-bytes of whatever it points at under an innocent name. The contents of a nested
-``.git/`` directory are a violation too (a vendored repository ships its whole
-history); the root ``.git`` is the checkout's own and is never selected.
+``.env``. A required asset is matched by its exact name, because that is the name
+the catalog opens it by. A link (a symlink, a Windows junction, or another reparse
+point whose tag names another path, such as a WSL symlink) is a violation of class
+``symlink``, never a file or a directory to walk into: the archive would carry the
+bytes of whatever it points at under an innocent name. A reparse point that is not
+a link, such as a OneDrive placeholder for a file not downloaded yet, is packaged
+like any other file. The contents of a nested ``.git/`` directory are a violation too (a
+vendored repository ships its whole history); the root ``.git`` is the checkout's
+own and is never selected.
 
 The secret and run-state names (the ``secrets``, ``runtime-state`` and
 ``save-state`` classes) are read from ``skill-maker/skill-creator/scripts/
 residue-classes.json``, the list the skill packager refuses by as well, so a
 name added there is caught by both.
 
+``--out`` writes the archive to ``<out>.tmp`` and moves it into place only when it
+is complete. A selected file that cannot be read, or an archive that cannot be
+written, removes the temporary file and leaves whatever was at ``--out`` as it was.
+
 Exit 0 when the enumerated set is clean, 1 when residue or a missing required
 file is found, 2 on manifest/engine error, including a manifest that is not a
-mapping of string lists or a residue list that cannot be read. The JSON report
-lists every violation with the class it matched.
+mapping of string lists, a residue list that cannot be read, a directory that
+cannot be listed, or an archive that cannot be written. The JSON report lists
+every violation with the class it matched.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fnmatch
 import json
+import os
 import sys
 import zipfile
 from pathlib import Path
@@ -37,6 +49,7 @@ SKILLS = Path(__file__).resolve().parents[1]
 if str(SKILLS / "scripts") not in sys.path:
     sys.path.insert(0, str(SKILLS / "scripts"))
 from data_formats import load_data  # noqa: E402
+from file_safety import is_link  # noqa: E402
 
 # The skill packager refuses the same secret and run-state names, and it must run
 # without this directory, so the list lives with it and is read from there.
@@ -114,6 +127,58 @@ def matches(relative: str, patterns: list[str]) -> bool:
     return False
 
 
+def enumerate_tree(root: Path) -> list[tuple[str, bool]]:
+    """Every file and every link under ``root``: its relative POSIX path, and whether it is a link.
+
+    ``Path.rglob`` walks into a Windows junction, which ``is_symlink()`` does not
+    report, so the archive took files from wherever one pointed. Here a link is a
+    leaf, never entered. The root's own ``.git`` is the checkout's and is skipped.
+    Raises OSError when a directory cannot be listed: a tree that was not read in
+    full cannot be called clean.
+    """
+    entries: list[tuple[str, bool]] = []
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        for path in directory.iterdir():
+            if directory == root and path.name == ".git":
+                continue
+            if is_link(path):
+                entries.append((path.relative_to(root).as_posix(), True))
+            elif path.is_dir():
+                pending.append(path)
+            elif path.is_file():
+                entries.append((path.relative_to(root).as_posix(), False))
+    return entries
+
+
+def write_archive(root: Path, selected: list[str], out: Path) -> None:
+    """Zip the ``selected`` files of ``root`` into ``out``, which only a complete archive replaces.
+
+    The archive was written in place, so a file it could not read ended the run in
+    a traceback with half an archive at ``out``. It is built in ``<out>.tmp`` now and
+    moved into place in one step. Each file is read whole before it is added, so
+    a read that fails is told apart from a write that fails. Raises OSError, after
+    removing the temporary file; a file that could not be read is named in it.
+    """
+    temporary = out.with_name(out.name + ".tmp")
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
+            for relative in sorted(selected):
+                source = root / relative
+                try:
+                    info, data = zipfile.ZipInfo.from_file(source, relative), source.read_bytes()
+                except OSError as exc:
+                    raise OSError(f"cannot read {relative}: {exc}") from exc
+                archive.writestr(info, data, zipfile.ZIP_DEFLATED)
+        os.replace(temporary, out)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            temporary.unlink()
+        raise
+
+
 def manifest_globs(manifest: object) -> tuple[list[str], list[str]]:
     """The include and exclude globs, or a ValueError naming what is wrong with the manifest."""
     if not isinstance(manifest, dict):
@@ -141,15 +206,14 @@ def main() -> int:
     except ValueError as exc:  # DataFormatError is a ValueError
         print(json.dumps({"ok": False, "engine_error": str(exc)}))
         return 2
+    try:
+        entries = enumerate_tree(root)
+    except OSError as exc:
+        print(json.dumps({"ok": False, "engine_error": f"cannot enumerate {root}: {exc}"}))
+        return 2
     selected: list[str] = []
     violations = []
-    for path in root.rglob("*"):
-        link = path.is_symlink()
-        if not (link or path.is_file()):
-            continue
-        relative = path.relative_to(root).as_posix()
-        if relative == ".git" or relative.startswith(".git/"):
-            continue
+    for relative, link in entries:
         if not matches(relative, include):
             continue
         if matches(relative, exclude):
@@ -164,15 +228,16 @@ def main() -> int:
                 violations.append({"path": relative, "class": klass})
                 break
     violations.sort(key=lambda violation: violation["path"])
-    missing = [glob for glob in REQUIRED_ASSET_GLOBS if not any(fnmatch.fnmatch(rel, glob) for rel in selected)]
+    missing = [glob for glob in REQUIRED_ASSET_GLOBS if not any(fnmatch.fnmatchcase(rel, glob) for rel in selected)]
     ok = not violations and not missing
     report = {"ok": ok, "root": str(root), "selected_count": len(selected), "violations": violations, "missing_required": missing}
     if ok and args.out:
         out = Path(args.out).resolve()
-        out.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
-            for relative in sorted(selected):
-                archive.write(root / relative, relative)
+        try:
+            write_archive(root, selected, out)
+        except OSError as exc:
+            print(json.dumps({"ok": False, "engine_error": f"cannot write the archive {out}: {exc}"}))
+            return 2
         report["archive"] = str(out)
     print(json.dumps(report, indent=2))
     return 0 if ok else 1

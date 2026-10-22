@@ -416,18 +416,23 @@ def hook_hash(path) -> str | None:
         return None
 
 
+def _hashed(name: str) -> bool:
+    """True when ``module_hashes`` records a module of this name: anything but a test module or ``_testkit.py``."""
+    return not name.startswith("test_") and name != "_testkit.py"
+
+
 def module_hashes(directory) -> dict[str, str]:
     """sha256 of every Python module a hook can import from ``directory``, found by listing it, and of the modules
     the hooks import from the ``skills/scripts`` beside it, named ``scripts/<file>``.
 
     Naming the modules in ``directory`` would leave out the next one added, and the guard lives in the
-    modules the three entry scripts import, not in the entry scripts. Test modules are
-    left out: no hook loads them, and editing one is not tampering. ``skills/scripts`` holds tools no hook runs,
-    so only the files ``_bootstrap.enforcement_files`` names are recorded from it."""
+    modules the three entry scripts import, not in the entry scripts. Test modules and the support they share
+    (``_testkit.py``) are left out: no hook loads them, and editing one is not tampering. ``skills/scripts`` holds
+    tools no hook runs, so only the files ``_bootstrap.enforcement_files`` names are recorded from it."""
     directory = Path(directory)
     found = {}
     for path in sorted(directory.glob("*.py")):
-        digest = None if path.name.startswith("test_") else hook_hash(path)
+        digest = hook_hash(path) if _hashed(path.name) else None
         if digest:
             found[path.name] = digest
     for path in _bootstrap.enforcement_files(directory):
@@ -467,7 +472,8 @@ def hash_key(script) -> str:
 def changed_files(script: str | None, record: dict, modules: dict | None = None) -> list[str] | None:
     """Names that differ from what was recorded: the script, and each module beside it that changed, appeared or went.
 
-    None when neither the script nor its directory was recorded."""
+    A recorded name ``module_hashes`` no longer records (``_testkit.py``, in a record an older release made) is not a
+    change. None when neither the script nor its directory was recorded."""
     if not script:
         return None
     differing: set[str] = set()
@@ -483,7 +489,7 @@ def changed_files(script: str | None, record: dict, modules: dict | None = None)
     if isinstance(files, dict):
         recorded = True
         current = module_hashes(directory)
-        differing |= {name for name in files.keys() | current.keys() if files.get(name) != current.get(name)}
+        differing |= {name for name in files.keys() | current.keys() if _hashed(name) and files.get(name) != current.get(name)}
     return sorted(differing) if recorded else None
 
 

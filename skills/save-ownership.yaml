@@ -61,10 +61,12 @@ unowned_path_rule: >-
 enforcement:
   machine_checked: >-
     validation/test_save_contracts.py OwnershipAgreementTests pins the writer of
-    core-run-record, gate-verdict, and grilling-log, requires the writer of every
-    class to be a roster skill (that is also an ownership.yaml owner), one of the
-    three roles, the compound role or one of the two processes named above,
-    requires the tool of every tool-bearing class to exist on disk, and
+    core-run-record, gate-verdict, and grilling-log, requires the startup probe
+    file to fall in exactly one class, persistence-probe, written by admiral,
+    requires the writer of every class to be a roster skill (that is also an
+    ownership.yaml owner), one of the three roles, the compound role or one of
+    the two processes named above, requires the tool of every tool-bearing class
+    to exist on disk, and
     rejects any pattern that is absolute or contains a parent reference.
     GeneratedRootPolicyTests requires generated_roots to be exactly these two
     roots, requires every project kind scripts/output_paths.py offers to

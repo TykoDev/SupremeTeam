@@ -15,12 +15,8 @@ import tomllib
 import unittest
 
 import _catalog
-from _catalog import SKILLS
+from _catalog import CHECKOUT_ONLY, REPO
 from package_check import manifest_globs, matches
-
-REPO = SKILLS.parent
-IN_A_CHECKOUT = (REPO / "README.md").is_file() and (REPO / "docs").is_dir()
-CHECKOUT_ONLY = unittest.skipUnless(IN_A_CHECKOUT, "installed copy: only skills/ is present")
 
 #: Directories that hold generated or foreign files, which the linter and these tests both leave alone.
 SKIPPED_DIRECTORIES = {".git", ".harness-state", ".claude", "skillset-saves", "__pycache__", ".venv"}

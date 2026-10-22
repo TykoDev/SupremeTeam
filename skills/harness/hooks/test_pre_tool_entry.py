@@ -8,6 +8,9 @@ guard code runs and the first revision denied ``rm -rf /``. The entry now has no
 the guard, and only a failure to import or run it fails open, with the fault counted and, below the floor,
 the interpreter and the floor named. Every hook module imports on an interpreter below the floor, and
 the real scripts are run under each older interpreter installed here.
+
+The script as a host runs it is here too: the decision on stdout with exit zero, a boundary that holds for
+the absolute paths hosts report, and the coverage advisory, which never denies.
 """
 from __future__ import annotations
 
@@ -24,12 +27,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-HOOK_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(HOOK_DIR))
-import _bootstrap  # noqa: E402
-import _testkit as kit  # noqa: E402
-import pre_tool_use  # noqa: E402
+import _bootstrap
+import _testkit as kit
+import pre_tool_use
 
+HOOK_DIR = Path(__file__).resolve().parent
 # The hook modules this package owns: each must import on an interpreter below the floor.
 OWNED_MODULES = ("_bootstrap", "_cmdscan", "_fsutil", "_paths", "_state", "guard_hook", "guard_state", "post_tool_use",
                  "pre_tool_use", "run_heartbeat", "size_audit", "audit_improve", "user_prompt_submit")
@@ -51,12 +53,8 @@ def _observation(root: Path) -> dict:
 
 class EntryPointTests(unittest.TestCase):
     def setUp(self):
-        manager = kit.project()
-        self.root = manager.__enter__()
-        self.addCleanup(manager.__exit__, None, None, None)
-        patcher = mock.patch.dict("os.environ", {"CLAUDE_PROJECT_DIR": str(self.root)})
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.root = self.enterContext(kit.project())
+        self.enterContext(kit.in_project(self.root))
 
     def run_entry(self, version=None) -> str:
         err = io.StringIO()
@@ -136,6 +134,114 @@ class EntryPointTests(unittest.TestCase):
         self.assertEqual((proc.returncode, proc.stdout), (0, b""))
 
 
+class PreToolUseTests(unittest.TestCase):
+    """The registered script as a host runs it: the decision on stdout with exit zero, a recorded boundary that holds
+    for the absolute paths hosts report, and a payload it cannot parse let through."""
+
+    def setUp(self):
+        self.root = self.enterContext(kit.project())
+
+    def hook(self, payload) -> subprocess.CompletedProcess:
+        return kit.run_hook("pre_tool_use.py", payload, self.root, text=True)
+
+    def test_legacy_unbounded_allow_dangerous_flag_cannot_bypass_guard(self):
+        kit.write_guard(self.root, {"allow_dangerous": True})
+        result = self.hook(kit.bash("rm -rf /"))
+        self.assertEqual(result.returncode, 0)
+        self.assertIn('"permissionDecision": "deny"', result.stdout)
+
+    def test_frozen_boundary_blocks_writes_but_not_reads(self):
+        kit.write_guard(self.root, {"frozen_globs": ["src/payments/**"]})
+        read_result = self.hook(kit.bash("Get-Content src/payments/file.txt", "PowerShell"))
+        write_result = self.hook(kit.bash("Set-Content src/payments/file.txt x", "PowerShell"))
+        self.assertEqual(read_result.stdout, "")
+        self.assertIn('"permissionDecision": "deny"', write_result.stdout)
+
+    def test_leading_wildcard_blocked_glob_matches_shell_path(self):
+        kit.write_guard(self.root, {"blocked_globs": ["**/secrets/**"]})
+        result = self.hook(kit.bash("Set-Content app/secrets/token.txt x", "PowerShell"))
+        self.assertIn('"permissionDecision": "deny"', result.stdout)
+
+    def test_frozen_relative_glob_blocks_edit_of_absolute_windows_path(self):
+        # Hosts report absolute target paths; a relative frozen glob must still catch them.
+        kit.write_guard(self.root, {"frozen_globs": ["src/payments/**"]})
+        result = self.hook({"tool_name": "Edit", "tool_input": {"file_path": "D:\\proj\\src\\payments\\charge.py"}})
+        self.assertEqual(result.returncode, 0)
+        self.assertIn('"permissionDecision": "deny"', result.stdout)
+
+    def test_frozen_relative_glob_blocks_write_of_absolute_path(self):
+        kit.write_guard(self.root, {"frozen_globs": ["src/payments/**"]})
+        result = self.hook({"tool_name": "Write", "tool_input": {"file_path": "D:/proj/src/payments/charge.py"}})
+        self.assertIn('"permissionDecision": "deny"', result.stdout)
+
+    def test_read_only_command_on_absolute_frozen_path_still_allowed(self):
+        kit.write_guard(self.root, {"frozen_globs": ["src/payments/**"]})
+        result = self.hook(kit.bash("Get-Content D:\\proj\\src\\payments\\charge.py", "PowerShell"))
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+
+    def test_absolute_path_outside_frozen_glob_is_allowed(self):
+        kit.write_guard(self.root, {"frozen_globs": ["src/payments/**"]})
+        result = self.hook({"tool_name": "Edit", "tool_input": {"file_path": "D:\\proj\\src\\billing\\charge.py"}})
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+
+    def test_malformed_json_fails_open(self):
+        result = self.hook("{")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+
+
+class PreToolCoverageAdvisoryTests(unittest.TestCase):
+    """Advisory context, never a deny: running coverage is legitimate; leaving its
+    output at the project root is the defect, and it is still correctable here."""
+
+    def setUp(self):
+        self.root = self.enterContext(kit.project())
+
+    def _advice(self, command: str) -> str:
+        result = kit.run_hook("pre_tool_use.py", kit.bash(command), self.root, text=True)
+        self.assertEqual(result.returncode, 0)
+        if not result.stdout.strip():
+            return ""
+        payload = json.loads(result.stdout)["hookSpecificOutput"]
+        self.assertNotIn("permissionDecision", payload, "the advisory must never deny")
+        return payload["additionalContext"]
+
+    def test_parallel_and_unrouted_coverage_commands_are_advised(self):
+        cases = (
+            "coverage run -p -m pytest tests/",
+            "coverage run --parallel-mode -m unittest discover",
+            "python -m pytest --cov=app tests/",
+            "npx nyc mocha",
+            "npx c8 node --test",
+            "npx vitest run --coverage",
+        )
+        for command in cases:
+            with self.subTest(command=command):
+                advice = self._advice(command)
+                self.assertIn("output_paths.py", advice)
+                self.assertIn("evidence/coverage", advice)
+
+    def test_commands_that_name_a_destination_stay_silent(self):
+        cases = (
+            "coverage run -p -m pytest && coverage combine --data-file=skillset-saves/runs/r/build/evidence/coverage/.coverage",
+            "python -m pytest --cov=app --cov-report=xml:skillset-saves/runs/r/build/evidence/coverage/cov.xml",
+            "npx nyc --report-dir=skillset-saves/runs/r/qa/evidence/coverage --temp-dir=skillset-saves/runs/r/qa/evidence/coverage/tmp mocha",
+            "npx vitest run --coverage --coverage.reportsDirectory=skillset-saves/runs/r/qa/evidence/coverage",
+            "coverage run -m pytest tests/",
+            "python -m unittest discover -s tests",
+            "git status --porcelain",
+        )
+        for command in cases:
+            with self.subTest(command=command):
+                self.assertEqual(self._advice(command), "")
+
+    def test_a_denied_command_is_still_denied_not_advised(self):
+        result = kit.run_hook("pre_tool_use.py", kit.bash("rm -rf / && coverage run -p -m pytest"), self.root, text=True)
+        self.assertIn('"permissionDecision": "deny"', result.stdout)
+
+
 class PartialCopyTests(unittest.TestCase):
     """A copy of the harness whose `skills/scripts` lacks `save_taxonomy.py` still guards and still lets the other two hooks run.
 
@@ -174,14 +280,15 @@ class PartialCopyTests(unittest.TestCase):
 
     def test_the_run_scope_is_no_run_where_the_grammar_is_missing(self):
         code = "import sys; sys.path.insert(0, %r); import _state; print(_state.RUN_ID, _state.active_run_id(%r))" % (str(self.hooks), str(self.project))
-        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=kit.clean_env(self.project), check=False)
         self.assertEqual((proc.returncode, proc.stdout.strip()), (0, "None no-run"), proc.stderr)
 
 
 class PoisonedHelperTests(unittest.TestCase):
     """A helper on the guard's import path that ends the process (`raise SystemExit(0)` appended to it) switched the
     guard off with no fault counted: `_state` and the rule loop caught only `Exception`. The guard now keeps enforcing
-    and counts the fault; Rule F refuses the edit while the guard is in use (`HarnessFileTests`)."""
+    and counts the fault; Rule F refuses the edit while the guard is in use (`EnforcementFilesTests` in
+    `test_guard_harness_files.py`)."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -269,9 +376,7 @@ class OlderInterpreterTests(unittest.TestCase):
     """The real scripts, as a subprocess, under every older interpreter installed here (RR-guard-1)."""
 
     def setUp(self):
-        manager = kit.project()
-        self.root = manager.__enter__()
-        self.addCleanup(manager.__exit__, None, None, None)
+        self.root = self.enterContext(kit.project())
 
     def test_the_entry_denies_and_allows_exactly_as_it_does_on_the_floor(self):
         for label, python in OLDER:
@@ -311,10 +416,7 @@ class OlderInterpreterTests(unittest.TestCase):
 
     def test_every_entry_refreshes_a_due_heartbeat_under_each_older_interpreter(self):
         """The refresh moved out of `_state` into `run_heartbeat` (QR-PY-14); the three entries still reach the real writer from it."""
-        (self.root / "README.md").write_text("# fixture\n", encoding="utf-8")
-        created = subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), "create", "--run-id", "run-1", "--evidence", "README.md",
-                                  "--project-root", str(self.root)], capture_output=True, text=True, env=kit.clean_env(self.root), check=False)
-        self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
+        kit.pin_a_run(self.root, "run-1")
         lock = self.root / "skillset-saves" / "runs" / "run-1" / "_lock.md"
         throttle = self.root / ".harness-state" / "observations" / "heartbeat-scan.json"
         entries = (("pre_tool_use.py", "PreToolUse", kit.bash("ls")), ("post_tool_use.py", "PostToolUse", kit.bash("ls")),

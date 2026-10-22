@@ -16,8 +16,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import _catalog
+
 HERE = Path(__file__).resolve().parent
-HAVE_YAML = importlib.util.find_spec("yaml") is not None
 
 
 def load(name: str, filename: str):
@@ -28,7 +29,9 @@ def load(name: str, filename: str):
 
 
 run_eval = load("validation_run_eval_under_test", "run_eval.py")
-trigger_eval = load("validation_trigger_eval_under_test", "trigger_eval.py") if HAVE_YAML else None
+# trigger_eval.py exits at import without PyYAML. _catalog.pyyaml() holds the CI leg to its PyYAML promise, so a
+# leg that promises PyYAML and lost it fails here instead of skipping TriggerEvalTests.
+trigger_eval = load("validation_trigger_eval_under_test", "trigger_eval.py") if _catalog.pyyaml() else None
 
 
 def completed(stdout: str = "", returncode: int = 0, stderr: str = "") -> subprocess.CompletedProcess:
@@ -140,8 +143,11 @@ description: Does alpha things. Use when the user wants alpha.
 """
 
 
-@unittest.skipUnless(HAVE_YAML, "trigger_eval.py requires PyYAML")
 class TriggerEvalTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        _catalog.require_pyyaml()
+
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

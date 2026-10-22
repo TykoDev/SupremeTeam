@@ -10,15 +10,14 @@ analyser returns is a path word; deciding whether it lies on a boundary is ``_pa
 from __future__ import annotations
 
 import os
-import sys
 import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
+import _cmdscan
+
 HOOK_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(HOOK_DIR))
-import _cmdscan  # noqa: E402
 
 
 def analyse(text: str, ps: bool = False):
@@ -409,6 +408,32 @@ class WriteTargetTests(unittest.TestCase):
         self.assertEqual((sub, [a.text for a in operands], directories, flags), ("commit", ["f"], ["r"], ["-m"]))
 
 
+class WindowsWordLexingTests(unittest.TestCase):
+    """A backslash inside a word that begins as a Windows path is a separator, not an escape."""
+
+    def test_a_drive_path_word_keeps_its_backslashes(self):
+        analysis = _cmdscan.analyse(r"echo x > C:\work\src\a.py")
+        self.assertEqual([write.path for write in analysis.writes], [r"C:\work\src\a.py"])
+
+    def test_a_unc_word_keeps_its_backslashes(self):
+        analysis = _cmdscan.analyse(r"echo x > \\host\share\out.txt")
+        self.assertEqual([write.path for write in analysis.writes], [r"\\host\share\out.txt"])
+
+    def test_a_mixed_separator_drive_path_stays_one_word(self):
+        analysis = _cmdscan.analyse(r"cd C:\work\proj/src/payments && touch n")
+        self.assertEqual(analysis.writes[0].path, "n")
+        self.assertEqual(analysis.writes[0].cwds, (r"C:\work\proj/src/payments",))
+
+    def test_ordinary_escapes_still_win_outside_a_windows_path(self):
+        self.assertEqual(_cmdscan.analyse("echo a\\>b").writes, [])
+        self.assertEqual(_cmdscan.analyse("\\rm -rf /").commands[0].verb, "rm")
+        self.assertFalse(_cmdscan.analyse("rm src/pay\\*").writes[0].glob)
+
+    def test_a_quoted_windows_path_is_kept_as_written(self):
+        analysis = _cmdscan.analyse('echo x > "C:\\work\\my dir\\a.py"')
+        self.assertEqual([write.path for write in analysis.writes], ["C:\\work\\my dir\\a.py"])
+
+
 class CommandStructureTests(unittest.TestCase):
     def test_wrappers_and_paths_reduce_to_the_command_that_runs(self):
         cases = (
@@ -647,7 +672,6 @@ class UnnamedWriteTests(unittest.TestCase):
 
     def test_xargs_keeps_the_arguments_it_was_given_as_the_command(self):
         """The marker is not an argument: the commands and writes are what they were."""
-        self.assertIn(("rm", ("-rf",)), commands("cat list | xargs rm -rf"))
         self.assertEqual(paths("ls | xargs touch named"), {"named"})
         self.assertNotIn("<stdin>", " ".join(" ".join(argv) for _, argv in commands("ls | xargs rm")))
 

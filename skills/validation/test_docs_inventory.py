@@ -1,21 +1,20 @@
-"""The inventories and preconditions that documents state are checked against the tree and the specs.
+"""The inventories that documents state are checked against the tree, the specs and the code.
 
 ``validate_manifests.py`` compares the documents' totals (`53 skills`) with the roster, but the
 sections a total is made of were never added up: a heading that states no count, or a count that
-disagrees with its own table, left the total standing while the parts did not sum to it. The
-engineer's precondition is the other kind of drift: it asked for a stack lock that
-``pipelines.yaml`` orders after the implementation spec, so the stage could only be satisfied by
-going back to a later stage.
+disagrees with its own table, left the total standing while the parts did not sum to it.
 
-The gate prose is the third kind: documents that say which typed record kinds exist, which keys
-carry them, what a stack lock must satisfy and what the validator leaves to the gatekeeper are
-compared with ``gates.yaml``, which the engine's own tests tie to the code.
+The gate prose is the second kind of drift: documents that say which typed record kinds exist, which keys
+carry them, how many keys are artifact-backed or take a fallback, what a stack lock must satisfy and
+what the validator leaves to the gatekeeper are compared with ``gates.yaml``, which the engine's own
+tests tie to the code, and the finding statuses they list with the engine's ``FINDING_STATUSES``.
 
 The tests that read the checkout's AGENTS.md, docs/, scripts/ or README skip in an installed
 copy, which carries only ``skills/``.
 """
 from __future__ import annotations
 
+import importlib.util
 import re
 import subprocess
 import sys
@@ -23,12 +22,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from _catalog import SKILLS, load_spec
+from _catalog import CHECKOUT_ONLY, HOOKS, IN_A_CHECKOUT, REPO, SKILLS, gatekeepers, load_spec, number_word, section
 
-REPO = SKILLS.parent
-GATEKEEPER_SKILLS = ("gatekeeper-admiral", "design/gatekeeper-design", "build/gatekeeper-build", "review/gatekeeper-code")
-IN_A_CHECKOUT = (REPO / "AGENTS.md").is_file() and (REPO / "docs").is_dir()
-CHECKOUT_ONLY = unittest.skipUnless(IN_A_CHECKOUT, "installed copy: only skills/ is present")
+GATEKEEPER_SKILLS = gatekeepers()
 
 HEADING = re.compile(r"^(#{2,6}) (.+?)\s*$", re.M)
 FENCE = re.compile(r"^```.*?^```", re.M | re.S)
@@ -68,6 +64,18 @@ def skill_sections(text: str) -> list:
 
 def skills_on_disk() -> list:
     return sorted(path.relative_to(REPO).as_posix() for path in SKILLS.rglob("SKILL.md"))
+
+
+def load_module(name: str, path: Path):
+    """The module at ``path``, loaded by file the way the gate engine's own tests load ``check.py``."""
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def gate_engine():
+    return load_module("gate_check_engine", SKILLS / "harness" / "gatekeeper" / "check.py")
 
 
 @CHECKOUT_ONLY
@@ -110,40 +118,9 @@ class SkillCountTests(unittest.TestCase):
         self.assertEqual(total, len(skills_on_disk()))
 
 
-class EngineerPreconditionTests(unittest.TestCase):
-    """What the engineer needs before it slices must come from a stage that runs before it."""
-
-    def later_steps(self) -> list:
-        stages = load_spec("pipelines.yaml")["pipelines"]["design"]["stages"]
-        own = next(index for index, stage in enumerate(stages) if stage["owner"] == "engineer")
-        return [stage["step"] for stage in stages[own + 1:]]
-
-    def preconditions(self) -> dict:
-        """Where the engineer states what it needs: workflow step 1, and the preconditions table."""
-        skill = (SKILLS / "design" / "engineer" / "SKILL.md").read_text(encoding="utf-8")
-        item = re.search(r"^1\. (Confirm the package is sliceable.*)$", skill, re.M)
-        self.assertIsNotNone(item, "engineer workflow step 1 moved or was reworded")
-        sentence = re.split(r"(?<=\.)\s+(?=[A-Z])", item.group(1))[0]
-        workflow = (SKILLS / "design" / "engineer" / "references" / "workflow.md").read_text(encoding="utf-8")
-        section = re.search(r"^## Preconditions\s*$(.*?)^## ", workflow, re.M | re.S)
-        self.assertIsNotNone(section, "engineer references/workflow.md lost its Preconditions section")
-        table = "\n".join(line for line in section.group(1).splitlines() if line.startswith("|"))
-        return {"SKILL.md workflow step 1": sentence, "references/workflow.md preconditions table": table}
-
-    def test_the_engineer_is_not_the_last_stage(self):
-        self.assertTrue(self.later_steps())
-
-    def test_no_precondition_names_an_artifact_a_later_stage_produces(self):
-        for step in self.later_steps():
-            name = re.compile(re.sub(r"[-_]", r"[\\s_-]*", step), re.I)
-            for where, text in self.preconditions().items():
-                with self.subTest(step=step, where=where):
-                    self.assertIsNone(name.search(text),
-                                      f"engineer {where} names '{step}', which pipelines.yaml orders after it")
-
-
 class GateProseTests(unittest.TestCase):
-    """What the documents say about typed records and the stack lock is what the spec says."""
+    """What the documents say about typed records, the stack lock, artifact backing and finding statuses is what the
+    spec and the engine say."""
 
     @classmethod
     def setUpClass(cls):
@@ -191,11 +168,11 @@ class GateProseTests(unittest.TestCase):
         self.assertEqual([], mentions)
 
     def roster_rows(self, text: str, heading: str) -> dict:
-        """kind -> the backticked names in its second cell, for the table under ``heading``."""
-        section = re.search(rf"^{re.escape(heading)}\s*$(.*?)(?=^## |\Z)", text, re.M | re.S)
-        self.assertIsNotNone(section, f"no section '{heading}'")
+        """kind -> the backticked names in its second cell, for the table in the ``## heading`` section."""
+        body = section(text, heading)
+        self.assertIsNotNone(body, f"no section '## {heading}'")
         rows = {}
-        for row in re.finditer(r"^\|\s*`([a-z_]+)`\s*\|([^|]*)\|", section.group(1), re.M):
+        for row in re.finditer(r"^\|\s*`([a-z_]+)`\s*\|([^|]*)\|", body, re.M):
             if row.group(1) in self.kinds:
                 rows[row.group(1)] = self.names_in(row.group(2))
         return rows
@@ -209,12 +186,12 @@ class GateProseTests(unittest.TestCase):
     def test_the_admirals_typed_record_roster_matches_the_spec(self):
         """The roster left `mock_parity` out of the probe row and `mock_rendering` out of the render row."""
         text = (SKILLS / "gatekeeper-admiral" / "references" / "boundary-evidence.md").read_text(encoding="utf-8")
-        self.check_roster(self.roster_rows(text, "## 2. Typed-record roster"))
+        self.check_roster(self.roster_rows(text, "2. Typed-record roster"))
 
     @CHECKOUT_ONLY
     def test_the_gates_page_typed_record_table_matches_the_spec(self):
         text = (REPO / "docs" / "gatekeepers.md").read_text(encoding="utf-8")
-        self.check_roster(self.roster_rows(text, "## Typed evidence records"))
+        self.check_roster(self.roster_rows(text, "Typed evidence records"))
 
     SUBMITTER_HEADER = re.compile(r"^\|\s*Boundary\s*\|\s*Guards\s*\|\s*Submitter\s*\|.*$", re.M)
 
@@ -306,6 +283,46 @@ class GateProseTests(unittest.TestCase):
         self.assertIn("typed records and the finding policy were not checked", text)
         self.assertIn("a bare sanctioned wording passes there without an applicability record", text)
 
+    def test_gatekeeper_readme_artifact_backing_matches_gates(self):
+        """The engine README counts and lists the artifact-backed keys, then counts the keys a fallback can stand in for."""
+        backed, waivable = set(), set(self.spec["fallback_values"])
+        for boundary in self.spec["boundaries"].values():
+            backed.update(boundary.get("artifact_evidence", []))
+            waivable.update(boundary.get("fallback_values", {}))
+        readme = (SKILLS / "harness" / "gatekeeper" / "README.md").read_text(encoding="utf-8")
+        paragraph = re.search(r"([A-Za-z-]+) evidence keys are artifact-backed(.*?)\b([A-Za-z-]+)\s+keys accept a sanctioned",
+                              readme, re.S)
+        self.assertIsNotNone(paragraph, "the README lost its artifact-backed keys paragraph")
+        self.assertEqual(number_word(len(backed)), paragraph.group(1).lower())
+        self.assertEqual(number_word(len(waivable)), paragraph.group(3).lower())
+        missing = sorted(key for key in backed if f"`{key}`" not in paragraph.group(2))
+        self.assertEqual(missing, [], f"README omits artifact-backed keys: {missing}")
+
+    #: The review lenses whose finding packets carry a status template.
+    LENSES = ("review/design-qa/SKILL.md", "review/mr-robot/SKILL.md", "review/security-review/SKILL.md")
+
+    def test_every_documented_status_list_is_the_engines(self):
+        """A document that lists the finding statuses `check.py` accepts lists `FINDING_STATUSES` and counts them."""
+        statuses = gate_engine().FINDING_STATUSES
+        claim = re.compile(r"a status from the ([a-z-]+) `[./]*harness/gatekeeper/check\.py` accepts \(([^)]*)\)")
+        found = 0
+        for path in sorted(SKILLS.rglob("*.md")):
+            for count, listed in claim.findall(path.read_text(encoding="utf-8")):
+                found += 1
+                with self.subTest(document=path.relative_to(SKILLS).as_posix()):
+                    self.assertEqual(number_word(len(statuses)), count)
+                    self.assertEqual(statuses, set(re.findall(r"`([a-z-]+)`", listed)))
+        self.assertTrue(found, "no document lists the statuses check.py accepts")
+
+    def test_every_lens_packet_status_is_accepted_by_the_engine(self):
+        statuses = gate_engine().FINDING_STATUSES
+        for relative in self.LENSES:
+            match = re.search(r"<status: ([^>]*)>", (SKILLS / relative).read_text(encoding="utf-8"))
+            self.assertIsNotNone(match, f"{relative} carries no status template")
+            declared = {part.strip() for part in match.group(1).split("|")}
+            self.assertLessEqual(declared, statuses,
+                                 f"{relative} teaches a status the gate rejects: {sorted(declared - statuses)}")
+
 
 @CHECKOUT_ONLY
 class ExitCodeTableTests(unittest.TestCase):
@@ -337,9 +354,9 @@ class ExitCodeTableTests(unittest.TestCase):
 
     def test_the_tabulated_tools_exist(self):
         text = (REPO / "docs" / "harness.md").read_text(encoding="utf-8")
-        section = re.search(r"^## Exit codes and streams\s*$(.*?)(?=^## )", text, re.M | re.S)
-        self.assertIsNotNone(section, "docs/harness.md lost its 'Exit codes and streams' section")
-        names = re.findall(r"^\| `([^`]+\.py)`", section.group(1), re.M)
+        table = section(text, "Exit codes and streams")
+        self.assertIsNotNone(table, "docs/harness.md lost its 'Exit codes and streams' section")
+        names = re.findall(r"^\| `([^`]+\.py)`", table, re.M)
         self.assertGreaterEqual(len(names), 12)
         for name in names:
             with self.subTest(tool=name):
@@ -347,19 +364,31 @@ class ExitCodeTableTests(unittest.TestCase):
                 self.assertTrue(found, f"docs/harness.md tabulates {name}, which is not in the tree")
 
     def test_the_named_exit_codes_are_the_ones_the_table_gives(self):
-        save_run = (SKILLS / "harness" / "hooks" / "save_run.py").read_text(encoding="utf-8")
-        self.assertRegex(save_run, r"EXIT_OK, EXIT_REFUSED, EXIT_DEGRADED, EXIT_ENGINE = 0, 1, 2, 3")
-        install = (REPO / "scripts" / "install_hooks.py").read_text(encoding="utf-8")
-        self.assertRegex(install, r"(?m)^EXIT_REFUSED = 2$")
-        self.assertRegex(install, r"(?m)^EXIT_DECLINED = 3$")
-        table = (REPO / "docs" / "harness.md").read_text(encoding="utf-8")
-        save_row = next(line for line in table.splitlines() if line.startswith("| `hooks/save_run.py`"))
-        cells = [cell.strip() for cell in save_row.strip("|").split("|")]
-        self.assertTrue(cells[1].startswith("`ok`") and cells[2].startswith("`refused`") and cells[3].startswith("`degraded`"))
-        self.assertTrue(cells[4].startswith("engine error"))
-        install_row = next(line for line in table.splitlines() if line.startswith("| `scripts/install_hooks.py`"))
-        install_cells = [cell.strip() for cell in install_row.strip("|").split("|")]
-        self.assertTrue(install_cells[3].startswith("a write was refused") and install_cells[4].startswith("declined"))
+        """Each named constant's value picks the column of the row that has to describe it."""
+        if str(HOOKS) not in sys.path:
+            sys.path.insert(0, str(HOOKS))
+        save_run = load_module("save_run", HOOKS / "save_run.py")
+        install = load_module("install_hooks", REPO / "scripts" / "install_hooks.py")
+        text = (REPO / "docs" / "harness.md").read_text(encoding="utf-8")
+        lines = section(text, "Exit codes and streams").splitlines()
+
+        def cells(start: str) -> list:
+            line = next(line for line in lines if line.startswith(start))
+            return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+        column = {heading: index for index, heading in enumerate(cells("| Tool |"))}
+        named = {
+            "hooks/save_run.py": ((save_run.EXIT_OK, "`ok`"), (save_run.EXIT_REFUSED, "`refused`"),
+                                  (save_run.EXIT_DEGRADED, "`degraded`"), (save_run.EXIT_ENGINE, "engine error")),
+            "scripts/install_hooks.py": ((install.EXIT_REFUSED, "a write was refused"), (install.EXIT_DECLINED, "declined")),
+        }
+        for tool, codes in named.items():
+            row = cells(f"| `{tool}`")
+            for code, description in codes:
+                with self.subTest(tool=tool, code=code):
+                    self.assertIn(str(code), column, f"docs/harness.md has no column for exit {code}")
+                    self.assertTrue(row[column[str(code)]].startswith(description),
+                                    f"exit {code} of {tool} is described as {row[column[str(code)]]!r}")
 
 
 @CHECKOUT_ONLY

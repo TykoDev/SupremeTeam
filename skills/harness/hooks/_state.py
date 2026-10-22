@@ -85,8 +85,6 @@ _SESSION_ENV = ("SUPREMETEAM_SESSION_ID", "CLAUDE_SESSION_ID", "CODEX_SESSION_ID
 # working directory keeps runtime state at the project root even when a
 # script is invoked from a subdirectory (save-ownership.yaml generated_roots).
 ROOT_MARKERS = ("skillset-saves", ".harness-state", ".git")
-# The old private name: skills/harness/gatekeeper/test_gate_wrappers.py pins the gate engine's own list against this one.
-_ROOT_MARKERS = ROOT_MARKERS
 # The one documented order: an explicit Supreme Team variable beats a host's own
 # workspace variable, and any variable beats the marker walk from the working
 # directory. Every hook-directory reader and writer resolves the root here.

@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Verify, repair and readiness: host selection, matcher coverage, interpreter,
-project root, read-only diagnostics, and hook-script integrity.
+"""Verify, repair and readiness: their verdicts, the analysis of a configured command, host selection, matcher
+coverage, interpreter, project root, read-only diagnostics, observed hooks, and hook-script integrity.
 
-Every test runs the scripts as subprocesses in a scratch project and a scratch
-home with the host environment signals removed, so none of them depends on the
-shell the suite happens to run in.
+The scripts run as subprocesses in a scratch project and a scratch home with the host environment signals removed, so
+no test depends on the shell the suite happens to run in; the functions behind them are called in this process.
 """
 from __future__ import annotations
 
@@ -21,26 +20,15 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import _bootstrap
+import _saves
+import _testkit as kit
+import check_readiness
+import repair_registration as repair
+import verify_registration as verify
+
 HOOK_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(HOOK_DIR))
-import _bootstrap  # noqa: E402
-import _saves  # noqa: E402
-import check_readiness  # noqa: E402
-import repair_registration as repair  # noqa: E402
-import verify_registration as verify  # noqa: E402
-import test_run_state as fixtures  # noqa: E402
-
-_SIGNAL_PREFIXES = ("CLAUDE", "CODEX_", "COPILOT", "GITHUB_COPILOT")
-_PROJECT_VARS = ("SUPREMETEAM_PROJECT_DIR", "CLAUDE_PROJECT_DIR", "CODEX_WORKSPACE_DIR", "GITHUB_WORKSPACE", "SUPREMETEAM_HOOK_ROOT")
 POSIX = os.name == "posix"
-
-
-def plain_env(home: Path, **extra: str) -> dict:
-    """An ordinary terminal: no host signal, no project variable, a scratch home."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith(_SIGNAL_PREFIXES) and k not in _PROJECT_VARS}
-    env["HOME"] = env["USERPROFILE"] = str(home)
-    env.update(extra)
-    return env
 
 
 class Scratch(unittest.TestCase):
@@ -56,8 +44,7 @@ class Scratch(unittest.TestCase):
         (self.project / ".git").mkdir(parents=True)
 
     def run_tool(self, script: str, *args: str, cwd: Path | None = None, **extra: str) -> subprocess.CompletedProcess:
-        return subprocess.run([sys.executable, str(HOOK_DIR / script), *args], text=True, capture_output=True,
-                              cwd=str(cwd or self.project), env=plain_env(self.home, **extra), check=False)
+        return kit.run_cli(script, *args, env=kit.plain_env(self.home, **extra), cwd=cwd or self.project)
 
     def write_json(self, path: Path, data) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -69,6 +56,264 @@ class Scratch(unittest.TestCase):
 
     def claude_settings(self, data) -> Path:
         return self.write_json(self.project / ".claude" / "settings.json", data)
+
+
+class VerifyRegistrationTests(Scratch):
+    """The verifier's verdicts on a project's own Claude settings (registered, missing, unknown, partial) and on commands
+    that only resemble the registered scripts."""
+
+    BLOCK = {
+        "hooks": {
+            "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"python {HOOK_DIR / 'pre_tool_use.py'}"}]}],
+            "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"python {HOOK_DIR / 'post_tool_use.py'}"}]}],
+            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": f"python {HOOK_DIR / 'user_prompt_submit.py'}"}]}],
+        }
+    }
+
+    def verify(self, host: str = "claude", **extra: str) -> subprocess.CompletedProcess:
+        return self.run_tool("verify_registration.py", "--host", host, CLAUDE_PROJECT_DIR=str(self.project), **extra)
+
+    def test_all_registered_exits_zero(self):
+        self.claude_settings(self.BLOCK)
+        result = self.verify()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("status: REGISTERED", result.stdout)
+
+    def test_missing_exits_one_and_prompts(self):
+        # A readable settings file that simply lacks the hooks -> MISSING (exit 1).
+        self.claude_settings({"model": "opus"})
+        result = self.verify()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("REGISTER_PROMPT", result.stdout)
+        self.assertIn("status: MISSING", result.stdout)
+        self.assertIn("skills/harness/hooks/", result.stdout)
+        self.assertNotIn("skills/admiral/harness/hooks/", result.stdout)
+
+    def test_no_settings_anywhere_is_unknown(self):
+        # No readable settings file at all -> UNKNOWN (exit 2); still prompts.
+        result = self.verify()
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("status: UNKNOWN", result.stdout)
+
+    def test_partial_registration_is_missing(self):
+        self.claude_settings({"hooks": {"PreToolUse": self.BLOCK["hooks"]["PreToolUse"]}})
+        result = self.verify()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("[OK ] PreToolUse", result.stdout)
+        self.assertIn("[MISSING] UserPromptSubmit", result.stdout)
+
+    def test_same_basename_from_unrelated_package_is_missing(self):
+        self.claude_settings({
+            "hooks": {
+                "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "python /tmp/other/skills/harness/hooks/pre_tool_use.py"}]}],
+                "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "python /tmp/other/skills/harness/hooks/post_tool_use.py"}]}],
+                "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "python /tmp/other/skills/harness/hooks/user_prompt_submit.py"}]}],
+            }
+        })
+        result = self.verify()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("status: MISSING", result.stdout)
+
+    def test_supremeteam_named_lookalike_paths_are_rejected(self):
+        for root in (r"C:\unrelated\admiral-hooks", r"C:\other\skills\Supreme Team\harness\hooks"):
+            with self.subTest(root=root):
+                self.claude_settings({
+                    "hooks": {
+                        "PreToolUse": [{"hooks": [{"command": f"python {root}\\pre_tool_use.py"}]}],
+                        "PostToolUse": [{"hooks": [{"command": f"python {root}\\post_tool_use.py"}]}],
+                        "UserPromptSubmit": [{"hooks": [{"command": f"python {root}\\user_prompt_submit.py"}]}],
+                    }
+                })
+                result = self.verify()
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("status: MISSING", result.stdout)
+
+    def test_explicit_supremeteam_hook_root_is_accepted(self):
+        # The explicit root must hold real script files: a configured path
+        # that does not exist is "configured" but never "registered".
+        explicit = self.tmp / "explicit"
+        explicit.mkdir()
+        for name in ("pre_tool_use.py", "post_tool_use.py", "user_prompt_submit.py"):
+            (explicit / name).write_text("# relocated hook\n", encoding="utf-8")
+        self.claude_settings({
+            "hooks": {
+                "PreToolUse": [{"hooks": [{"command": f"python {explicit / 'pre_tool_use.py'}"}]}],
+                "PostToolUse": [{"hooks": [{"command": f"python {explicit / 'post_tool_use.py'}"}]}],
+                "UserPromptSubmit": [{"hooks": [{"command": f"python {explicit / 'user_prompt_submit.py'}"}]}],
+            }
+        })
+        result = self.verify(SUPREMETEAM_HOOK_ROOT=str(explicit))
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("status: REGISTERED", result.stdout)
+
+    def test_real_path_suffix_reference_and_note_are_rejected(self):
+        real = HOOK_DIR / "pre_tool_use.py"
+        for command in (f'python "{real}.bak"', f'echo "{real}"', f'python C:\\wrapper.py --note="{real}"'):
+            with self.subTest(command=command):
+                self.claude_settings({
+                    "hooks": {
+                        "PreToolUse": [{"hooks": [{"command": command}]}],
+                        "PostToolUse": self.BLOCK["hooks"]["PostToolUse"],
+                        "UserPromptSubmit": self.BLOCK["hooks"]["UserPromptSubmit"],
+                    }
+                })
+                result = self.verify()
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("[MISSING] PreToolUse", result.stdout)
+
+    def test_copilot_native_config_is_detected(self):
+        self.write_json(self.project / ".github" / "hooks.json", self.BLOCK)
+        result = self.verify("copilot")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("status: REGISTERED", result.stdout)
+
+
+class RegistrationAnalysisTests(unittest.TestCase):
+    """What the verifier makes of one configured command: whether it names the script, finds it, and would run it."""
+
+    def test_inline_program_mentioning_the_hook_is_not_executable(self):
+        real = HOOK_DIR / "pre_tool_use.py"
+        state = verify.analyse(f'python -c "pass" "{real}"', "pre_tool_use.py")
+        self.assertTrue(state["configured"])
+        self.assertTrue(state["resolvable"])
+        self.assertFalse(state["executable"])
+        self.assertIn("-c", state["reason"])
+        state = verify.analyse(f'python -m runpy "{real}"', "pre_tool_use.py")
+        self.assertFalse(state["executable"])
+
+    def test_nonexistent_configured_script_is_not_registered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"SUPREMETEAM_HOOK_ROOT": tmp}):
+                state = verify.analyse(f'python "{Path(tmp) / "pre_tool_use.py"}"', "pre_tool_use.py")
+        self.assertTrue(state["configured"])
+        self.assertFalse(state["resolvable"])
+        self.assertFalse(state["executable"])
+
+    def test_environment_variable_forms_and_py_launcher_are_accepted(self):
+        real = HOOK_DIR / "post_tool_use.py"
+        with mock.patch.dict(os.environ, {"SUPREMETEAM_HOOK_ROOT_TEST": str(HOOK_DIR)}):
+            for command in ('python "$SUPREMETEAM_HOOK_ROOT_TEST/post_tool_use.py"', 'py -3.13 "%SUPREMETEAM_HOOK_ROOT_TEST%/post_tool_use.py"',
+                            f'python -u -X utf8 "{real}"', f'FOO=bar python "{real}"'):
+                with self.subTest(command=command):
+                    self.assertTrue(verify.analyse(command, "post_tool_use.py")["executable"], command)
+
+    def test_option_that_swallows_the_path_is_not_executable(self):
+        real = HOOK_DIR / "post_tool_use.py"
+        self.assertFalse(verify.analyse(f'python -W "{real}"', "post_tool_use.py")["executable"])
+        self.assertFalse(verify.analyse(f'node "{real}"', "post_tool_use.py")["executable"])
+
+
+class RepairRegistrationTests(Scratch):
+    """A repair previews before it applies, keeps what the file held, backs it up once, and refuses a file it cannot parse."""
+
+    def repair(self, *args: str) -> tuple[int, str]:
+        result = self.run_tool("repair_registration.py", *args, CLAUDE_PROJECT_DIR=str(self.project))
+        return result.returncode, result.stdout
+
+    def test_dry_run_apply_preserve_and_idempotent(self):
+        settings = self.claude_settings({"model": "opus", "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo unrelated"}]}]}})
+        code, out = self.repair("--host", "claude", "--scope", "project")
+        self.assertEqual(code, 1, out)
+        self.assertIn("(proposed)", out)
+        self.assertIn('"model": "opus"', settings.read_text(encoding="utf-8"))
+        self.assertNotIn("pre_tool_use.py", settings.read_text(encoding="utf-8"))
+        code, out = self.repair("--host", "claude", "--scope", "project", "--apply", "--python", sys.executable)
+        self.assertEqual(code, 0, out)
+        after = json.loads(settings.read_text(encoding="utf-8"))
+        self.assertEqual(after["model"], "opus")
+        commands = [h["command"] for g in after["hooks"]["PreToolUse"] for h in g["hooks"]]
+        self.assertIn("echo unrelated", commands)
+        self.assertTrue(list(settings.parent.glob("settings.json.bak-*")))
+        verified = self.run_tool("verify_registration.py", "--host", "claude", CLAUDE_PROJECT_DIR=str(self.project))
+        self.assertEqual(verified.returncode, 0, verified.stdout)
+        self.assertFalse((self.home / ".claude" / "settings.json").exists(), "user scope must not be touched")
+        code, out = self.repair("--host", "claude", "--scope", "project", "--apply", "--python", sys.executable)
+        self.assertEqual(code, 0)
+        self.assertIn("no changes", out)
+        self.assertEqual(len(list(settings.parent.glob("settings.json.bak-*"))), 1)
+
+    def test_refuses_to_overwrite_invalid_json(self):
+        settings = self.project / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text("{not json", encoding="utf-8")
+        code, out = self.repair("--host", "claude", "--scope", "project", "--apply")
+        self.assertEqual(code, 2)
+        self.assertEqual(settings.read_text(encoding="utf-8"), "{not json")
+
+
+class CheckReadinessTests(Scratch):
+    """Readiness with the interpreter, the hooks and the saves each in a known state, and each capability on its own."""
+
+    def readiness(self, *extra: str) -> subprocess.CompletedProcess:
+        return self.run_tool("check_readiness.py", "--host", "claude", "--project-root", str(self.project), *extra,
+                             CLAUDE_PROJECT_DIR=str(self.project))
+
+    def test_ready_when_python_hooks_and_active_run_exist(self):
+        self.claude_settings(VerifyRegistrationTests.BLOCK)
+        kit.write_run(self.project, "2026-06-08_active_ready")
+        result = self.readiness("--require-active-run", "--min-python", f"{sys.version_info.major}.{sys.version_info.minor}")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("Python: ok", result.stdout)
+        self.assertIn("Hooks: registered", result.stdout)
+        self.assertIn("Saves: active", result.stdout)
+        self.assertIn("Ready: yes", result.stdout)
+
+    def test_require_active_run_fails_when_saves_are_inactive(self):
+        self.claude_settings(VerifyRegistrationTests.BLOCK)
+        kit.write_run(self.project, "2026-06-08_done", status="complete")
+        result = self.readiness("--require-active-run")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("Hooks: registered", result.stdout)
+        self.assertIn("Saves: complete", result.stdout)
+        self.assertIn("Ready: no", result.stdout)
+
+    def test_json_output_reports_missing_hooks(self):
+        result = self.readiness("--json")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        data = json.loads(result.stdout)
+        self.assertEqual(data["hooks"]["status"], "unknown")
+        self.assertEqual(data["saves"]["status"], "missing")
+
+    def test_capabilities_are_reported_independently(self):
+        data = json.loads(self.readiness("--json").stdout)
+        self.assertEqual(data["hooks"]["status"], "unknown")
+        caps = data["capabilities"]
+        self.assertFalse(caps["hooks_executable"])
+        self.assertEqual(caps["hooks_observed"], "unverified")
+        self.assertTrue(caps["deterministic_validators"])
+        self.assertIn("repair_registration.py", data["repair_hint"])
+
+
+class ObservationTests(Scratch):
+    """A hook fired with a host's payload records its event as observed, and one fired with a synthetic payload as
+    simulated; readiness reports what was observed."""
+
+    def fire(self, script: str, payload: dict) -> None:
+        proc = kit.run_hook(script, payload, self.project)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def observed(self) -> dict:
+        return json.loads(self.run_tool("check_readiness.py", "--host", "claude", "--project-root", str(self.project), "--json").stdout)
+
+    def test_real_host_payload_records_observed_and_synthetic_records_simulated(self):
+        path = self.project / ".harness-state" / "observations" / "PreToolUse.json"
+        self.fire("pre_tool_use.py", kit.bash("ls"))
+        record = json.loads(path.read_text(encoding="utf-8"))
+        self.assertIn("simulated", record)
+        self.assertNotIn("observed", record)
+        self.fire("pre_tool_use.py", {"session_id": "host-1", **kit.bash("ls")})
+        self.fire("post_tool_use.py", {"session_id": "host-1", **kit.bash("ls"), "tool_response": {"exit_code": 0, "stdout": "ok"}})
+        self.fire("user_prompt_submit.py", {"session_id": "host-1", "prompt": "hello"})
+        record = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(record["observed"]["count"], 1)
+        self.assertNotIn("host-1", json.dumps(record), "session ids are hashed, never stored")
+        data = self.observed()
+        self.assertEqual(data["capabilities"]["hooks_observed"], "observed")
+        self.assertEqual({e["state"] for e in data["hooks"]["observations"].values()}, {"observed"})
+
+    def test_readiness_reports_partial_when_only_some_events_observed(self):
+        self.fire("pre_tool_use.py", {"session_id": "host-1", **kit.bash("ls")})
+        self.assertEqual(self.observed()["capabilities"]["hooks_observed"], "partial")
 
 
 class AutoHostTests(Scratch):
@@ -225,10 +470,8 @@ class ReadinessSemanticsTests(Scratch):
     def test_an_active_run_needs_no_instruction(self):
         self.claude_settings(self.registered())
         (self.project / "README.md").write_text("x\n", encoding="utf-8")
-        created = subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), "create", "--project-root", str(self.project),
-                                  "--run-id", "r1", "--evidence", "README.md"], capture_output=True, text=True, check=False,
-                                 env=plain_env(self.home))
-        self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
+        code, out = kit.save(self.project, "r1", "create", "--evidence", "README.md")
+        self.assertEqual(code, 0, out)
         _, data = self.readiness("--host", "auto")
         self.assertEqual((data["saves"]["status"], data["saves"]["next_step"]), ("active", ""))
         self.assertNotIn("  next:", self.run_tool("check_readiness.py", "--host", "auto").stdout)
@@ -238,10 +481,8 @@ class ReadinessSemanticsTests(Scratch):
     def run_with_a_lock_to_refuse(self) -> None:
         self.claude_settings(self.registered())
         (self.project / "README.md").write_text("x\n", encoding="utf-8")
-        created = subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), "create", "--project-root", str(self.project),
-                                  "--run-id", "r1", "--evidence", "README.md"], capture_output=True, text=True, check=False,
-                                 env=plain_env(self.home))
-        self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
+        code, out = kit.save(self.project, "r1", "create", "--evidence", "README.md")
+        self.assertEqual(code, 0, out)
 
     def assert_said_plainly(self, data: dict, text: str) -> None:
         saves = data["saves"]
@@ -254,7 +495,7 @@ class ReadinessSemanticsTests(Scratch):
         self.assertIn(f"Saves: corrupt - {self.LOCK} exists but this account cannot read it (permission denied)", text)
         self.assertIn(f"  next: {_saves.ACCESS_DENIED_STEP}", text)
 
-    @unittest.skipUnless(fixtures.modes_are_enforced(), "this process bypasses file modes")
+    @unittest.skipUnless(kit.modes_are_enforced(), "this process bypasses file modes")
     def test_a_run_record_the_account_cannot_read_is_said_plainly_and_is_not_a_missing_one(self):
         """RR3-state-1: owner-only records read, for a second account, as `pointer missing or malformed`."""
         self.run_with_a_lock_to_refuse()
@@ -273,8 +514,8 @@ class ReadinessSemanticsTests(Scratch):
         def report(*args: str) -> tuple[int, str]:
             out = io.StringIO()
             argv = ["check_readiness.py", "--host", "claude", "--project-root", str(self.project), *args]
-            with (fixtures.refusing("runs/r1/_lock.md"), mock.patch.object(sys, "argv", argv),
-                  mock.patch.dict(os.environ, plain_env(self.home), clear=True), contextlib.redirect_stdout(out)):
+            with (kit.refusing("runs/r1/_lock.md"), mock.patch.object(sys, "argv", argv),
+                  mock.patch.dict(os.environ, kit.plain_env(self.home), clear=True), contextlib.redirect_stdout(out)):
                 return check_readiness.main(), out.getvalue()
 
         code, as_json = report("--json", "--require-active-run")
@@ -291,8 +532,8 @@ class ReadinessSemanticsTests(Scratch):
         def report(*args: str) -> tuple[int, str]:
             out = io.StringIO()
             argv = ["check_readiness.py", "--host", "claude", "--project-root", str(self.project), *args]
-            with (fixtures.refusing("runs/r1/_lock.md"), mock.patch.object(sys, "argv", argv),
-                  mock.patch.dict(os.environ, plain_env(self.home), clear=True), contextlib.redirect_stdout(out)):
+            with (kit.refusing("runs/r1/_lock.md"), mock.patch.object(sys, "argv", argv),
+                  mock.patch.dict(os.environ, kit.plain_env(self.home), clear=True), contextlib.redirect_stdout(out)):
                 return check_readiness.main(), out.getvalue()
 
         refused = f"{self.LOCK} exists but this account cannot read it (permission denied); {_saves.PIN_MAY_BE_HELD}"
@@ -644,7 +885,7 @@ class ProjectRootTests(Scratch):
         code = ("import sys; sys.path.insert(0, %r); import repair_registration as r, verify_registration as v; "
                 "print(all(r.target_path(h, s) in v._paths(h) for h in v.HOSTS for s in ('project', 'local') "
                 "if (h, s) != ('codex', 'local') and (h, s) != ('copilot', 'local')))" % str(HOOK_DIR))
-        out = subprocess.run([sys.executable, "-c", code], cwd=str(sub), env=plain_env(self.home), text=True, capture_output=True, check=False)
+        out = subprocess.run([sys.executable, "-c", code], cwd=str(sub), env=kit.plain_env(self.home), text=True, capture_output=True, check=False)
         self.assertEqual(out.stdout.strip(), "True", out.stderr)
 
 
@@ -931,9 +1172,10 @@ class IntegrityTests(Scratch):
         self.assertNotIn("changed since registration", after.stdout)
 
     def hooks_with_modules(self) -> Path:
-        """A hook directory like the real one: the three entry scripts, the modules they import, and a test module."""
+        """A hook directory like the real one: the three entry scripts, the modules they import, a test module and the
+        support the tests share."""
         root = self.relocated_hooks()
-        for name in ("guard_hook.py", "_state.py", "_saves.py", "test_guard_rules.py"):
+        for name in ("guard_hook.py", "_state.py", "_saves.py", "test_guard_rules.py", "_testkit.py"):
             (root / name).write_text(f"# {name}\n", encoding="utf-8")
         self.settings_pointing_at(root)
         return root
@@ -977,11 +1219,24 @@ class IntegrityTests(Scratch):
         env = {"SUPREMETEAM_HOOK_ROOT": str(root)}
         self.run_tool("repair_registration.py", "--host", "claude", "--record-hashes", **env)
         (root / "test_guard_rules.py").write_text("# edited test\n", encoding="utf-8")
+        (root / "_testkit.py").write_text("# edited test support\n", encoding="utf-8")
         self.assertEqual({h["integrity"] for h in self.verify_json(**env)[1].values()}, {"unchanged"})
         (root / "planted.py").write_text("# new\n", encoding="utf-8")
         (root / "_saves.py").unlink()
         hooks = self.verify_json(**env)[1]
         self.assertEqual({tuple(h["changed_files"]) for h in hooks.values()}, {("_saves.py", "planted.py")})
+
+    def test_a_record_an_older_release_made_with_the_test_support_in_it_is_not_a_change(self):
+        """`_testkit.py` was hashed until it was left out; the record a project made before that still names it."""
+        root = self.hooks_with_modules()
+        env = {"SUPREMETEAM_HOOK_ROOT": str(root)}
+        self.run_tool("repair_registration.py", "--host", "claude", "--record-hashes", **env)
+        record = self.record()
+        record["directories"][verify.hash_key(root)]["files"]["_testkit.py"] = "ab" * 32
+        self.write_json(self.project / ".harness-state" / verify.HASH_RECORD, record)
+        out, hooks = self.verify_json(**env)
+        self.assertEqual({h["integrity"] for h in hooks.values()}, {"unchanged"}, out.stdout)
+        self.assertNotIn("changed since registration", out.stdout)
 
     def test_a_record_made_before_directories_were_recorded_still_reads_and_says_nothing_new(self):
         root = self.hooks_with_modules()
@@ -1195,7 +1450,7 @@ class InstalledCopyTests(Scratch):
         tokens = verify._tokens(command)
         self.assertEqual(Path(tokens[1]), hooks / "repair_registration.py", command)
         self.assertTrue(Path(tokens[1]).is_absolute() and Path(tokens[1]).is_file(), command)
-        preview = subprocess.run(tokens, text=True, capture_output=True, cwd=str(self.project), env=plain_env(self.home), check=False)
+        preview = subprocess.run(tokens, text=True, capture_output=True, cwd=str(self.project), env=kit.plain_env(self.home), check=False)
         self.assertEqual(preview.returncode, 1, preview.stdout + preview.stderr)
         self.assertIn("proposed", preview.stdout)
 
@@ -1203,7 +1458,7 @@ class InstalledCopyTests(Scratch):
         hooks = self.installed_hooks()
         self.claude_settings({"theme": "dark"})
         out = subprocess.run([sys.executable, str(hooks / "verify_registration.py"), "--host", "claude"], text=True, capture_output=True,
-                             cwd=str(self.project), env=plain_env(self.home), check=False)
+                             cwd=str(self.project), env=kit.plain_env(self.home), check=False)
         self.assertEqual(out.returncode, 1, out.stdout + out.stderr)
         line = next(line for line in out.stdout.splitlines() if "preview a scoped repair with: " in line)
         self.assert_runs_from_here(line.split("preview a scoped repair with: ", 1)[1], hooks)
@@ -1212,7 +1467,7 @@ class InstalledCopyTests(Scratch):
         hooks = self.installed_hooks()
         self.claude_settings({"theme": "dark"})
         out = subprocess.run([sys.executable, str(hooks / "check_readiness.py"), "--host", "claude", "--json"], text=True, capture_output=True,
-                             cwd=str(self.project), env=plain_env(self.home), check=False)
+                             cwd=str(self.project), env=kit.plain_env(self.home), check=False)
         hint = json.loads(out.stdout)["repair_hint"]
         self.assert_runs_from_here(hint.split(" (dry run", 1)[0], hooks)
 

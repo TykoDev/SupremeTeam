@@ -43,7 +43,7 @@ are not.
 | §1 Layer 3: guarded, frozen, read-only, single-writer, and destructive write boundaries | best-effort checks for supported actions where hooks are registered; not a sandbox | `skills/harness/hooks/pre_tool_use.py`, against `.harness-state/guard-state.json` |
 | §1 Layer 4: repeated-failure, empty-output, and oscillation trajectory patterns | machine-checked where hooks are registered | `skills/harness/hooks/post_tool_use.py` |
 | Single-writer ownership of the run record and the guard boundary record | machine-checked | `skills/validation/test_catalog_contracts.py`, `GuardWriterTests`, with [save-ownership.yaml](save-ownership.yaml) |
-| Fail-open behavior of every hook, and fail-loud behavior of the gate engine | machine-checked | `skills/harness/hooks/test_hooks*.py` and `skills/harness/gatekeeper/test_gatecheck.py` |
+| Fail-open behavior of every hook, and fail-loud behavior of the gate engine | machine-checked | `skills/harness/hooks/test_hooks_robustness.py`, `FailOpenTests`, and `skills/harness/gatekeeper/test_gatecheck.py` |
 | A gate spec that is missing or malformed is an engine error, never a pass | machine-checked | `skills/harness/gatekeeper/check.py`, exit code 2 |
 | §2: that a failure was classified into the *correct* category | judgement | nothing |
 | §2: that a constraint sits at the earliest layer where it is enforceable | judgement | nothing |

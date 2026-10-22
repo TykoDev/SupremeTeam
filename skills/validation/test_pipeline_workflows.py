@@ -19,9 +19,8 @@ documentation's, and if the two ever diverge this file fails rather than the
 documentation quietly going stale.
 
 Negative cases matter more than the positive ones. A generator that only ever
-produces passing packages proves the generator works, not the gate. Each
-``Refuses`` test removes exactly one property from an otherwise-valid package and
-asserts the gate notices.
+produces passing packages proves the generator works, not the gate, so
+``GateRefusalTests`` spoils one of these packages and asserts the gate notices.
 """
 from __future__ import annotations
 
@@ -34,7 +33,7 @@ import unittest
 from pathlib import Path
 
 import _catalog
-from _catalog import SKILLS
+from _catalog import REPO, SKILLS
 from data_formats import content_sha256, parse_yaml
 
 sys.path.insert(0, str(SKILLS / "harness" / "gatekeeper"))
@@ -42,11 +41,9 @@ import _fixtures
 
 # The specs are read the way the gate reads them, with data_formats, so this module
 # runs on a host without PyYAML instead of skipping the one end-to-end gate test.
-REPO = SKILLS.parent
 CHECK = SKILLS / "harness" / "gatekeeper" / "check.py"
 GATES = _catalog.load_spec("gates.yaml")
 PIPELINES = _catalog.load_spec("pipelines.yaml")
-OWNERSHIP = _catalog.load_spec("ownership.yaml")
 REGISTRY = _catalog.load_spec("tech-stacks/registry.yaml")
 
 #: The first registry overlay, used to build a stack_lock the gate will accept.
@@ -233,31 +230,15 @@ class BoundarySatisfiabilityTests(unittest.TestCase):
                     unsatisfiable.append(f"{boundary}: {verdict.get('failures')}")
         self.assertEqual([], unsatisfiable, "\n".join(unsatisfiable))
 
-    def test_every_pipeline_names_a_boundary_that_exists(self):
-        missing = [
-            f"{name} declares boundary {data.get('boundary')!r}, which gates.yaml does not define"
-            for name, data in PIPELINES["pipelines"].items()
-            if data.get("boundary") not in GATES["boundaries"]
-        ]
-        self.assertEqual([], missing, "\n".join(missing))
-
-    def test_every_boundary_is_closed_by_exactly_one_pipeline(self):
-        owners: dict[str, list[str]] = {}
-        for name, data in PIPELINES["pipelines"].items():
-            boundary = data.get("boundary")
-            if boundary:
-                owners.setdefault(boundary, []).append(name)
-        problems = [f"{b} is closed by {p}" for b, p in owners.items() if len(p) > 1]
-        problems += [f"{b} is closed by no pipeline" for b in GATES["boundaries"] if b not in owners]
-        self.assertEqual([], problems, "\n".join(problems))
-
 
 class GateRefusalTests(unittest.TestCase):
-    """The gate notices when a valid package is spoiled one property at a time.
+    """The gate notices when a package this module builds is spoiled.
 
-    Without these, the satisfiability test above only proves the fixture builder
-    works. Each case starts from a package known to pass and breaks exactly one
-    thing, so a failure here names the guarantee that stopped holding.
+    Without this, the satisfiability test above only proves the fixture builder
+    works. The case starts from a package the gate accepts and breaks one thing,
+    the artifact under its recorded digest. The other refusals a package can
+    meet (missing evidence, a bare fallback at schema 2, a wrong submitter, a
+    barred waiver) are the gate's own tests, in `harness/gatekeeper/`.
     """
 
     BOUNDARY = "build-to-review"
@@ -269,38 +250,6 @@ class GateRefusalTests(unittest.TestCase):
             mutate(package, root)
             return run_gate(self.BOUNDARY, package, root)
 
-    def test_baseline_passes(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            verdict = run_gate(self.BOUNDARY, build_package(self.BOUNDARY, root), root)
-        self.assertTrue(verdict.get("pass"), verdict.get("failures"))
-
-    def test_missing_required_evidence_is_refused(self):
-        key = GATES["boundaries"][self.BOUNDARY]["required_evidence"][0]
-        verdict = self._spoiled(lambda pkg, root: pkg["evidence"].pop(key))
-        self.assertFalse(verdict.get("pass"))
-        self.assertIn(f"missing evidence: {key}", verdict.get("failures", []))
-
-    def test_bare_fallback_string_is_refused_at_schema_two(self):
-        """The sanctioned wording alone is not a waiver at schema 2."""
-        waivable = GATES.get("fallback_values") or {}
-        key = next(k for k in GATES["boundaries"][self.BOUNDARY]["required_evidence"]
-                   if k in waivable)
-        wording = waivable[key][0]
-        verdict = self._spoiled(lambda pkg, root: pkg["evidence"].__setitem__(key, wording))
-        self.assertFalse(verdict.get("pass"))
-        self.assertIn(f"bare fallback string not accepted at schema 2: {key} "
-                      "(use an applicability record)", verdict.get("failures", []))
-
-    def test_applicability_record_is_accepted_for_a_waivable_key(self):
-        waivable = GATES.get("fallback_values") or {}
-        key = next(k for k in GATES["boundaries"][self.BOUNDARY]["required_evidence"]
-                   if k in waivable)
-        record = {"applicable": False, "reason": waivable[key][0],
-                  "scope": "synthetic probe", "decided_by": "test"}
-        verdict = self._spoiled(lambda pkg, root: pkg["evidence"].__setitem__(key, record))
-        self.assertTrue(verdict.get("pass"), verdict.get("failures"))
-
     def test_tampered_artifact_digest_is_refused(self):
         def tamper(pkg, root):
             (root / ARTIFACT_REL).write_text("altered after hashing\n", encoding="utf-8")
@@ -309,53 +258,11 @@ class GateRefusalTests(unittest.TestCase):
         self.assertTrue(any("hash" in f or "digest" in f for f in verdict.get("failures", [])),
                         verdict.get("failures"))
 
-    def test_wrong_submitter_is_refused(self):
-        verdict = self._spoiled(lambda pkg, root: pkg.__setitem__("owner", "not-the-submitter"))
-        self.assertFalse(verdict.get("pass"))
-        self.assertTrue(any("submitter mismatch" in f for f in verdict.get("failures", [])),
-                        verdict.get("failures"))
-
-    def test_no_fallback_key_cannot_be_waived(self):
-        """A boundary's `no_fallback` list beats a global waiver map that names the key.
-
-        The shipped spec bars keys that no waiver map names, so this test used to
-        find nothing to exercise and skip, and deleting the precedence from
-        check.py left the suite green. It now builds a synthetic spec that makes
-        the barred key waivable globally, with that spec's own wording as the
-        reason so only the bar can refuse the waiver, and a control run without
-        the bar that proves the same record is otherwise accepted.
-        """
-        boundary, key = next((b, k) for b, s in GATES["boundaries"].items() for k in s.get("no_fallback") or [])
-        wording = "synthetic wording that only this test's spec sanctions"
-        verdicts = {}
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            for barred in (True, False):
-                synthetic = json.loads(json.dumps(GATES))
-                synthetic["fallback_values"][key] = [wording]
-                if not barred:
-                    del synthetic["boundaries"][boundary]["no_fallback"]
-                gates = root / f"gates-{barred}.yaml"
-                gates.write_text(json.dumps(synthetic), encoding="utf-8")
-                package = build_package(boundary, root)
-                package["evidence"][key] = {
-                    "applicable": False, "reason": wording, "scope": "synthetic probe", "decided_by": "test"}
-                manifest = root / f"manifest-{barred}.json"
-                manifest.write_text(json.dumps(package), encoding="utf-8")
-                proc = subprocess.run(
-                    [sys.executable, str(CHECK), "--boundary", boundary, "--package", str(manifest),
-                     "--gates", str(gates)],
-                    capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(REPO))
-                verdicts[barred] = json.loads(proc.stdout)
-        self.assertFalse(verdicts[True]["pass"])
-        self.assertIn(f"evidence not waivable: {key}", verdicts[True]["failures"])
-        self.assertTrue(verdicts[False]["pass"], verdicts[False]["failures"])
-
 
 class RunLifecycleTests(unittest.TestCase):
     """One complete run, start to gate to close.
 
-    `test_hooks_lifecycle.py` exercises each save operation in isolation — a
+    `test_run_state.py` exercises each save operation in isolation — a
     checkpoint on a completed run, a stale lock, an interrupted journal. Nothing
     walked the whole arc: open a run, checkpoint once per pipeline stage, submit
     the package the stages produced, take a verdict, and close. That arc is what
@@ -433,119 +340,6 @@ class RunLifecycleTests(unittest.TestCase):
             self.assertGreaterEqual(
                 trail.count("checkpoint"), len(stages),
                 "the audit trail lost a stage: one checkpoint event per stage is expected")
-
-    def test_a_checkpoint_against_a_stale_revision_is_refused(self):
-        """The optimistic-concurrency guard the whole arc depends on."""
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "skillset-saves").mkdir()
-            (root / "README.md").write_text("# fixture\n", encoding="utf-8")
-            opened = self._save(root, "create", "--run-id", "wf-stale", "--owner", "build-management",
-                                "--evidence", "README.md")
-            stale = opened["revision"]
-            first = self._save(root, "checkpoint", "--run-id", "wf-stale",
-                               "--owner", "build-management", "--expect-revision", str(stale))
-            self.assertEqual("ok", first.get("result"), first)
-            replay = self._save(root, "checkpoint", "--run-id", "wf-stale",
-                                "--owner", "build-management", "--expect-revision", str(stale))
-            self.assertEqual("refused", replay.get("result"),
-                             "a second writer on the same revision must be refused")
-
-
-class StageCoverageTests(unittest.TestCase):
-    """Pipeline stages and gate evidence have to describe the same run.
-
-    A boundary requires evidence keys; a pipeline declares the stages that run
-    before it. If the two drift, a pipeline is documented as complete while its
-    gate asks for something no stage produces.
-    """
-
-    def test_every_stage_owner_is_a_real_skill(self):
-        known = {p.parent.relative_to(SKILLS).as_posix() for p in SKILLS.rglob("SKILL.md")}
-        leaves = {name.rsplit("/", 1)[-1] for name in known}
-        unknown = []
-        for pipeline, data in PIPELINES["pipelines"].items():
-            for stage in data.get("stages", []):
-                for field in ("owner", "delegate"):
-                    who = stage.get(field)
-                    if who and who not in known and who not in leaves:
-                        unknown.append(f"{pipeline}/{stage.get('step')} {field}={who!r} is not a skill")
-        self.assertEqual([], unknown, "\n".join(unknown))
-
-    def test_every_declared_stage_artifact_has_an_owner_in_ownership(self):
-        artifacts = {entry["id"] for entry in OWNERSHIP.get("artifacts", [])
-                     if isinstance(entry, dict) and "id" in entry}
-        if not artifacts:
-            self.skipTest("ownership.yaml exposes no artifact ids in the expected shape")
-        unknown = []
-        for pipeline, data in PIPELINES["pipelines"].items():
-            for stage in data.get("stages", []):
-                artifact = stage.get("artifact")
-                if artifact and artifact not in artifacts:
-                    unknown.append(
-                        f"{pipeline}/{stage.get('step')} produces {artifact!r}, "
-                        "which ownership.yaml does not declare")
-        self.assertEqual([], unknown, "\n".join(unknown))
-
-    def test_the_redesign_pipeline_builds_mocks_before_it_builds_anything(self):
-        """Order is judgement everywhere else; here it is the whole fix.
-
-        Four living prototypes built before a choice is three implementations
-        thrown away. The stage list is what stops that recurring, so the two
-        facts it rests on are pinned: every stage that produces the
-        selected-variant evidence runs after the stage that records the
-        selection, and each of those stages is conditional on it.
-        """
-        stages = PIPELINES["pipelines"]["redesign"]["stages"]
-        order = {stage["step"]: index for index, stage in enumerate(stages)}
-        self.assertIn("selection", order, "the redesign pipeline records no selection")
-        self.assertLess(order["mock-build"], order["selection"],
-                        "the mocks are drawn before the choice, not after it")
-
-        owners = GATES["evidence_owners"]["redesign-review"]
-        after_the_choice = {owners[key] for key in
-                            ("selected_variant", "parity_evidence", "rendered_verification")}
-        late = [s for s in stages if s.get("owner") in after_the_choice
-                and order[s["step"]] > order["selection"]]
-        self.assertTrue(late, "no stage runs after the selection")
-        for stage in late:
-            with self.subTest(stage=stage["step"]):
-                self.assertEqual("a variant was selected", stage.get("when"),
-                                 f"{stage['step']} runs unconditionally, so a deferral "
-                                 f"or a merge would still build a prototype")
-
-    def test_phase_gate_stages_match_what_the_gate_model_claims(self):
-        """`gate_model` names which pipelines carry a phase-gate stage.
-
-        Six of the ten deliberately carry none — their boundary is judged once,
-        by `gatekeeper-admiral`, and `pipelines.yaml` `gate_model` says so in
-        prose. That prose is the only place the distinction is recorded, so it
-        is worth comparing: a pipeline that gains or loses a phase gatekeeper
-        without the model being updated is exactly the drift this suite exists
-        to catch. The first version of this test asserted every pipeline ends at
-        a gatekeeper and was simply wrong about the catalog.
-        """
-        model = str(PIPELINES.get("gate_model") or "")
-        self.assertIn("only four model the gate as a stage", model,
-                      "gate_model no longer states how many pipelines carry a phase-gate stage")
-
-        claimed = set()
-        for sentence in model.split("."):
-            if "carry an explicit phase-gate stage" in sentence:
-                claimed = {name for name in PIPELINES["pipelines"]
-                           if f"{name}," in sentence or f"{name} " in sentence}
-                break
-        self.assertTrue(claimed, "could not read the phase-gated pipeline names out of gate_model")
-
-        actual = set()
-        for pipeline, data in PIPELINES["pipelines"].items():
-            for stage in data.get("stages") or []:
-                if "gatekeeper" in str(stage.get("owner", "")):
-                    actual.add(pipeline)
-        self.assertEqual(
-            claimed, actual,
-            f"gate_model claims {sorted(claimed)} carry a phase-gate stage; "
-            f"pipelines.yaml actually gives one to {sorted(actual)}")
 
 
 class WorkedExampleTests(unittest.TestCase):

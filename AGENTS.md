@@ -241,7 +241,7 @@ Not skills. These are the files the skills are checked against.
 | **run_heartbeat.py** | `skills/harness/hooks/run_heartbeat.py` | The heartbeat refresh every registered hook runs on a host event: throttled, fail-open, written only through `save_run.py` |
 | **_fsutil.py** | `skills/harness/hooks/_fsutil.py` | The one atomic write and the one OS advisory lock the hook-directory writers share |
 | **_bootstrap.py** | `skills/harness/hooks/_bootstrap.py` | Puts the hooks directory and `skills/scripts` on `sys.path` once, so modules import each other by name, and lists the files a registered hook runs to decide |
-| **_testkit.py** | `skills/harness/hooks/_testkit.py` | Test support for the guard suites: an in-process `decide()` and a subprocess `run_hook()` |
+| **_testkit.py** | `skills/harness/hooks/_testkit.py` | Test support for the hooks suite: an in-process `decide()`, subprocess runners (`run_hook()`, `run_cli()`, `save()`) and environments that carry none of the shell's project or session variables, and shared fixtures; not hashed into the integrity record |
 | **verify_registration.py** | `skills/harness/hooks/verify_registration.py` | Inspects host hook config without mutating it |
 | **repair_registration.py** | `skills/harness/hooks/repair_registration.py` | Previews a scoped registration repair; applies only with `--apply` |
 | **check_readiness.py** | `skills/harness/hooks/check_readiness.py` | Python, hooks, and save state as an independent capability map |

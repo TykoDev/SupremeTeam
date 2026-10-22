@@ -280,6 +280,12 @@ python3 ~/.agents/skills/scripts/check_runtime.py
 python3 ~/.agents/skills/scripts/validate_manifests.py
 ```
 
+`validate_manifests.py` reads the install's `.supremeteam-manifest`: an install of
+chosen teams is checked for the items it holds, a skill missing from one of those
+items fails the check, and the report lists the skills of the teams it left out
+under `not_installed`. A copy without that record, such as a
+[manual install](#manual-install-fallback), is checked as the whole catalog.
+
 Once a run is active, one command covers Python, hooks, and saves:
 
 ```bash

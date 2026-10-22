@@ -396,7 +396,7 @@ class WrapperBootstrapTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("hooks_state_under_test", hooks / "_state.py")
         state = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(state)
-        self.assertEqual(tuple(gc.ROOT_MARKERS), tuple(state._ROOT_MARKERS))
+        self.assertEqual(tuple(gc.ROOT_MARKERS), tuple(state.ROOT_MARKERS))
 
 
 class OptionalArtifactTests(unittest.TestCase):

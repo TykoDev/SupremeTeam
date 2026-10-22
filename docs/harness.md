@@ -138,7 +138,7 @@ A mistyped option is argparse's own exit 2 with nothing on stdout in every tool.
 | `scripts/package_check.py` | clean | residue or a missing required file | manifest or engine error | | JSON on stdout |
 | `scripts/validate_manifests.py` | clean | a contract is violated | | | JSON on stdout |
 | `scripts/check_runtime.py` | ready | not ready | | | text on stdout |
-| `scripts/check_parity.py` | coverage meets the threshold | scored ids missing | input or engine failure | | JSON on stdout |
+| `scripts/check_parity.py` | coverage meets the threshold | scored ids missing | input or engine failure | | JSON on stdout for 0 and 1; exit 2 writes JSON with `engine_error` to stderr and no record |
 | `scripts/scan_record.py` | record written | | wrapper error | | the record and sidecars; read `result.status` |
 | `scripts/output_paths.py`, `content_hash.py` | JSON | unsafe, unknown or unreadable request | | | JSON on stdout |
 | `hooks/verify_registration.py` | registered | hooks missing, or no host found | host or config undetermined | | text on stdout |

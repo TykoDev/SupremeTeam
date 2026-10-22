@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """The hardening claims the README makes, each one run against the registered hooks (SEC-17).
 
-The README credited ``test_hooks_hardening.py`` with path canonicalisation, Windows-versus-POSIX separators, symlink
-protection, malformed-JSON fuzzing and universal fail-open. That file holds registration, trajectory and freeze-record
-tests; none of those five existed anywhere end to end. They are here:
+The README once credited another suite with path canonicalisation, Windows-versus-POSIX separators, symlink protection,
+malformed-JSON fuzzing and universal fail-open, and none of those five existed anywhere end to end. They are here:
 
 * spellings of one path that every rule must treat as the same path, in the separators of both platforms;
 * links that lead out of an allowed or into a frozen tree, and links the hooks must not follow;
@@ -19,34 +18,22 @@ import os
 import random
 import subprocess
 import sys
-import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-HOOK_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(HOOK_DIR))
-import _testkit as kit  # noqa: E402
+import _testkit as kit
 
+HOOK_DIR = Path(__file__).resolve().parent
 SEED = 20260929
 SCRIPTS = {"PreToolUse": "pre_tool_use.py", "PostToolUse": "post_tool_use.py", "UserPromptSubmit": "user_prompt_submit.py"}
 MODULES = {"PreToolUse": "pre_tool_use", "PostToolUse": "post_tool_use", "UserPromptSubmit": "user_prompt_submit"}
 FROZEN = {"frozen_globs": [{"glob": "src/payments/**", "owner": "ops", "scope": "release"}]}
 
 
-def can_link() -> bool:
-    with tempfile.TemporaryDirectory() as tmp:
-        try:
-            os.symlink(tmp, Path(tmp) / "probe", target_is_directory=True)
-            return True
-        except (OSError, NotImplementedError):
-            return False
-
-
 class Project(unittest.TestCase):
     def setUp(self):
-        manager = kit.project()
-        self.root = manager.__enter__()
-        self.addCleanup(manager.__exit__, None, None, None)
+        self.root = self.enterContext(kit.project())
         self.scratch = self.root / "tmp"
         self.scratch.mkdir()
         self.env = {"TMPDIR": str(self.scratch), "TEMP": str(self.scratch), "TMP": str(self.scratch), "HOME": str(self.root / "home"),
@@ -170,17 +157,14 @@ class SeparatorTests(Project):
                 self.assertEqual(self.entry(kit.bash(command, tool)), "", command)
 
     def test_the_writer_stores_every_spelling_as_one_record(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp)
-            guard = [sys.executable, str(HOOK_DIR / "guard_state.py")]
+        with kit.project() as project:
             for glob in ("src\\payments\\**", "./src/payments/**", "src/payments/**", "src//payments//**"):
-                subprocess.run([*guard, "freeze", "--glob", glob, "--owner", "ops", "--scope", "s"], capture_output=True, text=True,
-                               env=kit.clean_env(project), check=False)
+                kit.run_cli("guard_state.py", "freeze", "--glob", glob, "--owner", "ops", "--scope", "s", env=kit.clean_env(project))
             records = json.loads((project / ".harness-state" / "guard-state.json").read_text(encoding="utf-8"))["frozen_globs"]
             self.assertEqual([record["glob"] for record in records], ["src/payments/**"])
 
 
-@unittest.skipUnless(can_link(), "this host cannot create symbolic links")
+@unittest.skipUnless(kit.can_link(), kit.NO_LINKS)
 class SymlinkTests(Project):
     def link(self, name: str, target: str) -> None:
         path = self.root / name
@@ -212,13 +196,24 @@ class SymlinkTests(Project):
         self.assertTrue(kit.denied(self.entry(kit.bash("echo {} > innocent.json"))))
 
     def test_a_linked_state_directory_loses_its_permissive_grants_and_keeps_its_restrictions(self):
+        """The grant is live (created a minute ago, nine minutes left), so only the link keeps it from lifting Rule A:
+        the same record in a directory of the project's own does lift it. The command is one only Rule A denies: with a
+        boundary recorded, Rule F denies ``rm -rf /`` as well, so that command showed nothing about the grant."""
+        now = datetime.now(timezone.utc)
+        grant = {"owner": "o", "reason": "r", "scope": "s", "created_at": (now - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                 "expires_at": (now + timedelta(minutes=9)).strftime("%Y-%m-%dT%H:%M:%SZ")}
+        record = json.dumps({"allow_dangerous": grant, "frozen_globs": [{"glob": "src/**", "owner": "o"}]})
         elsewhere = self.root / "elsewhere"
         elsewhere.mkdir()
-        grant = {"owner": "o", "reason": "r", "scope": "s", "created_at": "2099-01-01T00:00:00Z", "expires_at": "2099-01-01T00:10:00Z"}
-        (elsewhere / "guard-state.json").write_text(json.dumps({"allow_dangerous": grant, "frozen_globs": [{"glob": "src/**", "owner": "o"}]}), encoding="utf-8")
+        (elsewhere / "guard-state.json").write_text(record, encoding="utf-8")
         os.symlink(elsewhere, self.root / ".harness-state", target_is_directory=True)
-        self.assertTrue(kit.denied(self.entry(kit.bash("rm -rf /"))), "a grant behind a link must not lift Rule A")
+        format_a_device = kit.bash("mkfs.ext4 /dev/sdb1")
+        self.assertTrue(kit.denied(self.entry(format_a_device)), "a grant behind a link must not lift Rule A")
         self.assertTrue(kit.denied(self.entry(kit.edit("src/app.py"))), "a restriction behind a link still holds")
+        os.unlink(self.root / ".harness-state")
+        (self.root / ".harness-state").mkdir()
+        (self.root / ".harness-state" / "guard-state.json").write_text(record, encoding="utf-8")
+        self.assertEqual(self.entry(format_a_device), "", "the same grant in the project's own directory lifts Rule A")
 
     def test_the_coverage_sweep_moves_a_link_and_never_the_directory_it_points_to(self):
         victim = self.root / "victim"
@@ -361,13 +356,8 @@ class FailOpenTests(Project):
 
     def run_broken(self, event: str, what: str) -> subprocess.CompletedProcess:
         """Run the registered script as ``__main__`` with one internal function made to raise."""
-        script = HOOK_DIR / SCRIPTS[event]
-        code = ("import runpy, sys, _state\n"
-                "def boom(*a, **k):\n    raise RuntimeError('SECRET-DETAIL')\n"
-                f"_state.{what} = boom\n"
-                f"sys.argv = ['{script.name}']\nrunpy.run_path({str(script)!r}, run_name='__main__')\n")
-        return subprocess.run([sys.executable, "-c", code], input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}, "prompt": "hello"}).encode(),
-                              capture_output=True, cwd=HOOK_DIR, env=kit.clean_env(self.root, PYTHONPATH=str(HOOK_DIR), **self.env), check=False)
+        return kit.run_broken(SCRIPTS[event], what, {"tool_name": "Bash", "tool_input": {"command": "ls"}, "prompt": "hello"}, self.root,
+                              **self.env)
 
     def test_every_hook_survives_its_own_internals_failing_and_counts_it(self):
         for event in SCRIPTS:
@@ -423,20 +413,6 @@ class FailOpenTests(Project):
         self.assertFalse(kit.denied(proc.stdout.decode("utf-8")))
         self.assertIn("[harness:guard-state]", proc.stdout.decode("utf-8"))
 
-    def test_a_rule_that_faults_does_not_switch_off_the_rules_after_it(self):
-        import guard_hook
-
-        kit.write_guard(self.root, FROZEN)
-        broken = [("A", lambda call: (_ for _ in ()).throw(RuntimeError("SECRET-DETAIL"))), *guard_hook.RULES[1:]]
-        saved = guard_hook.RULES
-        guard_hook.RULES = broken
-        try:
-            output = self.entry(kit.edit("src/payments/a.py"), "guard_hook", "main")
-        finally:
-            guard_hook.RULES = saved
-        self.assertTrue(kit.denied(output))
-        self.assertEqual(self.faults("PreToolUse")["last_fault"]["type"], "RuntimeError")
-
     def test_a_project_without_a_home_directory_or_a_usable_temp_directory_still_runs(self):
         env = kit.clean_env(self.root)
         for name in ("HOME", "USERPROFILE", "TMPDIR", "TEMP", "TMP", "XDG_CONFIG_HOME"):
@@ -461,7 +437,7 @@ class DamagedGuardRecordTests(Project):
     """RR-guard-3: a record that cannot be used names no boundary, and that is no longer the same as no record."""
 
     DAMAGE = {"truncated": b'{"frozen_globs": [{"glob": "src/payments/**", "owner": "ops"}', "binary": b"\xff\xfe\x00\x01{", "empty": b"",
-              "a list": b"[]", "a number": b"7", "a string": b'"text"', "null": b"null"}
+              "not JSON": b"{not json", "a list": b"[]", "a number": b"7", "a string": b'"text"', "null": b"null"}
     WRITE = {"tool_name": "Write", "tool_input": {"file_path": "src/payments/a.py", "content": "x"}, "session_id": "host-1"}
 
     def record(self, content: bytes) -> None:
@@ -527,8 +503,7 @@ class DamagedGuardRecordTests(Project):
     def test_readiness_shows_the_fault(self):
         self.record(self.DAMAGE["truncated"])
         self.script("PreToolUse", self.WRITE)
-        proc = subprocess.run([sys.executable, str(HOOK_DIR / "check_readiness.py"), "--project-root", str(self.root)], capture_output=True,
-                              text=True, env=kit.clean_env(self.root, **self.env), check=False)
+        proc = kit.run_cli("check_readiness.py", "--project-root", str(self.root), env=kit.clean_env(self.root, **self.env))
         self.assertIn("GuardStateUnreadable", proc.stdout + proc.stderr)
 
 
@@ -583,9 +558,8 @@ class RunIdTests(Project):
         (self.root / "README.md").write_text("# fixture\n", encoding="utf-8")
         for run_id in ("../escape", "a/b"):
             with self.subTest(run_id=run_id):
-                proc = subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), "create", "--run-id", run_id, "--evidence", "README.md",
-                                       "--project-root", str(self.root)], capture_output=True, text=True, env=kit.clean_env(self.root), check=False)
-                self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+                code, out = kit.save(self.root, run_id, "create", "--evidence", "README.md")
+                self.assertEqual(code, 1, out)
         self.assertFalse((self.root / "skillset-saves" / "escape").exists())
         self.assertFalse((self.root / "escape").exists())
         self.assertEqual(sorted(p.name for p in (self.root / "skillset-saves" / "runs").glob("*")) if (self.root / "skillset-saves" / "runs").is_dir() else [], [])

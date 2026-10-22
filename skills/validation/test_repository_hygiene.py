@@ -20,13 +20,10 @@ import unittest
 from pathlib import Path
 
 import _catalog
-from _catalog import SKILLS
+from _catalog import CHECKOUT_ONLY, REPO, SKILLS
 from package_check import RESIDUE_CLASSES, manifest_globs, matches
 
-REPO = SKILLS.parent
 ASSETS = REPO / "docs" / "assets"
-IN_A_CHECKOUT = (REPO / "README.md").is_file() and (REPO / "docs").is_dir()
-CHECKOUT_ONLY = unittest.skipUnless(IN_A_CHECKOUT, "installed copy: only skills/ is present")
 
 #: The owner's decision, recorded in the work order for CR-02 and DX-17.
 COPYRIGHT = "Copyright (c) 2026 TykoDev"

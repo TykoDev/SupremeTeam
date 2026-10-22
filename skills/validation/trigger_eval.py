@@ -64,6 +64,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+# The advertised triggers are read by the extractor test_trigger_routing.py checks the corpus with.
+import _catalog
+
 try:
     import yaml
 except ModuleNotFoundError:
@@ -71,11 +74,6 @@ except ModuleNotFoundError:
 
 SKILLS = Path(__file__).resolve().parent.parent
 REPO = SKILLS.parent
-
-# A bullet either quotes the phrasings it answers to, or is itself the phrasing.
-QUOTED = re.compile(r'"([^"]{4,80})"')
-# Trailing explanation after an em dash is commentary, not part of the trigger.
-EXPLAIN = re.compile(r"\s+[—-]\s+.*$")
 
 
 def frontmatter(text: str) -> dict:
@@ -96,37 +94,14 @@ def frontmatter(text: str) -> dict:
         raise ValueError(f"frontmatter is not valid YAML: {exc}") from exc
 
 
-def triggers_for(text: str) -> list[str]:
-    """The user phrasings a skill advertises under `## Use This Skill When`."""
-    match = re.search(r"^## Use This Skill When\s*$(.*?)^## ", text, re.M | re.S)
-    if not match:
-        return []
-    found: list[str] = []
-    for line in match.group(1).splitlines():
-        line = line.strip()
-        if not line.startswith("- "):
-            continue
-        body = line[2:].strip()
-        quoted = QUOTED.findall(body)
-        if quoted:
-            found.extend(q.strip() for q in quoted)
-            continue
-        # A bare bullet is the phrasing; drop any trailing gloss and markup.
-        body = EXPLAIN.sub("", body)
-        body = re.sub(r"[`*]", "", body).strip(" .")
-        # Bullets that are prose about routing, not a phrasing a user would type.
-        if 2 <= len(body.split()) <= 12 and not body.lower().startswith(("route ", "a request")):
-            found.append(body)
-    return found
-
-
 def triggers_from_description(description: str) -> list[str]:
     """Fallback for skills with no `## Use This Skill When` section.
 
-    Five skills advertise their triggers only inside the description, in a
-    "Use to X, Y, or Z" clause. Those skills still have to be routable, so the
-    corpus takes the clause apart rather than skipping them — a skill absent from
-    the corpus would score as neither hit nor miss, which flatters the result.
+    Such a skill advertises its triggers only inside the description, in a
+    "Use to X, Y, or Z" clause; ``main`` prints how many there are. Those skills
+    still have to be routable, so the corpus takes the clause apart rather than
+    skipping them — a skill absent from the corpus would score as neither hit nor
+    miss, which flatters the result.
     """
     match = re.search(r"\bUse (?:to|when|for)\b(.*?)(?:\.\s|$)", description, re.S | re.I)
     if not match:
@@ -135,7 +110,7 @@ def triggers_from_description(description: str) -> list[str]:
     parts = re.split(r",| or | and (?=\w+ing)", clause)
     out = []
     for part in parts:
-        part = EXPLAIN.sub("", part).strip(" .;:—-")
+        part = _catalog.EXPLAIN.sub("", part).strip(" .;:—-")
         if 2 <= len(part.split()) <= 12:
             out.append(part)
     return out
@@ -155,7 +130,7 @@ def roster() -> dict[str, dict]:
             broken.append(f"{name}: {exc}")
             continue
         description = str(meta.get("description", "")).strip()
-        advertised = triggers_for(text)
+        advertised = _catalog.advertised_triggers(text)
         out[name] = {
             "description": description,
             "triggers": advertised or triggers_from_description(description),
@@ -197,7 +172,6 @@ def routing_away(text: str) -> list[tuple[str, str]]:
     return out
 
 
-ENTRY_ROUTING = re.compile(r"^## Entry Routing\s*$(.*?)^## ", re.M | re.S)
 BACKTICKED = re.compile(r"`([a-z][A-Za-z0-9_-]*(?:/[A-Za-z0-9_-]+)?)`")
 
 
@@ -223,10 +197,10 @@ def delegating_owners(skills: dict) -> dict[str, set[str]]:
     owners: dict[str, set[str]] = {}
     for name in skills:
         text = (SKILLS / name / "SKILL.md").read_text(encoding="utf-8", errors="replace")
-        section = ENTRY_ROUTING.search(text)
-        if not section:
+        section = _catalog.section(text, "Entry Routing")
+        if section is None:
             continue  # no declared route in; nothing to credit
-        named = set(BACKTICKED.findall(section.group(1)))
+        named = set(BACKTICKED.findall(section))
         owners[name] = {ref for ref in named if ref in skills and ref != name}
     return owners
 

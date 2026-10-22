@@ -1,9 +1,11 @@
-"""Regression coverage for scan_record.py: argument handling, command fidelity, and gate-ready artifact names.
+"""Regression coverage for scan_record.py: result statuses, argument handling, command fidelity, record destinations, and artifact names.
 
-Each case here reproduced a defect: a non-integer --fail-exit-codes escaped as a
-traceback, --version-command ran through a shell, the recorded command lost
-argument boundaries, and a record written in the documented layout named its raw
-output relative to evidence/ so no honest manifest could hash it.
+ResultStatusTests pins the five outcomes a record tells apart. Each other case
+reproduced a defect: a non-integer --fail-exit-codes escaped as a traceback,
+--version-command ran through a shell, the recorded command lost argument
+boundaries, an unwritable destination raised out of main() instead of exiting 2,
+and a record written in the documented layout named its raw output relative to
+evidence/ so no honest manifest could hash it.
 """
 from __future__ import annotations
 
@@ -44,10 +46,32 @@ class ScanRecordCase(unittest.TestCase):
         return json.loads((out or self.out).read_text(encoding="utf-8"))
 
     def assert_wrapper_error(self, proc: subprocess.CompletedProcess, needle: str) -> None:
+        """scan_record.py documents exit 0 when a record was written and 2 on a wrapper error.
+
+        A refused run takes the wrapper-error branch with a structured engine_error,
+        rather than raising out of main() as a traceback and exiting 1, and writes no record.
+        """
         self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
         self.assertNotIn("Traceback", proc.stderr)
         self.assertIn(needle, json.loads(proc.stderr.strip())["engine_error"])
-        self.assertFalse(self.out.exists(), "a refused run must not leave a record behind")
+        self.assertFalse(self.out.is_file(), "a refused run must not leave a record behind")
+
+
+class ResultStatusTests(ScanRecordCase):
+    def test_pass_fail_error_unavailable_and_not_run_are_distinguished(self):
+        (self.root / "requirements.txt").write_text("requests==2.32.0\n", encoding="utf-8")
+        self.assertEqual(self.scan("--input", "requirements.txt").returncode, 0)
+        record = self.record()
+        self.assertEqual((record["result"]["status"], record["inputs"][0]["path"]), ("pass", "requirements.txt"))
+        self.assertTrue((self.root / "scan.stdout.txt").is_file())
+        for status, scanner in (("fail", python("import sys; print('1 vulnerability'); sys.exit(1)")),
+                                ("error", python("import sys; sys.exit(7)")),
+                                ("unavailable", ("definitely-not-a-scanner-binary",))):
+            with self.subTest(status=status):
+                self.scan(scanner=scanner)
+                self.assertEqual(self.record()["result"]["status"], status)
+        self.scan("--no-run", scanner=python("pass"))
+        self.assertEqual(self.record()["result"]["status"], "not-run")
 
 
 class ArgumentValidationTests(ScanRecordCase):
@@ -68,6 +92,40 @@ class ArgumentValidationTests(ScanRecordCase):
         self.assert_wrapper_error(self.scan("--version-command", "tool --version 'unterminated"), "--version-command")
 
 
+class RecordDestinationTests(ScanRecordCase):
+    """Every destination the wrapper cannot write is a wrapper error, not a crash."""
+
+    def refused(self, out: Path | None = None) -> subprocess.CompletedProcess:
+        return self.scan("--no-run", scanner=("pip-audit",), out=out)
+
+    def test_unusable_record_destination_exits_two_with_a_structured_error(self):
+        """An --out whose parent cannot be created is a wrapper error, not a crash."""
+        blocker = self.root / "blocker"
+        blocker.write_text("not a directory", encoding="utf-8")
+        self.assert_wrapper_error(self.refused(blocker / "nested" / "scan.json"), "record destination unusable")
+
+    def test_unwritable_raw_output_destination_exits_two_and_writes_no_record(self):
+        """The sidecars are the artifacts the record names, so losing one aborts the run.
+
+        gates.yaml requires a scan record to carry hashed artifacts, so a record that
+        outlived a failed sidecar write would name raw output that does not exist.
+        Aborting keeps the documented contract exact: no record written, exit 2.
+        """
+        (self.root / "scan.stdout.txt").mkdir()
+        self.assert_wrapper_error(self.refused(), "raw output destination unusable")
+
+    def test_unwritable_record_file_exits_two_with_a_structured_error(self):
+        """A record whose own JSON cannot be written is not a usable record at all."""
+        (self.root / "scan.json.tmp").mkdir()
+        self.assert_wrapper_error(self.refused(), "record could not be written")
+
+    def test_failed_record_replace_exits_two_and_leaves_no_temp_file(self):
+        """os.replace can fail after a clean write; the temp file must not survive it."""
+        self.out.mkdir()
+        self.assert_wrapper_error(self.refused(), "record could not be moved into place")
+        self.assertFalse((self.root / "scan.json.tmp").exists())
+
+
 class CommandFidelityTests(ScanRecordCase):
     def test_argv_survives_an_argument_with_a_space(self):
         scanner = python("import sys; print(sys.argv[1:])") + ("my req.txt", "--flag=a b")
@@ -76,6 +134,13 @@ class CommandFidelityTests(ScanRecordCase):
         self.assertEqual(record["argv"], list(scanner))
         self.assertEqual(shlex.split(record["command"]), list(scanner))
         self.assertNotEqual(record["command"], " ".join(scanner), "a bare join loses the argument boundary")
+
+    def test_scanner_receives_its_own_end_of_options_token(self):
+        scanner = python("import json, sys; print(json.dumps(sys.argv[1:]))") + ("--", "--target")
+        proc = self.scan(scanner=scanner)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.record()["result"]["status"], "pass")
+        self.assertEqual(json.loads((self.root / "scan.stdout.txt").read_text(encoding="utf-8")), ["--", "--target"])
 
     def test_version_command_is_run_as_an_argument_list_not_through_a_shell(self):
         marker = self.root / "shell-ran"

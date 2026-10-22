@@ -690,12 +690,6 @@ def inspect_run(project_root: Path, run_id: str, *, now: datetime | None = None)
     return result
 
 
-def classify_saves(project_root: Path, *, now: datetime | None = None) -> tuple[str, str]:
-    """The classification as a ``(status, detail)`` pair, for a caller that wants no more."""
-    result = inspect_saves(project_root, now=now)
-    return str(result["status"]), str(result["detail"])
-
-
 def has_active_run(project_root: Path) -> bool:
     """Return true while any run holds the session pin with a fresh lock, whatever the pointer says, and for a record
     this account cannot read.

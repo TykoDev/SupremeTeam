@@ -34,6 +34,9 @@ Each class states the failure it prevents.
   records the delegate field as unchecked, so a typo there fails at run time.
 * `RevisionCapTests` - two documents stating different revision caps. One says
   stop, the other says continue, and a run resubmits past the cap.
+* `CycleCapPhrasingTests` - an escalation row that counts rounds to a cap the
+  spec no longer has ("a second `REVISE` ends the cycle"), so the owner stops
+  while the gate would still take a resubmission.
 * `GatekeeperBoundaryTests` - a boundary with no gatekeeper, or two phase
   gatekeepers claiming the same boundary. Either way the package is judged by
   the wrong evidence table or by nobody.
@@ -45,6 +48,8 @@ Each class states the failure it prevents.
   the gate counts, and a conditional stage no document admits is conditional.
   The first is a pipeline that cannot close; the second is a stage run every
   time or skipped with no record.
+* `EngineerPreconditionTests` - a precondition naming an artifact a later stage
+  produces. The engineer cannot start until a stage that runs after it has run.
 
 Every expectation is derived from `team-manifest.yaml`, `pipelines.yaml`,
 `gates.yaml`, `routing-doctrine.md`, or `contracts/workflow-protocol.md`, so the
@@ -80,11 +85,16 @@ def _skill_md(name: str) -> str:
     return (SKILL_DIRS[name] / "SKILL.md").read_text(encoding="utf-8")
 
 
+def _documents():
+    """Every Markdown document under skills/."""
+    for path in sorted(SKILLS.rglob("*.md")):
+        if "__pycache__" not in path.parts:
+            yield path
+
+
 def _section(text: str, heading: str) -> str:
     """The body of one `## heading` section, or '' when the skill has none."""
-    match = re.search(r"^## " + re.escape(heading) + r"\s*$(.*?)(?=^## |\Z)",
-                      text, re.S | re.M)
-    return match.group(1) if match else ""
+    return _catalog.section(text, heading) or ""
 
 
 def _stages():
@@ -98,19 +108,8 @@ def _stages():
                     yield name, owner, stage.get("step"), role, who
 
 
-def _roster() -> set:
-    """Every name the manifest declares, across all nine role and list keys."""
-    names = set()
-    for key in ("phase_leads", "phase_gatekeepers", "pipeline_owners", "specialists", "standalone_tools",
-                "creation", "release", "safety", "browser", "testing"):
-        names.update(TEAM.get(key) or [])
-    for key in ("front_door", "session_memory", "cross_stage_gatekeeper"):
-        if TEAM.get(key):
-            names.add(TEAM[key])
-    return names
-
-
-ROSTER = _roster()
+#: Every name the manifest declares, across its role and list keys.
+ROSTER = _catalog.roster()
 
 
 class DelegationTargetTests(unittest.TestCase):
@@ -357,48 +356,21 @@ class SpecialistEntryRoutingTests(unittest.TestCase):
     @staticmethod
     def _routing_rows() -> dict:
         """The routing-class table as {class: member cell}."""
-        table = re.search(r"^## Routing classes\s*$(.*?)(?=^## )", DOCTRINE, re.S | re.M)
-        assert table, "routing-doctrine.md has no Routing classes section"
-        rows = {}
-        for cls, members in re.findall(r"^\|\s*([^|]+?)\s*\|\s*(.*?)\s*\|.*\|\s*$",
-                                       table.group(1), re.M):
-            if cls in {"Routing class"} or set(cls) <= {"-", " "}:
-                continue
-            rows[cls] = members
-        return rows
+        return dict(_catalog.routing_rows())
 
     @classmethod
     def internal_specialists(cls) -> set:
-        """The internal-specialist row of routing-doctrine.md, resolved to names.
+        """The internal-specialist row of routing-doctrine.md, resolved to names by `_catalog.routing_classes`.
 
         The row reads "every skill under `design/`, `build/`, `review/` not named
         in a row above; `taste/taste-review`; `skill-maker/skill-creator` and
         `skill-maker/skill-reviewer`", so it is a set of directory prefixes minus
-        the skills other rows claim, plus three explicit paths. Both halves are
-        read from the table rather than restated here, so the classification
+        the skills the rows above it claim, plus three explicit paths. Both halves
+        are read from the table rather than restated here, so the classification
         tracks the doctrine.
         """
-        rows = cls._routing_rows()
-        row = next(v for k, v in rows.items() if k.startswith("Internal specialist"))
-        tokens = re.findall(r"`([^`]+)`", row)
-        prefixes = [t for t in tokens if t.endswith("/")]
-        explicit = {SKILL_PATHS[t] for t in tokens if t in SKILL_PATHS}
-
-        claimed = set()
-        for name, members in rows.items():
-            if name.startswith("Internal specialist"):
-                continue
-            for token in re.findall(r"`([^`]+)`", members):
-                if token in SKILL_DIRS:
-                    claimed.add(token)
-                elif token in SKILL_PATHS:
-                    claimed.add(SKILL_PATHS[token])
-
-        found = set(explicit)
-        for path, name in SKILL_PATHS.items():
-            if any(path.startswith(p) for p in prefixes) and name not in claimed:
-                found.add(name)
-        return found
+        classes, _ = _catalog.routing_classes()
+        return next(members for label, members in classes.items() if label.startswith("Internal specialist"))
 
     def test_the_routing_table_yields_a_usable_specialist_set(self):
         """A table parse that returned nothing would make the rule below vacuous."""
@@ -412,16 +384,6 @@ class SpecialistEntryRoutingTests(unittest.TestCase):
         self.assertEqual(specialists & orchestrators, set(),
                          "a pipeline owner filed as an internal specialist")
 
-    def test_every_delegated_specialist_declares_an_entry_routing_section(self):
-        missing = []
-        specialists = self.internal_specialists()
-        for _pipeline, _owner, _step, _role, who in _stages():
-            if who in specialists and not _section(_skill_md(who), "Entry Routing"):
-                missing.append(who)
-        self.assertEqual(sorted(set(missing)), [],
-                         "an internal specialist must state how it may be entered:\n  "
-                         + "\n  ".join(sorted(set(missing))))
-
     def test_every_internal_specialist_names_its_delegating_owner(self):
         specialists = self.internal_specialists()
         violations = []
@@ -431,7 +393,7 @@ class SpecialistEntryRoutingTests(unittest.TestCase):
                 continue
             routing = _section(_skill_md(who), "Entry Routing")
             if not routing:
-                continue  # reported by the test above
+                continue  # reported by test_trigger_routing.EntryRoutingConsistencyTests
             checked += 1
             if not self._cites(routing, owner):
                 violations.append(
@@ -730,13 +692,6 @@ class PipelineOwnerRoleTests(unittest.TestCase):
                          "a pipeline owner must hold an orchestrator role:\n  "
                          + "\n  ".join(wrong))
 
-    def test_every_stage_owner_is_on_the_roster(self):
-        missing = []
-        for pipeline, _owner, step, role, who in _stages():
-            if role == "owner" and who not in ROSTER:
-                missing.append(f"{pipeline}/{step} owner '{who}' is not on the roster")
-        self.assertEqual(missing, [], "\n  ".join(missing))
-
     def test_every_stage_delegate_is_a_skill_on_the_roster(self):
         missing, delegates = [], 0
         for pipeline, _owner, step, role, who in _stages():
@@ -763,39 +718,28 @@ class RevisionCapTests(unittest.TestCase):
     where the spec says two tells an owner to resubmit past the point the gate
     stops listening - so the run neither advances nor escalates.
 
-    `test_catalog_contracts.py` already checks the one phrasing
-    "Maximum revisions per phase/stage/boundary". This reads every phrasing the
-    catalog actually uses, including `cycle_cap` of/is/`:`, the bare
-    "`cycle_cap` 3" of a cycle-count line, the spelled-out "a cycle cap of three",
-    and "Maximum revisions per cross-stage handoff" - which the narrower pattern
-    does not match.
+    This reads every phrasing the catalog uses, in every document under
+    `skills/`: `cycle_cap` of/is/`:`, the bare "`cycle_cap` 3" of a cycle-count
+    line, the spelled-out "a cycle cap of three", and "Maximum revisions per"
+    a boundary, stage, phase or handoff, followed by a colon or "is", with or
+    without a parenthetical between ("per stage (mock-build): 3").
     """
 
-    WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
-    #: Two shapes. The first allows only backticks, spaces and an of/is/:/=
-    #: between the phrase and its number, which is what keeps "At the cycle cap,
-    #: an unresolved Critical..." and "the revision cap, `post_tool_use.py`" out.
-    #: The second requires the explicit colon a "Maximum revisions per X: N" line
-    #: always carries, so the phrase cannot reach across a clause to a stray digit.
+    #: Two shapes, each ending in a count in digits or in words. The first allows
+    #: only backticks, spaces and an of/is/:/= between the phrase and its number,
+    #: which is what keeps "At the cycle cap, an unresolved Critical..." and "the
+    #: revision cap, `post_tool_use.py`" out. The second requires the colon or
+    #: "is" a "Maximum revisions per X: N" line carries, after at most a
+    #: parenthetical, so the phrase cannot reach across a clause to a stray digit.
     CAP = re.compile(
         r"(?:cycle[_ ]cap|revision\s+cap)[`\s]*(?:of|is|set\s+to)?[`\s:=]*"
-        r"(\d+|one|two|three|four|five)\b"
-        r"|maximum\s+revisions?(?:\s+per\s+[\w-]+(?:[\s-][\w-]+){0,2})?\s*[:=]\s*"
-        r"(\d+|one|two|three|four|five)\b", re.I)
+        rf"({_catalog.NUMBER})\b"
+        r"|maximum\s+revisions?(?:\s+per\s+[\w-]+(?:[\s-][\w-]+){0,2})?(?:\s*\([^)\n]*\))?"
+        rf"(?:\s*[:=]|\s+is)\s*({_catalog.NUMBER})\b", re.I)
 
     @classmethod
     def stated_caps(cls, text: str) -> list:
-        found = []
-        for match in cls.CAP.finditer(text):
-            raw = (match.group(1) or match.group(2)).lower()
-            found.append(int(raw) if raw.isdigit() else cls.WORDS[raw])
-        return found
-
-    @staticmethod
-    def _documents():
-        for path in sorted(SKILLS.rglob("*.md")):
-            if "__pycache__" not in path.parts:
-                yield path
+        return [_catalog.number_value(match.group(1) or match.group(2)) for match in cls.CAP.finditer(text)]
 
     def test_the_gate_spec_declares_a_numeric_cap(self):
         cap = (GATES.get("revise_policy") or {}).get("cycle_cap")
@@ -804,7 +748,7 @@ class RevisionCapTests(unittest.TestCase):
     def test_every_stated_cycle_cap_matches_the_gate_spec(self):
         cap = (GATES.get("revise_policy") or {}).get("cycle_cap")
         violations, seen = [], 0
-        for path in self._documents():
+        for path in _documents():
             text = path.read_text(encoding="utf-8", errors="replace")
             for stated in self.stated_caps(text):
                 seen += 1
@@ -818,12 +762,15 @@ class RevisionCapTests(unittest.TestCase):
         self.assertGreaterEqual(seen, 30, "the cap detector matched almost nothing")
 
     def test_the_cap_detector_reads_every_phrasing_the_catalog_uses(self):
-        """Each string is a real sentence; the negatives each broke an earlier pattern."""
+        """The positives are real sentences, plus the two forms a narrower per-phase check
+        read before it was merged into this one; the negatives each broke an earlier pattern."""
         for text, expected in [
             ("exhausting `../gates.yaml` `revise_policy.cycle_cap` of 3", [3]),
             ("`revise_policy.cycle_cap` is 3; a third cycle escalates", [3]),
             ("- Maximum revisions per boundary: 3 (`gates.yaml` `revise_policy.cycle_cap`)", [3]),
             ("- Maximum revisions per cross-stage handoff: 3.", [3]),
+            ("- Maximum revisions per phase is 3.", [3]),
+            ("- Maximum revisions per stage (mock-build): 3", [3]),
             ("- Cycle count: 1 of `revise_policy.cycle_cap` 3. A third cycle escalates.", [3]),
             ("`revise_policy` sets `cycle_cap: 3`. A second `REVISE` ends the cycle", [3]),
             ("| A `REVISE` is one packet with a cycle cap of three |", [3]),
@@ -840,6 +787,151 @@ class RevisionCapTests(unittest.TestCase):
         ]:
             with self.subTest(kind="no number stated", text=text[:45]):
                 self.assertEqual(self.stated_caps(text), [])
+
+
+class CycleCapPhrasingTests(unittest.TestCase):
+    """The revision cap stated as a round, where an escalation row counts them.
+
+    `RevisionCapTests` reads the cap wherever a document gives it as a number. An
+    escalation row gives it as a position instead: "a third cycle escalates",
+    "returns `REVISE` a third time", "all three revise packets", "rather than
+    opening a fourth cycle". An earlier policy escalated a round sooner, and the
+    rows it left ("A second `REVISE` ends the cycle", "both revise packets, both
+    verdicts") told an owner to stop while the gate still took a resubmission.
+
+    Every phrase is built from `gates.yaml` `revise_policy.cycle_cap`: the cap's
+    own round where the rows are, and nowhere the round before it. A new cap
+    fails these tests until the rows say the new round. Only the clauses the
+    earlier policy used are banned, so a document can still describe an earlier
+    round.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cap = GATES["revise_policy"]["cycle_cap"]
+        cls.cap = cap
+        cls.at, cls.past, cls.early = (_catalog.ordinal(n) for n in (cap, cap + 1, cap - 1))
+        cls.every, cls.early_every = cls.gathered(cap), cls.gathered(cap - 1)
+        cls.early_count = _catalog.number_word(cap - 1)
+        cls.early_times = {1: "once", 2: "twice"}.get(cap - 1, f"{cls.early_count} times")
+
+    @staticmethod
+    def gathered(n: int) -> str:
+        """How a row gathers n packets or verdicts: "both", or "all three"."""
+        return "both" if n == 2 else f"all {_catalog.number_word(n)}"
+
+    def check(self, relative, absent=(), present=()):
+        text = (SKILLS / relative).read_text(encoding="utf-8")
+        for phrase in absent:
+            self.assertNotIn(phrase, text, f"{relative}: stale `{phrase}`")
+        for phrase in present:
+            self.assertIn(phrase, text, f"{relative}: missing `{phrase}`")
+
+    def offending_lines(self, matches) -> list:
+        """file:line: text for every line of every document under skills/ that ``matches``."""
+        found = []
+        for path in _documents():
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if matches(line):
+                    found.append(f"{path.relative_to(SKILLS).as_posix()}:{number}: {line.strip()[:90]}")
+        return found
+
+    def test_the_workflow_protocol_counts_rounds_to_the_cap(self):
+        """Its "validated as N by `validate_manifests.py`" is the spec's N; that the
+        validator accepts only the spec's number is `scripts/test_validate_manifests.py`'s."""
+        stated = re.findall(r"validated as (\d+)", WORKFLOW)
+        self.assertTrue(stated, "workflow-protocol.md no longer says what the cap is validated as")
+        self.assertEqual({str(self.cap)}, set(stated))
+        self.assertIn(f"The {self.at} REVISE round reaches", WORKFLOW)
+        self.assertIn("counted per submitted revision", WORKFLOW)
+        self.assertNotIn(f"{self.early} REVISE round reaches", WORKFLOW)
+        self.assertNotIn("first submission plus at most", WORKFLOW)
+
+    #: The owners whose failure rows name the cycle that escalates.
+    ESCALATING_OWNERS = (
+        "build/bob-the-builder/SKILL.md", "build/cross-check-build-confirm/SKILL.md", "build/debugger/SKILL.md",
+        "build/health-check/SKILL.md", "build/test-builder/SKILL.md", "investigate/SKILL.md", "review/cso/SKILL.md",
+    )
+
+    def test_the_escalating_owners_name_the_cycle_at_the_cap(self):
+        phrase = f"a {self.at} cycle escalates"
+        for relative in self.ESCALATING_OWNERS:
+            with self.subTest(document=relative):
+                self.assertIn(phrase, (SKILLS / relative).read_text(encoding="utf-8"),
+                              f"{relative} must say '{phrase}' while the cap is {self.cap}")
+
+    def test_no_document_escalates_a_round_before_the_cap(self):
+        early = self.early
+        clauses = (
+            f"{early} REVISE round reaches",
+            f"{early} failed round escalates",
+            f"escalate on the {early} failed round",
+            f"stop after {self.early_count} failed revision attempts",
+            f"returns `REVISE` {self.early_times}, exhausting",
+            f"returns `REVISE` {self.early_times} on the same package",
+            f"A {early} `REVISE` ends the cycle",
+            f"A {early} `REVISE` on the same package ends",
+            f"`REVISE` a {early} time, exhausting",
+            f"{early} `REVISE` escalates",
+            f"{early} `REVISE` would have ended",
+            f"{early} cycle also returns `REVISE`",
+            f"{early.capitalize()} REVISE on the same keys",
+            f"{early} `REVISE` **ends the cycle**",
+        )
+        gathers = re.compile(rf"(?:{early}|{self.early_times}|{self.early_count} failed)[^.\n]{{0,60}}"
+                             rf"{self.early_every} (?:verdicts|revise packets|verdict records|packets)")
+        offenders = self.offending_lines(lambda line: any(clause in line for clause in clauses) or gathers.search(line))
+        self.assertEqual(offenders, [], f"an escalation row must escalate at the {self.at} round:\n  " + "\n  ".join(offenders))
+
+    def test_no_escalation_row_carries_the_packets_of_fewer_rounds(self):
+        rows = (f"with {self.early_every} revise packets, {self.early_every} verdicts",
+                f"carrying {self.early_every} packets, {self.early_every} verdict records",
+                f"with {self.early_every} revise packets, {self.early_every} verdict records")
+        offenders = self.offending_lines(lambda line: any(row in line for row in rows))
+        self.assertEqual(offenders, [], f"escalation rows must carry {self.every} packets and the corresponding "
+                                        "verdict records:\n  " + "\n  ".join(offenders))
+
+    def test_investigate_failure_row(self):
+        self.check("investigate/SKILL.md",
+                   absent=(f"a {self.early} time, exhausting", f"{self.early_every} revise packets, {self.early_every} verdicts"),
+                   present=(f"a {self.at} time, exhausting", f"{self.every} revise packets"))
+
+    def test_qa_gate_package(self):
+        self.check("qa/SKILL.md",
+                   absent=(f"rather than opening a {self.at} cycle",),
+                   present=(f"rather than opening a {self.past} cycle",))
+        self.check("qa/references/gate-package.md",
+                   absent=(f"A {self.early} `REVISE` on the same package ends", f"Opening a {self.at} cycle"),
+                   present=(f"A {self.at} `REVISE` on the same package ends", f"Opening a {self.past} cycle"))
+
+    def test_ship_skill_failure_row(self):
+        self.check("ship/SKILL.md",
+                   absent=(f"`REVISE` a {self.early} time", f"a {self.early} `REVISE` ends the cycle", f"starting a {self.at}"),
+                   present=(f"`REVISE` a {self.at} time", f"starting a {self.past}", f"{self.every} packets"))
+
+    def test_ship_gate_submission(self):
+        self.check("ship/references/gate-submission.md",
+                   absent=(f"A {self.early} `REVISE` ends the cycle", f"with\n{self.early_every} packets"),
+                   present=(f"A {self.at} `REVISE` ends the cycle", f"{self.every} packets"))
+
+    def test_ship_examples_show_the_failed_verdict_at_the_cap(self):
+        self.check("ship/references/examples.md",
+                   absent=(f"so the {self.early} `REVISE`", f"{self.early_every} packets attached",
+                           f"{self.early_every} verdict records"),
+                   present=(f"{self.at.capitalize()} verdict:", f"so the {self.at} `REVISE` **ends the cycle**",
+                            f"{self.every} packets and all corresponding verdict records"))
+
+    def test_redesign_failure_row_has_no_submission_past_the_cap(self):
+        self.check("design/redesign/SKILL.md",
+                   absent=(f"and a {self.at} submission spends", f"{self.early_every} verdicts"),
+                   present=(f"there is no {self.past} submission", "all corresponding verdict records"))
+
+    def test_commander_and_redesign_examples_headings(self):
+        for relative in ("design/commander/references/examples.md", "design/redesign/references/examples.md"):
+            self.check(relative,
+                       absent=(f"{self.early.capitalize()} REVISE on the same keys",
+                               f"{self.early_every} revise packets, {self.early_every} verdict records"),
+                       present=(f"{self.at.capitalize()} REVISE on the same keys", "all corresponding verdict records"))
 
 
 class GatekeeperBoundaryTests(unittest.TestCase):
@@ -1466,6 +1558,43 @@ class StageConditionTests(unittest.TestCase):
         ]:
             with self.subTest(kind="bare mention", when=when):
                 self.assertFalse(self.states_the_condition(text, when))
+
+
+class EngineerPreconditionTests(unittest.TestCase):
+    """What the engineer needs before it slices must come from a stage that runs before it.
+
+    It once asked for a stack lock that `pipelines.yaml` orders after the
+    implementation spec, so the stage could only be satisfied by going back to a
+    later one.
+    """
+
+    def later_steps(self) -> list:
+        stages = PIPELINES["pipelines"]["design"]["stages"]
+        own = next(index for index, stage in enumerate(stages) if stage["owner"] == "engineer")
+        return [stage["step"] for stage in stages[own + 1:]]
+
+    def preconditions(self) -> dict:
+        """Where the engineer states what it needs: workflow step 1, and the preconditions table."""
+        skill = (SKILLS / "design" / "engineer" / "SKILL.md").read_text(encoding="utf-8")
+        item = re.search(r"^1\. (Confirm the package is sliceable.*)$", skill, re.M)
+        self.assertIsNotNone(item, "engineer workflow step 1 moved or was reworded")
+        sentence = re.split(r"(?<=\.)\s+(?=[A-Z])", item.group(1))[0]
+        workflow = (SKILLS / "design" / "engineer" / "references" / "workflow.md").read_text(encoding="utf-8")
+        section = _catalog.section(workflow, "Preconditions")
+        self.assertIsNotNone(section, "engineer references/workflow.md lost its Preconditions section")
+        table = "\n".join(line for line in section.splitlines() if line.startswith("|"))
+        return {"SKILL.md workflow step 1": sentence, "references/workflow.md preconditions table": table}
+
+    def test_the_engineer_is_not_the_last_stage(self):
+        self.assertTrue(self.later_steps())
+
+    def test_no_precondition_names_an_artifact_a_later_stage_produces(self):
+        for step in self.later_steps():
+            name = re.compile(re.sub(r"[-_]", r"[\\s_-]*", step), re.I)
+            for where, text in self.preconditions().items():
+                with self.subTest(step=step, where=where):
+                    self.assertIsNone(name.search(text),
+                                      f"engineer {where} names '{step}', which pipelines.yaml orders after it")
 
 
 if __name__ == "__main__":

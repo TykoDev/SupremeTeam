@@ -2,13 +2,19 @@
 """Hardening of the shared hook state helper: input decoding, fault trace, trust, identity.
 
 Each class names the finding it closes. The hooks stay fail-open throughout: every
-case here asserts exit 0 or an empty/permissive result alongside the new behaviour.
+case about the helper asserts exit 0 or an empty/permissive result alongside the new behaviour.
+
+The last three classes are about this directory as a whole: no test writes into a project
+the shell names, the hook modules keep their import structure, and the README lists the
+files that are here.
 """
 from __future__ import annotations
 
+import ast
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -18,26 +24,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
-HOOK_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(HOOK_DIR))
-import _fsutil  # noqa: E402
-import _state  # noqa: E402
-import _testkit as kit  # noqa: E402
+import _fsutil
+import _state
+import _testkit as kit
 
-_ENV_NAMES = ("SUPREMETEAM_PROJECT_DIR", "CLAUDE_PROJECT_DIR", "CODEX_WORKSPACE_DIR", "GITHUB_WORKSPACE",
-              "SUPREMETEAM_SESSION_ID", "CLAUDE_SESSION_ID", "CODEX_SESSION_ID", "COPILOT_SESSION_ID", "GITHUB_RUN_ID")
+HOOK_DIR = Path(__file__).resolve().parent
 
 
 class StateCase(unittest.TestCase):
     def setUp(self):
-        manager = kit.project()
-        self.root = manager.__enter__()
-        self.addCleanup(manager.__exit__, None, None, None)
-        env = {name: value for name, value in os.environ.items() if name not in _ENV_NAMES}
-        env["CLAUDE_PROJECT_DIR"] = str(self.root)
-        patcher = mock.patch.dict(os.environ, env, clear=True)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.root = self.enterContext(kit.project())
+        self.enterContext(kit.in_project(self.root))
 
     def stdin(self, raw: bytes):
         wrapper = io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8", errors="strict")
@@ -209,6 +206,17 @@ class RunIdAndTextTests(StateCase):
         self.assertTrue(long.endswith("..."))
         self.assertEqual(_state.safe_text(None), "None")
         self.assertEqual(_state.safe_text(["a", "b"], 10), "['a', 'b']")
+
+    def test_c1_ansi_and_line_separators_become_questions_and_spaces(self):
+        text = _state.safe_text("run`x`\u202e\u009b[31m\u2028IGNORE", 120)
+        for unwanted in ("`", "\u202e", "\u009b", "\u2028", "\x1b", "\n"):
+            self.assertNotIn(unwanted, text)
+        self.assertIn("run'x'", text, "a backtick becomes a quote, never a command fence")
+
+    def test_the_cap_is_characters_and_the_text_is_one_line(self):
+        text = _state.safe_text("r" * 300, 60)
+        self.assertLessEqual(len(text), 60)
+        self.assertTrue(text.endswith("..."))
 
 
 class RunRecordReadingTests(StateCase):
@@ -392,6 +400,15 @@ class OptionalRootTests(StateCase):
                     self.assertEqual(_state.project_root(), Path(f"/{name.lower()}"))
                     del os.environ[name]
 
+    def test_hook_state_root_walks_up_to_the_project_marker(self):
+        """With no project variable, a script run from a subdirectory takes the nearest ancestor that holds a marker,
+        and where none does, the directory it started from."""
+        nested = self.root / "skills" / "harness" / "hooks"
+        nested.mkdir(parents=True)
+        self.assertEqual(_state.find_project_root(nested), nested)
+        (self.root / ".git").mkdir()
+        self.assertEqual(_state.find_project_root(nested), self.root)
+
 
 class LoadByPathTests(StateCase):
     """A tool outside this directory may load ``_state.py`` by path (the gate engine compares its root markers with these)."""
@@ -401,13 +418,13 @@ class LoadByPathTests(StateCase):
                 "spec = importlib.util.spec_from_file_location('hooks_state_under_test', sys.argv[1])\n"
                 "state = importlib.util.module_from_spec(spec)\n"
                 "spec.loader.exec_module(state)\n"
-                "print(state.ROOT_MARKERS == state._ROOT_MARKERS, state.PROJECT_ENV[0])\n")
+                "print(*state.ROOT_MARKERS, state.PROJECT_ENV[0])\n")
         with tempfile.TemporaryDirectory() as elsewhere:
             env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
             proc = subprocess.run([sys.executable, "-P", "-c", code, str(HOOK_DIR / "_state.py")], capture_output=True, text=True,
                                   cwd=elsewhere, env=env, check=False)
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(proc.stdout.strip(), "True SUPREMETEAM_PROJECT_DIR")
+        self.assertEqual(proc.stdout.strip(), "skillset-saves .harness-state .git SUPREMETEAM_PROJECT_DIR")
 
 
 class StateWriteTests(StateCase):
@@ -490,6 +507,155 @@ class StateWriteTests(StateCase):
             waited = time.monotonic() - started
         self.assertEqual(history, [{"sig": "late"}], "without the lock the step is still recorded")
         self.assertLess(waited, 5, "the append gave up on a lock another writer held, instead of waiting for it")
+
+
+class ProjectIsolationTests(unittest.TestCase):
+    """The suite's own runners kept `SUPREMETEAM_PROJECT_DIR`, which outranks `CLAUDE_PROJECT_DIR`, so a suite started from a
+    shell that set it wrote hook records into that project, and the registration repair rewrote its `.claude/settings.json`.
+    A test of each kind of runner that did is run here under a shell whose every project variable names a scratch project."""
+
+    WROTE_THERE = (
+        "test_pre_tool_entry.PreToolUseTests.test_legacy_unbounded_allow_dangerous_flag_cannot_bypass_guard",
+        "test_pre_tool_entry.EntryPointTests.test_a_fault_in_the_guard_is_swallowed_and_counted",
+        "test_run_heartbeat.HookHeartbeatTests.test_real_host_event_refreshes_a_fresh_lock_older_than_the_throttle",
+        "test_post_tool_use.TrajectoryHintTests.test_repeated_failing_command_emits_recovery_hint",
+        "test_registration_hardening.RepairRegistrationTests.test_dry_run_apply_preserve_and_idempotent",
+        "test_registration_hardening.ObservationTests.test_real_host_payload_records_observed_and_synthetic_records_simulated",
+        "test_audit_improve.AuditImproveTests.test_registered_prompt_and_post_hooks_surface_the_audit",
+        "test_gate_watch.GateWatchTests.test_a_failing_manifest_is_reported_once_per_change",
+        "test_state_hardening.FaultTraceTests.test_a_fault_is_counted_by_type_with_a_timestamp_and_no_message",
+    )
+
+    def test_no_test_writes_into_the_project_the_shell_names(self):
+        with kit.project() as elsewhere:
+            (elsewhere / ".git").mkdir()
+            env = {**os.environ, **dict.fromkeys(_state.PROJECT_ENV, str(elsewhere))}
+            proc = subprocess.run([sys.executable, "-m", "unittest", *self.WROTE_THERE], cwd=HOOK_DIR, env=env, stdin=subprocess.DEVNULL,
+                                  capture_output=True, text=True, timeout=600, check=False)
+            written = sorted(path.relative_to(elsewhere).as_posix() for path in elsewhere.rglob("*"))
+        self.assertEqual(written, [".git"], "written into the project the shell names")
+        self.assertEqual(proc.returncode, 0, proc.stderr[-3000:])
+        self.assertIn(f"Ran {len(self.WROTE_THERE)} tests", proc.stderr)
+
+
+class ImportStructureTests(unittest.TestCase):
+    """QR-PY-14 / QR-PY-04: one bootstrap, no private cross-module imports, one project-root resolver."""
+
+    OWNED = ("guard_hook", "guard_state", "pre_tool_use", "post_tool_use", "user_prompt_submit", "size_audit", "audit_improve",
+             "_state", "_cmdscan", "_paths", "_fsutil", "_bootstrap", "save_run", "_saves", "verify_registration", "repair_registration",
+             "run_heartbeat")
+    HOOK_MODULES = {path.stem for path in HOOK_DIR.glob("*.py")} | {"data_formats", "save_taxonomy"}
+
+    def tree(self, name: str) -> ast.Module:
+        return ast.parse((HOOK_DIR / f"{name}.py").read_text(encoding="utf-8"))
+
+    def imported(self, name: str) -> set:
+        """Every module ``name`` imports, wherever in the file: a function-local import is an edge too."""
+        found = set()
+        for node in ast.walk(self.tree(name)):
+            if isinstance(node, ast.Import):
+                found.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                found.add(node.module.split(".")[0])
+        return found
+
+    def test_the_state_helper_imports_no_hook_module_above_it(self):
+        """`_state` is the lowest hook module. It imported `save_run`, which imports it, for the one heartbeat function."""
+        allowed = {"_bootstrap", "_fsutil", "save_taxonomy", "data_formats"}
+        self.assertEqual(self.imported("_state") & (self.HOOK_MODULES - allowed), set())
+        self.assertFalse(hasattr(_state, "refresh_run_heartbeat"), "the move leaves no alias behind")
+
+    def test_the_heartbeat_module_is_above_the_state_helper_and_the_writer_not_below(self):
+        self.assertLessEqual({"_state", "save_run"}, self.imported("run_heartbeat"))
+        for lower in ("_state", "save_run", "_saves", "_fsutil", "_bootstrap"):
+            with self.subTest(lower=lower):
+                self.assertNotIn("run_heartbeat", self.imported(lower))
+
+    def test_no_owned_module_imports_a_private_name_from_another_module(self):
+        offenders = []
+        for name in self.OWNED:
+            for node in ast.walk(self.tree(name)):
+                if isinstance(node, ast.ImportFrom) and node.module in self.HOOK_MODULES:
+                    offenders += [f"{name}: from {node.module} import {alias.name}" for alias in node.names
+                                  if alias.name.startswith("_") and not alias.name.startswith("__")]
+        self.assertEqual(offenders, [])
+
+    def test_owned_modules_import_what_a_module_defines_not_what_it_re_exports(self):
+        saves = self.tree("_saves")
+        defined = {node.name for node in saves.body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
+        defined |= {target.id for node in saves.body if isinstance(node, ast.Assign) for target in node.targets if isinstance(target, ast.Name)}
+        offenders = []
+        for name in self.OWNED:
+            for node in ast.walk(self.tree(name)):
+                if isinstance(node, ast.ImportFrom) and node.module == "_saves":
+                    offenders += [f"{name}: {alias.name}" for alias in node.names if alias.name not in defined]
+        self.assertEqual(offenders, [])
+
+    def test_only_the_bootstrap_edits_sys_path(self):
+        offenders = []
+        for name in self.OWNED:
+            if name == "_bootstrap":
+                continue
+            for node in ast.walk(self.tree(name)):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("insert", "append", "extend"):
+                    owner = node.func.value
+                    if isinstance(owner, ast.Attribute) and owner.attr == "path" and isinstance(owner.value, ast.Name) and owner.value.id == "sys":
+                        offenders.append(f"{name}:{node.lineno}")
+        self.assertEqual(offenders, [])
+
+    def test_the_project_root_is_resolved_in_one_place(self):
+        names = set(_state.PROJECT_ENV)
+        offenders = []
+        for name in self.OWNED:
+            if name == "_state":
+                continue
+            for node in ast.walk(self.tree(name)):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in names:
+                    offenders.append(f"{name}:{node.lineno} {node.value}")
+        self.assertEqual(offenders, [])
+
+    def test_the_documented_environment_order_is_the_code_order(self):
+        """The README states the order twice: the project root paragraph names all four variables in order, and the
+        environment table names the host ones in order, tried after the first. Two names swapped in either fail."""
+        order = ("SUPREMETEAM_PROJECT_DIR", "CLAUDE_PROJECT_DIR", "CODEX_WORKSPACE_DIR", "GITHUB_WORKSPACE")
+        self.assertEqual(_state.PROJECT_ENV, order)
+        readme = (HOOK_DIR / "README.md").read_text(encoding="utf-8")
+        paragraph = readme.partition("**Project root order.**")[2].partition("\n")[0]
+        self.assertEqual(tuple(name for name in re.findall(r"`(\w+)`", paragraph) if name in order), order, paragraph)
+        rows = [line for line in readme.splitlines() if line.startswith("|") and order[1] in line.split("|")[1]]
+        self.assertEqual(len(rows), 1, rows)
+        names, _, description = rows[0].split("|")[1:4]
+        self.assertEqual(tuple(re.findall(r"`(\w+)`", names)), order[1:], rows[0])
+        self.assertIn(f"in that order after `{order[0]}`", description)
+
+    def test_scripts_run_by_path_import_cleanly_from_another_directory(self):
+        with tempfile.TemporaryDirectory() as elsewhere:
+            for script in ("post_tool_use.py", "user_prompt_submit.py", "size_audit.py", "audit_improve.py", "guard_state.py"):
+                with self.subTest(script=script):
+                    proc = subprocess.run([sys.executable, str(HOOK_DIR / script), "--help"] if script in ("size_audit.py", "audit_improve.py", "guard_state.py")
+                                          else [sys.executable, str(HOOK_DIR / script)],
+                                          input=b"{}", capture_output=True, cwd=elsewhere, env=kit.clean_env(Path(elsewhere)), check=False)
+                    self.assertEqual(proc.returncode, 0, proc.stderr.decode())
+                    self.assertNotIn(b"Traceback", proc.stderr)
+
+
+class ReadmeManifestTests(unittest.TestCase):
+    """The README's coverage list left out nine test modules, and its manifest kept rows for modules that had gone, so
+    neither said where a behaviour is tested."""
+
+    def section(self, heading: str) -> str:
+        text = (HOOK_DIR / "README.md").read_text(encoding="utf-8")
+        return text.split(f"\n{heading}\n", 1)[1].split("\n## ", 1)[0]
+
+    def test_the_manifest_has_one_row_for_every_module_here_and_none_for_a_file_that_is_not(self):
+        rows = re.findall(r"^\| \[`([^`]+)`\]", self.section("## Complete Hook Directory Manifest"), re.M)
+        self.assertEqual(len(rows), len(set(rows)), "a file has two rows")
+        self.assertEqual({path.name for path in HOOK_DIR.glob("*.py")} - set(rows), set())
+        self.assertEqual([row for row in rows if not (HOOK_DIR / row).is_file()], [])
+
+    def test_the_coverage_list_names_every_test_module_and_no_other(self):
+        named = set(re.findall(r"\[`(test_\w+\.py)`\]", self.section("### Coverage by Test Module")))
+        self.assertEqual(named, {path.name for path in HOOK_DIR.glob("test_*.py")})
 
 
 if __name__ == "__main__":

@@ -44,6 +44,14 @@ class RegistryTests(unittest.TestCase):
             self.cache(**kwargs)
             self.assertEqual(self.inspect()["status"], "mismatch")
 
+    def test_a_workspace_path_holding_three_dashes_is_read_whole(self):
+        """The frontmatter ends at a line that is exactly ---, not at the first --- in it."""
+        workspace = self.root / "client---portal"
+        workspace.mkdir()
+        self.cache(workspace=workspace)
+        result = inspect_registry(self.path, host="test-host", workspace=workspace, now=self.now)
+        self.assertEqual(result["status"], "use-cache", result)
+
     def test_invalid_metadata_never_proves_freshness(self):
         for ttl in (0, -1, "true", "NaN", "infinity"):
             with self.subTest(ttl=ttl):
@@ -51,3 +59,7 @@ class RegistryTests(unittest.TestCase):
                 self.assertEqual(self.inspect()["status"], "invalid")
         self.path.write_text("not metadata", encoding="utf-8")
         self.assertEqual(self.inspect()["status"], "invalid")
+
+
+if __name__ == "__main__":
+    unittest.main()

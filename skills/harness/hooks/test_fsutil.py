@@ -21,9 +21,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+import _fsutil
+
 HOOK_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(HOOK_DIR))
-import _fsutil  # noqa: E402
 
 
 class AtomicWriteTests(unittest.TestCase):

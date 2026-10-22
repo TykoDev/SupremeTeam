@@ -43,7 +43,8 @@ makes the record fail the gate as input hash drift.
         [--level mock|full] [--project-root .] [--min-coverage 1.0]
 
 Exit 0 when coverage meets the threshold, 1 when scored ids are missing, 2 on an
-input or engine error. The JSON summary is printed to stdout.
+input or engine error. The JSON summary is printed to stdout; an exit 2 prints a
+JSON ``engine_error`` to stderr instead, and writes no record.
 
 An inventory must list at least one route and one component, and a route's
 ``states`` must be a list. Anything else exits 2: an empty expectation set would
@@ -63,7 +64,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from data_formats import content_sha256  # noqa: E402
+from data_formats import content_sha256, load_data  # noqa: E402
+from file_safety import AtomicWriteError, write_atomically  # noqa: E402
 
 ID_RE = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
 PARITY_LISTS = ("routes", "components", "interactions", "flows")
@@ -158,9 +160,10 @@ class MarkerScanner(html.parser.HTMLParser):
 
 
 def load_inventory(path: Path) -> dict:
+    # load_data accepts the byte order mark Windows PowerShell 5.1 writes, which json.loads refuses.
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+        data = load_data(path)
+    except ValueError as exc:  # DataFormatError is a ValueError
         raise ParityError(f"inventory unreadable: {exc}") from exc
     if not isinstance(data, dict) or data.get("schema_version") != 1:
         raise ParityError("inventory must be a schema_version 1 object")
@@ -242,7 +245,7 @@ def relative(path: Path, root: Path) -> str:
         return path.resolve().as_posix()
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check a redesign mock or variant for parity against the design inventory.")
     parser.add_argument("--inventory", required=True)
     parser.add_argument("--app", required=True, help="the scanned surface: mock.html at --level mock, app.html at --level full")
@@ -252,7 +255,7 @@ def main() -> int:
                         help="full scores every list; mock scores routes and components and reports the rest as informational")
     parser.add_argument("--project-root", default=".")
     parser.add_argument("--min-coverage", type=float, default=1.0)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     root = Path(args.project_root)
     inventory_path, app_path, catalog_path = Path(args.inventory), Path(args.app), Path(args.components)
     try:
@@ -287,11 +290,13 @@ def main() -> int:
     }
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
-        tmp = out.with_suffix(out.suffix + ".tmp")
-        tmp.write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
-        tmp.replace(out)
     except OSError as exc:
-        print(json.dumps({"ok": False, "engine_error": f"cannot write record: {exc}"}), file=sys.stderr)
+        print(json.dumps({"ok": False, "engine_error": f"record destination unusable: {exc}"}), file=sys.stderr)
+        return 2
+    try:
+        write_atomically(out, json.dumps(record, indent=2, sort_keys=True))
+    except AtomicWriteError as exc:
+        print(json.dumps({"ok": False, "engine_error": f"record {exc}"}), file=sys.stderr)
         return 2
     print(json.dumps({"ok": passed, "record": relative(out, root), "coverage": summary["coverage"],
                       "level": args.level, "mock_root": surface.mock_root,

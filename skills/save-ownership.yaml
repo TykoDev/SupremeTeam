@@ -17,12 +17,13 @@ generated_roots_rule: >-
   test scratch (test-work/), eval reports and workspaces, and packages built
   outside a run (packages/). The only exception is application source written
   by build specialists, which belongs to the application's own layout.
-  scripts/output_paths.py resolves every kind under these roots and the hook
-  state helper locates the project root by walking up to the nearest
-  skillset-saves/, .harness-state/, or .git so nothing lands in a subdirectory.
-  Every kind the resolver offers has a declared class below, including the four
-  that live outside a run - test_work, eval_reports, eval_workspace, and
-  standalone_packages.
+  scripts/output_paths.py resolves every kind under these roots except product,
+  which is that application source, and global_preferences, which resolves under
+  the per-user data root outside the checkout; the hook state helper locates the
+  project root by walking up to the nearest skillset-saves/, .harness-state/, or
+  .git so nothing lands in a subdirectory. Every other kind the resolver offers
+  has a declared class below, including test_work, eval_reports, eval_workspace,
+  and standalone_packages, which live outside a run.
 writer_vocabulary:
   purpose: >-
     Every `writer` below is one of three kinds. A skill name is a single skill in
@@ -60,10 +61,12 @@ unowned_path_rule: >-
 enforcement:
   machine_checked: >-
     validation/test_save_contracts.py OwnershipAgreementTests pins the writer of
-    core-run-record, gate-verdict, and grilling-log, requires the writer of every
-    class to be a roster skill (that is also an ownership.yaml owner), one of the
-    three roles, the compound role or one of the two processes named above,
-    requires the tool of every tool-bearing class to exist on disk, and
+    core-run-record, gate-verdict, and grilling-log, requires the startup probe
+    file to fall in exactly one class, persistence-probe, written by admiral,
+    requires the writer of every class to be a roster skill (that is also an
+    ownership.yaml owner), one of the three roles, the compound role or one of
+    the two processes named above, requires the tool of every tool-bearing class
+    to exist on disk, and
     rejects any pattern that is absolute or contains a parent reference.
     GeneratedRootPolicyTests requires generated_roots to be exactly these two
     roots, requires every project kind scripts/output_paths.py offers to

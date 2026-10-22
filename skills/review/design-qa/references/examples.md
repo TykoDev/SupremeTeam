@@ -79,5 +79,5 @@ and mobile tiers. Continues Example 3.
   - `DQ-05` | Critical | destructive-action modal, small mobile and mobile tiers, both themes | **verified** — the declared stacked layout now applies below the tablet tier; confirm and cancel render on separate rows with the declared spacing, shown in the four re-taken captures. Same id, same severity, status `verified`.
   - `DQ-06` | Minor | confirmation toast, all tiers | status **open** — the corner radius is still one step off the token scale. Returns under its original id and severity, not renumbered and not downgraded because the round's Critical cleared.
 - Open risks: unchanged from r4 — the modal's pending and failed states still have no fixture and were not captured, so the fix is verified only in the confirm state it was reported in.
-- Next action: the Critical is cleared, so this group no longer blocks. `review/code-chief` rules on `DQ-06`; cycle 1 of a `cycle_cap` of 2 is spent, and at the cap an unresolved Minor does not convert into a blocker.
+- Next action: the Critical is cleared, so this group no longer blocks. `review/code-chief` rules on `DQ-06`; cycle 1 of a `cycle_cap` of 3 is spent, and at the cap an unresolved Minor does not convert into a blocker.
 - Revision: r5 <- r4.

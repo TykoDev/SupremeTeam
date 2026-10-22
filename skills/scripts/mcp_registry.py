@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
-from data_formats import parse_yaml
+from data_formats import parse_frontmatter
 
 
 def inspect_registry(path: Path, *, host: str, workspace: Path, now: datetime | None = None) -> dict:
@@ -17,13 +17,11 @@ def inspect_registry(path: Path, *, host: str, workspace: Path, now: datetime | 
     if not path.exists():
         return {**result, "reason": "no workspace cache"}
     try:
-        text = path.read_text(encoding="utf-8-sig")
-        pieces = text.split("---", 2)
-        if len(pieces) != 3 or pieces[0].strip():
+        # The frontmatter ends at the first line that is exactly ---; a value such as a
+        # workspace path may contain three dashes of its own.
+        meta = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+        if not meta:
             raise ValueError("registry needs frontmatter")
-        meta = parse_yaml(pieces[1])
-        if not isinstance(meta, dict):
-            raise ValueError("registry metadata must be a mapping")
         ttl = meta.get("discovery_ttl_hours")
         if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not 0 < ttl < float("inf"):
             raise ValueError("discovery_ttl_hours must be finite and positive")

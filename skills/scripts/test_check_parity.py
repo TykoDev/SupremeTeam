@@ -1,7 +1,15 @@
-"""Regression coverage for the redesign parity checker."""
+"""Regression coverage for the redesign parity checker.
+
+Most tests call ``main()`` in this process with the arguments a command line
+would carry. Two run the script itself, so the exit code and the JSON it prints
+stay pinned end to end.
+"""
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -9,8 +17,10 @@ import unittest
 from pathlib import Path
 
 import check_parity
+import validate_manifests
 
 SCRIPT = Path(__file__).resolve().parent / "check_parity.py"
+SKILLS = SCRIPT.parents[1]
 
 INVENTORY = {
     "schema_version": 1,
@@ -47,17 +57,29 @@ FULL_APP = """<html><body>
 </body></html>"""
 
 
-def run(root: Path, app: str, catalog: str = CATALOG, inventory: dict | None = None, extra: tuple[str, ...] = ()):
-    (root / "inv.json").write_text(json.dumps(inventory or INVENTORY), encoding="utf-8")
+def main_in_process(argv: list[str]) -> subprocess.CompletedProcess:
+    """``check_parity.main`` run here, its exit code and output shaped like a finished subprocess."""
+    stdout, stderr = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        code = check_parity.main(argv)
+    return subprocess.CompletedProcess(argv, code, stdout.getvalue(), stderr.getvalue())
+
+
+def run(root: Path, app: str, catalog: str = CATALOG, inventory: dict | None = None, extra: tuple[str, ...] = (),
+        *, cli: bool = False, bom: bool = False):
+    """Write the inputs under ``root`` and check them, in this process or, with ``cli``, as the command line."""
+    (root / "inv.json").write_text(json.dumps(inventory or INVENTORY), encoding="utf-8-sig" if bom else "utf-8")
     (root / "app.html").write_text(app, encoding="utf-8")
     (root / "components.html").write_text(catalog, encoding="utf-8")
-    proc = subprocess.run(
-        [sys.executable, str(SCRIPT), "--inventory", str(root / "inv.json"), "--app", str(root / "app.html"),
-         "--components", str(root / "components.html"), "--out", str(root / "evidence" / "parity.json"),
-         "--project-root", str(root), *extra],
-        capture_output=True, text=True, check=False,
-    )
-    record = json.loads((root / "evidence" / "parity.json").read_text(encoding="utf-8")) if (root / "evidence" / "parity.json").exists() else {}
+    argv = ["--inventory", str(root / "inv.json"), "--app", str(root / "app.html"),
+            "--components", str(root / "components.html"), "--out", str(root / "evidence" / "parity.json"),
+            "--project-root", str(root), *extra]
+    if cli:
+        proc = subprocess.run([sys.executable, str(SCRIPT), *argv], capture_output=True, text=True, check=False)
+    else:
+        proc = main_in_process(argv)
+    out = root / "evidence" / "parity.json"
+    record = json.loads(out.read_text(encoding="utf-8")) if out.is_file() else {}
     return proc, record
 
 
@@ -65,8 +87,9 @@ class ParityCheckerTests(unittest.TestCase):
     def test_full_coverage_passes_and_binds_inputs(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            proc, record = run(root, FULL_APP)
+            proc, record = run(root, FULL_APP, cli=True)
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertEqual(json.loads(proc.stdout)["record"], "evidence/parity.json")
             self.assertEqual(record["result"]["status"], "pass")
             self.assertEqual(record["coverage"], 1.0)
             self.assertEqual({i["path"] for i in record["inputs"]}, {"inv.json", "app.html", "components.html"})
@@ -101,7 +124,7 @@ class ParityCheckerTests(unittest.TestCase):
             root = Path(tmp)
             bad = json.loads(json.dumps(INVENTORY))
             bad["routes"].append({"id": "Route Home", "states": []})
-            proc, record = run(root, FULL_APP, inventory=bad)
+            proc, record = run(root, FULL_APP, inventory=bad, cli=True)
             self.assertEqual(proc.returncode, 2)
             self.assertIn("engine_error", json.loads(proc.stderr))
             self.assertEqual(record, {})
@@ -192,9 +215,8 @@ class ParityRecordLineEndingTests(unittest.TestCase):
             app = root / "app.html"
             app.write_bytes(FULL_APP.replace("\n", ending).encode("utf-8"))
             out = root / "parity.json"
-            proc = subprocess.run([sys.executable, str(SCRIPT), "--inventory", str(inventory), "--app", str(app),
-                                   "--components", str(catalog), "--out", str(out), "--project-root", str(root)],
-                                  capture_output=True, text=True)
+            proc = main_in_process(["--inventory", str(inventory), "--app", str(app), "--components", str(catalog),
+                                    "--out", str(out), "--project-root", str(root)])
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             return json.loads(out.read_text(encoding="utf-8"))
 
@@ -203,6 +225,27 @@ class ParityRecordLineEndingTests(unittest.TestCase):
         crlf = {i["path"]: i["sha256"] for i in self._run("\r\n")["inputs"]}
         self.assertEqual(lf, crlf)
         self.assertEqual(len(lf), 3)
+
+
+class RecordFileTests(unittest.TestCase):
+    """The inventory is read whatever wrote it, and the record is written whole or not at all."""
+
+    def test_an_inventory_with_a_byte_order_mark_is_read(self):
+        """Windows PowerShell 5.1 writes UTF-8 with a byte order mark, which json.loads refuses."""
+        with tempfile.TemporaryDirectory() as tmp:
+            proc, record = run(Path(tmp), FULL_APP, bom=True)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(record["result"]["status"], "pass")
+
+    def test_a_record_that_cannot_be_put_in_place_leaves_no_temporary_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "evidence" / "parity.json").mkdir(parents=True)
+            proc, record = run(root, FULL_APP)
+            self.assertEqual(sorted(path.name for path in (root / "evidence").iterdir()), ["parity.json"])
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertEqual(record, {})
+        self.assertTrue(json.loads(proc.stderr)["engine_error"].startswith("record could not be moved into place: "))
 
 
 def scan_markup(markup: str) -> check_parity.MarkerScanner:
@@ -357,6 +400,40 @@ class InventoryValidationTests(unittest.TestCase):
         self.assertIn("invalid id", self.engine_error(self.inventory(components=[{"id": "Not An Id"}])))
         duplicate = self.inventory(components=[{"id": "component.a"}, {"id": "component.a"}])
         self.assertIn("duplicate id", self.engine_error(duplicate))
+
+
+class DocumentedExampleTests(unittest.TestCase):
+    """The check_parity commands the redesign skills document run as written against a complete run tree."""
+
+    def test_parity_examples_use_real_run_inputs_and_outputs(self):
+        installed, _ = validate_manifests.install_record(SKILLS)
+        if installed is not None and "design" not in installed:
+            self.skipTest("the design team, whose documents hold the examples, is not installed here")
+        docs = ("design/design-mapper/references/examples.md", "design/prototyper/references/workflow.md")
+        count = 0
+        for document in docs:
+            text = (SKILLS / document).read_text(encoding="utf-8")
+            for line in text.splitlines():
+                if not line.startswith("python skills/scripts/check_parity.py --"):
+                    continue
+                with self.subTest(document=document, command=line), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp).resolve()
+                    args = shlex.split(line.replace("{run-id}", "doc-fixture"))[2:]
+                    paths = {flag: root / args[args.index(flag) + 1] for flag in ("--inventory", "--app", "--components", "--out")}
+                    for path in paths.values():
+                        self.assertTrue(path.is_relative_to(root / "skillset-saves" / "runs" / "doc-fixture"))
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                    paths["--inventory"].write_text(json.dumps(INVENTORY), encoding="utf-8")
+                    paths["--components"].write_text(CATALOG, encoding="utf-8")
+                    level = args[args.index("--level") + 1]
+                    paths["--app"].write_text(MOCK if level == "mock" else FULL_APP, encoding="utf-8")
+                    with contextlib.chdir(root):
+                        self.assertEqual(main_in_process(args).returncode, 0)
+                    record = json.loads(paths["--out"].read_text(encoding="utf-8"))
+                    self.assertEqual(record["result"]["status"], "pass")
+                    self.assertTrue(all(entry["path"].startswith("skillset-saves/runs/doc-fixture/") for entry in record["inputs"]))
+                    count += 1
+        self.assertEqual(count, 4, "documented commands must not silently disappear")
 
 
 if __name__ == "__main__":

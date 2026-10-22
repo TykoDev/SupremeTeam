@@ -101,7 +101,7 @@ phase `redesign`, submission `r-2301-rd2`, revision 2, owner `redesign`.
 - Verdict: `REVISE`.
 - Boundary: `redesign-review`, submitted by `redesign`.
 - Evidence, and the waiver that is *not* a failure:
-  - `mock_rendering` carries the applicability record "no visible surface changed". `../../gates.yaml` lists that key under this boundary's `no_fallback`, so the waiver is rejected — the four directions are mocks, a mock that was never rendered is not evidence, and a boundary-level `no_fallback` beats the global fallback.
+  - `mock_rendering` carries the applicability record "no visible surface changed". `../../gates.yaml` lists that key under this boundary's `no_fallback`, so the waiver is rejected — the four directions are mocks, a mock that was never rendered is not evidence, and no fallback map names `mock_rendering` anyway: that wording is `rendered_verification`'s, sanctioned at `review-to-delivery` only.
   - `rendered_verification`, `selected_variant`, `parity_evidence`, and `accessibility_evidence` each carry the record `selection deferred - no variant built`, and `selection.decision` is `deferred`. That reason is sanctioned at this boundary by its own `fallback_values`, so all four pass. Refusing them would route a `REVISE` to `design-qa` for a render of a variant this run never built.
 - Next action: route to `design-qa`, the owner of `mock_rendering`, for hashed captures of the four mocks across the required breakpoints and themes, bound by `inputs` to each mock. The other nine keys are unchanged and carry their prior judgment.
 - Revision: 2.

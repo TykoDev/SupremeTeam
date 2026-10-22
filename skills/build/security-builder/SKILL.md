@@ -9,7 +9,7 @@ description: >-
   security inside a build; a dedicated engagement — a standalone audit or scoped
   remediation campaign — is `review/cso`, which delegates the authorized fixes
   here. Defers feature code to `build/bob-the-builder`.
-version: 1.0.1
+version: 1.0.2
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -124,7 +124,7 @@ Do not skip a mandatory build activity inside the canonical path; route scope ch
 | --- | --- |
 | Invoked cold with no `### Save Context` block, no active run lock, and no named delegating owner | Scan nothing and change nothing. Return to the owning sub-orchestrator — `design/commander`, `build/build-management`, or `review/cso` — then accept the delegation back. A cold invocation names no scope, no authorized fix set, and no boundary to return at. |
 | The handoff arrives without `Phase` or `Return boundary`, or the two disagree | Do not guess the stage. Return the handoff to the delegating owner naming the missing or contradictory field. A design seed produced where a build checkpoint was wanted leaves the boundary with no graded evidence and the gate with no baseline. |
-| A gate returns a REVISE naming `security_seed` or `security_evidence` | Take only the findings routed to this owner, fix them in one pass, re-run the focused checks that prove each one, and hand the updated record back through the delegating owner for a single resubmission. `../../gates.yaml` `revise_policy.cycle_cap` is 2; the second failed round escalates instead of a third submission, using the shared phase/cross-stage counter in `../../contracts/workflow-protocol.md`. |
+| A gate returns a REVISE naming `security_seed` or `security_evidence` | Take only the findings routed to this owner, fix them in one pass, re-run the focused checks that prove each one, and hand the updated record back through the delegating owner for a single resubmission. `../../gates.yaml` `revise_policy.cycle_cap` is 3; the third failed round escalates instead of a fourth submission, using the shared phase/cross-stage counter in `../../contracts/workflow-protocol.md`. |
 | The dependency scanner, SCA tool, or advisory database is unavailable or cannot reach its source | Record the request with `scan_record.py --no-run` so the gap is typed rather than narrated, name the surface that stayed unscanned, and narrow the security claim to what was actually inspected. `../../gates.yaml` `evidence_type_rules.scan` treats `unavailable` or `error` as a data gap, never as a clean scan. |
 | A dependency or vendored surface carries a critical issue, but ownership of the affected code or package is unclear | Isolate the non-first-party boundary, record the ownership gap, and do not claim the build is hardened until responsibility is explicit. |
 | The required hardening fix changes auth, tenancy, or data-handling behavior beyond the approved scope | Escalate the scope boundary instead of treating a design-level security change as routine build cleanup. |

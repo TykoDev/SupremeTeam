@@ -8,7 +8,7 @@ description: >-
   say an API or SDK is "hard to get started with". Covers the experience of
   developers consuming the surface; end-user visual quality goes to
   `review/design-qa` and runtime frontend behavior to `review/frontier`.
-version: 1.0.0
+version: 1.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -137,7 +137,7 @@ A clean pass asserts the published path was walked end to end and worked. When n
 
 ## REVISE Rounds
 
-`check.py` groups a REVISE packet by evidence key and routes each group to that key's owner in `../../gates.yaml` `evidence_owners`. At `review-to-delivery` every key belongs to `code-chief` or `design-qa`, so no group is addressed to this lens directly: `code-chief` receives the group and sub-delegates the part this lens owns, under a `cycle_cap` of 2. `revise_policy.parallel_fix` is what lets that sub-delegation run alongside the other lenses rather than in sequence. A REVISE round is a delta pass, not a fresh journey:
+`check.py` groups a REVISE packet by evidence key and routes each group to that key's owner in `../../gates.yaml` `evidence_owners`. At `review-to-delivery` every key belongs to `code-chief` or `design-qa`, so no group is addressed to this lens directly: `code-chief` receives the group and sub-delegates the part this lens owns, under a `cycle_cap` of 3. `revise_policy.parallel_fix` is what lets that sub-delegation run alongside the other lenses rather than in sequence. A REVISE round is a delta pass, not a fresh journey:
 
 1. Re-walk only the journey steps and keys named in `changed_evidence` for this group, plus any later step whose success depended on them. Unchanged evidence keeps its prior judgment, mirroring how the gatekeeper re-judges under `delta_review`.
 2. Re-walk from a freshly built sandbox, not the one the previous round left behind. A sandbox that already carries the first round's installed state cannot show whether the fix works for a developer starting from nothing, which is the only claim this lens makes.

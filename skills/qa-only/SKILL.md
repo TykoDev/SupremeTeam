@@ -7,7 +7,7 @@ description: >-
   audit — even when the request is only "just tell me what's broken". Reports,
   never edits; defers fix-and-reverify QA to `qa` and performance
   measurement to `benchmark`.
-version: 1.0.4
+version: 1.0.5
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -74,7 +74,7 @@ Delegated inside the `qa` pipeline, this sweep produces every required evidence 
 python skills/harness/gatekeeper/check.py --boundary qa-review --package <manifest.json>
 ```
 
-A bare pass rate is not evidence. `test_matrix` and `executed_probes` are typed `probe` records at schema 2 — `artifacts`, `tool`, `command`, `exit_code`, `observed_at`, and `result.status` of `pass` — whose artifact paths are hashed files under the run's `evidence/` destination, resolved with `skills/scripts/output_paths.py`; a bare path string fails with `must be a typed probe record at schema 2`. A `REVISE` arrives through `qa` as one packet; re-run only the evidence it names as changed and return it, and `qa` resubmits once with `--prior`. `../gates.yaml` `revise_policy` sets `cycle_cap: 2`, so a second `REVISE` escalates rather than starting a third cycle.
+A bare pass rate is not evidence. `test_matrix` and `executed_probes` are typed `probe` records at schema 2 — `artifacts`, `tool`, `command`, `exit_code`, `observed_at`, and `result.status` of `pass` — whose artifact paths are hashed files under the run's `evidence/` destination, resolved with `skills/scripts/output_paths.py`; a bare path string fails with `must be a typed probe record at schema 2`. A `REVISE` arrives through `qa` as one packet; re-run only the evidence it names as changed and return it, and `qa` resubmits once with `--prior`. `../gates.yaml` `revise_policy` sets `cycle_cap: 3`, so a third `REVISE` escalates rather than starting a fourth cycle.
 
 ## Workflow
 
@@ -142,7 +142,7 @@ Skip only when the requested surface, tool, or environment does not exist and a 
 | Someone requests a quick fix while the QA-only boundary is active | Refuse the mutation, keep the scope report-only, and hand the defect to the team that owns remediation. The harness denies the write regardless, so agreeing would produce a denial rather than a fix; offer the alternative instead — finish the report, then rerun under `qa`, which is the skill that may fix. |
 | The run ends before the boundary is released — a crash, an interrupt, a refused release, or a handoff that never returns | Treat the workspace as blocked, not the run as finished. The unreleased record makes hook Rule D deny every edit-tool write and mutating shell command project-wide in later sessions. Recover with `python skills/harness/hooks/guard_state.py status` to read the stuck run id and its owner, then release it as that owner: `python skills/harness/hooks/guard_state.py release-read-only --run-id <run> --requester <owner> --reason "<why the run ended>"`. Nobody else can release it, and hand-editing `guard-state.json` is denied by the hook, so record the owner in the report while the run is still live. |
 | Multiple failures collapse into one probable root cause | Group them under one evidence-backed defect chain so the report does not exaggerate the number of independent issues. |
-| `qa` reports that `check.py` returned `REVISE` twice on the same package | Stop re-running the sweep for a third attempt. `../gates.yaml` `revise_policy` sets `cycle_cap: 2`, so the second `REVISE` escalates rather than starting another cycle: return the evidence that did and did not change between the two packets, plus the released boundary, and leave the `ESCALATE` to `qa`, which owns the boundary. |
+| `qa` reports that `check.py` returned `REVISE` a third time on the same package | Stop re-running the sweep for a fourth attempt. `../gates.yaml` `revise_policy` sets `cycle_cap: 3`, so the third `REVISE` escalates rather than starting another cycle: return the evidence that did and did not change across the three packets, plus the released boundary, and leave the `ESCALATE` to `qa`, which owns the boundary. |
 
 ## Save Protocol
 

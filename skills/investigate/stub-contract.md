@@ -34,7 +34,7 @@ before delegating.
 - Two keys are artifact-backed; four are stated in the package. No key at this boundary is waivable.
 - An unreproducible failure returns `ESCALATE` with the uncertainty stated, never a package missing a key.
 - The submitter self-checks the manifest mechanically before submitting, so a package that fails the machine is never sent.
-- Maximum revisions per boundary: 2. All keys share one owner, so a REVISE packet is resolved in a single pass and resubmitted once with `--prior`; a third cycle escalates.
+- Maximum revisions per boundary: 3. All keys share one owner, so a REVISE packet is resolved in a single pass and resubmitted once with `--prior`; a third cycle escalates.
 
 ## Package Shape
 

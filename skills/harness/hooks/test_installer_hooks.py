@@ -30,11 +30,11 @@ try:
 except ImportError:  # Windows has no pseudo-terminals
     pty = select = None
 
-HOOK_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(HOOK_DIR))
-import repair_registration as repair  # noqa: E402
-import verify_registration as verify  # noqa: E402
+import _testkit as kit
+import repair_registration as repair
+import verify_registration as verify
 
+HOOK_DIR = Path(__file__).resolve().parent
 REPO = HOOK_DIR.parents[2]
 INSTALLER = REPO / "scripts" / "install_hooks.py"
 INSTALL_SH = REPO / "scripts" / "install.sh"
@@ -57,10 +57,29 @@ def _node_strips_types() -> bool:
     return done.returncode == 0
 
 
+def write_catalog(skills: Path) -> None:
+    """What install.sh copies and checks, without the 400-odd files of the real tree: every item install-items.txt
+    selects, each skill directory as a SKILL.md, the real runtime contract (install.sh reads its Python floor) and a
+    line of text for each other file."""
+    for line in (REPO / "scripts" / "install-items.txt").read_text(encoding="utf-8").splitlines():
+        kind, *words = line.split() or ("",)
+        names = words[:1] if kind in ("core", "seed") else words[1:] if kind == "team" else []
+        for name in names:
+            source, target = REPO / "skills" / name, skills / name
+            if source.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                (target / "SKILL.md").write_text(f"{name}\n", encoding="utf-8")
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if name == "runtime-manifest.yaml":
+                    shutil.copy2(source, target)
+                else:
+                    target.write_text(f"{name}\n", encoding="utf-8")
+
+
 NODE_TS = _node_strips_types()
-BASH = shutil.which("bash")
+BASH = kit.find_bash()
 POSIX = os.name == "posix"
-_STRIP = ("CLAUDE", "CODEX_", "COPILOT", "GITHUB_COPILOT", "SUPREMETEAM_", "GITHUB_WORKSPACE")
 
 
 @unittest.skipUnless(INSTALLER.is_file(), "scripts/install_hooks.py is repository tooling, not an installed file")
@@ -76,10 +95,7 @@ class InstallerCase(unittest.TestCase):
         self.settings = self.tmp / "settings.json"
 
     def env(self, **extra: str) -> dict:
-        env = {k: v for k, v in os.environ.items() if not k.startswith(_STRIP)}
-        env["HOME"] = env["USERPROFILE"] = str(self.home)
-        env.update(extra)
-        return env
+        return kit.plain_env(self.home, **extra)
 
     def argv(self, *args: str) -> list[str]:
         return [sys.executable, str(INSTALLER), "--hook-root", str(HOOK_DIR), *args]
@@ -118,10 +134,6 @@ class DefaultsTests(InstallerCase):
         result = self.install("--target", "claude", "--claude-settings", str(self.settings), "--python-command", str(old), "--dry-run")
         self.assertIn("is Python 3.11.4, below the 3.13 floor", result.stdout)
 
-    def test_a_usable_interpreter_gets_no_note(self):
-        result = self.install("--target", "claude", "--claude-settings", str(self.settings), "--dry-run")
-        self.assertNotIn("note:", result.stdout)
-
     def test_the_hash_of_every_registered_script_is_recorded_in_the_project(self):
         result = self.install("--target", "claude", "--claude-settings", str(self.settings))
         self.assertIn("hook hashes recorded in:", result.stdout)
@@ -154,7 +166,7 @@ class DefaultsTests(InstallerCase):
         self.assertIn("note: user scope edits the global claude configuration", result.stdout)
         self.assertFalse((self.home / ".claude").exists())
 
-    def test_an_explicit_config_path_carries_no_scope_note(self):
+    def test_a_usable_interpreter_and_an_explicit_config_path_get_no_note(self):
         result = self.install("--target", "claude", "--claude-settings", str(self.settings), "--dry-run")
         self.assertNotIn("note:", result.stdout)
 
@@ -748,7 +760,8 @@ class ShellWrapperTests(unittest.TestCase):
     """install.sh forwards the scope and confirmation options to install_hooks.py.
 
     The helper is replaced by a stub that records its arguments and exits with the
-    code the test asks for; everything else is the real installer and the real catalog.
+    code the test asks for; everything else is the real installer, run on a catalog of
+    stand-ins for the items it installs (``write_catalog``).
     """
 
     STUB = ("import json, os, sys\n"
@@ -763,9 +776,8 @@ class ShellWrapperTests(unittest.TestCase):
         (cls.repo / "scripts").mkdir(parents=True)
         shutil.copy2(INSTALL_SH, cls.repo / "scripts" / "install.sh")
         shutil.copy2(REPO / "scripts" / "install-items.txt", cls.repo / "scripts" / "install-items.txt")
-        shutil.copytree(REPO / "scripts" / "superseded", cls.repo / "scripts" / "superseded")
         (cls.repo / "scripts" / "install_hooks.py").write_text(cls.STUB, encoding="utf-8")
-        shutil.copytree(REPO / "skills", cls.repo / "skills", ignore=shutil.ignore_patterns("__pycache__", ".harness-state", "skillset-saves"))
+        write_catalog(cls.repo / "skills")
         # install.sh looks for a Python 3.13 under the name python3 or python.
         cls.bin = cls.root / "bin"
         cls.bin.mkdir()
@@ -786,8 +798,8 @@ class ShellWrapperTests(unittest.TestCase):
         home = work / "home"
         home.mkdir()
         log = work / "stub.json"
-        env = {**os.environ, "HOME": str(home), "STUB_LOG": str(log), "STUB_EXIT": str(exit_code),
-               "PATH": os.pathsep.join([str(self.bin), os.environ.get("PATH", "")])}
+        env = kit.plain_env(home, STUB_LOG=str(log), STUB_EXIT=str(exit_code),
+                            PATH=os.pathsep.join([str(self.bin), os.environ.get("PATH", "")]))
         result = subprocess.run([BASH, str(self.repo / "scripts" / "install.sh"), "--destination", str(work / "dest"),
                                  "--target", "claude", "--claude-destination", str(work / "claude"), *args],
                                 capture_output=True, text=True, env=env, cwd=str(work), timeout=180, check=False)

@@ -59,18 +59,23 @@ enforcement:
     select from the chosen root, matches the result against ten residue classes
     (interpreter-cache, runtime-state, save-state, test-scratch, render-scratch,
     coverage-residue, eval-workspace, archives, vcs-metadata, secrets), refuses
-    symlinks, confirms nine required assets are present,
-    and exits 1 on any violation or 2 on a manifest error. The runtime-state,
+    links (a symlink, a Windows junction or another reparse point whose tag
+    names another path, but not a cloud placeholder), confirms nine required assets are
+    present by their exact names, and exits 1 on any violation or 2 on a manifest
+    or engine error, such as a directory it cannot list or, with --out, a file it
+    cannot read into the archive; --out is replaced only by a complete archive. The runtime-state,
     save-state and secrets names are read from
     skill-maker/skill-creator/scripts/residue-classes.json, the list the skill
-    packager refuses by as well. Two suites run it and
-    therefore exercise this manifest's globs through it:
-    validation/test_save_contracts.py PackageCheckTests asserts that
-    .harness-state/** and **/__pycache__/** drop those trees before the residue
-    scan and that the real repository root enumerates clean, and
-    scripts/test_runtime_utilities.py asserts that **/.env and **/.env.* keep both
-    files out of a written archive while the root documents stay in. Removing one
-    of those four patterns fails a suite.
+    packager refuses by as well. scripts/test_package_check.py runs it and
+    therefore exercises this manifest's globs through it: EnumerationTests
+    asserts that the excludes drop the .harness-state/ and __pycache__/ trees
+    before the residue scan and that **/.env and **/.env.* keep both files out of
+    a written archive while the root documents stay in, and RepositoryTests that
+    the real repository root enumerates clean. Removing **/.env or **/.env.*
+    fails that file. .harness-state/** and **/__pycache__/** are each shadowed
+    there by **/.harness-state/** and **/*.pyc, so removing one of them fails the
+    check_package requirement below, which scripts/test_validate_manifests.py
+    runs.
     scripts/validate_manifests.py check_package requires the five top-level keys,
     requires cache_files_are_publishable, runtime_state_is_publishable, and
     save_state_is_publishable to be false, and requires five specific exclude

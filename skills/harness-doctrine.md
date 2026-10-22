@@ -43,7 +43,7 @@ are not.
 | §1 Layer 3: guarded, frozen, read-only, single-writer, and destructive write boundaries | best-effort checks for supported actions where hooks are registered; not a sandbox | `skills/harness/hooks/pre_tool_use.py`, against `.harness-state/guard-state.json` |
 | §1 Layer 4: repeated-failure, empty-output, and oscillation trajectory patterns | machine-checked where hooks are registered | `skills/harness/hooks/post_tool_use.py` |
 | Single-writer ownership of the run record and the guard boundary record | machine-checked | `skills/validation/test_catalog_contracts.py`, `GuardWriterTests`, with [save-ownership.yaml](save-ownership.yaml) |
-| Fail-open behavior of every hook, and fail-loud behavior of the gate engine | machine-checked | `skills/harness/hooks/test_hooks*.py` and `skills/harness/gatekeeper/test_gatecheck.py` |
+| Fail-open behavior of every hook, and fail-loud behavior of the gate engine | machine-checked | `skills/harness/hooks/test_hooks_robustness.py`, `FailOpenTests`, and `skills/harness/gatekeeper/test_gatecheck.py` |
 | A gate spec that is missing or malformed is an engine error, never a pass | machine-checked | `skills/harness/gatekeeper/check.py`, exit code 2 |
 | §2: that a failure was classified into the *correct* category | judgement | nothing |
 | §2: that a constraint sits at the earliest layer where it is enforceable | judgement | nothing |
@@ -71,7 +71,9 @@ Operating principles that follow from it:
 - Keep prose advisory and validators deterministic.
 - Make hooks fail open on internal errors so tooling cannot brick the host, and
   report the degradation clearly.
-- Block an action only when a valid guard or freeze record proves the boundary.
+- Block an action at a frozen, blocked or read-only boundary only when a valid
+  guard or freeze record proves that boundary; the rules that need no record are
+  under Failure paths.
 - Treat gate engine failure as `ESCALATE`, never as approval.
 - Keep one run owner and one revision lineage across all phases.
 - Re-check mode, save state, hook readiness, and tool freshness at boundaries.
@@ -235,11 +237,12 @@ All three lifecycle hooks — `pre_tool_use.py`, `post_tool_use.py`, and
 heartbeat refresh come from every hook and neither is post-tool only.
 `harness/hooks/README.md` § Heartbeat refresh is canonical for the refresh
 conditions and states the same set: a payload carrying a host session id,
-exactly one coherent run, a lock that is held, pinned, uninterrupted and not
-yet stale, a heartbeat older than the refresh interval, and a write made through
-`save_run.py heartbeat` as the recorded lock owner. The hook never revives a
-stale lock; reclaiming one goes through `save_run.py recover --reason` so the
-reclaim leaves audit evidence.
+exactly one coherent run holding the pin whatever the pointer says, a lock that
+is held, pinned, uninterrupted and not yet stale, a heartbeat older than the
+refresh interval, and a write made through `save_run.py heartbeat` as the
+recorded lock owner, which rewrites a damaged pointer from the run. The hook
+never revives a stale lock; reclaiming one goes through
+`save_run.py recover --reason` so the reclaim leaves audit evidence.
 
 Hooks fail open. The gate validators fail loud: a gate that cannot prove a
 package clean must never approve it.
@@ -295,11 +298,19 @@ failing open costs the guarantee.
   record a guard check as performed. `check_readiness.py` reports
   `hooks_observed: unverified` until a hook actually runs, and configuration
   inspection alone never upgrades that.
-- **The guard boundary record is absent, empty, or malformed.** Boundary rules
-  are inert and only the built-in destructive-pattern guard applies — except for
-  `allow_dangerous`, where the direction reverses: an expired or malformed grant
-  leaves the block in force, because a guard that cannot read its own grant
-  stays closed.
+- **The guard boundary record is absent, empty, or malformed.** The boundary
+  rules (frozen, blocked, read-only) are inert, because their boundaries live in
+  the record. The destructive-pattern guard and the single-writer rule apply
+  with or without a record, the hook-file rule applies while a run is active,
+  and the coverage advisory, which never denies, is unaffected. The
+  unplaced-write rule always refuses a write that follows a directory chain too
+  long to follow, and refuses any other write it cannot place while a run is
+  active or a single-writer record is on disk (`skillset-saves/` holding
+  `_latest.md`, `_write.lock`, `runs/` or `preferences/`, or the guard record
+  file itself, which an empty or malformed record still is). For
+  `allow_dangerous` the direction reverses: an expired or malformed grant leaves
+  the block in force, because a guard that cannot read its own grant stays
+  closed.
 - **The gate engine cannot load or parse its spec.** That is an engine error,
   exit code 2, never a pass and never a verdict. Treat it as `ESCALATE` (§0). The exit codes
   of every tool are tabulated under "Exit codes and streams" in the repository's `docs/harness.md`,

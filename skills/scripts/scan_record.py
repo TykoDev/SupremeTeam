@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import shlex
 import shutil
@@ -63,19 +62,12 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from data_formats import content_sha256  # noqa: E402
+from file_safety import AtomicWriteError, write_atomically  # noqa: E402
 
 
 def sha256_file(path: Path) -> str:
     """Canonical digest: text folded to LF, binary byte-for-byte (data_formats.content_sha256)."""
     return content_sha256(path)
-
-
-def discard(path: Path) -> None:
-    """Drop a temp file a failed write or replace left behind, masking nothing."""
-    try:
-        path.unlink()
-    except OSError:
-        pass
 
 
 def git_head(project_root: Path) -> str | None:
@@ -256,18 +248,10 @@ def main() -> int:
         "limitations": limitations,
         "note": "status pass means the scanner exited 0 and matched no --fail-on-output pattern, which is not proof it found nothing; unavailable, error, and not-run are data gaps and never a clean scan",
     }
-    tmp = out.with_suffix(out.suffix + ".tmp")
     try:
-        tmp.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    except OSError as exc:
-        discard(tmp)
-        print(json.dumps({"engine_error": f"record could not be written: {exc}"}), file=sys.stderr)
-        return 2
-    try:
-        os.replace(tmp, out)
-    except OSError as exc:
-        discard(tmp)
-        print(json.dumps({"engine_error": f"record could not be moved into place: {exc}"}), file=sys.stderr)
+        write_atomically(out, json.dumps(record, indent=2, sort_keys=True) + "\n")
+    except AtomicWriteError as exc:
+        print(json.dumps({"engine_error": f"record {exc}"}), file=sys.stderr)
         return 2
     print(json.dumps({"record": str(out), "status": status, "exit_code": exit_code}, indent=2))
     return 0

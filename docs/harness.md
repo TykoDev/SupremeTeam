@@ -14,10 +14,10 @@ enforced.
 
 | # | Layer | When | Where it lives |
 |---|---|---|---|
-| 1 | Environment Contract | before interaction | `design-doctrine.md`, `grill-me-doctrine.md`, `mcp-tools.md`, `tech-stacks/registry.yaml`, intake briefs |
+| 1 | Environment Contract | before interaction | `design-doctrine.md`, `grill-me-doctrine.md`, `mcp-tools.md`, `tech-stacks/registry.yaml`, `execution-contract.md`, intake briefs |
 | 2 | Procedural Skill | task conditioning | the skill library, `session-memory` learnings, `pipelines.yaml` |
-| 3 | Action Realization | before execution | `careful`, `freeze`, `guard`, `unfreeze`, the save write probe, `pre_tool_use.py` |
-| 4 | Trajectory Regulation | after execution | gatekeepers, checkpoints, rewind rules, `post_tool_use.py` |
+| 3 | Action Realization | before execution | `careful`, `freeze`, `guard`, `unfreeze`, the save write probe, gate pre-checks, `pre_tool_use.py` |
+| 4 | Trajectory Regulation | after execution | gatekeepers, checkpoints, rewind rules, the revision cap, `post_tool_use.py` |
 
 An intervention that helps a weak model but gets in a strong one's way is a
 defect. When in doubt, it does nothing.
@@ -33,32 +33,33 @@ the guard cannot see".
 
 | File | Event | Layer | What it does |
 |---|---|---|---|
-| `pre_tool_use.py` | `PreToolUse` | 3 | Denies destructive commands; writes into a frozen or blocked boundary; writes outside a read-only run's save path; direct writes to the single-writer records (run, Taste, guard); edits to the hook scripts and their registration while a run is pinned or a boundary recorded; recognized writes whose target the analysis cannot place while a boundary or record is protected. Advises, never denies, on a coverage command with no destination |
+| `pre_tool_use.py` | `PreToolUse` | 3 | Denies destructive commands; writes into a frozen or blocked boundary; writes outside a read-only run's save path; direct writes to the single-writer records (run, Taste, guard, gate verdicts); edits to the hook scripts and their registration while a run is pinned or a boundary recorded; recognized writes whose target the analysis cannot place while a boundary or record is protected. Advises, never denies, on a coverage command with no destination |
 | `post_tool_use.py` | `PostToolUse` | 4 | Records repeated failures, empty-output streaks and oscillation; refreshes the pinned run's heartbeat; sweeps coverage residue into the run |
-| `user_prompt_submit.py` | `UserPromptSubmit` | routing | Points lifecycle work at `admiral`, reinforces the session pin, silent on slash commands |
+| `user_prompt_submit.py` | `UserPromptSubmit` | routing | Points lifecycle work at `admiral`, reinforces the session pin, silent on slash commands except `/audit-improve`, whose audit report it injects |
 | `save_run.py` | CLI | persistence | The only writer of the run record |
 | `guard_state.py` | CLI | 3 | The only writer of the guard record |
 | `guard_hook.py`, `_cmdscan.py`, `_paths.py`, `_program_paths.py` | modules | 3 | Rules A to G; the shell command analyser; the path canonicaliser; the bounded literal-target pass over inline Python |
 | `_state.py`, `_fsutil.py`, `_bootstrap.py` | modules | 3, 4 | Fail-open helpers, the atomic write and advisory lock, `sys.path` setup and the enforcement file list |
 | `run_heartbeat.py` | module | persistence | The throttled heartbeat refresh every hook runs |
 | `verify_registration.py` | diagnostic | | Reads host hook config. Exit 0 registered, 1 missing, 2 unknown; `--host auto` judges only hosts that show evidence |
-| `repair_registration.py` | diagnostic | | Previews a registration repair; writes only with `--apply` |
+| `repair_registration.py` | diagnostic | | Previews a registration repair; writes host config only with `--apply` |
 | `check_readiness.py` | diagnostic | | Python, hooks and saves as a capability map |
 
 ## Registration
 
 Always opt-in: `--register-hooks` (`-RegisterHooks`) on the installer, or
 `scripts/install_hooks.py` from a checkout. Both preview every file they would
-change and ask on a terminal; `--hooks-yes` skips the question; exit 3 means
-declined, nothing written. Claude Code, Codex and Copilot take JSON config that
-`verify_registration.py` reads back; Cursor and OpenCode take a plugin that is not
-machine-verifiable. Which file each host and scope edits:
+change and ask on a terminal; `--hooks-yes` (`-HooksYes`), or `--yes` on
+`install_hooks.py`, skips the question. Declining writes nothing;
+`install_hooks.py` exits 3. Claude Code, Codex and Copilot take JSON config that
+`verify_registration.py` reads back; Cursor, OpenCode and pi take a plugin or
+extension that is not machine-verifiable. Which file each host and scope edits:
 [Install.md](../Install.md#runtime-hooks).
 
-An install that skips, declines or fails registration ends with a banner saying
-so. Without hooks the guard, the routing reminder and the hook heartbeat are
-advisory; `admiral` says so at intake and `check_readiness.py --require-hooks`
-reports the host as not ready.
+An install without `--register-hooks`, or one that declines or fails
+registration, ends with a banner saying so. Without hooks the guard, the routing
+reminder and the hook heartbeat are advisory; `admiral` says so at intake and
+`check_readiness.py --require-hooks` reports the host as not ready.
 
 Repair from an installed copy:
 
@@ -77,20 +78,27 @@ python skills/harness/hooks/check_readiness.py --host auto --require-active-run 
 Capabilities are reported one by one: `python_runtime`, `hooks_configured`,
 `hooks_executable`, `hooks_coverage`, `hooks_interpreter`, `hooks_observed`,
 `hooks_faults`, `saves_readable`, `active_run`, `deterministic_validators`.
-`Ready:` covers Python, the run with `--require-active-run`, and the hooks with
-`--require-hooks`. `hooks_observed` stays `unverified` until a hook fires: config
-proves registration, not execution. The diagnostic installs and registers
-nothing.
+`Ready:` covers Python and a hook check that reached an answer;
+`--require-active-run` adds the run, and `--require-hooks` adds registered hooks
+with full matcher coverage and a usable interpreter. `hooks_observed` stays
+`unverified` until a hook fires: config proves registration, not execution. The
+diagnostic installs and registers nothing.
 
 ## Guard and freeze
 
 `pre_tool_use.py` enforces the boundary `guard` and `freeze` record in
-`.harness-state/guard-state.json` (`frozen_globs`, `blocked_globs`,
+`.harness-state/guard-state.json` (`frozen_globs`, `blocked_globs`, `read_only`,
 `allow_dangerous`), resolved under `SUPREMETEAM_PROJECT_DIR`, then a host
 workspace variable, then the nearest ancestor holding `skillset-saves/`,
 `.harness-state/` or `.git`. Every generated file lands under `skillset-saves/`
-or `.harness-state/`. With no record, only the destructive-pattern rule applies.
-`unfreeze` clears `frozen_globs`.
+or `.harness-state/`, except global Taste preferences, which live in a per-user
+data directory outside the checkout. With no record, no frozen, blocked or
+read-only boundary is enforced; the destructive-command and single-writer rules
+still are, the hook-file rule while a run is pinned, and the unplaced-write rule
+(a write the analyser cannot place) while `skillset-saves/` holds `_latest.md`,
+`_write.lock`, `runs/` or `preferences/`, and always after a `cd` chain too long
+to follow. `unfreeze` releases an entry by setting `released_at`; no boundary
+entry is ever deleted.
 
 The analyser reads literal text. A script file, a package manager, a tool with
 no table entry, and a git tree command with no path at the project root are not
@@ -126,16 +134,16 @@ A mistyped option is argparse's own exit 2 with nothing on stdout in every tool.
 |---|---|---|---|---|---|
 | `harness/gatekeeper/check.py` | facts pass | defects found | engine error | | JSON on stdout; an engine error writes JSON with `engine_error` to stderr |
 | `gatekeeper-*/scripts/check.py` (`_gatecheck.py`) | no blocking finding | blocking finding | the gate could not run | | Markdown or JSON on stdout; a refused package directory writes `ERROR:` to stderr |
-| `hooks/save_run.py` | `ok` | `refused`: a contract violation | `degraded`: the write failed, nothing published | engine error, JSON on stderr | JSON `result` on stdout for 0, 1 and 2 |
+| `hooks/save_run.py` | `ok` | `refused`: a contract violation | `degraded`: a write did not complete; `reason` says what was published | engine error, JSON on stderr | JSON `result` on stdout for 0, 1 and 2 |
 | `scripts/package_check.py` | clean | residue or a missing required file | manifest or engine error | | JSON on stdout |
 | `scripts/validate_manifests.py` | clean | a contract is violated | | | JSON on stdout |
 | `scripts/check_runtime.py` | ready | not ready | | | text on stdout |
-| `scripts/check_parity.py` | coverage meets the threshold | scored ids missing | input or engine failure | | JSON on stdout |
+| `scripts/check_parity.py` | coverage meets the threshold | scored ids missing | input or engine failure | | JSON on stdout for 0 and 1; exit 2 writes JSON with `engine_error` to stderr and no record |
 | `scripts/scan_record.py` | record written | | wrapper error | | the record and sidecars; read `result.status` |
 | `scripts/output_paths.py`, `content_hash.py` | JSON | unsafe, unknown or unreadable request | | | JSON on stdout |
 | `hooks/verify_registration.py` | registered | hooks missing, or no host found | host or config undetermined | | text on stdout |
 | `hooks/check_readiness.py` | `Ready: yes` | `Ready: no` | internal error | | text on stdout |
-| `hooks/repair_registration.py` | nothing to do, or applied | changes needed, `--apply` not given | refused or engine error | | diff and text on stdout |
+| `hooks/repair_registration.py` | nothing to do, applied, or hashes recorded | changes needed, `--apply` not given; or any uncaught exception, a failed `--record-hashes` write included | refused, or the `--apply` write failed | | diff and JSON on stdout; an uncaught exception prints only its traceback, on stderr |
 | `scripts/install_hooks.py` | registered or clean dry run | | a write was refused or a written hook did not verify | declined, nothing written | text on stdout |
 | `hooks/guard_state.py` | ok | refused | usage error | | the refusal on stderr |
 | the lifecycle hooks | always: a deny is a JSON permission decision, not an exit code | | | | JSON on stdout |

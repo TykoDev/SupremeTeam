@@ -58,8 +58,11 @@ leg whose interpreter disagrees, so a broken install cannot turn tests into
 skips. Leave it unset on your machine.
 
 The validation tests read the catalog with `skills/scripts/data_formats.py`, the
-parser production uses, through `skills/validation/_catalog.py`. A test that
-needs PyYAML says so in its skip message.
+parser production uses, through `skills/validation/_catalog.py`. It also holds
+the other readers the test modules share: a document's sections, the
+routing-class table, the advertised triggers, the roster, the gatekeepers, counts
+spelled as words, the checkout check and the PreToolUse hook's answer. A test
+that needs PyYAML says so in its skip message.
 
 ## Continuous integration
 
@@ -97,8 +100,6 @@ say so in the message.
 - Give a body to every change that alters behaviour. Say why, not what.
 - Keep moves and edits in separate commits. A commit that moves code and changes
   what it does hides the second inside the first.
-- When `skills/mcp-tools.md` changes, keep the text it replaces in `scripts/superseded/` and name it in
-  `scripts/install-items.txt`, so an installed copy that never edited the old registry is replaced on upgrade.
 - A seed file the installers once shipped stays listed in `scripts/install-items.txt` when it is
   retired, so an upgrade does not delete a user's copy as a stale owned file.
 - Land changes through a pull request into `dev`, not by pushing to it.

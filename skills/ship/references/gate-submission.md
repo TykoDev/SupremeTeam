@@ -109,9 +109,9 @@ gatekeeper re-judges only what moved. Raise the revision on every resubmission: 
 reusable only for the same boundary, submission, revision, package fingerprint, and gate-spec
 digest.
 
-`revise_policy` sets `cycle_cap: 2`. A second `REVISE` ends the cycle: return `ESCALATE` with
-both packets, the changed and unchanged evidence, and the owner of each key that did not
-converge. Hold the release while either verdict stands — a gate that has not approved has not
+`revise_policy` sets `cycle_cap: 3`. A third `REVISE` ends the cycle: return `ESCALATE` with
+all three packets, the changed and unchanged evidence, and the owner of each key that did not
+converge. Hold the release while any of those verdicts stands — a gate that has not approved has not
 approved slowly.
 
 ## 4. Repeat Releases: Current-Run Snapshots

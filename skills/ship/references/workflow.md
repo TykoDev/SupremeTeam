@@ -28,7 +28,7 @@ the pipeline route closes a gate.
 - Partial rollout states must stay explicit rather than being normalized into success.
 - Proactive next steps are useful only when they do not hide release risk.
 - The named owner's go decision is required in both entry modes; it is a judgment, not a mechanical check, so the absence of a gate never removes it.
-- A second `REVISE` on the same package reaches `cycle_cap: 2` and escalates with both packets; the release stays held while that verdict or an `ESCALATE` stands.
+- A third `REVISE` on the same package reaches `cycle_cap: 3` and escalates with all three packets; the release stays held while that verdict or an `ESCALATE` stands.
 
 ## Acceptance Checklist
 

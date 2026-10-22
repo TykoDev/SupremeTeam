@@ -13,7 +13,7 @@
 2. Define one durable configuration surface for variables, secrets references, domains, certificates, and promotion rules.
 3. Check that the setup survives environment drift, rollback, and operator handoff without hidden manual steps.
 4. Resolve the canonical path, show the diff against the configuration already there, and obtain a named owner's approval of that diff before writing.
-5. When the file already at that path cannot be parsed, stop rather than approximate: the diff is uncomputable, so report the path, the parser error, and the failing line, and offer the owner a repair-then-rediff or an explicit full replacement shown against the unparseable content quoted verbatim. Preserve the original until the replacement is confirmed.
+5. When the file already at that path cannot be parsed, stop rather than approximate: the diff is uncomputable, so report the path, the parser error, and the failing line, and offer the owner a repair-then-rediff or an explicit full replacement shown against the existing file's path, its sha256, and the parser error; the content is never echoed verbatim, only what a redaction pass leaves. Preserve the original until the replacement is confirmed.
 6. Write the rollback plan as its own artifact: trigger, procedure, and data considerations, to the shape in `rollback-plan.md`. It is written *after* the approval, not before — it is a durable artifact like the config, so approval-before-any-durable-write covers it too, and the order here matches `../SKILL.md` Workflow steps 4-6.
 7. Package the result so later deployment flows can reuse the same proven configuration safely, recording the approver, the approved diff, and each file hash.
 

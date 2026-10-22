@@ -10,8 +10,9 @@ repository root; in an installed copy `skills/` is the install root (see
 install the tree (the installers copy `skills/` into `~/.agents/skills/`, or
 `%USERPROFILE%\.agents\skills\`, and mirror it into each host's directory) and keep
 the grouped layout intact. A host that scans one level deep registers the 22
-skills at the install root by name; the 31 nested specialists are reached by path
-through the skill that delegates to them. See [Install.md](Install.md).
+skills at the install root by name; the 31 nested skills (23 internal specialists,
+five pipeline owners and three phase gatekeepers) are reached by path through the
+skill that delegates to them. See [Install.md](Install.md).
 
 **Do not commit runtime state.** `skillset-saves/` and `.harness-state/` are
 generated and Git-ignored. Saved runs, locks, audit trails, and guard records stay
@@ -240,7 +241,7 @@ Not skills. These are the files the skills are checked against.
 | **run_heartbeat.py** | `skills/harness/hooks/run_heartbeat.py` | The heartbeat refresh every registered hook runs on a host event: throttled, fail-open, written only through `save_run.py` |
 | **_fsutil.py** | `skills/harness/hooks/_fsutil.py` | The one atomic write and the one OS advisory lock the hook-directory writers share |
 | **_bootstrap.py** | `skills/harness/hooks/_bootstrap.py` | Puts the hooks directory and `skills/scripts` on `sys.path` once, so modules import each other by name, and lists the files a registered hook runs to decide |
-| **_testkit.py** | `skills/harness/hooks/_testkit.py` | Test support for the guard suites: an in-process `decide()` and a subprocess `run_hook()` |
+| **_testkit.py** | `skills/harness/hooks/_testkit.py` | Test support for the hooks suite: an in-process `decide()`, subprocess runners (`run_hook()`, `run_cli()`, `save()`) and environments that carry none of the shell's project or session variables, and shared fixtures; not hashed into the integrity record |
 | **verify_registration.py** | `skills/harness/hooks/verify_registration.py` | Inspects host hook config without mutating it |
 | **repair_registration.py** | `skills/harness/hooks/repair_registration.py` | Previews a scoped registration repair; applies only with `--apply` |
 | **check_readiness.py** | `skills/harness/hooks/check_readiness.py` | Python, hooks, and save state as an independent capability map |
@@ -278,13 +279,17 @@ and the machine-readable specs.
 
 `admiral`, `gatekeeper-admiral`, `investigate`, `skill-maker`, `session-memory`,
 `taste`, and `audit-improve` sit directly under `skills/` because they are cross-cutting.
-Pipeline-stage skills nest under their category directory; standalone tools under
-their group. This manifest is the authoritative flat index regardless of depth.
+Pipeline-stage skills nest under their category directory; standalone tools sit
+directly under `skills/` too, grouped only in this manifest. This manifest is the
+authoritative flat index regardless of depth.
 
 The checkout also carries files outside `skills/`, which the installers do not copy:
-`README.md`, `QUICK-START.md`, `Install.md`, `BENCHMARK.md`,
-`CHANGELOG.md`, `CONTRIBUTING.md`, `LICENSE`, `ruff.toml`, `docs/`, the installers in `scripts/`
+this file, `README.md`, `QUICK-START.md`, `Install.md`, `BENCHMARK.md`,
+`Test-Guide.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `LICENSE`, `ruff.toml`,
+`.gitattributes`, `.gitignore`, `docs/`, the installers in `scripts/`
 (`install.sh`, `install.ps1`, `install_hooks.py`, `install-items.txt`,
-`test_install.py`) and the CI workflow `.github/workflows/ci.yml`.
+`test_install.py`), the checkout utilities in `tools/` (`run-audit/` and
+`rescan-compare/`, each with a README and its own tests) and the CI workflow
+`.github/workflows/ci.yml`.
 
 Full tree in [docs/directory-structure.md](docs/directory-structure.md).

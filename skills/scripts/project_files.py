@@ -5,11 +5,11 @@ from __future__ import annotations
 import bisect
 import os
 import re
-import stat
 from pathlib import Path
 from typing import Any
 
 from data_formats import DataFormatError, parse_yaml
+from file_safety import is_reparse_point
 from redaction import add_error, add_warning
 
 
@@ -175,30 +175,17 @@ def is_text_path(path: Path) -> bool:
     return path.name.lower() in TEXT_FILE_NAMES_LOWER or path.suffix.lower() in TEXT_SUFFIXES
 
 
-def _is_reparse_point(path: Path) -> bool:
-    try:
-        if path.is_symlink():
-            return True
-        is_junction = getattr(path, "is_junction", None)
-        if callable(is_junction) and is_junction():
-            return True
-        attributes = getattr(path.lstat(), "st_file_attributes", 0)
-        return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
-    except (OSError, ValueError):
-        return False
-
-
 def _has_reparse_component(path: Path, root: Path) -> bool:
     try:
         relative = path.relative_to(root)
     except ValueError:
         return True
     current = root
-    if _is_reparse_point(current):
+    if is_reparse_point(current):
         return True
     for part in relative.parts:
         current /= part
-        if _is_reparse_point(current):
+        if is_reparse_point(current):
             return True
     return False
 
@@ -206,7 +193,7 @@ def _has_reparse_component(path: Path, root: Path) -> bool:
 def has_reparse_ancestor(path: Path) -> bool:
     current = path
     while True:
-        if _is_reparse_point(current):
+        if is_reparse_point(current):
             return True
         parent = current.parent
         if parent == current:
@@ -222,11 +209,11 @@ def safe_regular_file(path: Path, root: Path) -> bool:
         resolved.relative_to(root.resolve(strict=True))
     except (OSError, ValueError):
         return False
-    return path.is_file() and not _is_reparse_point(path)
+    return path.is_file() and not is_reparse_point(path)
 
 
 def _skip_reparse_directory(path: Path, root: Path, warnings: list[str]) -> bool:
-    if not _is_reparse_point(path):
+    if not is_reparse_point(path):
         return False
     add_warning(warnings, f"{relative_path(path, root)}: skipped, reparse points are not inspected")
     return True
@@ -238,7 +225,7 @@ def walk_project(root: Path, errors: list[str], warnings: list[str]) -> list[Pat
     directory_count = 0
     total_bytes = 0
 
-    if _is_reparse_point(root):
+    if is_reparse_point(root):
         add_error(errors, "project root: reparse points are not inspected")
         return files
 
@@ -362,7 +349,7 @@ def read_text(
         if required:
             add_error(errors, f"{relative}: reparse points are not inspected")
         return None
-    if _is_reparse_point(path) or not safe_regular_file(path, root):
+    if is_reparse_point(path) or not safe_regular_file(path, root):
         if required:
             add_error(errors, f"{relative}: reparse points and out-of-root files are not inspected")
         return None

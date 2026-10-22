@@ -15,9 +15,11 @@ Operations (all emit one JSON result on stdout and use the exit codes below):
 
     create      new run from at least one evidence path: probe the save root,
                 acquire an exclusive pinned lock, publish revision 1, write the pointer.
-    checkpoint  publish revision n+1 atomically (state + lock + pointer) after
-                snapshotting revision n into _history/; registers evidence hashes,
-                and --drop-evidence removes a registered path (with --reason).
+    checkpoint  publish revision n+1 after snapshotting revision n into _history/:
+                the lock and the state first, as one revision under the journal,
+                then the pointer, then the audit event, so a failure of either of
+                those leaves the revision published (exit 2). Registers evidence
+                hashes, and --drop-evidence removes a registered path (with --reason).
                 Resumes a released run (audit event ``resume``); reopens a
                 complete/blocked run only with --reopen (audit event ``reopen``).
     heartbeat   refresh the lock heartbeat without changing the revision; refuses
@@ -29,13 +31,17 @@ Operations (all emit one JSON result on stdout and use the exit codes below):
                 through checkpoint --reopen.
     release     release the lock and pin without a terminal status (paused hand-back).
     recover     reclaim a *stale* lock (--reason): refuses a fresh lock or a competing
-                owner, records the prior lock path, heartbeat, and bytes as evidence
-                first. --rollback settles an interrupted publish instead.
+                owner, publishes the new lock and state (``recovered_from`` names the
+                prior lock path, heartbeat, owner, and sha256), then appends the same
+                evidence as the ``recover`` audit event. --rollback settles an
+                interrupted publish instead.
     status      read-only classification (delegates to _saves.inspect_saves).
 
 Exit codes: 0 = ok, 1 = refused (contract violation: competing owner, wrong
-revision, unsafe path, busy lock), 2 = degraded (the write failed; nothing
-coherent was published, the previous revision is intact), 3 = engine/input error.
+revision, unsafe path, busy lock), 2 = degraded (a write failed; the reason says
+what was and was not published: a failure before the state and lock are written
+publishes nothing, while a failed pointer write or audit append comes after them,
+so that revision is published), 3 = engine/input error.
 
 Every mutation holds one exclusive lock (``_write.lock``, an operating-system
 advisory lock, so a crashed writer never leaves it held) from reading the current
@@ -48,13 +54,15 @@ up the host.
 Writes are staged to per-process temporary files in the run directory and
 published with ``os.replace``. A ``_journal.json`` records the in-flight revision
 before the first replace and is removed after the last one, so an interrupted
-checkpoint is visible (``status`` reports ``interrupted``) and ``recover
+checkpoint is visible (``status --run-id`` reports ``interrupted``) and ``recover
 --rollback`` restores the last coherent revision from ``_history/``. The audit
 event for a revision is appended once its state is published, before the journal
 is cleared. Nothing is ever deleted: superseded revisions stay in ``_history/``
 (a first revision that never finished publishing is retired there too) and every
 event is appended to ``_audit-trail.md``, including operations that were refused
-or degraded.
+or degraded once their run directory exists. The trail cannot record its own
+failure: when the append is what failed, neither the event nor a ``refused`` or
+``degraded`` line is written.
 
 Freeze/guard records are out of scope here and are never touched.
 """
@@ -62,6 +70,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
 import json
 import os
 import sys
@@ -88,8 +97,8 @@ from save_taxonomy import (  # noqa: E402
     protocol_state_for,
 )
 from _saves import (  # noqa: E402
-    ACCESS_DENIED_STEP, heartbeat_is_stale, inspect_run, inspect_saves, is_directory, next_step, parse_timestamp, path_exists,
-    path_is_dir, refusal,
+    ACCESS_DENIED_STEP, NEXT_STEPS, NOT_A_FILE, heartbeat_is_stale, inspect_run, inspect_saves, is_directory, next_step,
+    not_a_file, parse_timestamp, path_exists, path_is_dir, refusal, refused_detail,
 )
 import _fsutil  # noqa: E402
 import _state  # noqa: E402
@@ -101,6 +110,8 @@ WRITER_LOCK_TIMEOUT = 10.0
 HOOK_LOCK_WAIT = 0.25
 # Non-fatal write degradations observed during one invocation (reported in the result).
 WRITE_NOTES: list[str] = []
+# A link where the audit trail belongs, said as plainly as a directory there (``NOT_A_FILE``).
+IS_A_LINK = "is a link, not a file"
 
 
 class Refused(Exception):
@@ -147,15 +158,22 @@ def new_run_id(run_id: str) -> str:
 
 
 def read_json(path: Path, *, refuse: bool = False) -> dict[str, Any] | None:
-    """The record as a mapping, or None. ``refuse`` lets a permission error through, for a caller that must not
-    take a record this account may not read for one that is absent."""
+    """The record as a mapping, or None. ``refuse`` raises instead where the record is there and cannot be read, for a
+    caller that must not take it for an absent one: PermissionError where this account may not read it, and
+    IsADirectoryError where a directory (or a junction, or a link to one) stands where it belongs, which is damage."""
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except PermissionError:
-        # Windows says the same for a directory where the record belongs, which is damage, not a refusal.
-        if refuse and not is_directory(path):
+    except IsADirectoryError:
+        if refuse:
             raise
         return None
+    except PermissionError:
+        if not refuse:
+            return None
+        if not_a_file(path):
+            # Windows says permission denied for a directory or a junction where the record belongs.
+            raise IsADirectoryError(errno.EISDIR, NOT_A_FILE, str(path)) from None
+        raise
     except (OSError, ValueError, RecursionError):
         return None
     return value if isinstance(value, dict) else None
@@ -173,8 +191,9 @@ _why = _fsutil.why
 
 @contextlib.contextmanager
 def owner_only():
-    """Create files for this user alone, whatever the umask: a run record names owners, evidence paths and
-    hashes that another account sharing the project directory has no need to read. Directories keep their default."""
+    """On POSIX, create files for this user alone (mode 0600), whatever the umask: a run record names owners, evidence
+    paths and hashes that another account sharing the project directory has no need to read. On Windows the umask
+    narrows nothing, so a file inherits its directory's access list. Directories keep their default."""
     previous = os.umask(0o077)
     try:
         yield
@@ -182,16 +201,43 @@ def owner_only():
         os.umask(previous)
 
 
+def _not_through_a_link(path: str, flags: int) -> int:
+    """The opener of the audit append: owner-only, and where the system has ``O_NOFOLLOW``, refusing a link at the trail
+    itself, so one planted after ``append_audit`` looked fails the open instead of being followed."""
+    return os.open(path, flags | getattr(os, "O_NOFOLLOW", 0), 0o600)
+
+
 def atomic_write(path: Path, data: str | bytes) -> None:
+    # On Windows a directory (or a junction, or a link to one) where the record belongs fails the replace as a permission
+    # problem, which the replace retries for about three seconds; waiting does not clear it, so it fails here. POSIX
+    # raises IsADirectoryError at once, and its rename replaces a link instead of following it.
+    if os.name == "nt" and not_a_file(path):
+        raise Degraded(f"write failed for {path.name}: {path.name} {NOT_A_FILE}")
     try:
         with owner_only():
             _fsutil.atomic_write(path, data, notes=WRITE_NOTES)
     except OSError as exc:
-        raise Degraded(f"write failed for {path.name}: {_why(exc)}") from exc
+        # A directory where the record belongs is damage; Windows would call it a permission problem.
+        why = f"{path.name} {NOT_A_FILE}" if not_a_file(path) else _why(exc)
+        raise Degraded(f"write failed for {path.name}: {why}") from exc
 
 
 def dump(obj: dict[str, Any]) -> str:
     return json.dumps(obj, indent=2, sort_keys=True) + "\n"
+
+
+def way_out(run: dict[str, Any]) -> str:
+    """A run that holds the session pin (one of the reader's ``held_runs``), and what settles it. ``recover --reason``
+    reclaims a stale lock only where no other run holds the pin, so the owner closing it is named as well."""
+    run_id = run.get("run_id", "")
+    if run.get("directory_at"):
+        return f"run {run_id} holds a lock, but a directory stands at {run['directory_at']}: preserve the record and escalate"
+    if run.get("interrupted"):
+        return f"run {run_id} has an interrupted publish: settle it with recover --run-id {run_id} --rollback"
+    if run.get("state") == "stale":
+        return (f"run {run_id} holds a stale lock: complete, block, or release it as its owner, or reclaim it with "
+                f"recover --run-id {run_id} --reason <why> once it is the only held run")
+    return f"run {run_id} holds a fresh lock: complete, block, or release it"
 
 
 class WriteLock(_fsutil.AdvisoryLock):
@@ -248,8 +294,20 @@ class RunStore:
             # The classification names what the readers say is refused, which is a directory that exists, not the leaf
             # that may not.
             found = inspect_saves(self.project_root)
-            detail = found["detail"] if found.get("access_denied") else refusal(self.rel(path))
+            detail = refused_detail(found) if found.get("access_denied") else refusal(self.rel(path))
             raise Refused(f"{detail}: {ACCESS_DENIED_STEP}") from exc
+
+    def damaged(self, path: Path) -> str:
+        """The refusal for a directory (or a junction, or a link to one) where a record of the run belongs: damage, which
+        no operation writes over, said as the readers say it and not as the permission error Windows gives for it."""
+        return f"{self.rel(path)} {NOT_A_FILE}: {NEXT_STEPS['corrupt']}"
+
+    def journaled(self) -> bool:
+        """Whether a publish of the run was interrupted, which its journal says. A directory where the journal belongs is
+        no journal but damage, and refuses: no rollback can settle it."""
+        if not_a_file(self.journal_path):
+            raise Refused(self.damaged(self.journal_path))
+        return self.seen(self.journal_path)
 
     def probe(self) -> str:
         """Write/read/delete probe inside the save root. Raises Degraded."""
@@ -307,34 +365,46 @@ class RunStore:
 
     # --------------------------------------------------------------- records
     def current(self) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        """The run's state and lock. A record this account cannot read refuses, naming it: it is not a missing one."""
+        """The run's state and lock. A record this account cannot read refuses, naming it: it is not a missing one. Nor is
+        a directory where a record belongs, which is damage."""
         records = []
         for path in (self.state_path, self.lock_path):
             try:
                 records.append(read_json(path, refuse=True))
+            except IsADirectoryError as exc:
+                raise Refused(self.damaged(path)) from exc
             except PermissionError as exc:
                 raise Refused(f"{refusal(self.rel(path))}: {ACCESS_DENIED_STEP}") from exc
         return records[0], records[1]
 
     def competing_owner(self, owner: str) -> str | None:
-        """Another coherent held run in this save root blocks a new pin.
+        """Every other run that holds the session pin in this save root, each named with its way out, or None.
 
-        A *stale* held run blocks too: creating or resuming beside it would
-        leave two held runs, which the reader classifies as ``conflicting`` so
-        neither could be pinned. Reclaim it with ``recover`` or close it first.
+        The reader's ``held_runs`` decides, whatever the pointer says: a damaged
+        pointer that makes the save root ``corrupt`` hides no held run from it. A
+        coherent held run blocks a new pin, and so does a *stale* one: creating or
+        resuming beside it would leave two held runs, which the reader classifies as
+        ``conflicting`` so neither could be pinned; its owner closes it, or ``recover
+        --reason`` reclaims it once it is the only held run. So does a run whose lock
+        says held while its journal shows an interrupted publish, which ``recover
+        --rollback`` settles, and a held run whose records agree beside a directory
+        where its journal belongs, which is preserved and escalated: no rollback
+        settles a directory. Other damaged runs do not block.
 
         A record this account cannot read refuses too, with the path and the reason: it
         may be a held run, and the one-held-run rule cannot be kept beside a run nobody
-        here can see (owner-only records, a second account sharing the directory)."""
+        here can see (a second account sharing the directory, whose records are
+        owner-only on POSIX, or a record whose access list excludes this account). The
+        reader carries ``access_denied`` on every classification, so a damaged pointer
+        hides no such record either."""
         result = inspect_saves(self.project_root)
         if result.get("access_denied"):
-            raise Refused(f"{result['detail']}: {next_step(result)}")
-        if result["status"] in {"active", "orphaned", "conflicting", "stale"} and result.get("run_id") != self.run_id:
-            return f"{result['status']}: {result['detail']}"
-        return None
+            raise Refused(f"{refused_detail(result)}: {ACCESS_DENIED_STEP}")
+        blocking = [run for run in result.get("held_runs") or () if run.get("run_id") != self.run_id]
+        return "; ".join(way_out(run) for run in blocking) or None
 
     def require_not_interrupted(self) -> None:
-        if self.seen(self.journal_path):
+        if self.journaled():
             raise Refused("previous checkpoint was interrupted; run recover --rollback first")
 
     def require_owner(self, owner: str, lock: dict[str, Any] | None) -> None:
@@ -351,13 +421,21 @@ class RunStore:
         line = json.dumps({"at": now_iso(), "event": event, **payload}, sort_keys=True)
         try:
             self.run_dir.mkdir(parents=True, exist_ok=True)
-            with owner_only(), open(self.audit_path, "a", encoding="utf-8", newline="\n") as handle:
+            # A link where the trail belongs, dangling or not, would take the event (and create a file) wherever it
+            # leads: it is refused, like a directory there.
+            if os.path.islink(self.audit_path):
+                raise OSError(errno.ELOOP, IS_A_LINK, str(self.audit_path))
+            with owner_only(), open(self.audit_path, "a", encoding="utf-8", newline="\n", opener=_not_through_a_link) as handle:
                 handle.write(line + "\n")
-            # A trail an earlier writer created is not replaced, so it is narrowed here.
-            with contextlib.suppress(OSError):
-                self.audit_path.chmod(0o600)
+                # A trail an earlier writer created is not replaced, so it is narrowed here, through the file it opened
+                # (on POSIX; on Windows chmod changes only the read-only flag, and the trail keeps the access list it has).
+                with contextlib.suppress(OSError):
+                    if os.chmod in os.supports_fd:
+                        os.chmod(handle.fileno(), 0o600)
         except OSError as exc:
-            raise Degraded(f"audit append failed: {_why(exc)}") from exc
+            what = NOT_A_FILE if not_a_file(self.audit_path) else IS_A_LINK if os.path.islink(self.audit_path) else ""
+            why = f"{self.rel(self.audit_path)} {what}" if what else _why(exc)
+            raise Degraded(f"audit append failed: {why}") from exc
 
     def note_failure(self, event: str, operation: str, owner: str, reason: str) -> None:
         """Best-effort audit line for a refused or degraded operation.
@@ -400,11 +478,14 @@ class RunStore:
         clear, so a failed publish never leaves an event for a revision that
         does not exist, and a crash before the clear leaves the journal to
         roll the revision forward. A failure before the core is complete leaves
-        the journal in place (``status`` reports ``interrupted``; ``recover
-        --rollback`` restores the prior revision). A failure of the pointer alone
-        leaves a coherent but *orphaned* run: the journal is cleared and a
-        Degraded result says so, because the reader still recognises the run and
-        ``heartbeat`` rewrites the pointer."""
+        the journal in place (``status --run-id`` reports ``interrupted``;
+        ``recover --rollback`` restores the prior revision). A failure of the
+        pointer alone leaves a coherent run that ``_latest.md`` does not name at
+        this revision, so plain ``status`` does not report it ``active`` (it may
+        read ``orphaned`` or ``corrupt``, by what the old pointer says) while
+        ``status --run-id`` still finds it: the journal is cleared, a Degraded
+        result says so, and ``heartbeat`` rewrites the pointer while the lock
+        is held."""
         revision = int(state["revision"])
         atomic_write(self.journal_path, dump({"revision": revision, "step": "begin", "at": now_iso()}))
         atomic_write(self.lock_path, dump(lock))
@@ -424,7 +505,8 @@ class RunStore:
         if pointer_error:
             self.append_audit("pointer-degraded", {"revision": revision, "error": pointer_error})
             raise Degraded(f"revision {revision} state and lock published, pointer not updated ({pointer_error}); "
-                           f"run is coherent but orphaned until heartbeat rewrites the pointer")
+                           f"the run is coherent, but _latest.md does not name this revision; heartbeat rewrites it "
+                           f"while the lock is held")
 
     def settle_event(self, revision: int, event: str, payload: dict[str, Any]) -> None:
         """Append the event for a revision whose files are already written, keeping the
@@ -432,9 +514,11 @@ class RunStore:
         try:
             self.append_audit(event, payload)
         except Degraded as exc:
-            raise Degraded(f"revision {revision} state and lock are published but the {event} audit event was not "
-                           f"recorded ({exc}); the journal stays, so status reports interrupted and "
-                           f"recover --rollback rolls the revision forward") from exc
+            # Revision 0 is the retired first revision, which publishes nothing.
+            done = (f"revision {revision} state and lock are published" if revision
+                    else "any lock or state the unpublished first revision wrote is in _history/")
+            raise Degraded(f"{done} but the {event} audit event was not recorded ({exc}); the journal stays, so "
+                           f"status --run-id reports interrupted and recover --rollback settles it") from exc
 
     def clear_journal(self) -> None:
         try:
@@ -450,13 +534,16 @@ class RunStore:
                           "(for admiral, the intake report)")
         paths = sorted({self.normalize_evidence(value) for value in evidence})
         with self.exclusive(create=True):
-            if self.seen(self.journal_path):
+            if self.journaled():
                 raise Refused(f"run {self.run_id} has an interrupted publish (journal present); run recover --rollback first")
+            for path in (self.state_path, self.lock_path):
+                if not_a_file(path):
+                    raise Refused(self.damaged(path))
             if self.seen(self.state_path) or self.seen(self.lock_path):
                 raise Refused(f"run {self.run_id} already exists; use checkpoint or recover")
             competing = self.competing_owner(owner)
             if competing:
-                raise Refused(f"another run holds the session pin ({competing}); complete, release, or recover it first")
+                raise Refused(f"another run holds the session pin ({competing})")
             hashes = self.evidence_hashes(paths)
             self.probe()
             stamp = now_iso()
@@ -618,7 +705,7 @@ class RunStore:
     def recover(self, owner: str, reason: str, rollback: bool) -> dict[str, Any]:
         with self.exclusive():
             state, lock = self.current()
-            journaled = self.seen(self.journal_path)
+            journaled = self.journaled()
             if rollback and not journaled:
                 raise Refused("recover --rollback settles an interrupted publish and no _journal.json is present; "
                               "reclaim a stale lock with recover --reason instead")
@@ -723,7 +810,7 @@ class RunStore:
             raise Refused("state unreadable; escalate with both revisions instead of merging")
         competing = self.competing_owner(owner)
         if competing:
-            raise Refused(f"another run is active ({competing}); recovery would create a conflicting active set")
+            raise Refused(f"another run holds the session pin ({competing}); recovery would create a conflicting active set")
         stamp = now_iso()
         current = int(state.get("revision", 0))
         self.snapshot(current)
@@ -740,7 +827,8 @@ class RunStore:
         result["operation"] = "status"
         result["run_id_requested"] = self.run_id
         try:
-            result["interrupted"] = path_exists(self.journal_path)
+            # A directory where the journal belongs is damage, which `requested_run` reports, not an interrupted publish.
+            result["interrupted"] = path_exists(self.journal_path) and not not_a_file(self.journal_path)
         except PermissionError:
             # What this account is refused is in the classification above; a journal behind it is neither shown nor denied.
             result["interrupted"] = False
@@ -864,7 +952,7 @@ def main() -> int:
         if store is not None:
             store.note_failure("degraded", args.operation, args.owner, str(exc))
         print(json.dumps({"result": "degraded", "operation": args.operation, "run_id": args.run_id, "reason": str(exc),
-                          "note": "the write did not complete; see reason for what was and was not published, then run status"}, indent=2))
+                          "note": "the write did not complete; see reason for what was and was not published, then run status --run-id"}, indent=2))
         return EXIT_DEGRADED
     except (OSError, ValueError) as exc:
         print(json.dumps({"result": "engine_error", "operation": args.operation, "reason": str(exc)}, indent=2), file=sys.stderr)

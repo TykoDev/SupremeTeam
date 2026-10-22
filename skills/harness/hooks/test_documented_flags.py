@@ -15,11 +15,14 @@ from __future__ import annotations
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+
+import _testkit as kit
 
 HOOK_DIR = Path(__file__).resolve().parent
 SKILLS = HOOK_DIR.parents[1]
@@ -32,7 +35,7 @@ _PYTHON_COMMAND = re.compile(r"""\b(?:python3?|py\s+-3)\s+["']?(?P<script>[^\s"'
 _WRAPPER_COMMAND = re.compile(r"\binstall\.(?P<kind>sh|ps1)\b(?P<args>[^`\n|]*)")
 _FLAG = re.compile(r"-{1,2}[A-Za-z][\w-]*")
 _STOP = {"&&", "||", ";", ">", ">>", "2>&1", "#"}
-_help_cache: dict[tuple, set[str] | None] = {}
+_help_cache: dict[tuple, str | None] = {}
 
 
 def _index() -> dict[str, list[Path]]:
@@ -73,21 +76,26 @@ def _option_names(help_text: str) -> set[str]:
     return names
 
 
-def parser_flags(script: Path, subcommand: str | None = None) -> set[str] | None:
-    """The flags ``script`` accepts, from its own ``--help``; None when it has no argument parser."""
+def _help(script: Path, subcommand: str | None = None) -> str | None:
+    """``script``'s own ``--help`` (of ``subcommand`` when given), run once; None when it shows no argparse usage."""
     key = (script, subcommand)
     if key not in _help_cache:
         argv = [sys.executable, str(script), *([subcommand] if subcommand else []), "--help"]
         env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUTF8": "1"}
         done = subprocess.run(argv, capture_output=True, text=True, cwd=str(REPO), env=env, timeout=60, check=False)
-        _help_cache[key] = _option_names(done.stdout) if done.returncode == 0 and "usage:" in done.stdout else None
+        _help_cache[key] = done.stdout if done.returncode == 0 and "usage:" in done.stdout else None
     return _help_cache[key]
 
 
+def parser_flags(script: Path, subcommand: str | None = None) -> set[str] | None:
+    """The flags ``script`` accepts, from its own ``--help``; None when it has no argument parser."""
+    help_text = _help(script, subcommand)
+    return None if help_text is None else _option_names(help_text)
+
+
 def subcommands(script: Path) -> set[str]:
-    done = subprocess.run([sys.executable, str(script), "--help"], capture_output=True, text=True, cwd=str(REPO),
-                          env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUTF8": "1"}, timeout=60, check=False)
-    usage = done.stdout.split("\n\n", 1)[0]
+    """The sub-commands the usage line of ``script`` offers, read from the same ``--help`` as its flags."""
+    usage = (_help(script) or "").split("\n\n", 1)[0]
     match = re.search(r"\{([\w,-]+)\}", usage)
     return set(match.group(1).split(",")) if match else set()
 
@@ -103,7 +111,7 @@ def resolve(documented: str, index: dict[str, list[Path]]) -> list[Path]:
 def wrapper_flags() -> tuple[set[str] | None, set[str] | None]:
     """Flags ``install.sh`` documents in its usage text and parameters ``install.ps1`` declares (lower case)."""
     shell = None
-    bash = shutil.which("bash")
+    bash = kit.find_bash()
     if bash and (REPO / "scripts" / "install.sh").is_file():
         done = subprocess.run([bash, str(REPO / "scripts" / "install.sh"), "--help"], capture_output=True, text=True, check=False)
         shell = set(re.findall(r"^\s+(--[\w-]+|-h)\b", done.stdout, re.M)) | {"--help"}
@@ -181,29 +189,48 @@ class DocumentedFlagTests(unittest.TestCase):
     def setUpClass(cls):
         cls.index = _index()
         cls.shell, cls.powershell = wrapper_flags()
+        cls.scanned = None
 
-    def check(self, path: Path) -> tuple[list[str], int]:
-        if not path.is_file():
-            self.skipTest(f"{path.name} is not part of this tree")
-        return problems_in(path.read_text(encoding="utf-8"), path.relative_to(REPO).as_posix() if REPO in path.parents else path.name,
-                           self.index, self.shell, self.powershell)
+    def scan(self) -> dict[Path, tuple[list[str], int]]:
+        """Each document's problems and how many command lines were checked in it, read once for the two tests below."""
+        cls = type(self)
+        if cls.scanned is None:
+            cls.scanned = {path: problems_in(path.read_text(encoding="utf-8"),
+                                             path.relative_to(REPO).as_posix() if REPO in path.parents else path.name,
+                                             self.index, self.shell, self.powershell)
+                           for path in DOCS if path.is_file()}
+        return cls.scanned
 
     @unittest.skipUnless(CHECKOUT, "not a checkout: the documents name scripts/install*, which an installed copy does not carry")
     def test_every_documented_flag_exists_in_the_script_it_is_given_to(self):
-        total = 0
-        for path in DOCS:
-            if not path.is_file():
-                continue
-            problems, checked = self.check(path)
-            total += checked
+        scanned = self.scan()
+        for problems, _ in scanned.values():
             self.assertEqual(problems, [], "\n".join(problems))
-        self.assertGreaterEqual(total, 15, "the scan found almost no command lines, so it proved nothing")
+        self.assertGreaterEqual(sum(checked for _, checked in scanned.values()), 15,
+                                "the scan found almost no command lines, so it proved nothing")
 
     @unittest.skipUnless(CHECKOUT, "not a checkout: the hooks README names scripts/install_hooks.py, which an installed copy does not carry")
     def test_the_hooks_readme_commands_are_all_found_and_checked(self):
-        problems, checked = self.check(HOOK_DIR / "README.md")
-        self.assertEqual(problems, [], "\n".join(problems))
-        self.assertGreaterEqual(checked, 25)
+        """Its problems are reported with the other documents' above; here, that the scan reads most of what it shows."""
+        self.assertGreaterEqual(self.scan()[HOOK_DIR / "README.md"][1], 25)
+
+    @unittest.skipUnless(os.name == "nt", "only Windows puts a bash that cannot open its own paths (WSL's) on PATH")
+    def test_the_installer_options_come_from_a_bash_that_can_open_the_installer(self):
+        """`shutil.which("bash")` took the first bash on PATH, which from PowerShell or cmd is WSL's in `System32`: WSL reads
+        `C:\\...` as a relative name, so install.sh showed no usage and every documented option was reported unknown. A
+        stand-in that prints nothing sits first on PATH here, in a directory read as the system's."""
+        usable = kit.find_bash()
+        if usable is None or not (REPO / "scripts" / "install.sh").is_file():
+            self.skipTest("needs Git for Windows' bash and scripts/install.sh")
+        with tempfile.TemporaryDirectory() as system_root:
+            system32 = Path(system_root, "System32")
+            system32.mkdir()
+            (system32 / "bash.bat").write_text("@echo off\r\n", encoding="utf-8")
+            kit.find_bash.cache_clear()
+            self.addCleanup(kit.find_bash.cache_clear)
+            with mock.patch.dict(os.environ, {"SystemRoot": system_root, "PATH": os.pathsep.join([str(system32), str(Path(usable).parent)])}):
+                shell, _ = wrapper_flags()
+        self.assertIn("--register-hooks", shell or set())
 
     def test_a_flag_the_parser_does_not_define_is_reported(self):
         text = "\n".join((

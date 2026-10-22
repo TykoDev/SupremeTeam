@@ -50,7 +50,13 @@ authority:
     both that count and the number of distinct names declared across the role and
     list keys. The check counts distinct names, so a name listed in two groups is
     not an error by itself (qa, ship and skill-maker are, deliberately); a skill
-    left out of every group is, because the distinct count then falls short.
+    left out of every group is, because the distinct count then falls short. An
+    install of chosen teams holds part of the roster, so where the installer's
+    .supremeteam-manifest record says which items it installed, skill_count must
+    equal the distinct member count, every installed skill must be a member, a
+    member missing from an installed item fails, and only the members placed in
+    items the install leaves out are reported as not installed. A checkout, or an
+    install without a record the validator can read, is checked in full.
   grouping: >-
     Only the union of the groups is checked. Nothing verifies that a skill sits in
     the right group, so a release skill listed under browser would pass every test.
@@ -68,7 +74,14 @@ enforcement:
     non-empty lists, requires state_root to be skillset-saves, requires verdicts to
     be exactly APPROVED, REVISE, and ESCALATE. check_pipeline_mirrors requires
     skill_count to equal both the SKILL.md count on disk and the distinct member
-    count, and rejects a pipeline owner or stage owner that is not a member.
+    count (in an install its record describes, the distinct member count, with
+    every installed skill a member), and rejects a pipeline owner or stage owner
+    that is not a member. In an install, left_out_skills places each member
+    missing from the installed items (by the agent manifests there, by
+    UNDELEGATED_SKILLS, or at the top level under its own name) and fails one
+    placed in an installed item; checked in full, check_skill_places requires each
+    nested member to be named at its path by an agent manifest in its own item or
+    in admiral's, or to be listed in UNDELEGATED_SKILLS.
     check_ownership rejects an ownership.yaml owner that is neither a member nor a
     declared role. validation/test_pipeline_contracts.py repeats the owner and gate
     submitter checks independently through the same helper.
@@ -87,7 +100,12 @@ failure_paths:
     check_pipeline_mirrors fails with the SKILL.md count it found on disk.
     skill_count must equal both that count and the distinct member count, so a
     skill missing from every group, or a name with no SKILL.md, fails the same
-    check. Fix the roster, not the number: editing skill_count to match a
+    check. In an install of chosen teams it fails naming the installed skills
+    that are not members, or the distinct member count skill_count differs from,
+    and a member missing from an installed item fails by its path: through the
+    agent manifest that delegates to it, or through the install record for one no
+    manifest names.
+    Fix the roster, not the number: editing skill_count to match a
     miscount hides the missing or extra skill it exists to surface.
   documentation_mirror_stale: >-
     check_pipeline_mirrors also reads AGENTS.md, README.md, and four files under

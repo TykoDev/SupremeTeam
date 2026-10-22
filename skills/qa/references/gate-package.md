@@ -122,9 +122,9 @@ gatekeeper re-judges only what moved and carries its earlier judgment on what di
 revision on every resubmission: a verdict is reusable only for the same boundary, submission,
 revision, package fingerprint, and gate-spec digest.
 
-`revise_policy` sets `cycle_cap: 2`. A second `REVISE` on the same package ends the cycle:
-return `ESCALATE` with both packets, the `changed_evidence` and `unchanged_evidence` lists, and
-the keys that did not converge. Opening a third cycle is not a retry — it is the failure this
+`revise_policy` sets `cycle_cap: 3`. A third `REVISE` on the same package ends the cycle:
+return `ESCALATE` with all three packets, the `changed_evidence` and `unchanged_evidence` lists, and
+the keys that did not converge. Opening a fourth cycle is not a retry — it is the failure this
 cap exists to surface.
 
 ## 5. Recording a Probe That Could Not Run

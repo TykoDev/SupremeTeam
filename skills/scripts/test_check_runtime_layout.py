@@ -18,7 +18,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import test_check_runtime_detection as fixtures
+import _runtime_fixtures as fixtures
 
 SCRIPTS = fixtures.SCRIPTS
 
@@ -130,7 +130,7 @@ class InstalledLayoutTests(unittest.TestCase):
             shutil.copytree(fixtures.CATALOG_SOURCE / "tech-stacks", skills / "tech-stacks")
             project = holder / "project"
             fixtures.write_tree(project, fixtures.VITE_TREE)
-            modes = ["--project-root", str(project), "--detect-project", "--detect-start-command", "--scan-scaffold", "--json"]
+            modes = ["--project-root", str(project), "--detect-project", "--detect-start-command", "--json"]
 
             installed = self.run_script(skills / "scripts" / "check_runtime.py", *modes, cwd=holder)
             in_tree = self.run_script(fixtures.SCRIPT, *modes, "--catalog-root", str(skills), cwd=holder)

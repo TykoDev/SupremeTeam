@@ -2,14 +2,13 @@
 name: cso
 description: >-
   Owns the `security` pipeline end to end, normally invoked by `admiral`, and submits
-  it at `security-review` for `gatekeeper-admiral`'s verdict: it runs threat
-  modelling, posture assessment, adversarial probing, triage, and authorized
-  remediation as one engagement, performing none of them itself. Use when `admiral` delegates a security
-  engagement, or the user wants a whole security oversight pass over a system — an
-  audit, a threat model, a hardening round, or a challenge to accepted risk. A single
-  dimension goes to the lens that owns it: `review/security-review` scans,
-  `review/mr-robot` probes.
-version: 1.0.4
+  it at `security-review` for `gatekeeper-admiral`'s verdict: threat modelling, posture
+  assessment, adversarial probing, triage, and authorized remediation run as one
+  engagement it delegates, never performs. Use when `admiral` delegates it, or the user
+  wants a whole security oversight pass — an audit, a threat model, a hardening round, a
+  challenge to accepted risk — even when they only ask "is this system secure?". One
+  dimension goes to its lens: `review/security-review` scans, `review/mr-robot` probes.
+version: 1.0.5
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent, Task
 ---
 
@@ -212,7 +211,7 @@ named decider, never silent omissions.
 | Fixes are not authorized, so the `remediation` stage's `when: fixes authorized` condition is unmet | Apply nothing. Ship the finding set with a remediation owner and a fix path per item, carry `remediation_plan` as the plan rather than the applied change, and record every unremediated Critical and Major finding in `residual_risk` with a reopen trigger. A deferred Major requires a named owner and a reopen trigger inside the `findings` record. |
 | The scan record reads `result.status: fail` and fixes are not authorized | Return `ESCALATE` with the `fail` record and the triaged findings, naming the decision only the engagement owner can make: authorize remediation, or accept the risk. Only `pass` satisfies `vulnerability_scan`, and its sanctioned waiver asserts there is no scan surface, which a failing scan disproves, so no resubmission closes the boundary. Never re-run the scanner with its finding codes left out of `--fail-exit-codes` to turn the record into a `pass` or an `error`. |
 | The scanner is unavailable, times out, or exits on an unexpected code | Keep the `scan_record.py` record with its real `result.status` (`unavailable`, `error`, or `not-run`) and its `--limitation` entries. A missing scan is a data gap, never a clean scan: either record the sanctioned `vulnerability_scan` applicability record with reason, scope, and decider, or return `ESCALATE` naming the missing coverage. |
-| The gate returns `REVISE` | Treat the packet as one unit: route every failure in `revise_packet.by_owner` to its owner in parallel, batching all findings for one owner into a single revision delegation, then resubmit once with `--prior` so unchanged evidence carries its prior judgment. `revise_policy.cycle_cap` is 2; a third cycle escalates instead of resubmitting. |
+| The gate returns `REVISE` | Treat the packet as one unit: route every failure in `revise_packet.by_owner` to its owner in parallel, batching all findings for one owner into a single revision delegation, then resubmit once with `--prior` so unchanged evidence carries its prior judgment. `revise_policy.cycle_cap` is 3; a third cycle escalates instead of resubmitting. |
 | A critical trust boundary depends on vendored code, managed services, or third-party identity flows that were not in the package | Keep the external dependency in scope, elevate the missing evidence, and refuse to let the first-party code alone define the posture. |
 | A compensating control such as manual monitoring or after-hours approval is not staffed or tested in the real operating model | Preserve the governance gap as a blocker in `findings` rather than crediting a control that exists only on paper. |
 | A delegate returns an artifact whose sha256 does not match the digest registered for it in the manifest or the prior checkpoint | Treat the manifest as wrong until proven otherwise, and do not re-hash the file to make it agree — that converts a detected substitution into a silent one. Re-request the artifact from its owner naming the expected digest, re-verify at the destination `output_paths.py` resolves, and register the new digest through a `session-memory` checkpoint so the revision lineage records which bytes the package actually carries. If the delegate confirms the file is correct and the digest is stale, the upstream revision moved: rewind to the earliest boundary that depends on it rather than patching the map. |

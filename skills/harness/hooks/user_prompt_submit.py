@@ -13,10 +13,16 @@ Posture (harness-doctrine.md):
     so the prompt proceeds unmodified -- a harness fault never blocks the host.
   - advisory, not coercive. The hook injects context; it never blocks the prompt.
 
-Behavior:
-  - Active run detected          -> reinforce the session pin (route to the run).
-  - Explicit slash command       -> stay silent (deterministic host routing; the
+Behavior, checked in this order (the first match decides):
+  - Empty prompt                 -> stay silent.
+  - /audit-improve as first word -> run the read-only harness audit through
+                                     ``audit_improve.maybe_audit(force=True)``, which
+                                     skips the cooldown and writes no marker, and
+                                     inject its summary, active run or not; a fault
+                                     there is counted and the hook stays silent.
+  - Any other slash command      -> stay silent (deterministic host routing; the
                                      target skill's own Entry Routing check applies).
+  - Active run detected          -> reinforce the session pin (route to the run).
   - Otherwise                    -> inject the "route through admiral" reminder.
 
 Output contract: prints the UserPromptSubmit additionalContext envelope to stdout
@@ -70,7 +76,8 @@ def _saves_root() -> Path:
 
 
 def _active_run() -> bool:
-    """Return true only for a coherent, fresh canonical saved run."""
+    """Whether a run holds the session pin, as `_saves.has_active_run` answers it: a run whose lock is fresh, whatever
+    the pointer says, or a record this account cannot read, which may be one. A fault answers no, and is counted."""
     try:
         import _bootstrap
 

@@ -91,7 +91,7 @@ refused: D:\proj\.harness-state\guard-state.json is not valid JSON (Expecting va
 
 **Output:**
 - Risky boundary: a recursive delete across the working tree.
-- Guard state: unreadable. Every frozen, blocked, and read-only boundary in the record is unusable, and the hook falls back to the rules that need no record — the destructive-command, single-writer, and hook-file rules, which still deny on a malformed record (the hook says so in the call's context and counts a `GuardStateUnreadable` fault). That fallback catches only the destructive patterns it knows; whether this particular wipe matches one is not something to lean on, because a worktree wipe can be spelled in ways the pattern list does not cover.
+- Guard state: unreadable. Every frozen, blocked, and read-only boundary in the record is unusable, and the hook falls back to the rules that need no record — the destructive-command, single-writer, and unplaced-write rules, which still deny on a malformed record, and the hook-file rule while a run is active (the hook says so in the call's context and counts a `GuardStateUnreadable` fault). That fallback catches only what its rules recognize; whether this particular wipe trips one is not something to lean on, because a worktree wipe can be spelled in ways none of them covers.
 - Decision: no-go. An unreadable boundary tightens the verdict rather than excusing it; a corrupt record is never evidence that nothing was protected.
 - Next safe action: the record's owner repairs or removes the file directly — `guard_state.py` refuses to overwrite corrupt bytes and the hook denies an agent write to that path, so the repair happens outside the tool loop — then re-records the boundary through the writer and the check re-runs.
 

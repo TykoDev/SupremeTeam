@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/favicon.jpg" width="112" alt="Supreme Team gate seal" />
+  <img src="docs/assets/Logo.png" width="148" alt="Supreme Team logo" />
 </p>
 
 <h1 align="center">Supreme Team</h1>
@@ -57,7 +57,7 @@ More in [docs/gatekeepers.md](docs/gatekeepers.md).
 ## Persistence & recovery
 
 Run state lives in `skillset-saves/` inside your project. Checkpoints publish
-atomically, so an interrupted publish is visible and repairable, a stale lock
+behind a journal, so an interrupted publish is visible and repairable, a stale lock
 reclaim leaves a trace, and a lost pointer is not a lost run. Kill the session
 mid-run and the next one resumes from the same files.
 
@@ -67,13 +67,10 @@ More in [docs/persistent-saves.md](docs/persistent-saves.md).
 
 ## How well it works
 
-Scores and routing accuracy are in [BENCHMARK.md](BENCHMARK.md). Scores are model
-judgements and routing is a paid run; CI re-runs neither.
-
-The routing figure is the one worth reading the methodology for: a catalog scores
-100% when queried with its own advertised phrasings, which measures lexical echo,
-and noticeably less when those queries are rewritten the way someone would
-actually type them. Only the second number measures anything.
+[BENCHMARK.md](BENCHMARK.md) has the results measured on the current tree: the seven
+test suites, the three validators and lint. Model-judged rubric scores and routing
+accuracy are not in it, because neither was re-run on this tree; routing is a paid
+model run, and CI runs neither.
 
 ## Check an installation
 
@@ -130,7 +127,7 @@ python -m unittest discover -s skills/skill-maker/skill-creator -p "test_*.py"
 |---|---|
 | [QUICK-START.md](QUICK-START.md) | Install and first run |
 | [Install.md](Install.md) | The full installation procedure |
-| [BENCHMARK.md](BENCHMARK.md) | Scores, routing accuracy, test results |
+| [BENCHMARK.md](BENCHMARK.md) | Measured test, validator and lint results |
 | [AGENTS.md](AGENTS.md) | Flat skill index for tool discovery |
 | [docs/architecture.md](docs/architecture.md) | Pipelines, tiers, execution modes |
 | [docs/skills.md](docs/skills.md) | Every skill and what it owns |

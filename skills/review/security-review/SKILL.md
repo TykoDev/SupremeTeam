@@ -8,7 +8,7 @@ description: >-
   vulnerabilities, audit dependency risk, or trace data leakage — even when they
   only mention untrusted input or secrets. Defers exploit chaining to
   `review/mr-robot`, accepted risk to `review/cso`.
-version: 1.1.1
+version: 1.1.2
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -123,7 +123,7 @@ Every pass returns the same fields in this order, so `review/code-chief` merges 
 ```text
 Outcome:     security-review, <stage>, <revision reviewed>, <n> findings: <c> Critical, <m> Major, <k> Minor, <i> Info
 Evidence:    <trust boundaries enumerated and classes checked; scan record path, result.status, and bound inputs, or the applicability record and why>
-Findings:    <id> | Critical|Major|Minor|Info | <status: open|blocking|verified|deferred|not-applicable> | <code path, dependency@version, or config entry> | confirmed|conditional | <reachability from the scoped surface> | <narrowest viable fix>
+Findings:    <id> | Critical|Major|Minor|Info | <status: open|in-progress|resolved|verified|deferred|not-applicable> | <code path, dependency@version, or config entry> | confirmed|conditional | <reachability from the scoped surface> | <narrowest viable fix>
 Open risks:  <weaknesses left unproven, and the control-plane, runtime, or dependency evidence that would settle each>
 Next action: <single next step with its owner>
 Revision:    <revision this packet judges>
@@ -161,7 +161,7 @@ and produces a skip record.
 | `review-to-delivery` | Every key there belongs to `code-chief` or `design-qa`; this lens owns none | No group is addressed here. `code-chief` receives its group and sub-delegates the security part, which `revise_policy.parallel_fix` lets run alongside the other lenses rather than in sequence. |
 | `security-review` | `vulnerability_scan` to security-review, `denial_path_evidence` to `mr-robot`, and the remaining five to `cso` | The packet's `security-review` group holds the `vulnerability_scan` failures and nothing else, and `cso` — the submitter — delegates it. A failure named against `scope`, `threat_model`, `findings`, `remediation_plan`, or `residual_risk` belongs to `cso` and is never repaired here. |
 
-Both run under `revise_policy.cycle_cap` of 2. A REVISE round is a delta pass, not a fresh review:
+Both run under `revise_policy.cycle_cap` of 3. A REVISE round is a delta pass, not a fresh review:
 
 1. Re-review only the paths, dependencies, and keys named in `changed_evidence` for the group, plus any sink whose reachability runs through them. Unchanged evidence keeps its prior judgment, mirroring how the gatekeeper re-judges under `delta_review`.
 2. Re-run the scan rather than re-read the record. A dependency bump, a pin, or a patched sink is verified by re-running `skills/scripts/scan_record.py` over the changed inputs and shipping the new record; re-reading the prior record verifies nothing, and editing its `result.status` by hand fabricates the one artifact this lens owns.

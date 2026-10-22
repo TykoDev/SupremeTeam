@@ -1,217 +1,23 @@
 #!/usr/bin/env python3
-"""Behavioural tests for the save lifecycle writer, output path resolver,
-package check, scan recorder, and the agreement between ownership.yaml,
-save-ownership.yaml, pipelines.yaml, and save-protocol.md."""
+"""The save path policy against the resolver and the documents that state it.
+
+Every project kind the output path resolver offers lands under one of the two
+generated roots save-ownership.yaml declares, and ownership.yaml,
+save-ownership.yaml, pipelines.yaml, and save-protocol.md agree. The writer,
+the resolver, the scan recorder, and the package check are tested beside their
+code, in harness/hooks/test_run_state.py and scripts/test_output_paths.py,
+test_scan_record.py, and test_package_check.py."""
 from __future__ import annotations
 
-import json
-import os
-import subprocess
-import sys
+import fnmatch
 import tempfile
 import unittest
-import unittest.mock
 from pathlib import Path
 
 import _catalog
+from output_paths import resolve
 
 ROOT = _catalog.SKILLS
-SCRIPTS = ROOT / "scripts"
-HOOKS = ROOT / "harness" / "hooks"
-sys.path.insert(0, str(SCRIPTS))
-sys.path.insert(0, str(HOOKS))
-from output_paths import resolve  # noqa: E402
-
-from validate_manifests import team_members  # noqa: E402
-
-SAVE_RUN = HOOKS / "save_run.py"
-SCAN = SCRIPTS / "scan_record.py"
-PACKAGE_CHECK = SCRIPTS / "package_check.py"
-
-
-def deny_reason(stdout: str) -> str:
-    """The reason of a PreToolUse deny, read from the hook's JSON envelope; fails when the hook did not deny."""
-    decision = json.loads(stdout)["hookSpecificOutput"]
-    if decision["permissionDecision"] != "deny":
-        raise AssertionError(f"the hook did not deny: {decision}")
-    return decision["permissionDecisionReason"]
-
-
-def run(script: Path, *args: str, cwd: Path | None = None) -> tuple[int, dict]:
-    proc = subprocess.run([sys.executable, str(script), *args], text=True, capture_output=True, check=False, cwd=str(cwd) if cwd else None)
-    payload = {}
-    for stream in (proc.stdout, proc.stderr):
-        text = stream.strip()
-        if text:
-            try:
-                payload = json.loads(text[text.index("{"):]) if "{" in text else {}
-            except ValueError:
-                payload = {"raw": text}
-            if payload:
-                break
-    return proc.returncode, payload
-
-
-class SaveLifecycleTests(unittest.TestCase):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.project = Path(tmp.name).resolve()
-        (self.project / "README.md").write_text("# fixture\n", encoding="utf-8")
-
-    def save(self, *args: str) -> tuple[int, dict]:
-        return run(SAVE_RUN, *args, "--project-root", str(self.project))
-
-    def test_create_checkpoint_heartbeat_complete_lifecycle(self):
-        code, out = self.save("create", "--run-id", "run-1", "--evidence", "README.md")
-        self.assertEqual(code, 0, out)
-        self.assertEqual(out["revision"], 1)
-        state = json.loads((self.project / "skillset-saves/runs/run-1/_state.md").read_text(encoding="utf-8"))
-        self.assertEqual(state["status"], "active")
-        self.assertTrue(state["session_pin"])
-        self.assertIn("README.md", state["artifact_hashes"])
-        pointer = json.loads((self.project / "skillset-saves/_latest.md").read_text(encoding="utf-8"))
-        self.assertEqual(pointer["run_id"], "run-1")
-        code, out = self.save("status", "--run-id", "run-1")
-        self.assertEqual(out["status"], "active", out)
-
-        (self.project / "notes.md").write_text("design decided\n", encoding="utf-8")
-        code, out = self.save("checkpoint", "--run-id", "run-1", "--expect-revision", "1", "--evidence", "notes.md", "--next-action", "design-to-build")
-        self.assertEqual(code, 0, out)
-        self.assertEqual(out["revision"], 2)
-        self.assertTrue((self.project / "skillset-saves/runs/run-1/_history/rev-1.state.json").exists())
-        code, out = self.save("checkpoint", "--run-id", "run-1", "--expect-revision", "1")
-        self.assertEqual(code, 1)
-        self.assertIn("revision conflict", out["reason"])
-
-        code, out = self.save("heartbeat", "--run-id", "run-1")
-        self.assertEqual(code, 0, out)
-        code, out = self.save("complete", "--run-id", "run-1")
-        self.assertEqual(code, 0, out)
-        code, out = self.save("status", "--run-id", "run-1")
-        self.assertEqual(out["status"], "complete", out)
-        self.assertEqual(out["run_status"], "complete")
-        lock = json.loads((self.project / "skillset-saves/runs/run-1/_lock.md").read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "released")
-        self.assertFalse(lock["session_pin"])
-        audit = (self.project / "skillset-saves/runs/run-1/_audit-trail.md").read_text(encoding="utf-8").splitlines()
-        # The refused stale-revision checkpoint above is on the trail between the two it bracketed.
-        self.assertEqual([json.loads(line)["event"] for line in audit], ["create", "checkpoint", "refused", "complete"])
-
-    def test_competing_owner_and_wrong_owner_are_refused(self):
-        self.save("create", "--run-id", "run-1", "--evidence", "README.md")
-        code, out = self.save("create", "--run-id", "run-2", "--evidence", "README.md")
-        self.assertEqual(code, 1)
-        self.assertIn("another run holds the session pin", out["reason"])
-        code, out = self.save("checkpoint", "--run-id", "run-1", "--owner", "intruder")
-        self.assertEqual(code, 1)
-        self.assertIn("owned by", out["reason"])
-        code, out = self.save("recover", "--run-id", "run-1", "--owner", "intruder", "--reason", "impatient")
-        self.assertEqual(code, 1)
-        self.assertIn("fresh and held by another owner", out["reason"])
-
-    def test_unsafe_evidence_paths_are_refused(self):
-        code, out = self.save("create", "--run-id", "run-1", "--evidence", "../outside.md")
-        self.assertEqual(code, 1)
-        self.assertIn("traversal", out["reason"])
-        self.assertFalse((self.project / "skillset-saves/runs/run-1/_state.md").exists())
-
-    def test_interrupted_checkpoint_is_visible_and_rolls_back(self):
-        self.save("create", "--run-id", "run-1", "--evidence", "README.md")
-        self.save("checkpoint", "--run-id", "run-1")
-        run_dir = self.project / "skillset-saves/runs/run-1"
-        # Simulate a crash after the journal and lock were written for revision 3.
-        (run_dir / "_journal.json").write_text(json.dumps({"revision": 3, "step": "begin"}), encoding="utf-8")
-        lock = json.loads((run_dir / "_lock.md").read_text(encoding="utf-8"))
-        lock["revision"] = 3
-        (run_dir / "_lock.md").write_text(json.dumps(lock), encoding="utf-8")
-        code, out = self.save("status", "--run-id", "run-1")
-        self.assertEqual(out["status"], "interrupted")
-        code, out = self.save("checkpoint", "--run-id", "run-1")
-        self.assertEqual(code, 1)
-        self.assertIn("interrupted", out["reason"])
-        code, out = self.save("recover", "--run-id", "run-1", "--rollback")
-        self.assertEqual(code, 0, out)
-        self.assertEqual(out["revision"], 2)
-        code, out = self.save("status", "--run-id", "run-1")
-        self.assertEqual(out["status"], "active", out)
-
-    def test_stale_lock_recovery_records_evidence(self):
-        self.save("create", "--run-id", "run-1", "--evidence", "README.md")
-        run_dir = self.project / "skillset-saves/runs/run-1"
-        lock = json.loads((run_dir / "_lock.md").read_text(encoding="utf-8"))
-        lock["heartbeat"] = "2020-01-01T00:00:00+00:00"
-        (run_dir / "_lock.md").write_text(json.dumps(lock), encoding="utf-8")
-        code, out = self.save("recover", "--run-id", "run-1", "--owner", "resumer")
-        self.assertEqual(code, 1)
-        self.assertIn("--reason", out["reason"])
-        code, out = self.save("recover", "--run-id", "run-1", "--owner", "resumer", "--reason", "heartbeat older than 30 minutes")
-        self.assertEqual(code, 0, out)
-        self.assertEqual(out["evidence"]["prior_heartbeat"], "2020-01-01T00:00:00+00:00")
-        audit = [json.loads(line) for line in (run_dir / "_audit-trail.md").read_text(encoding="utf-8").splitlines()]
-        self.assertEqual(audit[-1]["event"], "recover")
-        self.assertEqual(audit[-1]["prior_owner"], "admiral")
-
-    def test_direct_edit_of_core_files_is_denied_by_hook(self):
-        env = os.environ.copy()
-        env["CLAUDE_PROJECT_DIR"] = str(self.project)
-        for path in ("skillset-saves/runs/other/_state.md", "skillset-saves/_latest.md", "skillset-saves/runs/x/_history/rev-1.state.json"):
-            with self.subTest(path=path):
-                payload = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(self.project / path)}})
-                proc = subprocess.run([sys.executable, str(HOOKS / "pre_tool_use.py")], input=payload, text=True, capture_output=True, env=env, check=False)
-                self.assertIn("save_run.py", deny_reason(proc.stdout))
-        payload = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(self.project / "skillset-saves/runs/other/design/reports/report_plan.md")}})
-        proc = subprocess.run([sys.executable, str(HOOKS / "pre_tool_use.py")], input=payload, text=True, capture_output=True, env=env, check=False)
-        self.assertEqual(proc.stdout.strip(), "")
-
-    def test_direct_edit_of_project_taste_state_is_denied_but_reads_pass(self):
-        env = os.environ.copy()
-        env["CLAUDE_PROJECT_DIR"] = str(self.project)
-        for path in ("taste.json", "taste.md", "taste.journal.jsonl", "taste.lock", "_history/revision-1.json"):
-            with self.subTest(path=path):
-                target = self.project / "skillset-saves/preferences" / path
-                payload = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(target)}})
-                proc = subprocess.run([sys.executable, str(HOOKS / "pre_tool_use.py")], input=payload, text=True, capture_output=True, env=env, check=False)
-                self.assertIn("skills/taste/taste_prefs.py", deny_reason(proc.stdout))
-        payload = json.dumps({"tool_name": "Read", "tool_input": {"file_path": str(self.project / "skillset-saves/preferences/taste.json")}})
-        proc = subprocess.run([sys.executable, str(HOOKS / "pre_tool_use.py")], input=payload, text=True, capture_output=True, env=env, check=False)
-        self.assertEqual(proc.stdout.strip(), "")
-
-
-class OutputPathTests(unittest.TestCase):
-    def test_every_kind_resolves_inside_project(self):
-        root = Path(tempfile.gettempdir()) / "admiral-output-paths"
-        cases = {
-            "manifest": dict(run_id="r1", phase="design"),
-            "reports": dict(run_id="r1", phase="design", name="report_plan.md"),
-            "artifacts": dict(run_id="r1", phase="design", name="tokens.css"),
-            "phase_report": dict(run_id="r1", phase="intake", name="report_grilling.md"),
-            "evidence": dict(run_id="r1", phase="security", name="scan-pip-audit.json"),
-            "packages": dict(run_id="r1", phase="skill-creation", name="my-skill.skill"),
-            "verdict": dict(run_id="r1", phase="review", boundary="review-to-delivery"),
-            "core": dict(run_id="r1", name="_state.md"),
-            "project_preferences": {},
-            "trajectory": dict(run_id="r1", session="abc"),
-            "product": dict(name="src/app.css"),
-            "test_work": dict(name="case-1/README.md"),
-            "eval_reports": dict(name="report.html"),
-            "eval_workspace": dict(name="my-skill-workspace/iteration-1"),
-            "standalone_packages": dict(name="my-skill.skill"),
-        }
-        for kind, kwargs in cases.items():
-            with self.subTest(kind=kind):
-                target = resolve(root, kind, **kwargs)
-                if isinstance(target, tuple):
-                    for item in target:
-                        item.resolve().relative_to(root.resolve())
-                else:
-                    target.resolve().relative_to(root.resolve())
-        with self.assertRaises(ValueError):
-            resolve(root, "artifacts", run_id="r1", phase="design", name="../escape.css")
-        with self.assertRaises(ValueError):
-            resolve(root, "manifest", run_id="../x", phase="design")
-        with self.assertRaises(ValueError):
-            resolve(root, "core", run_id="r1", name="manifest.json")
 
 
 class GeneratedRootPolicyTests(unittest.TestCase):
@@ -252,83 +58,6 @@ class GeneratedRootPolicyTests(unittest.TestCase):
         self.assertEqual(list(save["generated_roots"]), ["skillset-saves", ".harness-state"])
         self.assertIn("redesign", save["phase_directories"])
 
-    def test_hook_state_root_walks_up_to_the_project_marker(self):
-        import _state
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp).resolve()
-            (root / ".git").mkdir()
-            nested = root / "skills" / "harness" / "hooks"
-            nested.mkdir(parents=True)
-            self.assertEqual(_state.find_project_root(nested), root)
-            unmarked = Path(tempfile.mkdtemp()).resolve()
-            try:
-                self.assertEqual(_state.find_project_root(unmarked), unmarked)
-            finally:
-                unmarked.rmdir()
-            with unittest.mock.patch.dict(os.environ, {"SUPREMETEAM_PROJECT_DIR": str(nested)}):
-                self.assertEqual(_state.project_root(), nested)
-
-
-class ScanRecordTests(unittest.TestCase):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.project = Path(tmp.name).resolve()
-        (self.project / "requirements.txt").write_text("requests==2.32.0\n", encoding="utf-8")
-
-    def scan(self, *command: str, extra: tuple[str, ...] = ()) -> tuple[int, dict, dict]:
-        out = self.project / "evidence" / "scan.json"
-        code, summary = run(SCAN, "--project-root", str(self.project), "--out", str(out), "--input", "requirements.txt", *extra, "--", *command)
-        record = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
-        return code, summary, record
-
-    def test_pass_fail_error_unavailable_and_not_run_are_distinguished(self):
-        code, summary, record = self.scan(sys.executable, "-c", "print('0 vulnerabilities')")
-        self.assertEqual(code, 0)
-        self.assertEqual(record["result"]["status"], "pass")
-        self.assertEqual(record["inputs"][0]["path"], "requirements.txt")
-        self.assertTrue((self.project / "evidence" / "scan.stdout.txt").exists())
-        _, _, record = self.scan(sys.executable, "-c", "import sys; print('1 vulnerability'); sys.exit(1)")
-        self.assertEqual(record["result"]["status"], "fail")
-        _, _, record = self.scan(sys.executable, "-c", "import sys; sys.exit(7)")
-        self.assertEqual(record["result"]["status"], "error")
-        _, _, record = self.scan("definitely-not-a-scanner-binary")
-        self.assertEqual(record["result"]["status"], "unavailable")
-        _, _, record = self.scan(sys.executable, "-c", "pass", extra=("--no-run",))
-        self.assertEqual(record["result"]["status"], "not-run")
-
-
-class PackageCheckTests(unittest.TestCase):
-    def test_residue_is_reported_and_clean_root_builds_archive(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            skills = root / "skills"
-            for rel in ("gates.yaml", "pipelines.yaml", "ownership.yaml", "save-ownership.yaml",
-                        "team-manifest.yaml", "runtime-manifest.yaml", "tech-stacks/registry.yaml",
-                        "harness/gatekeeper/check.py", "harness/hooks/save_run.py"):
-                target = skills / rel
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text("x\n", encoding="utf-8")
-            (root / ".harness-state").mkdir()
-            (root / ".harness-state" / "guard-state.json").write_text("{}", encoding="utf-8")
-            (skills / "__pycache__").mkdir()
-            (skills / "__pycache__" / "x.pyc").write_bytes(b"\x00")
-            (skills / "deploy.pem").write_text("PRIVATE", encoding="utf-8")
-            code, report = run(PACKAGE_CHECK, "--root", str(root))
-            self.assertEqual(code, 1, report)
-            classes = {v["class"] for v in report["violations"]}
-            self.assertIn("secrets", classes)
-            self.assertNotIn("runtime-state", classes, "manifest exclude must drop .harness-state before residue scan")
-            self.assertNotIn("interpreter-cache", classes, "manifest exclude must drop caches before residue scan")
-            (skills / "deploy.pem").unlink()
-            code, report = run(PACKAGE_CHECK, "--root", str(root), "--out", str(root / "dist" / "supremeteam.zip"))
-            self.assertEqual(code, 0, report)
-            self.assertTrue((root / "dist" / "supremeteam.zip").exists())
-
-    def test_repository_package_enumeration_is_clean(self):
-        code, report = run(PACKAGE_CHECK, "--root", str(ROOT.parent))
-        self.assertEqual(code, 0, report)
-
 
 class OwnershipAgreementTests(unittest.TestCase):
     def test_save_ownership_agrees_with_ownership_and_pipelines(self):
@@ -354,9 +83,9 @@ class OwnershipAgreementTests(unittest.TestCase):
     PROCESSES = {"harness-hooks", "harness-tests"}
 
     def test_every_class_has_a_writer_of_a_declared_kind_and_every_tool_exists(self):
-        """QR-04: the pin above covers three writers of sixteen classes and the tools of two of four."""
+        """QR-04: the pin above covers three writers and the tools of two classes; this covers every class."""
         save_ownership = _catalog.load_spec("save-ownership.yaml")
-        roster = team_members(_catalog.load_spec("team-manifest.yaml"))
+        roster = _catalog.roster()
         owners = set(_catalog.load_spec("ownership.yaml")["owners"])
         vocabulary = save_ownership["writer_vocabulary"]
         for klass in save_ownership["classes"]:
@@ -373,10 +102,17 @@ class OwnershipAgreementTests(unittest.TestCase):
                     self.assertTrue((ROOT.parent / tool).is_file(), f"{klass['id']} names {tool}, which does not exist")
         self.assertEqual(set(), (self.PROCESSES | self.COMPOUND_ROLES) & roster, "a process or compound role is not a skill")
 
+    def test_startup_probe_has_a_declared_owner(self):
+        policy = _catalog.load_spec("save-ownership.yaml")
+        matches = [entry for entry in policy["classes"]
+                   if any(fnmatch.fnmatchcase("skillset-saves/_probe-audit.tmp", pattern) for pattern in entry["patterns"])]
+        self.assertEqual([entry["id"] for entry in matches], ["persistence-probe"])
+        self.assertEqual(matches[0]["writer"], "admiral")
+
     def test_every_pipeline_phase_has_a_save_directory(self):
         save_ownership = _catalog.load_spec("save-ownership.yaml")
         directories = set(save_ownership["phase_directories"])
-        pipelines = json.loads((ROOT / "pipelines.yaml").read_text(encoding="utf-8"))["pipelines"]
+        pipelines = _catalog.load_spec("pipelines.yaml")["pipelines"]
         for name in pipelines:
             with self.subTest(pipeline=name):
                 self.assertIn(name, directories)

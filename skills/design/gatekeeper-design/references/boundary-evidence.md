@@ -87,14 +87,16 @@ did-not-arise wordings in §5 are a separate mechanism from the waivers here.
 ## 4. Why `mock_rendering` behaves differently at `redesign-review`
 
 `../../../gates.yaml` lists `mock_rendering` under `redesign-review`'s
-`no_fallback`. At that boundary the key accepts neither the sanctioned string in
-§3 nor an applicability record, even though the global fallback exists everywhere
-the `render` kind otherwise appears.
+`no_fallback`. At that boundary the key accepts neither a fallback string nor an
+applicability record. No fallback map, global or boundary, names it either: the
+maps are keyed by evidence key, not by the `render` kind it shares with
+`rendered_verification`, and the wording §3 sanctions for `rendered_verification`
+holds at `review-to-delivery` only.
 
 The reasoning is substantive rather than procedural: the four mocks are always
-built, so "no visible surface changed" cannot be a true statement about them. A
-boundary-level `no_fallback` beats a global fallback; never grant a waiver the
-boundary refuses.
+built, so "no visible surface changed" cannot be a true statement about them. The
+`no_fallback` entry keeps a fallback added for the key later from opening a
+waiver; never grant a waiver the boundary refuses.
 
 Two consequences at the gate:
 

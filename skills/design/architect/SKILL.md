@@ -8,7 +8,7 @@ description: >-
   specs, or propose four redesign directions — even when the ask is just "how
   should this be structured?". Defers requirements to `design/researcher`,
   milestones to `design/planner`, slices to `design/engineer`.
-version: 1.1.0
+version: 1.1.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -70,7 +70,7 @@ Route elsewhere when the need is requirement evidence and a grounded problem sta
 - Questions that still affect ownership boundaries, data flow, or non-functional targets.
 - Brand and personality keywords, target users, layout intent, and dark-mode requirement when the surface is user-facing.
 - Frontend framework and Tailwind major version (v3 HSL channels vs v4 OKLCH function form), plus any existing `components.json`/`globals.css` when redesigning an existing frontend.
-- Commander's immutable effective Taste snapshot for this design revision, including its canonical digest and source revisions, or the sanctioned no-profile applicability record.
+- Commander's immutable effective Taste snapshot for this design revision, including its canonical digest and source revisions, or the sanctioned no-profile applicability record. It is not a start condition: `../../pipelines.yaml` runs the `taste-snapshot` stage beside research and requires it only at the design `phase-gate`, so neither the architecture stage nor the interface and design-system stage waits for it. A design-system decision taken before it arrives traces to one of the other three provenance sources, and the Taste traceability rows are completed against the snapshot before the package goes to the gate.
 
 ## Outputs
 
@@ -149,7 +149,7 @@ Skip only when the requested scope proves the specialist artifact is genuinely o
 | A critical external dependency or data contract is referenced but never specified well enough for implementation or integration planning | Preserve the missing contract as a blocker and refuse to treat the architecture as build-ready. |
 | An API endpoint is named without the endpoint contract template, auth/authorization model, error envelope, or contract tests | Treat the API surface as not build-ready and reopen the architecture package before downstream implementation. |
 | The proposed design quietly commits the project to an irreversible stack or deployment choice that was never approved upstream | Surface the hidden commitment as an explicit decision and route it back through the design owner before locking the architecture. |
-| The Taste snapshot is absent despite available storage, has unresolved conflicts affecting the surface, or its source revisions have changed | Stop the affected design decisions and return to Commander for Admiral/Taste resolution; do not read or repair the stores directly. |
+| The `taste-snapshot` stage returned no snapshot despite available storage, or the snapshot has unresolved conflicts affecting the surface, or its source revisions have changed (a snapshot that has not arrived yet is none of these: the stage runs beside research) | Stop the affected design decisions and return to Commander for Admiral/Taste resolution; do not read or repair the stores directly. |
 | A preference used by the active design is revoked | Report digest-bound drift with affected artifacts and require a user replay/retain decision. |
 
 ## Save Protocol

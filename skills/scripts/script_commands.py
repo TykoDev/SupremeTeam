@@ -39,6 +39,19 @@ ENV_OPTIONS_WITH_VALUES = frozenset({"--chdir", "--split-string", "--unset", "-S
 EXEC_OPTIONS_WITH_VALUES = frozenset({"--argv0", "-a"})
 COMMAND_LOOKUP_OPTIONS = frozenset({"--help", "--version", "-V", "-v", "-h"})
 
+# What starts a frontend or a backend server. Package scripts and Makefile recipes
+# are read with this one vocabulary, so a command counts the same wherever a
+# project writes it.
+FRONTEND_COMMANDS = ("vite", "next", "astro", "nuxt", "svelte", "webpack", "parcel")
+FRONTEND_SUBCOMMANDS = (("ng", "serve"),)
+BACKEND_COMMANDS = ("uvicorn", "gunicorn", "flask", "django", "fastapi", "nest")
+BACKEND_PYTHON_MODULES = ("uvicorn", "gunicorn", "flask", "django", "fastapi")
+# Launchers that run a project without naming a server, so a recipe that uses one
+# is still how the project starts.
+RUNTIME_LAUNCHERS = (
+    "bun", "cargo", "deno", "dotnet", "go", "gradle", "java", "mvn", "node", "pnpm", "python", "ruby", "yarn",
+)
+
 
 def _script_token_name(token: str) -> str:
     if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}:
@@ -272,22 +285,29 @@ def script_uses_node_server(scripts: dict[str, str]) -> bool:
     return False
 
 
+def runtime_signals(scripts: dict[str, str]) -> tuple[bool, bool]:
+    """Whether these command lines start a frontend, and whether they start a backend."""
+    frontend = any(script_uses_command(scripts, command) for command in FRONTEND_COMMANDS) or any(
+        script_uses_subcommand(scripts, command, subcommand) for command, subcommand in FRONTEND_SUBCOMMANDS
+    )
+    backend = (
+        any(script_uses_command(scripts, command) for command in BACKEND_COMMANDS)
+        or any(script_uses_python_module(scripts, module) for module in BACKEND_PYTHON_MODULES)
+        or script_uses_node_server(scripts)
+    )
+    return frontend, backend
+
+
 def _makefile_runtime_recipe(recipe: str) -> bool:
     scripts = {"makefile": recipe}
     return (
-        any(
-            script_uses_command(scripts, command)
-            for command in (
-                "bun", "cargo", "deno", "dotnet", "flask", "go", "gradle", "gunicorn",
-                "java", "mvn", "node", "parcel", "pnpm", "python", "ruby", "uvicorn",
-                "astro", "next", "nuxt", "svelte", "vite", "webpack", "yarn",
-            )
-        )
+        any(script_uses_command(scripts, command) for command in RUNTIME_LAUNCHERS)
         or any(
             script_uses_subcommand(scripts, manager, subcommand)
             for manager in ("bun", "npm", "pnpm", "yarn")
             for subcommand in ("dlx", "exec", "run")
         )
+        or any(runtime_signals(scripts))
     )
 
 
@@ -338,12 +358,7 @@ def makefile_runtime_signals(text: str) -> tuple[bool, bool]:
         recipe = makefile_recipe(lines, target)
         if not recipe:
             continue
-        scripts = {"makefile": recipe}
-        frontend = frontend or any(script_uses_command(scripts, tool) for tool in ("vite", "next", "astro", "nuxt", "svelte", "webpack", "parcel"))
-        backend = backend or any(script_uses_command(scripts, tool) for tool in ("uvicorn", "gunicorn", "flask", "django", "fastapi"))
-        backend = backend or any(
-            script_uses_python_module(scripts, module)
-            for module in ("uvicorn", "gunicorn", "flask", "django", "fastapi")
-        )
-        backend = backend or script_uses_node_server(scripts)
+        recipe_frontend, recipe_backend = runtime_signals({"makefile": recipe})
+        frontend = frontend or recipe_frontend
+        backend = backend or recipe_backend
     return frontend, backend

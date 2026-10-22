@@ -27,7 +27,7 @@ contract is `../../save-protocol.md`; nothing here overrides it.
 | `complete` | Terminal transition to status `complete`, releasing the pin; refused on a run already complete or blocked | At run completion |
 | `block` | Terminal transition to status `blocked`, releasing the pin; refused on a run already complete or blocked | When the run stops on a blocker no later stage can clear |
 | `release` | Releases lock and pin without a terminal status | On a paused hand-back the run may resume from |
-| `recover` | Reclaims a stale lock (`--reason`), or with `--rollback` settles an interrupted publish | Only after `status` proves the lock stale or the publish interrupted |
+| `recover` | Reclaims a stale lock (`--reason`), or with `--rollback` settles an interrupted publish | Only after `status --run-id` proves the lock stale or the publish interrupted |
 | `status` | Read-only classification of the saved state, and of the run you name | Before any write on a run this session did not create |
 
 Useful flags: `--evidence <path>` is repeatable and binds a project-relative
@@ -54,7 +54,7 @@ code carries the same verdict for a shell caller.
 | --- | --- | --- | --- |
 | `ok` | 0 | The revision published and the pointer was written | Report the revision, the registered evidence hashes, and the next action |
 | `refused` | 1 | Contract violation: competing owner, wrong revision, unsafe path, stale lock, `create` with no evidence, terminal run without `--reopen`. Also a busy write lock, which says so | Resolve the contract and reissue; for a busy lock just reissue. Never hand-edit a core run file to get past it |
-| `degraded` | 2 | The write failed; nothing coherent was published and the previous revision is intact | Warn once, report persistence as degraded, keep readable evidence, and use transient mode only when resume cannot be proven |
+| `degraded` | 2 | A write failed; `reason` says what was and was not published. A failure before the state and lock are written publishes nothing and the previous revision is intact; a failed pointer write or audit append comes after them, so that revision is published (see below) | Warn once, report persistence as degraded, keep readable evidence, and use transient mode only when resume cannot be proven |
 | *(engine error)* | 3 | Bad input or an internal failure in the writer itself | Treat as degraded for persistence purposes and surface the raw message; do not retry blindly |
 
 Read `result` as well as the code: a mistyped option is argparse's own exit 2,
@@ -62,14 +62,21 @@ which looks like `degraded`, but it prints nothing to stdout and the usage messa
 goes to stderr.
 
 A `degraded` result is not a smaller `refused`. `refused` means the run said no
-and the fix is upstream of the write; `degraded` means the medium said no and the
-run's own state is still exactly what it was. Both are written to the run's audit
-trail as `refused` and `degraded` events (operation, owner, reason), when the run
-directory exists, so the harness audit sees them.
+and the fix is upstream of the write; `degraded` means the medium said no, and the
+run's own state is still exactly what it was unless the reason says the revision
+was published. Both are written to the run's audit trail as `refused` and
+`degraded` events (operation, owner, reason), when the run directory exists, so
+the harness audit sees them; neither is written when the audit append is itself
+what failed, because the trail cannot record its own failure.
 
-A `degraded` reason can say the revision *was* published: when the state and lock
-are written and only the audit line failed, the journal stays and `status`
-reports `interrupted`, so `recover --rollback` rolls that revision forward.
+A `degraded` reason can say the revision *was* published, because the pointer
+write and the audit append come after the state and lock. When only the pointer
+failed, the journal is cleared, plain `status` may read the run `orphaned` or the
+save root `corrupt` (by what the old pointer says), and `heartbeat` rewrites the
+pointer while the lock is held, which it no longer is after `complete`, `block`,
+or `release`; when only the audit line failed, the journal stays and
+`status --run-id <run-id>` reports `interrupted`, so `recover --rollback` rolls
+that revision forward.
 
 ## Revision lineage and `--expect-revision`
 
@@ -96,11 +103,16 @@ A heartbeat dated more than five minutes ahead of the clock is treated as stale
 too: it can never age, so it would otherwise pin the run for ever.
 
 A checkpoint or heartbeat on a stale lock is refused. Reclaim it with
-`recover --reason "<why>"`, which records the stale lock's path (relative to the
-project), heartbeat, owner, and sha256 in the audit trail before granting a fresh
-one, and which refuses outright against a fresh lock, a competing active run, or
-a blank reason. The reclaim leaves evidence precisely so a contested run cannot
-be quietly taken over.
+`recover --reason "<why>"`, which refuses outright against a fresh lock, a
+competing held run, or a blank reason. Otherwise it publishes the fresh lock
+and the new state first, the state's `recovered_from` carrying the stale lock's
+path (relative to the project), heartbeat, owner, and sha256, and then appends
+the same evidence to the audit trail as the `recover` event. If that append
+fails the result is `degraded` and the lock is already reclaimed: the journal
+stays, `status --run-id` reports `interrupted`, and `recover --rollback` rolls
+the reclaim forward (its trail line is then `rollforward`, and the stale lock's
+evidence stays in `recovered_from`). The reclaim leaves evidence precisely so a
+contested run cannot be quietly taken over.
 
 The lock record above is separate from the writer mutex, `skillset-saves/_write.lock`.
 Every operation that writes holds the mutex from reading the run to its last
@@ -114,9 +126,10 @@ message to retry. The hook heartbeat waits a quarter of a second and skips.
 ## Interrupted publish and rollback
 
 `_journal.json` is written before the first `os.replace` of a publish and removed
-after the last, so an interrupted publish is visible: `status` reports
-`interrupted`. While the journal is present, `checkpoint`, `heartbeat`,
-`complete`, `block`, `release`, and a non-rollback `recover` are all refused.
+after the last, so an interrupted publish is visible: `status --run-id <run-id>`
+reports `interrupted` (plain `status` never does). While the journal is present,
+`checkpoint`, `heartbeat`, `complete`, `block`, `release`, and a non-rollback
+`recover` are all refused.
 
 The only forward path is `recover --rollback`, and it resolves to one of four
 outcomes depending on how far the interrupted publish got. The writer decides;
@@ -165,26 +178,35 @@ A lookup, a resume probe, and any pre-write check are read-only:
 python skills/harness/hooks/save_run.py status --run-id <run-id>
 ```
 
-`status` classifies the state as active, inactive, complete, stale, orphaned,
-conflicting, corrupt, interrupted, missing, uninitialized, or unreadable, and
-names the `next_step` for it. `complete` is a finished run the pointer names;
+`status --run-id` classifies the state as active, inactive, complete, stale,
+orphaned, conflicting, corrupt, interrupted, missing, uninitialized, or
+unreadable, and names the `next_step` for it. Only this form reports
+`interrupted`, while that run's `_journal.json` file exists; plain `status` and the
+readiness diagnostic never do. `complete` is a finished run the pointer names;
 `inactive` is a released or blocked one, and `run_status` says which, so a
 resumable `released` run is not mistaken for a `complete` one that needs
 `--reopen`. `uninitialized` is a run directory holding intake's report and no
 record, which is not a fault: run `create`. `status` also classifies the run named
 by `--run-id` on its own as `requested_run`, so the answer for that run does not
-depend on what else the save root holds. Only a coherent fresh active or orphaned
-record reinforces the session pin. `corrupt` and `unreadable` are terminal for the
-resume path until an owner decides: the canonical bytes stay untouched, because
+depend on what else the save root holds. A held run whose lock is fresh
+reinforces the session pin whatever the pointer says, mid-publish or beside a
+directory where its journal belongs included (`held_runs` names it, and whether
+its lock is fresh, beside a damaged pointer or a second held run too), and so
+does a record carrying `access_denied` (below), which may be a held run.
+`corrupt` and `unreadable` are terminal for the resume path until an owner decides: the canonical bytes stay untouched, because
 they are the only record of what the run was when it broke. A record that is not
 valid UTF-8, or is nested deeply enough to overflow the parser, is `corrupt`, not
 an error. A closed run whose evidence was pruned is not `corrupt`; its
 `evidence_missing` lists the paths. Evidence under a directory this account may not
 search is listed as `evidence_unverifiable` instead, and the run keeps the
-classification its own records give. A record this account is refused (records are
-owner-only, so a second account sharing the directory cannot read the first one's)
-is `corrupt` too, with `access_denied` naming the file and the reason `permission
-denied`: it may be a held run and `create` refuses beside it. Its owner completing
-or releasing the run does not change that, because the records of a closed run stay
-owner-only: they have to be made readable to this account, or removed by an account
-that may delete them.
+classification its own records give. A directory where a record belongs is
+`corrupt` too, `<path> is a directory, not a file`, on every platform. A record
+this account is refused (on POSIX the writer makes records owner-only, so a
+second account sharing the directory cannot read the first one's; on Windows a
+record inherits the directory's access list, which decides who else can read it)
+is named in `access_denied`, with the reason `permission denied`, whatever the
+classification, which is `corrupt` where nothing decides first: it may be a held
+run and `create` refuses beside it. Its owner completing or releasing the run does not
+change that, because closing a run does not change who may read its records: they
+have to be made readable to this account, or removed by an account that may
+delete them.

@@ -139,4 +139,4 @@ python skills/harness/gatekeeper/check.py --boundary security-review --package s
 ```
 
 - `scope`, `threat_model`, `denial_path_evidence`, and `residual_risk` came back as `unchanged_evidence` and carried their prior judgment; `vulnerability_scan`, `findings`, and `remediation_plan` came back as `changed_evidence` and were re-judged.
-- Cycle count: 1 of `revise_policy.cycle_cap` 2. A third cycle escalates instead of resubmitting.
+- Cycle count: 1 of `revise_policy.cycle_cap` 3. A third cycle escalates instead of resubmitting.

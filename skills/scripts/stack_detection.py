@@ -28,13 +28,7 @@ from project_files import (
     safe_regular_file,
 )
 from redaction import add_error
-from script_commands import (
-    makefile_runtime_signals,
-    script_uses_command,
-    script_uses_node_server,
-    script_uses_python_module,
-    script_uses_subcommand,
-)
+from script_commands import makefile_runtime_signals, runtime_signals, script_uses_command
 
 
 REGISTRY_ROW_KEYS = frozenset({"slug", "path", "framework", "versions", "source", "sha256"})
@@ -107,6 +101,15 @@ def read_package(
     if not isinstance(value, dict):
         add_error(errors, f"{relative_path(path, root)}: package manifest must be a JSON object")
         return {}
+    # Every mode reads a package through here, so its scripts are checked once and
+    # named by the file they are in. A null scripts field is no scripts, as npm reads it.
+    scripts = value.get("scripts")
+    if scripts is not None and not isinstance(scripts, dict):
+        add_error(errors, f"{relative_path(path, root)}: scripts must be an object")
+    elif scripts:
+        for name, command in scripts.items():
+            if not isinstance(command, str):
+                add_error(errors, f"{relative_path(path, root)}:scripts.{name}: command must be a string")
     return value
 
 
@@ -244,31 +247,10 @@ def _package_scripts(package: dict[str, Any]) -> dict[str, str]:
 
 def _package_classification_signals(package: dict[str, Any]) -> tuple[bool, bool]:
     dependencies = _package_dependencies(package)
-    scripts = _package_scripts(package)
-    frontend = bool(dependencies & (FRONTEND_PACKAGE_NAMES | FRONTEND_TOOL_PACKAGE_NAMES | SSR_PACKAGE_NAMES)) or any(
-        script_uses_command(scripts, tool)
-        for tool in ("vite", "next", "astro", "nuxt", "svelte", "webpack", "parcel")
-    ) or script_uses_subcommand(scripts, "ng", "serve")
-    backend = bool(dependencies & (BACKEND_PACKAGE_NAMES | SSR_PACKAGE_NAMES)) or any(
-        script_uses_command(scripts, tool)
-        for tool in ("uvicorn", "gunicorn", "flask", "django", "nest")
-    ) or any(
-        script_uses_python_module(scripts, module)
-        for module in ("uvicorn", "gunicorn", "flask", "django", "fastapi")
-    ) or script_uses_node_server(scripts)
+    script_frontend, script_backend = runtime_signals(_package_scripts(package))
+    frontend = bool(dependencies & (FRONTEND_PACKAGE_NAMES | FRONTEND_TOOL_PACKAGE_NAMES | SSR_PACKAGE_NAMES)) or script_frontend
+    backend = bool(dependencies & (BACKEND_PACKAGE_NAMES | SSR_PACKAGE_NAMES)) or script_backend
     return frontend, backend
-
-
-def validate_package_scripts(package: dict[str, Any], errors: list[str]) -> None:
-    if "scripts" not in package:
-        return
-    scripts = package["scripts"]
-    if not isinstance(scripts, dict):
-        add_error(errors, "package.json: scripts must be an object")
-        return
-    for name, command in scripts.items():
-        if not isinstance(command, str):
-            add_error(errors, f"package.json:scripts.{name}: command must be a string")
 
 
 def _compose_service_has_ports(service: Any) -> bool:
@@ -591,7 +573,6 @@ def detect_stacks(
     registry: dict[str, dict[str, Any]],
     files: list[Path],
     root: Path,
-    package: dict[str, Any],
     text_cache: dict[Path, str | None],
     errors: list[str],
     *,
@@ -599,7 +580,7 @@ def detect_stacks(
 ) -> list[dict[str, Any]]:
     if packages is not None:
         return _detect_across_packages(registry, files, root, text_cache, errors, packages)
-    return _detect_in_scope(registry, files, root, package, text_cache, errors)
+    return _detect_in_scope(registry, files, root, {}, text_cache, errors)
 
 
 @dataclass

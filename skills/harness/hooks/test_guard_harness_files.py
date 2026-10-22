@@ -10,16 +10,13 @@ the host, not by anything the agent can run), and the sanctioned registration wr
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
 import unittest
 from pathlib import Path
 from unittest import mock
 
-HOOK_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(HOOK_DIR))
-import _testkit as kit  # noqa: E402
+import _testkit as kit
 
+HOOK_DIR = Path(__file__).resolve().parent
 HOOK = HOOK_DIR.as_posix()
 SCRIPTS = ("guard_hook.py", "pre_tool_use.py", "_state.py", "post_tool_use.py", "user_prompt_submit.py", "_cmdscan.py")
 REGISTRATION = (".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".github/hooks.json")
@@ -28,23 +25,16 @@ UNRELATED_FREEZE = {"frozen_globs": [{"glob": "docs/**", "owner": "ops"}]}
 
 class HarnessFileCase(unittest.TestCase):
     def setUp(self):
-        manager = kit.project()
-        self.root = manager.__enter__()
-        self.addCleanup(manager.__exit__, None, None, None)
+        self.root = self.enterContext(kit.project())
         self.home = self.root / "home"
-        patcher = mock.patch.dict(os.environ, {"HOME": str(self.home), "USERPROFILE": str(self.home)})
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.enterContext(kit.in_project(self.root, HOME=str(self.home), USERPROFILE=str(self.home)))
         os.environ.pop("SUPREMETEAM_HARNESS_DEV", None)
 
     def engage_with_a_boundary(self) -> None:
         kit.write_guard(self.root, UNRELATED_FREEZE)
 
     def engage_with_a_pinned_run(self) -> None:
-        (self.root / "README.md").write_text("# fixture\n", encoding="utf-8")
-        proc = subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), "create", "--run-id", "r1", "--evidence", "README.md",
-                               "--project-root", str(self.root)], capture_output=True, text=True, check=False)
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        kit.pin_a_run(self.root)
 
     def edit(self, path: str) -> str:
         return kit.decide(kit.edit(path), self.root)
@@ -101,6 +91,7 @@ class EngagedByABoundaryTests(HarnessFileCase):
             f"node -e \"require('fs').writeFileSync('{HOOK}/guard_hook.py','')\"", f"sh -c 'echo x > {HOOK}/guard_hook.py'",
             f"cd {HOOK} && echo x > guard_hook.py", f"cd {HOOK}; rm _state.py", f"git -C {HOOK} checkout -- guard_hook.py",
             f"find {HOOK} -name '*.py' -delete", f"rm -rf {HOOK_DIR.parent}", f"mv {HOOK_DIR.parent} {HOOK_DIR.parent}.off",
+            f"rm -rf {HOOK_DIR}",
         ):
             with self.subTest(command=command):
                 self.assertProtected(self.shell(command))
@@ -124,7 +115,9 @@ class EngagedByABoundaryTests(HarnessFileCase):
         agent = self.root / "pi-agent"
         with mock.patch.dict(os.environ, {"PI_CODING_AGENT_DIR": str(agent)}):
             self.assertProtected(self.edit(f"{agent}/extensions/supremeteam-guard.ts"))
+            self.assertProtected(self.edit(str(agent / "extensions" / "supremeteam-guard.ts")))
             self.assertProtected(self.shell(f"echo x > {agent}/extensions/supremeteam-guard.ts"))
+            self.assertEqual(self.edit(str(agent / "extensions" / "other.ts")), "")
 
     def test_reads_other_files_and_the_sanctioned_registration_writers_pass(self):
         for command in (
@@ -163,8 +156,8 @@ class EngagedByAPinnedRunTests(HarnessFileCase):
         self.assertProtected(self.edit(f"{HOOK}/guard_hook.py"))
         self.assertProtected(self.shell(f"rm {HOOK}/_state.py"))
         self.assertProtected(self.edit(".claude/settings.json"))
-        subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), "release", "--run-id", "r1", "--project-root", str(self.root)],
-                       capture_output=True, text=True, check=True)
+        code, out = kit.save(self.root, "r1", "release")
+        self.assertEqual(code, 0, out)
         self.assertEqual(self.edit(f"{HOOK}/guard_hook.py"), "")
 
 

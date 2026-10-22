@@ -11,16 +11,13 @@ per part builds the smallest fixture for that part and calls it alone.
 from __future__ import annotations
 
 import json
-import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-HOOKS = Path(__file__).resolve().parent
-sys.path.insert(0, str(HOOKS))
-import audit_improve as subject  # noqa: E402
+import audit_improve as subject
 
 
 def write(path: Path, value) -> None:

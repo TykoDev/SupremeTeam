@@ -4,14 +4,13 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _testkit as kit
 import size_audit
 
 
@@ -84,6 +83,7 @@ class SizeAuditTests(unittest.TestCase):
         self.assertIsNone(size_audit.maybe_scan(empty, force=True))
         self.assertFalse((empty / ".harness-state").exists())
 
+    @unittest.skipUnless(kit.can_link(), kit.NO_LINKS)
     def test_symlink_outside_roots_is_never_followed(self):
         external = self.root / "external"
         external.mkdir()
@@ -91,25 +91,20 @@ class SizeAuditTests(unittest.TestCase):
         with outside.open("wb") as stream:
             stream.truncate(600)
         link = self.root / "skillset-saves" / "linked"
-        try:
-            link.symlink_to(external, target_is_directory=True)
-        except (OSError, NotImplementedError):
-            self.skipTest("symlinks unavailable on this host")
+        link.symlink_to(external, target_is_directory=True)
         result = size_audit.scan(self.root, threshold_bytes=500)
         self.assertEqual(result["files"], [])
 
     def test_cli_emits_post_tool_advisory(self):
         self._sparse("skillset-saves/package.zip", 2 * 1024 * 1024)
-        proc = subprocess.run([sys.executable, str(Path(size_audit.__file__)), "--project-root", str(self.root),
-                               "--force"], capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL,
-                              env={**os.environ, "SUPREMETEAM_SIZE_AUDIT_THRESHOLD_BYTES": str(1024 * 1024)})
+        proc = kit.run_cli("size_audit.py", "--project-root", str(self.root), "--force",
+                           env=kit.clean_env(self.root, SUPREMETEAM_SIZE_AUDIT_THRESHOLD_BYTES=str(1024 * 1024)))
         self.assertEqual(proc.returncode, 0, proc.stderr)
         envelope = json.loads(proc.stdout)
         self.assertEqual(envelope["hookSpecificOutput"]["hookEventName"], "PostToolUse")
         self.assertIn("skillset-saves/package.zip", envelope["hookSpecificOutput"]["additionalContext"])
-        result = json.loads(subprocess.run([sys.executable, str(Path(size_audit.__file__)),
-                                            "--project-root", str(self.root), "--json"],
-                                           capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL).stdout)
+        result = json.loads(kit.run_cli("size_audit.py", "--project-root", str(self.root), "--json",
+                                        env=kit.clean_env(self.root)).stdout)
         self.assertEqual(result, {"skipped": "not-due"})
 
 

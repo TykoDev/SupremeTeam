@@ -180,7 +180,7 @@ anything.
 - skill-reviewer wrote the link report to the named path and returned its digest.
 - The orchestrator replaced the paraphrase with `single skill - no team manifest produced`, byte-for-byte from `../../gates.yaml`.
 - Resubmitted once at revision 4 with `--prior`, so `skills` and `validation_report` returned as `unchanged_evidence` and carried their prior judgment.
-- Cycle count under Admiral: 1 of 2. A third cycle escalates instead of resubmitting.
+- Cycle count under Admiral: 1 of 3. A third cycle escalates instead of resubmitting.
 
 ---
 

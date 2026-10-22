@@ -80,5 +80,5 @@ The round after Example 1. `review/code-chief` sub-delegates the part of the
   - `BUG-02` | Info | open | `orders/retry_handler.ts:142` | unchanged and still with `review/security-review`; nothing in `changed_evidence` touches it, so it is carried forward rather than re-judged.
   - `BUG-06` | Major | open | `orders/persistence.ts:88` | **out-of-delta** — the new transaction wrapper swallows a rollback error, so a failed marker write reports success. Found while reading a path `BUG-01` depends on, but outside `changed_evidence`: reported as out-of-delta rather than folded into the round. `review/code-chief` decides whether it enters this cycle or the next.
 - Open risks: unchanged from r4 — the redelivery guarantee is still read rather than observed.
-- Next action: `review/code-chief` rules on `BUG-06`'s cycle. Cycle 1 of a `cycle_cap` of 2 is now spent.
+- Next action: `review/code-chief` rules on `BUG-06`'s cycle. Cycle 1 of a `cycle_cap` of 3 is now spent.
 - Revision: r5 <- r4.

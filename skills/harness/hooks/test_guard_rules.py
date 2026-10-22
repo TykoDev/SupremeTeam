@@ -7,27 +7,30 @@ ordinary commands per rule (a redirect with no space, ``python -c``, ``curl -o``
 and a table of ordinary reads (``2>/dev/null``, ``grep foo src/x``, ``git push origin feature``,
 ``rm -rf build/``) that must stay allowed. Every destructive-command rule has a positive and a
 negative case. The cases run in this process through ``guard_hook.main`` (``_testkit.decide``);
-the wiring through the registered entry point is covered by ``test_hooks.py`` and the other
-suites.
+the wiring through the registered entry point is covered by ``test_pre_tool_entry.py`` and the
+other suites.
 """
 from __future__ import annotations
 
+import ast
+import io
 import os
 import random
 import re
-import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
+import _state
+import _testkit as kit
+import guard_hook
+
 HOOK_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(HOOK_DIR))
-import _state  # noqa: E402
-import _testkit as kit  # noqa: E402
-import guard_hook  # noqa: E402
 
 FROZEN = {"frozen_globs": [{"glob": "src/payments/**", "owner": "ops"}]}
 READ_ONLY_RUN = "r1"
@@ -36,13 +39,15 @@ READ_ONLY = {"read_only": [{"run_id": READ_ONLY_RUN, "owner": "ops", "allow": [A
 
 
 class GuardCase(unittest.TestCase):
+    # A table class that asserts neither an observation record nor a Rule F boundary sets this, and its decisions
+    # skip the one and build the other once (``kit.fast_decisions``): about a tenth of the cost of each.
+    FAST = False
+
     def setUp(self):
-        manager = kit.project()
-        self.root = manager.__enter__()
-        self.addCleanup(manager.__exit__, None, None, None)
-        patcher = mock.patch.dict(os.environ, {"HOME": str(self.root / "home"), "USERPROFILE": str(self.root / "home")})
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.root = self.enterContext(kit.project())
+        self.enterContext(mock.patch.dict(os.environ, {"HOME": str(self.root / "home"), "USERPROFILE": str(self.root / "home")}))
+        if self.FAST:
+            self.enterContext(kit.fast_decisions())
 
     def guard(self, state: dict) -> None:
         kit.write_guard(self.root, state)
@@ -131,6 +136,7 @@ WIPES = (
     "rm -rf ~/", "rm -rf ~", "rm -rf ~/*", "rm -rf \"$HOME/\"", "rm -rf $HOME/", "rm -rf ${HOME}", "rm -rf $HOME/*",
     "rm -rf /", "rm -rf /*", "rm -rf //", "rm -rf /.", "rm -rf /./", "rm -rf /home", "rm -rf /etc/", "rm -rf /usr/*",
     "rm -fr /", "rm -Rf /", "rm -r -f /", "rm --recursive --force /", "rm / -rf", "rm -rf -- /", "rm -rf build /",
+    "rm -Rf ~", "rm -r -f $HOME", "rm --recursive --force /*",
     "sh -c \"rm -rf /\"", "bash -c 'rm -rf ~/*'", "bash -lc \"rm -rf /\"", "/bin/rm -rf /*", "/usr/bin/rm -rf /", "\\rm -rf /*",
     "command rm -rf /", "sudo rm -rf /", "sudo -u root rm -rf /", "env rm -rf /", "nohup rm -rf / &", "time rm -rf /",
     "nice -n 5 rm -rf /", "timeout 5 rm -rf /", "$(rm -rf /)", "echo $(rm -rf /)", "`rm -rf /`", "(rm -rf /)", "{ rm -rf /; }",
@@ -139,6 +145,18 @@ WIPES = (
     "cd /tmp && rm -rf *", "rm -rf ./*", "find / -delete", "find / -name x -delete", "find ~ -delete", "find / -exec rm -rf {} +",
     "if true; then rm -rf /; fi", "for i in 1; do rm -rf /; done", "bash <<EOF\nrm -rf /\nEOF", "cat <<EOF\n$(rm -rf /)\nEOF",
 )
+def rule_a_labels() -> set:
+    """Every label Rule A can deny with, read from ``guard_hook``: its textual table and the constants its structural and
+    push readers return."""
+    labels = {label for _pattern, label in guard_hook._TEXT_SIMPLE}
+    tree = ast.parse(Path(guard_hook.__file__).read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in ("_textual_dangerous", "_structural_label", "_git_push_label"):
+            labels |= {item.value.value for item in ast.walk(node)
+                       if isinstance(item, ast.Return) and isinstance(item.value, ast.Constant) and isinstance(item.value.value, str)}
+    return labels
+
+
 SAFE_DELETES = (
     "rm -rf build/", "rm -rf ./dist node_modules", "rm -f /tmp/x.log", "rm -r src/old", "rm -rf /tmp/build-123",
     "rm -rf /home/user/proj/build", "rm -rf ~/proj/build", "rm -rf $HOME/.cache/x", "git rm -r cached/",
@@ -151,6 +169,8 @@ SAFE_DELETES = (
 class DangerousRuleTests(GuardCase):
     """Rule A: each destructive-command rule with a positive and a negative case (QR-PY-10)."""
 
+    FAST = True
+
     def test_every_rule_denies_its_spellings_and_passes_its_near_misses(self):
         for label, denied, allowed in RULE_A:
             for tool, command in denied:
@@ -162,8 +182,16 @@ class DangerousRuleTests(GuardCase):
                 with self.subTest(rule=label, allowed=command):
                     self.assertEqual(self.call(command, tool), "", f"{label}: {command!r} must pass")
 
-    def test_every_rule_in_the_table_is_a_rule_the_guard_has(self):
-        self.assertEqual(len(RULE_A), 10, "the ten destructive-command rules: no rule may lose its pair of cases")
+    def test_every_label_the_guard_can_deny_with_is_reached_by_a_row(self):
+        """The table's length was checked against a number (10) while the guard had 13 labels; now every label Rule A
+        can give is read from ``guard_hook`` and must be the reason of a denied row, and no group loses either half."""
+        prefix, suffix = guard_hook._DANGEROUS_REASON.split("{label}")
+        reached = set()
+        for label, denied, allowed in RULE_A:
+            self.assertTrue(denied and allowed, f"{label}: a rule needs a denied and an allowed case")
+            for tool, command in denied:
+                reached.add(kit.reason(self.call(command, tool)).removeprefix(prefix).removesuffix(suffix))
+        self.assertEqual(reached, rule_a_labels())
 
     def test_the_ordinary_spellings_of_a_root_or_home_wipe_are_denied(self):
         self.check(WIPES, deny=True, fragment="allow-dangerous")
@@ -318,6 +346,8 @@ FROZEN_ALLOW_PS = (
 class FrozenBoundaryTests(GuardCase):
     """Rule B: a write into a frozen path is denied however it is spelled; a read never is."""
 
+    FAST = True
+
     def setUp(self):
         super().setUp()
         (self.root / "src" / "payments").mkdir(parents=True)
@@ -419,6 +449,18 @@ class FrozenBoundaryTests(GuardCase):
         self.check(("echo x > src/payments/a.py", "rm -rf src/payments"), deny=False)
         self.assertEqual(self.edit("src/payments/a.py"), "")
 
+    def test_old_freeze_record_stays_effective_until_released(self):
+        """A record from a run long over, with its scope, creation time and an empty release, still freezes."""
+        self.guard({"frozen_globs": [{"glob": "src/payments/**", "owner": "ops", "scope": "release", "created_at": "2000-01-01T00:00:00Z",
+                                      "run_id": "old", "released_at": None}]})
+        self.assertTrue(kit.denied(self.edit(f"{self.root}/src/payments/a.py", "Edit")))
+
+    def test_mixed_string_and_record_entries(self):
+        self.guard({"frozen_globs": ["infra/*.tf", {"glob": "src/payments/**", "owner": "ops"}]})
+        for path, denied in (("infra/main.tf", True), ("src/payments/a.py", True), ("src/other/a.py", False)):
+            with self.subTest(path=path):
+                self.assertEqual(kit.denied(self.edit(f"{self.root}/{path}", "Edit")), denied)
+
 
 # --- Rules B and C: a writer the analyser cannot place, or finds inside a launcher ---------------------------------
 
@@ -485,6 +527,8 @@ PLACED_LAUNCHED_WRITERS_PS = LAUNCHED_WRITERS_PS[-6:]
 
 class LaunchedWriterTests(GuardCase):
     """Placed writes outside a boundary pass; recognized unplaced writes fail closed."""
+
+    FAST = True
 
     BLOCK = {"blocked_globs": [{"glob": "**/secrets/**", "owner": "sec"}]}
 
@@ -622,6 +666,8 @@ class PowerShellAbbreviationRuleTests(GuardCase):
     """`rm -f src/payments/a` in the PowerShell tool (a native `rm` on Linux, `Remove-Item -f` elsewhere) was read as a filter, so
     no rule saw the path; the substring rule refused it."""
 
+    FAST = True
+
     def test_an_ambiguous_abbreviation_does_not_hide_a_frozen_write(self):
         self.guard(FROZEN)
         self.check(("rm -f src/payments/a", "rm -r -f src/payments", "Remove-Item -f src/payments/a", "ri -f src/payments/a",
@@ -643,13 +689,15 @@ class PowerShellAbbreviationRuleTests(GuardCase):
 class ReadOnlyRunTests(GuardCase):
     """Rule D: every mutation target must lie inside the allow list; naming an allowed path elsewhere proves nothing."""
 
+    FAST = True
+
     def setUp(self):
         super().setUp()
         self.guard(READ_ONLY)
 
     def test_a_mutation_outside_the_allow_list_is_denied_in_every_spelling(self):
         self.check((
-            "echo x > src/app.py", "echo x >src/app.py", "rm -rf build/", "touch notes.md", "sed -i 's/a/b/' README.md",
+            "echo x > src/app.py", "echo x > src/app/main.py", "echo x >src/app.py", "rm -rf build/", "touch notes.md", "sed -i 's/a/b/' README.md",
             "sed -E -i s/a/b/ src/app.py", "cp a src/b", "mv a src/b", "tee src/app.py < in", "curl -o src/x http://h/x",
             "wget -O /tmp/x http://h/x",
             "perl -pi -e s/a/b/ src/app.py", "tar -xf a.tar -C src",
@@ -680,6 +728,12 @@ class ReadOnlyRunTests(GuardCase):
                      f"src/{base}/x.py", f"{self.root}/src/{base}/x.py"):
             with self.subTest(path=path):
                 self.assertTrue(kit.denied(self.edit(path)), path)
+
+    def test_an_edit_outside_the_allow_list_is_denied_even_in_the_runs_other_phases(self):
+        for path in ("src/app/main.py", f"{self.root}/src/app/main.py", "README.md", "docs/index.md",
+                     f"skillset-saves/runs/{READ_ONLY_RUN}/design/reports/plan.md"):
+            with self.subTest(path=path):
+                self.assertIn("is recorded read-only", kit.reason(self.edit(path)))
 
     def test_writes_inside_the_allow_list_pass_in_every_spelling(self):
         base = f"skillset-saves/runs/{READ_ONLY_RUN}/investigation"
@@ -750,6 +804,8 @@ class ReadOnlyRunTests(GuardCase):
             f"awk '{{print $1}}' f > skillset-saves/runs/{READ_ONLY_RUN}/investigation/out",
             "perl -ne 'print if /x/' f", "perl -ne 'print if /x/ && $. > 3' f", "perl -e 'open(F, \"<f\"); print <F>'",
             "python -c \"print(1)\"", "python3 -c \"print(1 > 0)\"", "python3 -c \"print(open('f').read())\"",
+            "python3 -c \"print('s'.replace('a','b'))\"", "python3 -c \"lst=['a']; lst.remove('a'); print(lst)\"",
+            "python3 -c \"print({}.copy())\"",
             "python3 -c \"import subprocess; print(subprocess.check_output(['git','log']))\"", "node -e \"[1,2].map(x => x*2)\"",
             "node -e \"console.log(require('fs').readFileSync('f','utf8'))\"", "ruby -e \"puts [1,2].map { |x| x > 1 }\"",
             "sed -n 's/a/b/p' f", "sed -n '/a/,/b/p' f", "sed 's/world/x/' f", "sed -f script.sed f",
@@ -871,10 +927,13 @@ class ReadOnlyRunTests(GuardCase):
         self.check(("patch --dry-run file.txt fix.diff && patch file.txt fix.diff", "git apply --check fix.patch && git apply fix.patch"),
                    deny=True, fragment="is recorded read-only")
 
-    def test_a_released_record_is_inert(self):
-        self.guard({"read_only": [{"run_id": "r1", "owner": "ops", "allow": [ALLOW], "released": True}]})
-        self.check(("echo x > src/app.py", "git add -A"), deny=False)
-        self.assertEqual(self.edit("src/app.py"), "")
+    def test_a_released_record_is_inert_and_a_freeze_beside_it_still_applies(self):
+        for released in ({"released": True}, {"released_at": "2026-09-05T11:00:00Z"}):
+            self.guard({"read_only": [{"run_id": "r1", "owner": "ops", "allow": [ALLOW], **released}], "frozen_globs": ["src/legacy/**"]})
+            with self.subTest(released=released):
+                self.check(("echo x > src/app.py", "git add -A"), deny=False)
+                self.assertEqual(self.edit("src/app.py"), "")
+                self.assertIn("frozen boundary", kit.reason(self.edit("src/legacy/old.py")))
 
     def test_the_record_itself_stays_single_writer_inside_its_own_allow_list(self):
         out = self.edit(".harness-state/guard-state.json")
@@ -893,6 +952,8 @@ class ReadOnlyRunTests(GuardCase):
 class SingleWriterTests(GuardCase):
     """Rule C: the core records have one writer; every route to them that the analyser can see is denied."""
 
+    FAST = True
+
     GUARD_RECORD = ".harness-state/guard-state.json"
     STATE = "skillset-saves/runs/r1/_state.md"
 
@@ -909,9 +970,11 @@ class SingleWriterTests(GuardCase):
                      "skillset-saves/_write.lock", "skillset-saves//_write.lock", "skillset-saves/_WRITE.LOCK", f"{self.root}/skillset-saves/./_write.lock"):
             with self.subTest(path=path):
                 self.assertIn("save_run.py", kit.reason(self.edit(path)))
-        for path in ("skillset-saves/preferences/taste.json", "skillset-saves/preferences/TASTE.MD", "skillset-saves/preferences/_history/r-1.json"):
+        for path in ("skillset-saves/preferences/taste.json", "skillset-saves/preferences/TASTE.MD", "skillset-saves/preferences/taste.journal.jsonl",
+                     "skillset-saves/preferences/taste.lock", "skillset-saves/preferences/_history/r-1.json"):
             with self.subTest(path=path):
-                self.assertIn("taste_prefs.py", kit.reason(self.edit(path)))
+                self.assertIn("skills/taste/taste_prefs.py", kit.reason(self.edit(path)))
+                self.assertEqual(kit.decide({"tool_name": "Read", "tool_input": {"file_path": path}}, self.root), "", "a read is never denied")
         for path in ("skillset-saves/runs/r1/design/reports/report_plan.md", "skillset-saves/runs/r1/_state.md.bak",
                      ".harness-state/trajectories/x.json", "docs/guard-state.json", "skillset-saves/runs/r1/_write.lock", "src/_write.lock"):
             with self.subTest(allowed=path):
@@ -959,9 +1022,8 @@ class SingleWriterTests(GuardCase):
             with self.subTest(operation=operation):
                 passed = kit.run_hook("pre_tool_use.py", kit.bash(command), self.root)
                 self.assertEqual((passed.returncode, passed.stdout), (0, b""))
-                ran = subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), operation, "--run-id", "r1", *extra, "--project-root", str(self.root)],
-                                     capture_output=True, text=True, check=False)
-                self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+                code, out = kit.save(self.root, "r1", operation, *extra)
+                self.assertEqual(code, 0, out)
         self.assertTrue((saves / "_write.lock").is_file())
         for label, payload in (("write tool", kit.edit(str(saves / "_write.lock"))), ("remove", kit.bash("rm skillset-saves/_write.lock")),
                                ("redirect", kit.bash("echo x > skillset-saves/_write.lock"))):
@@ -973,6 +1035,10 @@ class SingleWriterTests(GuardCase):
     def test_the_writer_mutex_is_found_in_a_command_that_cannot_be_tokenised_too(self):
         self.check(("echo \"x > skillset-saves/_write.lock", "rm skillset-saves/_write.lock 'unterminated"), deny=True, fragment="save_run.py")
 
+    def test_powershell_reaches_a_core_run_file_only_through_the_writer(self):
+        self.check(("Set-Content skillset-saves\\runs\\r1\\_lock.md '{}'",), deny=True, tool="PowerShell", fragment="save_run.py")
+        self.check(("Get-Content skillset-saves/runs/r1/_lock.md",), deny=False, tool="PowerShell")
+
     def test_the_shell_cannot_reach_project_taste_state_either(self):
         self.check(("echo x > skillset-saves/preferences/taste.json", "cp x skillset-saves/preferences/taste.md",
                     "tee skillset-saves/preferences/taste.journal.jsonl < x", "rm skillset-saves/preferences/taste.lock"),
@@ -980,7 +1046,7 @@ class SingleWriterTests(GuardCase):
 
     def test_reads_and_the_sanctioned_writers_pass(self):
         self.check((
-            f"cat {self.GUARD_RECORD}", f"cat {self.STATE} 2>&1", "ls skillset-saves/runs/r1/_history/ 2>/dev/null", "grep guard-state README.md",
+            f"cat {self.GUARD_RECORD}", f"cat {self.STATE}", f"cat {self.STATE} 2>&1", "ls skillset-saves/runs/r1/_history/ 2>/dev/null", "grep guard-state README.md",
             f"jq . {self.STATE}", "python skills/harness/hooks/guard_state.py release --glob infra/** --requester ops",
             "python skills/harness/hooks/guard_state.py status", f"python skills/harness/hooks/save_run.py checkpoint --run-id r1 --evidence {self.STATE}",
             "python skills/harness/hooks/save_run.py recover --run-id r1 --reason 'stale skillset-saves/runs/r1/_lock.md, >30 min'",
@@ -1005,6 +1071,8 @@ class SingleWriterTests(GuardCase):
 class FallbackTests(GuardCase):
     """If the command cannot be tokenised the old textual rules apply, with the delimiter and redirect fixes."""
 
+    FAST = True
+
     def test_an_unbalanced_quote_falls_back_to_the_textual_rules(self):
         self.guard({**FROZEN, **READ_ONLY})
         self.check(("echo \"x > src/payments/a.py", "rm -rf src/payments' ", "echo 'x>>src/payments/log"), deny=True, fragment="frozen boundary")
@@ -1025,6 +1093,8 @@ class FallbackTests(GuardCase):
 
 
 class ToolShapeTests(GuardCase):
+    FAST = True
+
     def test_tool_names_and_command_shapes_the_hosts_use_are_recognised(self):
         cases = [({"tool_name": "bash", "tool_input": {"command": "rm -rf /"}}, True),
                  ({"tool_name": "shell", "tool_input": {"command": "rm -rf /"}}, True),
@@ -1225,6 +1295,8 @@ class OrdinaryMutatorTests(GuardCase):
     """RR-guard-5: what round 1 changed without saying so. An index-only git command is not a write into a frozen tree, and
     the package managers a read-only run must not run were denied only because `install` was a word in the text."""
 
+    FAST = True
+
     def test_unstaging_is_not_a_write_into_a_frozen_boundary(self):
         self.guard(FROZEN)
         self.check(("git restore --staged .", "git restore -S src", "git reset HEAD src/payments/a.py", "git reset -q", "git reset --mixed HEAD~1 -- .",
@@ -1259,6 +1331,8 @@ class OrdinaryMutatorTests(GuardCase):
 
 class WorkingDirectoryRuleTests(GuardCase):
     """RR-guard-6 and RR-guard-2: the guard places a write where the shell really is, and refuses one it cannot place."""
+
+    FAST = True
 
     def setUp(self):
         super().setUp()
@@ -1445,6 +1519,8 @@ FROZEN_VARIABLE_NEIGHBOURS = (
 class DirectoryDepositTests(GuardCase):
     """A write into a directory reaches what it lands as there, and a tree write reaches everything below."""
 
+    FAST = True
+
     def setUp(self):
         super().setUp()
         (self.root / "src" / "payments").mkdir(parents=True)
@@ -1527,12 +1603,6 @@ class RootExtractTests(GuardCase):
         mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": str(self.root), "SUPREMETEAM_HARNESS_DEV": ""}).start()
         self.addCleanup(mock.patch.stopall)
 
-    def pin_a_run(self) -> None:
-        (self.root / "README.md").write_text("x", encoding="utf-8")
-        proc = subprocess.run([sys.executable, str(HOOK_DIR / "save_run.py"), "create", "--run-id", "r1", "--evidence", "README.md",
-                               "--project-root", str(self.root)], capture_output=True, text=True, check=False)
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-
     def test_a_freeze_does_not_refuse_an_extract_at_the_root(self):
         self.guard(FROZEN)
         self.check(("unzip fixtures.zip", "tar -xzf vendor.tgz", "unzip fixtures.zip -d tests/fixtures"), deny=False)
@@ -1543,7 +1613,7 @@ class RootExtractTests(GuardCase):
 
     def test_an_active_admiral_run_refuses_an_extract_at_the_root_when_the_hooks_are_under_it(self):
         with mock.patch.object(sys.modules["guard_hook"], "HOOK_DIR", self.root / "skills" / "harness" / "hooks"):
-            self.pin_a_run()
+            kit.pin_a_run(self.root)
             self.check(("unzip fixtures.zip", "tar -xzf vendor.tgz"), deny=True, fragment="SUPREMETEAM_HARNESS_DEV")
             self.check(("unzip fixtures.zip -d tests/fixtures",), deny=False)
 
@@ -1564,6 +1634,8 @@ class RootExtractTests(GuardCase):
 class RootRecordReachTests(GuardCase):
     """Rule C for a command aimed at the project root rather than at the directory that holds the records: `git clean`,
     `rsync --delete` and a contents copy reach the records exactly when what they remove or land does."""
+
+    FAST = True
 
     def setUp(self):
         super().setUp()
@@ -1632,6 +1704,228 @@ class RootRecordReachTests(GuardCase):
 
         shutil.rmtree(self.root / "skillset-saves")
         self.check(("git clean -fdx", "rsync -a --delete site/ ./", "cp -r $SRC/. .", "curl -s https://h/x | tar -xz"), deny=False)
+
+
+class IndirectWriteTests(GuardCase):
+    """Writes that land where the command line does not spell them: archive members, rewritten or linked; programs and git
+    commands that choose their own destination; copies, cleans and syncs that reach the guard record from the project
+    root; and patches. Each command is decided, never run."""
+
+    def setUp(self):
+        super().setUp()
+        self.guard(FROZEN)
+        (self.root / "sub").mkdir()
+        (self.root / "backup" / ".harness-state").mkdir(parents=True)
+        (self.root / "backup" / ".harness-state" / "guard-state.json").write_text("{}", encoding="utf-8")
+        with tarfile.open(self.root / "strip.tar", "w") as archive:
+            info = tarfile.TarInfo("backup/.harness-state/guard-state.json")
+            info.size = 2
+            archive.addfile(info, io.BytesIO(b"{}"))
+        with tarfile.open(self.root / "link.tar", "w") as archive:
+            info = tarfile.TarInfo("out")
+            info.type = tarfile.SYMTYPE
+            info.linkname = ".harness-state"
+            archive.addfile(info)
+            info = tarfile.TarInfo("out/guard-state.json")
+            info.size = 2
+            archive.addfile(info, io.BytesIO(b"{}"))
+
+    def test_n8_unknown_extractor_is_not_a_proven_boundary(self):
+        # The command is analyzed only. An arbitrary executable's effects are not known.
+        self.check(("bsdtar -xf fixtures.tar -C src/payments",), deny=True)
+
+    def test_n8_launched_commands_module_opens_and_git_destinations_are_judged_where_they_land(self):
+        with tarfile.open(self.root / "benign.tar", "w") as archive:
+            info = tarfile.TarInfo("docs/readme.txt")
+            info.size = 1
+            archive.addfile(info, io.BytesIO(b"x"))
+        self.check((
+            "python3 -c \"import os; os.system('tar -xf benign.tar -C src/payments')\"",
+            "python3 -c \"import subprocess; subprocess.run(['rsync', '-a', 'sub/', 'src/payments/'])\"",
+            "python3 -c \"import subprocess; subprocess.run('curl -o src/payments/f https://h/x', shell=True)\"",
+            "python3 -c \"import tarfile; tarfile.open('benign.tar').extractall('src/payments')\"",
+            "python3 -c \"import zipfile; zipfile.ZipFile('a.zip').extract('f', 'src/payments')\"",
+            "python3 -c \"import os; os.open('src/payments/a.py', os.O_WRONLY | os.O_CREAT)\"",
+            "git -C src/payments clean -fd", "cd src/payments && git clean -fd", "git -C src clean -fd",
+            "git clone https://h/x src/payments/x", "git -C src/payments clone https://h/x", "git worktree add src/payments/wt",
+            "git submodule add https://h/x src/payments/x", "git archive --output=src/payments/a.tar HEAD",
+            "git format-patch -o src/payments HEAD~1", "git init src/payments/x", "git bundle create src/payments/b.bundle HEAD",
+            "tar -xf benign.tar --one-top-level=src/payments", "tar -xf benign.tar -C src --one-top-level=payments",
+        ), deny=True, fragment="frozen boundary")
+        self.check(("python3 -c \"import os; os.system(cmd)\"", "python3 -c \"exec(code)\"", "git am < p.diff", "git am p.diff",
+                    "python3 -c \"import zipfile; zipfile.ZipFile('a.zip').extractall()\"",
+                    "python3 -c \"import os; os.system('cat list | xargs rm')\""), deny=True, fragment="unplaced write target")
+        self.check((
+            "python3 -c \"import gzip; print(gzip.open('src/payments/f.gz').read())\"",
+            "python3 -c \"import codecs; print(codecs.open('src/payments/a.py', 'r', 'utf-8').read())\"",
+            "python3 -c \"import tarfile; print(tarfile.open('src/payments/a.tar').getnames())\"",
+            "python3 -c \"import os; fd = os.open('src/payments/a.py', os.O_RDONLY)\"",
+            "python3 -c \"import os; print(os.popen('cat src/payments/a.py').read())\"",
+            "python3 -c \"import subprocess; print(subprocess.check_output(['git', 'status'], cwd='src/payments'))\"",
+            "python3 -c \"import os; os.system('tar -xf benign.tar -C sub')\"",
+            "python3 -c \"import tarfile; tarfile.open('benign.tar').extractall('sub')\"",
+            "git -C sub clean -fd", "cd sub && git clean -fd", "git clone https://h/x sub/x", "git worktree add sub/wt",
+            "git archive -o sub/a.tar HEAD", "git format-patch -o sub HEAD~1", "git init", "git init sub/x",
+            "tar -xf benign.tar --one-top-level=sub", "tar -xf benign.tar --one-top-level",
+        ), deny=False)
+
+    def test_n8_runtime_built_interpreter_destination_is_not_placed(self):
+        self.check(("python3 -c 'open(\"\".join([\"src\",\"/pay\",\"ments/a.py\"]), \"w\").write(\"x\")'",), deny=True)
+
+    def test_archive_rewrites_and_links_cannot_hide_record_writes(self):
+        self.check(("tar -xf strip.tar --strip-components=1", "tar --strip-components 1 -xf strip.tar",
+                    "tar -xf strip.tar --transform=s,backup/,,", "tar -xPf strip.tar", "tar -xf link.tar",
+                    "tar -xf strip.tar --strip-components=1 -C sub", "tar -xf link.tar -C sub"), deny=True)
+        for name in (str(self.root / ".harness-state" / "guard-state.json"), "../.harness-state/guard-state.json"):
+            with tarfile.open(self.root / "absolute.tar", "w") as archive:
+                info = tarfile.TarInfo(name)
+                info.size = 2
+                archive.addfile(info, io.BytesIO(b"{}"))
+            self.check(("tar -xPf absolute.tar", "tar -xPf absolute.tar -C sub"), deny=True)
+        with zipfile.ZipFile(self.root / "link.zip", "w") as archive:
+            link = zipfile.ZipInfo("out")
+            link.create_system = 3
+            link.external_attr = 0o120777 << 16
+            archive.writestr(link, ".harness-state")
+            archive.writestr("out/guard-state.json", "{}")
+        self.check(("unzip link.zip",), deny=True)
+
+    def test_n8_archive_aliases_and_unknown_extraction_intent(self):
+        self.check(("gtar -xf strip.tar -C src/payments", "7zz x unknown.7z -osrc/payments",
+                    "unrar x unknown.rar src/payments/", "unar -o src/payments unknown.rar",
+                    "vendor-extractor --extract unknown.arc --destination src/payments",
+                    "custom -x unknown.arc -C src/payments", "vendor-extractor --extract unknown.arc",
+                    "vendor-extractor --extract unknown.arc --destination sub",
+                    "unrar x unknown.rar -o+ src/payments/", "unrar x unknown.rar '*.txt'"), deny=True)
+        self.check(("bsdtar -tf strip.tar", "7zz l unknown.7z", "unrar l unknown.rar",
+                    "grep -x pattern src/payments/a.py", "python3 -x script.py",
+                    "pytest -x tests", "unar -o sub unknown.rar"), deny=False)
+
+    def test_n8_computed_and_mixed_program_targets_cannot_hide_writes(self):
+        self.check(("python3 -c 'p=\"src\"+\"/payments/a.py\"; open(p, \"w\")'",
+                    "python3 -c 'open(\"sub/public.txt\", \"w\"); import os; os.system(\"rm src/payments/a.py\")'",
+                    "python3 -c 'open(\"src/payments/a.py\", **options)'",
+                    "echo 'open(\"\".join([\"src\",\"/payments/a.py\"]),\"w\")' | python3",
+                    "node -e 'require(\"fs\").writeFileSync(destination, \"x\")'"), deny=True)
+        self.check(("python3 -c 'open(\"sub/public.txt\", \"w\").write(\"x\")'",
+                    "python3 -c 'from pathlib import Path; Path(\"sub/public.txt\").write_text(\"x\")'",
+                    "python3 -c 'print(open(\"src/payments/a.py\").read())'"), deny=False)
+
+    def test_a_file_function_reached_by_name_by_getattr_or_as_a_value_is_judged(self):
+        """The two groups refused here reached the frozen boundary: the pass read a call by the name it is written with,
+        knew no `copy_into` or `move_into`, and read no function that is not called, `getattr` among them. Of the group
+        that passes, copying an object and a `replace` with no target were refused as unplaced writes, though they touch
+        no file."""
+        self.check(("python3 -c 'from shutil import rmtree as r; r(\"src/payments\")'",
+                    "python3 -c 'from os import remove as delete; delete(\"src/payments/a.py\")'",
+                    "python3 -c 'from posix import remove as delete; delete(\"src/payments/a.py\")'",
+                    "python3 -c 'import os; getattr(os, \"remove\")(\"src/payments/a.py\")'",
+                    "python3 -c 'from pathlib import Path; Path(\"a.py\").copy_into(\"src/payments\")'",
+                    "python3 -c 'from pathlib import Path; Path.copy_into(Path(\"a.py\"), \"src/payments\")'",
+                    "python3 -c 'from pathlib import Path; Path(\"src/payments/a.py\").move_into(\"sub\")'",
+                    "python3 -c 'from pathlib import Path; Path(name).copy_into(\"src\")'",
+                    "python3 -c 'import os; f = os.remove; f(\"src/payments/a.py\")'",
+                    "python3 -c 'import os; getattr(os, name)(\"src/payments/a.py\")'",
+                    "python3 -c 'import os; g = getattr; g(os, \"remove\")(\"src/payments/a.py\")'"),
+                   deny=True, fragment="frozen boundary")
+        self.check(("python3 -c 'import os; f = os.remove; f(path)'", "python3 -c 'import os; getattr(os, name)(path)'",
+                    "python3 -c 'import os; os.__getattribute__(\"remove\")(path)'"), deny=True, fragment="unplaced write target")
+        self.check(("python3 -c 'from pathlib import Path; Path(\"a.py\").copy_into(\"sub\")'",
+                    "python3 -c 'from posix import mkdir as make; make(\"sub/new\")'",
+                    "python3 -c 'import copy; print(copy.copy([1]), copy.deepcopy([1]))'",
+                    "python3 -c 'import datetime; print(datetime.datetime.now().replace(tzinfo=None))'"), deny=False)
+
+    def test_a_launcher_exec_or_namespace_reached_another_way_and_the_missing_file_functions_are_judged(self):
+        """Every command refused here passed the frozen boundary: a launcher or `exec` was read only through its
+        module's own name, a namespace lookup, `os.renames`, `os.mkfifo` and `tempfile.mkstemp(dir=...)` not at all, and
+        a path given with `dir_fd=`, after `os.chdir` or to a command run with `cwd=` was placed under the working
+        directory. The group that passes is the harmless form of each."""
+        self.check(("python3 -c 'from subprocess import run; run([\"rm\", \"-rf\", \"src/payments\"])'",
+                    "python3 -c 'from os import system as s; s(\"rm -rf src/payments\")'",
+                    "python3 -c 'import subprocess as sp; sp.run([\"rm\", \"-rf\", \"src/payments\"])'",
+                    "python3 -c 'import subprocess; subprocess.run([\"rm\", \"a.py\"], cwd=\"src/payments\")'",
+                    "python3 -c 'e = exec; e(\"import os; os.remove(\\\"src/payments/a.py\\\")\")'",
+                    "python3 -c 'import os; vars(os)[\"remove\"](\"src/payments/a.py\")'",
+                    "python3 -c 'import os; os.renames(\"src/payments/a.py\", \"b.py\")'",
+                    "python3 -c 'import os; os.mkfifo(\"src/payments/f\")'",
+                    "python3 -c 'import tempfile; tempfile.mkstemp(dir=\"src/payments\")'",
+                    "python3 -c 'import operator, os; operator.attrgetter(\"remove\")(os)(\"src/payments/a.py\")'",
+                    "python3 -c 'import os; os.remove(\"a.py\", dir_fd=os.open(\"src/payments\", os.O_RDONLY))'",
+                    "python3 -c 'import os; os.chdir(\"src/payments\"); os.remove(\"a.py\")'"),
+                   deny=True, fragment="frozen boundary")
+        self.check(("python3 -c 'import os; r = os.system; r(\"ls\")'",
+                    "python3 -c 'import operator, os; operator.attrgetter(\"remove\")(os)(path)'",
+                    "python3 -c 'import os; os.remove(\"a.py\", dir_fd=fd)'",
+                    "python3 -c 'import os; os.chdir(d); os.remove(\"a.py\")'"),
+                   deny=True, fragment="unplaced write target")
+        self.check(("python3 -c 'from subprocess import run; run([\"ls\"])'",
+                    "python3 -c 'e = exec; e(\"print(1)\")'",
+                    "python3 -c 'import tempfile; print(tempfile.mkstemp())'",
+                    "python3 -c 'import operator; print(sorted([2, 1], key=operator.attrgetter(\"real\")))'"), deny=False)
+
+    def test_no_target_directory_copy_lands_the_source_contents(self):
+        self.guard({})
+        self.check(("cp -rT backup .", "cp -r --no-target-directory backup .", "cp -Tr backup ."), deny=True)
+        (self.root / "site").mkdir()
+        self.check(("cp -rT site .",), deny=False)
+
+    def test_clean_magic_wildcards_and_descendant_excludes_do_not_hide_root_reach(self):
+        self.guard({})
+        self.check(("git clean -fdx :/", "git clean -fdx '*'", "git clean -fdx ':(top,glob)**'",
+                    "git clean -fdx -e '.harness-state/missing'", "git clean -fdx -e '.harness-state/*'",
+                    "git clean -fx .harness-state", "git clean -fx '*'"), deny=True)
+        self.check(("git clean -nfdx :/", "git clean -fdx -e .harness-state", "cd sub && git clean -fdx",
+                    "cd sub && git clean -fdx ."), deny=False)
+        self.check(("cd sub && git clean -fdx :/", "cd sub && git clean -fdx ..",
+                    "cd missing; git clean -fdx"), deny=True)
+
+    def test_sync_excludes_must_protect_the_directory_itself(self):
+        self.guard({})
+        self.check(("rsync -a --delete --exclude='.harness-state/missing' backup/ .",
+                    "rsync -a --delete --exclude='.harness-state/*' backup/ .",
+                    "rsync -a --delete-excluded --exclude=.harness-state backup/ .",
+                    "rsync -a --delete --filter='.harness-state' backup/ ."), deny=True)
+        self.check(("rsync -a --delete --exclude=.harness-state backup/ .",), deny=False)
+
+    def test_read_only_git_ref_mutations_are_not_reads(self):
+        self.guard(READ_ONLY)
+        self.check(("git branch -D feature", "git tag -d v1", "git update-ref -d refs/heads/feature",
+                    "git branch feature", "git tag v1", "git symbolic-ref HEAD refs/heads/feature"), deny=True)
+        self.check(("git branch", "git branch --list", "git tag --list", "git tag --verify v1", "git symbolic-ref HEAD",
+                    "git show-ref", "git log --oneline"), deny=False)
+
+    def test_read_only_interpreter_access_to_a_frozen_path_is_allowed(self):
+        self.check(("python3 -c 'print(open(\"src/payments/a.py\").read())'",
+                    "node -e 'console.log(require(\"fs\").readFileSync(\"src/payments/a.py\"))'"), deny=False)
+        self.check(("python3 -c 'open(\"src/payments/a.py\", \"w\").write(\"x\")'",), deny=True)
+
+    def test_shell_apply_patch_checks_update_add_delete_and_move_targets(self):
+        for action in ("Update File", "Add File", "Delete File", "Move to"):
+            patch = f"*** Begin Patch\n*** {action}: src/payments/a.py\n*** End Patch"
+            self.check((f"apply_patch <<'PATCH'\n{patch}\nPATCH", f"apply_patch '{patch}'"), deny=True)
+        self.check(("apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: .harness-state/guard-state.json\n*** End Patch\nPATCH",
+                    "apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: skillset-saves/runs/r1/_state.md\n*** End Patch\nPATCH"),
+                   deny=True)
+        self.check(("apply_patch <<'PATCH'\n*** Begin Patch\n*** Add File: docs/a.md\n+x\n*** End Patch\nPATCH",), deny=False)
+
+    def test_root_archive_cannot_write_frozen_or_hook_paths_without_a_run(self):
+        with zipfile.ZipFile(self.root / "frozen.zip", "w") as archive:
+            archive.writestr("src/payments/a.py", "x")
+        with zipfile.ZipFile(self.root / "hooks.zip", "w") as archive:
+            archive.writestr("skills/harness/hooks/guard_hook.py", "x")
+        self.check(("unzip frozen.zip",), deny=True, fragment="frozen boundary")
+        with mock.patch.object(guard_hook, "HOOK_DIR", self.root / "skills" / "harness" / "hooks"), \
+                mock.patch.dict(os.environ, {"SUPREMETEAM_HARNESS_DEV": ""}):
+            self.check(("unzip hooks.zip",), deny=True, fragment="SUPREMETEAM_HARNESS_DEV")
+
+    @unittest.skipUnless(kit.can_link(), kit.NO_LINKS)
+    def test_archive_member_existing_symlink_is_resolved(self):
+        (self.root / "alias").symlink_to(self.root / ".harness-state", target_is_directory=True)
+        with tarfile.open(self.root / "alias.tar", "w") as archive:
+            info = tarfile.TarInfo("alias/guard-state.json")
+            info.size = 2
+            archive.addfile(info, io.BytesIO(b"{}"))
+        self.check(("tar -xf alias.tar",), deny=True)
 
 
 if __name__ == "__main__":

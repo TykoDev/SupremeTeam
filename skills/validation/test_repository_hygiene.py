@@ -20,13 +20,10 @@ import unittest
 from pathlib import Path
 
 import _catalog
-from _catalog import SKILLS
+from _catalog import CHECKOUT_ONLY, REPO, SKILLS
 from package_check import RESIDUE_CLASSES, manifest_globs, matches
 
-REPO = SKILLS.parent
 ASSETS = REPO / "docs" / "assets"
-IN_A_CHECKOUT = (REPO / "README.md").is_file() and (REPO / "docs").is_dir()
-CHECKOUT_ONLY = unittest.skipUnless(IN_A_CHECKOUT, "installed copy: only skills/ is present")
 
 #: The owner's decision, recorded in the work order for CR-02 and DX-17.
 COPYRIGHT = "Copyright (c) 2026 TykoDev"
@@ -46,6 +43,22 @@ def jpeg_size(path: Path) -> tuple[int, int]:
             return width, height
         position += 2 + struct.unpack(">H", data[position + 2:position + 4])[0]
     raise ValueError(f"{path} has no start-of-frame marker")
+
+
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def png_size(path: Path) -> tuple[int, int]:
+    """Width and height from the IHDR chunk, which a PNG file must put first."""
+    data = path.read_bytes()[:24]
+    if data[:8] != PNG_SIGNATURE or data[12:16] != b"IHDR":
+        raise ValueError(f"{path} is not a PNG file")
+    width, height = struct.unpack(">II", data[16:24])
+    return width, height
+
+
+def image_size(path: Path) -> tuple[int, int]:
+    return png_size(path) if path.suffix.lower() == ".png" else jpeg_size(path)
 
 
 @CHECKOUT_ONLY
@@ -199,7 +212,7 @@ class ImageBudgetTests(unittest.TestCase):
     MAX_TOTAL_BYTES = 1_000_000
 
     def images(self):
-        found = sorted(ASSETS.glob("*.jpg"))
+        found = sorted([*ASSETS.glob("*.jpg"), *ASSETS.glob("*.png")])
         self.assertGreater(len(found), 4, "docs/assets yielded almost no images")
         return found
 
@@ -214,7 +227,7 @@ class ImageBudgetTests(unittest.TestCase):
         self.assertTrue(shown, "README.md shows no image at a set width")
         for source, width in shown:
             with self.subTest(image=source):
-                self.assertLessEqual(jpeg_size(REPO / source)[0], 2 * int(width))
+                self.assertLessEqual(image_size(REPO / source)[0], 2 * int(width))
 
     def test_every_image_is_referenced_and_every_reference_resolves(self):
         documents = [REPO / "README.md", *sorted((REPO / "docs").glob("*.md"))]
@@ -222,13 +235,13 @@ class ImageBudgetTests(unittest.TestCase):
         for image in self.images():
             with self.subTest(image=image.name):
                 self.assertIn(f"assets/{image.name}", text, "no document shows this image")
-        for name in sorted(set(re.findall(r"assets/([\w.-]+\.jpg)", text))):
+        for name in sorted(set(re.findall(r"assets/([\w.-]+\.(?:jpg|png))", text))):
             with self.subTest(reference=name):
                 self.assertTrue((ASSETS / name).is_file(), f"documents reference docs/assets/{name}, which is missing")
 
 
-class JpegReaderTests(unittest.TestCase):
-    """The size check above reads JPEG headers by hand, so the reader needs its own test."""
+class ImageReaderTests(unittest.TestCase):
+    """The size check above reads JPEG and PNG headers by hand, so the readers need their own tests."""
 
     def test_it_reads_the_frame_header_of_a_baseline_and_a_progressive_file(self):
         header = bytes([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x4A, 0x46])  # SOI, one APP0 segment
@@ -246,6 +259,20 @@ class JpegReaderTests(unittest.TestCase):
             path.write_bytes(bytes([0xFF, 0xD8, 0xFF, 0xD9]) + b"\x00" * 16)
             with self.assertRaises(ValueError):
                 jpeg_size(path)
+
+    def test_it_reads_the_header_chunk_of_a_png(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "x.png"
+            path.write_bytes(PNG_SIGNATURE + struct.pack(">I", 13) + b"IHDR" + struct.pack(">II", 40, 30) + bytes(5))
+            self.assertEqual((40, 30), png_size(path))
+            self.assertEqual((40, 30), image_size(path))
+
+    def test_a_png_without_its_signature_is_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "x.png"
+            path.write_bytes(b"\x00" * 24)
+            with self.assertRaises(ValueError):
+                png_size(path)
 
 
 if __name__ == "__main__":

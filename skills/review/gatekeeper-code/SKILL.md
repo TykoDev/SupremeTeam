@@ -8,7 +8,7 @@ description: >-
   validate the review package, review delivery readiness, say whether the review is
   finished enough to deliver, gate the review output, or challenge this review
   packet. Whether work is ready to *enter* review is `build/gatekeeper-build`.
-version: 1.3.0
+version: 1.3.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -258,7 +258,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 
 | Scenario | Response |
 | --- | --- |
-| The result reports `manifest_schema_version: 1`, so no typed record, waiver wording or finding policy was checked | Return `REVISE` to `code-chief` for a schema-2 manifest carrying `boundary` and `owner`. Exit 0 on a flat schema-1 package means the keys are present and the hashes hold, not that `executed_probes` was ever read as a passing probe or that `review_verdict` carries its challenge record. |
+| The result reports `manifest_schema_version: 1`, so no typed record or finding policy was checked, and a bare sanctioned wording could stand in for an applicability record | Return `REVISE` to `code-chief` for a schema-2 manifest carrying `boundary` and `owner`. Exit 0 on a flat schema-1 package means the keys are present and the hashes hold, not that `executed_probes` was ever read as a passing probe or that `review_verdict` carries its challenge record. |
 | A mandatory specialist report is missing or older than the package revision under review | Reject the submission, name the missing or stale report, and require the owning orchestrator to resubmit a coherent package set. |
 | The package claims security leadership signoff, accepted-risk readiness, or release security posture without `review/cso` evidence or an explicit skip reason | Return REVISE to `review/code-chief`: remove the unsupported leadership claim, or escalate to `admiral` to open the `security` pipeline under `cso` and carry that engagement's packet into the package. The review pipeline has no cso stage, so there is no CSO lens for `code-chief` to run. |
 | Specialist findings conflict on severity, exploitability, or scope | Preserve the contradiction in the verdict record; return REVISE when the disputed finding is Critical or Major and evidence can settle it, ESCALATE when the conflict requires external judgment, and let a dispute over a Minor ride along on the verdict (`revise_threshold`). |

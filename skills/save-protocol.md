@@ -27,7 +27,9 @@ is application source, which stays in the application's layout. A script run
 from a subdirectory still writes at the project root, because the hook state
 helper and every `--project-root` default walk up to the nearest
 `skillset-saves/`, `.harness-state/`, or `.git`; `scripts/output_paths.py`
-resolves every kind under these roots and rejects escapes.
+resolves every kind under these roots except `product` (application source) and
+`global_preferences` (the per-user data root outside the checkout, refused when
+that root lies inside the project), and rejects escapes.
 
 ```text
 skillset-saves/
@@ -149,22 +151,38 @@ prompt-submit hook, and the gate checker's run-root verification.
 1. Classify state as active, inactive, complete, stale, orphaned, conflicting,
    corrupt, interrupted, missing, uninitialized, or unreadable with
    `python skills/harness/hooks/save_run.py status` (no run id needed), or the
-   readiness diagnostic. `complete` is a closed run the pointer names;
+   readiness diagnostic. `interrupted` is the exception: only
+   `status --run-id <id>` reports it, while that run's `_journal.json` file exists;
+   plain `status` and the readiness diagnostic classify the records as they
+   stand and never report it. `complete` is a closed run the pointer names;
    `inactive` is anything else that is not held (released, blocked, or several
    closed runs), and `run_status` in the result says which. `uninitialized` is a
    run directory holding no record at all, which is what intake leaves when it
    has written its report and `create` has not run: the next step is `create`,
    not recovery. `status --run-id <id>` also classifies that named run on its own
-   as `requested_run`, and names the `next_step` for the classification. Only a
-   coherent fresh active or orphaned record reinforces the session pin. A record
-   that exists and that this account cannot read (every record is owner-only, so a
-   second operating-system account sharing the project directory cannot read the
-   first one's) is `corrupt` with `access_denied` naming it, never absent or
-   malformed: it may be a held run, so `create` and every operation that would pin
-   a run refuse beside it, and the guard counts it as held. `access_denied` marks
+   as `requested_run`, and names the `next_step` for the classification. Every
+   run is read before the pointer decides anything, and the result carries what
+   the reading found whatever it decides: `held_runs` names each run that holds
+   the pin (a coherent held run, one whose lock says held beside an interrupted
+   publish's journal, or a held run whose records agree beside a directory where
+   its journal belongs, `directory_at`), each with whether its lock is `fresh`,
+   and `access_denied` each record this account cannot read that may hold it. A
+   held run whose lock is fresh reinforces the session pin whatever the pointer
+   says (3), and so does a record carrying `access_denied`, which may be a held
+   run. A record that exists and that this account cannot read (on POSIX the writer makes
+   every record owner-only, mode 0600, so a second operating-system account sharing
+   the project directory cannot read the first one's; on Windows a record inherits
+   the directory's access list, which decides whether another account can read it)
+   is named in `access_denied`, never read as absent or malformed, and where
+   nothing decides first the save root is `corrupt` with it: it may
+   be a held run, so `create` and every operation that would pin a run refuse
+   beside it, and the guard counts it as held. `access_denied` marks
    the records that may hold the pin (the pointer, a lock, a state beside a lock
-   that says held); a state this account cannot read beside a readable released
+   that says held, a directory on the way to them); a state this account cannot read beside a readable released
    lock is a closed run, `corrupt` without `access_denied`, and `create` is allowed.
+   A directory (a junction, or a link to one) where a record belongs is damage,
+   not a refusal: `corrupt`, `<path> is a directory, not a file`, on every
+   platform.
 2. Verify lock owner, heartbeat, status, revision lineage, and referenced
    artifacts. Heartbeat contract: the heartbeat is an ISO-8601 `heartbeat:`
    timestamp field inside the run's `_lock.md`, refreshed on every checkpoint or
@@ -172,32 +190,51 @@ prompt-submit hook, and the gate checker's run-root verification.
    host tool activity (`harness/hooks/run_heartbeat.py` `refresh`: only a
    payload carrying a host session id, only when the run the pointer names has no
    heartbeat younger than five minutes, classifying every saved run at most once
-   a minute, only a held, pinned, coherent, non-interrupted, still-fresh lock,
+   a minute, only the one coherent held run whatever the pointer says, never
+   beside a second one or where the classification stopped at a record this
+   account cannot read, only a held, pinned, non-interrupted, still-fresh lock,
    written through `save_run.py`'s `heartbeat` as the lock owner with
-   `heartbeat_source: hook:<event>`; it never revives a stale lock). A hook holds
+   `heartbeat_source: hook:<event>`, which rewrites a damaged pointer from the
+   run; it never revives a stale lock). A hook holds
    up the host for as long as it runs, so it waits a quarter of a second for the
    writer lock and skips the refresh when another writer holds it; that skip is
    the design and is not counted as a hook fault. A lock is
    stale when its heartbeat is older than 30 minutes, which with hooks
    registered means 30 minutes without any host activity in the project, or when
    it is dated more than five minutes in the future, which no clock explains.
-   Reclaim only through `save_run.py recover --reason ...`, which records the
-   stale lock (path, heartbeat, owner, sha256) in the audit trail first and
-   refuses a fresh lock or a competing active run.
-3. Resume a single coherent active run automatically. A stale pointer, stale
-   lock, released run, conflicting active set, schema-invalid record, invalid
-   revision lineage, or missing evidence never reinforces the session pin.
-   Rebuild a stale pointer only after proving the target run (`heartbeat`
-   rewrites it from the run).
+   Reclaim only through `save_run.py recover --reason ...`, which refuses a fresh
+   lock or a competing held run, publishes the new lock and state first (the
+   state's `recovered_from` names the stale lock: path, heartbeat, owner, sha256),
+   and then appends the same evidence to the audit trail as the `recover` event;
+   if that append fails the result is `degraded` with the lock already reclaimed.
+3. Resume a single coherent active run automatically. A stale lock, released
+   run, schema-invalid record, state and lock at different revisions, or
+   missing evidence never reinforces the session pin, unless a publish was
+   interrupted under a fresh held lock. A coherent fresh held run
+   does, whatever the pointer says: beside a second held run the save root is
+   `conflicting`, and beside a pointer that is malformed, names a missing or
+   incoherent run, or names a revision its run is not at, it is `corrupt`;
+   neither answer resumes anything, and neither hides the run, which
+   `held_runs` names. A fresh held run mid-publish, or beside a directory where
+   its journal belongs, reinforces the pin too, and neither resumes. A pointer
+   that is only stale or missing, or that names
+   another coherent run at that run's revision, leaves a coherent fresh run
+   `orphaned`. Rebuild a stale pointer only after proving the target run
+   (`heartbeat` rewrites it from the run).
 4. For a new run, `save_run.py create --run-id <id> --evidence <path>
    --execution-mode <agent|skill>` (`--execution-mode` defaults to `agent`; at least
    one evidence path: a run stands on the evidence it is created from, so a
    create with none is refused) performs the write/read/delete probe, refuses
-   while another run holds the pin (active, orphaned, conflicting, or stale:
-   reclaim the old run with `recover --reason` and close it with `complete`,
-   `block`, or `release` first, because a second held run beside a stale one
-   leaves both `conflicting` and neither pinnable), and publishes revision 1
-   with the pointer. It proceeds in a run directory that already holds intake's
+   while another run holds the pin, whatever the pointer says, naming each one
+   and its way out (a fresh one: close it with `complete`, `block`, or
+   `release`; a stale one: close it the same way as its owner, or reclaim it
+   with `recover --reason` once it is the only held run, because a second held
+   run beside a stale one leaves both `conflicting` and neither pinnable; one
+   whose lock says held beside an interrupted publish's journal:
+   `recover --rollback`; a held run beside a directory where its journal
+   belongs: preserve the record and escalate, since no rollback settles a
+   directory; a run damaged in any other way does not block), and publishes
+   revision 1 with the pointer. It proceeds in a run directory that already holds intake's
    report, and a refusal leaves no directory behind. A new run id is 1 to 128
    letters, digits, `.`, `_` or `-`, starting with a letter, digit or `_`
    (`save_taxonomy.RUN_ID`, which the path resolver uses too); the grammar governs
@@ -230,9 +267,13 @@ prompt-submit hook, and the gate checker's run-root verification.
    both the pass and the fail path — a `_probe-*.tmp` left behind is a defect.
 
 5. Mark persistence active only after `create` returns `result: ok`. A
-   `degraded` result (exit 2) means the write failed and nothing coherent was
-   published: warn once, keep readable evidence, and use transient mode only
-   when resume cannot be proven. A `refused` result (exit 1) is a contract
+   `degraded` result (exit 2) means a write failed, and its `reason` says what was
+   and was not published: a failure before the state and lock are written
+   publishes nothing, but a failed pointer write or audit append comes after them,
+   so that revision *is* published (`heartbeat` rewrites the pointer; a missing
+   audit line leaves the journal, and `recover --rollback` rolls the revision
+   forward). Either way, warn once, keep readable evidence, and use transient mode
+   only when resume cannot be proven. A `refused` result (exit 1) is a contract
    violation to resolve, never something to work around by hand-editing files;
    the one refusal to retry is a busy write lock, which names itself.
 
@@ -376,24 +417,24 @@ so deleting any of those three pointers fails the suite.
 | Clause of §1–§5 | Backing | What fails |
 |-----------------|---------|------------|
 | §1 Everything generated lands under `skillset-saves/` or `.harness-state/` | Machine-checked by `validation/test_save_contracts.py` `GeneratedRootPolicyTests` and by [`scripts/validate_manifests.py`](scripts/validate_manifests.py) | `save-ownership.yaml: generated_roots must be exactly skillset-saves and .harness-state`; a resolver kind landing outside a declared root fails `test_every_project_kind_resolves_under_a_generated_root` |
-| §1 `scripts/output_paths.py` resolves every kind and rejects escapes | Machine-checked by `resolve()`; the *refusal* is pinned by `OutputPathTests`, the *kind set* by `GeneratedRootPolicyTests` | `resolve()` raises `ValueError` with `unknown output kind`, `name must be a relative path without traversal`, `run_id must be 1 to 128 letters, digits, '.', '_' or '-', starting with a letter, digit or '_'`, `core name must be _state.md, _lock.md, or _audit-trail.md`, `phase must be one of [...]`, `<phase> phase-root files must be named like one of [...]`, or `resolved path escapes project root`. Read the boundary of the test carefully: `OutputPathTests.test_every_kind_resolves_inside_project` asserts only that `ValueError` is raised, for three of those six cases, and never inspects the message — so the wording above is the script's, verified by running it, not a string any test asserts. `GeneratedRootPolicyTests.test_every_project_kind_resolves_under_a_generated_root` does pin `KINDS`, and the CLI declares `--kind ... choices=sorted(KINDS)`, so the two cannot drift apart. A `product` name at or under the version-control directory, a generated root, `skills/harness/` or a host hook-registration file is refused with `which no product output may target` (`ResolverContractTests`). |
+| §1 `scripts/output_paths.py` resolves every kind and rejects escapes | Machine-checked by `resolve()`; the *refusal* is pinned by `scripts/test_output_paths.py` `ResolverContractTests`, the *kind set* by `GeneratedRootPolicyTests` | `resolve()` raises `ValueError` with `unknown output kind`, `name must be a relative path without traversal`, `run_id must be 1 to 128 letters, digits, '.', '_' or '-', starting with a letter, digit or '_'`, `core name must be _state.md, _lock.md, or _audit-trail.md`, `phase must be one of [...]`, `<phase> phase-root files must be named like one of [...]`, or `resolved path escapes project root`. Read the boundary of the test carefully: `ResolverContractTests.test_every_kind_resolves_inside_project` asserts only that `ValueError` is raised, for three of those seven cases, and never inspects the message — so the wording above is the script's, verified by running it, not a string any test asserts. `GeneratedRootPolicyTests.test_every_project_kind_resolves_under_a_generated_root` does pin `KINDS`, and the CLI declares `--kind ... choices=sorted(KINDS)`, so the two cannot drift apart. A `product` name at or under the version-control directory, a generated root, `skills/harness/` or a host hook-registration file is refused with `which no product output may target` (`ResolverContractTests`). |
 | §1 The taxonomy in code equals `save-ownership.yaml`, and every resolver kind and phase resolves to one class | Machine-checked by `validation/test_save_taxonomy.py` | a phase the resolver accepts and the policy does not declare, a kind whose path no class owns or two classes claim, a declared phase-root pattern no kind can produce, or a hook whose copy of the core file names or the phases disagrees with `scripts/save_taxonomy.py` |
-| §1 A script run from a subdirectory still writes at the project root | Machine-checked by `GeneratedRootPolicyTests.test_hook_state_root_walks_up_to_the_project_marker` | `_state.find_project_root` returning a subdirectory instead of the nearest marker |
+| §1 A script run from a subdirectory still writes at the project root | Machine-checked by `harness/hooks/test_state_hardening.py` `OptionalRootTests.test_hook_state_root_walks_up_to_the_project_marker` | `_state.find_project_root` returning a subdirectory instead of the nearest marker |
 | §1 Every pipeline has a phase directory under a run | Machine-checked by `validate_manifests.py` and `OwnershipAgreementTests.test_every_pipeline_phase_has_a_save_directory` | `save-ownership.yaml: missing phase directory 'qa' for qa` — the pipeline name appears twice in the real message. The test asserts membership directly rather than matching that string. |
-| §1 The four governed subdirectories (`reports/`, `artifacts/`, `evidence/`, `packages/`) | Partly machine-checked | `scripts/test_runtime_utilities.py` pins the exact `reports/` destination for every declared pipeline phase, and `output_paths.resolve` composes the other three the same way. That a file was filed under the right one of the four is judgement. |
+| §1 The four governed subdirectories (`reports/`, `artifacts/`, `evidence/`, `packages/`) | Partly machine-checked | `scripts/test_output_paths.py` pins the exact `reports/` destination for every declared pipeline phase, and `output_paths.resolve` composes the other three the same way. That a file was filed under the right one of the four is judgement. |
 | §1 Evidence paths are project-relative and must exist | Machine-checked by `save_run.py` and `harness/hooks/_saves.py` | `evidence path must be project-relative without traversal`, `evidence path escapes project root`, `evidence path missing`, `registered evidence path missing` (with its `--drop-evidence` remedy), and, for a held run, `missing evidence path <p>` from the reader. A closed run whose evidence was pruned stays readable and lists it as `evidence_missing`. Evidence under a directory this account may not search is neither missing nor a refused run record: the reader lists it as `evidence_unverifiable` and the run keeps the classification its own records give, and a writer refuses a path it cannot read, naming it. |
 | §1 The run directory is the authorised evidence root, so a phase manifest may reference `../intake/report_grilling.md` | Machine-checked by [`harness/gatekeeper/check.py`](harness/gatekeeper/check.py) against [gates.yaml](gates.yaml) `evidence_rules.evidence_root`, pinned by `harness/gatekeeper/test_gate_run_layout.py` `EvidenceRootTests` | The root widens to the run directory only when the manifest `run_id` matches the directory and `_state.md`; otherwise it is the manifest directory. `test_other_run_evidence_is_rejected`, `test_traversal_absolute_and_unc_paths_are_rejected`, `test_symlink_escape_is_rejected`, and `test_run_id_mismatch_shrinks_root_to_package` each fail a package that reaches outside it. |
-| §1 The preference store under `skillset-saves/preferences/` is written only by `taste_prefs.py` | Machine-checked where hooks are registered | `pre_tool_use.py` denies an edit-tool write to `taste.json`, `taste.md`, `taste.journal.jsonl`, `taste.lock`, and `_history/*` under that directory, naming `skills/taste/taste_prefs.py` as the sanctioned writer; `SaveLifecycleTests.test_direct_edit_of_project_taste_state_is_denied_but_reads_pass` executes the hook on all five and confirms a `Read` of the same file is not denied |
+| §1 The preference store under `skillset-saves/preferences/` is written only by `taste_prefs.py` | Machine-checked where hooks are registered | `pre_tool_use.py` denies an edit-tool write to `taste.json`, `taste.md`, `taste.journal.jsonl`, `taste.lock`, and `_history/*` under that directory, naming `skills/taste/taste_prefs.py` as the sanctioned writer; `harness/hooks/test_guard_rules.py` `SingleWriterTests.test_edit_tools_are_matched_on_the_canonical_path` runs the guard on all five and confirms a `Read` of each is not denied |
 | §1 Pointer and run records carry schema version 1 | Machine-checked by `_saves.py` | a record whose `schema_version` is not 1 is classified `corrupt` and never reinforces the pin |
 | §1 `_latest.md` is only a pointer; scan `runs/` when it is absent, stale, or conflicting | Judgement | Nothing. `_saves.py` classifies the pointer and `heartbeat` rewrites it from the run, but whether a caller falls back to scanning `runs/` instead of trusting a stale pointer is the caller's discipline. |
 | §1 A boundary with a phase gate writes two records; the other six write only `verdict_{boundary}.cross-stage.json` | Judgement | Nothing compares those two filenames. `--verdict-out` writes wherever it is pointed, so the `.cross-stage.` suffix that keeps `gatekeeper-admiral` from overwriting the phase record is a naming convention this file carries, not a check. Passing the same `--verdict-out` path twice would silently overwrite. |
-| §1 Active state requires a pinned, held lock; terminal state an unpinned, released lock | Machine-checked by `save_run.py` and `_saves.py` | asserted end to end by `SaveLifecycleTests.test_create_checkpoint_heartbeat_complete_lifecycle` |
-| §2.1–2.2 State classification, lock verification, and the heartbeat contract | Machine-checked | `save_run.py status` returns the classification, table-driven in `harness/hooks/test_saves_reader.py`; `run_heartbeat.refresh` applies its preconditions, the five-minute throttle, and the once-a-minute scan throttle (`HeartbeatHotPathTests`), and a hook skips instead of waiting for a busy writer lock (`WriterExclusionTests.test_a_hook_never_waits_for_the_writer_lock`); a checkpoint or heartbeat on a stale lock is refused, and `recover --reason` records the stale lock in the audit trail first (`test_stale_lock_recovery_records_evidence`) |
+| §1 Active state requires a pinned, held lock; terminal state an unpinned, released lock | Machine-checked by `save_run.py` and `_saves.py` | asserted end to end by `harness/hooks/test_run_state.py` `RunTransitionTests.test_create_checkpoint_heartbeat_complete_lifecycle` |
+| §2.1–2.2 State classification, lock verification, and the heartbeat contract | Machine-checked | `save_run.py status` returns the classification, table-driven in `harness/hooks/test_saves_reader.py`; `run_heartbeat.refresh` applies its preconditions, the five-minute throttle, and the once-a-minute scan throttle (`HeartbeatHotPathTests`), keeps the one coherent held run alive whatever the pointer says and never beside a second (`HeartbeatBesideADamagedPointerTests`), and a hook skips instead of waiting for a busy writer lock (`WriterExclusionTests.test_a_hook_never_waits_for_the_writer_lock`); a checkpoint or heartbeat on a stale lock is refused, and `recover --reason` records the stale lock in the `recover` audit event once the new lock and state are published (`RecoveryTests.test_stale_lock_recovery_records_evidence`) |
 | §2.3 Resume a single coherent active run automatically | Judgement | Nothing. The classification the rule reads is mechanical; acting on it is the orchestrator's discipline. |
-| §2.4 `create` probes, refuses a competing pin, and publishes revision 1 | Machine-checked by `save_run.py` | `another run holds the session pin`, plus the write/read/delete probe result (`test_competing_owner_and_wrong_owner_are_refused`) |
+| §2.4 `create` probes, refuses a competing pin, and publishes revision 1 | Machine-checked by `save_run.py` | `another run holds the session pin` (`RunTransitionTests.test_competing_owner_and_wrong_owner_are_refused`), plus the write/read/delete probe result: a failed probe degrades the create with `persistence probe failed`, and a passed one is recorded in the state as `persistence_probe: ok`. No test asserts the probe. |
 | §2.5 Persistence is marked active only after `result: ok` | Judgement | Nothing. The exit codes (0 `ok`, 1 `refused`, 2 `degraded`, 3 engine error) are mechanical; whether the caller honours them is not. |
 | §3 The core run record has one writer and one tool | Machine-checked by `OwnershipAgreementTests` | the `core-run-record` writer is pinned to `session-memory` and its `save_run.py` tool must exist on disk |
-| §3 A direct edit-tool write to a core run file is denied | Machine-checked where hooks are registered | [`harness/hooks/pre_tool_use.py`](harness/hooks/pre_tool_use.py) Rule C denies `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, and `apply_patch` on `_state.md`, `_lock.md`, `_audit-trail.md`, `_latest.md`, `_journal.json`, and `_history/*`, and denies a shell command whose analysed write targets include one of them, or that removes or moves a directory holding them. There is no list of exempt commands: a script's arguments are data and not write targets, so `python save_run.py checkpoint ...` passes while a redirect from the same command into a core file is denied, and a command the analyser cannot tokenise is judged by textual rules that carry no exception. The hook is a text guard, not a lock ([`harness/hooks/README.md`](harness/hooks/README.md) § What the guard cannot see); pinned by `SaveLifecycleTests.test_direct_edit_of_core_files_is_denied_by_hook` and `harness/hooks/test_guard_rules.py` `SingleWriterTests` |
+| §3 A direct edit-tool write to a core run file is denied | Machine-checked where hooks are registered | [`harness/hooks/pre_tool_use.py`](harness/hooks/pre_tool_use.py) Rule C denies `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, and `apply_patch` on `_state.md`, `_lock.md`, `_audit-trail.md`, `_latest.md`, `_journal.json`, and `_history/*`, and denies a shell command whose analysed write targets include one of them, or that removes or moves a directory holding them. There is no list of exempt commands: a script's arguments are data and not write targets, so `python save_run.py checkpoint ...` passes while a redirect from the same command into a core file is denied, and a command the analyser cannot tokenise is judged by textual rules that carry no exception. The hook is a text guard, not a lock ([`harness/hooks/README.md`](harness/hooks/README.md) § What the guard cannot see); pinned by `validation/test_save_taxonomy.py` `RestatedTaxonomyStillAgreesTests.test_the_pre_tool_hook_guards_every_core_run_file_and_not_a_report` and `harness/hooks/test_guard_rules.py` `SingleWriterTests` |
 | §3 `save-ownership.yaml` and `ownership.yaml` agree | Partly machine-checked by `OwnershipAgreementTests` | the writers of `core-run-record`, `gate-verdict`, and `grilling-log` are pinned; `ownership.yaml` must list `grilling-log` under `admiral` and `run-state` under `session-memory`; the tools of two classes must exist and no pattern may be absolute or traverse. The other classes are not compared with the owner map, so a writer that contradicts it there fails nothing |
 | §3 A gatekeeper holds no edit tool | Machine-checked by `validation/test_catalog_contracts.py` `ToolSurfaceTests` | `<name> is a gatekeeper or declared single-writer but grants Edit`. That a gatekeeper never modifies a submission by some other route is judgement. |
 | §3 A phase lead owns its phase directory; a specialist writes only its delegated artifact | Judgement | Nothing. No comparator matches a written file against the patterns of its class, so a report written to the wrong phase subdirectory by the right owner fails nothing here — [save-ownership.yaml](save-ownership.yaml) `enforcement.judgement` records the same gap. |
@@ -401,7 +442,7 @@ so deleting any of those three pointers fails the suite.
 | §3 Writers take turns: one mutex, the revision checked again inside it, one staging name per process | Machine-checked by `harness/hooks/test_run_state.py` `WriterExclusionTests` and `LockMechanismTests`, each interleaving forced by pausing a real writer rather than raced for | two overlapping checkpoints on one revision that both return `ok`, a heartbeat that overwrites a checkpoint published while it decided, two creates that both take the pin, a staging file shared between processes; a busy lock refuses with `retry` after `--lock-timeout` seconds. The Windows locking branch is checked against a stub only. |
 | §3 A vanished evidence path is dropped with a recorded reason; `recover --rollback` settles an interrupted publish safely | Machine-checked by `test_run_state.py` `EvidenceTests` and `RecoveryTests` | `--drop-evidence` without `--reason`, an unregistered path, or a rollback that restores a stale heartbeat, publishes a damaged snapshot as the run, or cannot leave an interrupted `create` |
 | §4 Reserved state fields cannot be overwritten | Machine-checked by `save_run.py` | `--set may not override reserved field <key>` |
-| §4 The audit trail is append-only, superseded revisions are preserved, and an event follows the publish it describes | Machine-checked | the event sequence and `_history/rev-<n>.state.json` are asserted in `SaveLifecycleTests`; `test_run_state.py` `AuditTrailTests` asserts that a failed publish leaves no event and that a refused or degraded operation leaves `refused` or `degraded`, which `harness/hooks/audit_improve.py` counts |
+| §4 The audit trail is append-only, superseded revisions are preserved, and an event follows the publish it describes | Machine-checked | the event sequence and `_history/rev-<n>.state.json` are asserted in `harness/hooks/test_run_state.py` `RunTransitionTests.test_create_checkpoint_heartbeat_complete_lifecycle`; `AuditTrailTests` in the same file asserts that a failed publish leaves no event and that a refused or degraded operation leaves `refused` or `degraded`, which `harness/hooks/audit_improve.py` counts |
 | §4 That the recorded values are true — skills engaged, blockers, next action, verdicts | Judgement | Nothing. No comparator reads a recorded value for accuracy. |
 | §5 A verdict is reusable only when `check.py --prior` reports `prior_reusable: true` | Machine-checked by [`harness/gatekeeper/check.py`](harness/gatekeeper/check.py) | a `verdict_id`, `gate_spec_digest`, or `package_fingerprint` mismatch; pinned by `harness/gatekeeper/test_gate_run_layout.py` |
 | §5 Re-probe on resume, rewind to the earliest affected boundary, never merge conflicting histories | Judgement | Nothing. The lock and revision mechanics are checked; the choice of rewind point is not. |
@@ -409,10 +450,13 @@ so deleting any of those three pointers fails the suite.
 
 ## Failure paths
 
-- `create` returns `degraded` (exit 2). The write failed and nothing coherent
-  was published. Warn once, keep readable inline evidence, and use transient mode
-  only while resume cannot be proven. Do not hand-write the records the probe
-  could not write.
+- `create` returns `degraded` (exit 2). A write failed, and the `reason` says
+  what was and was not published: a failed probe, state, or lock write publishes
+  nothing, while a failed pointer write or audit append leaves revision 1
+  published (`heartbeat` rewrites the pointer; `recover --rollback` rolls forward
+  a revision whose audit line is missing). Warn once, keep readable inline
+  evidence, and use transient mode only while resume cannot be proven. Do not
+  hand-write the records the probe could not write.
 - `create`, `checkpoint`, `heartbeat`, `complete`, `block`, `release`, or
   `recover` returns `refused` (exit 1). That is a contract violation with a named
   reason — a revision conflict, a competing pin, a wrong owner, a stale lock, or
@@ -423,37 +467,58 @@ so deleting any of those three pointers fails the suite.
   built on. Roll back, then re-checkpoint: the rollback leaves the lock with a
   fresh heartbeat, so the run is not stale however long it sat. `--rollback`
   with no journal is refused, not read as a reclaim.
-- A `create` died between its first and last write. `status` reports
-  `interrupted` and `create` refuses the run id, naming `recover --rollback`;
-  the rollback retires the partial record into `_history/` and frees the id.
+- A `create` died between its first and last write. `status --run-id <id>`
+  reports `interrupted` and `create` refuses the run id, naming
+  `recover --rollback`; the rollback retires the partial record into `_history/`
+  and frees the id.
 - A run directory holds intake's report and no record (`uninitialized`). Nothing
   is wrong: run `create` with the report as evidence. It is not `corrupt`, and it
   is not a run to recover.
-- A record exists that this account cannot read (`corrupt` with `access_denied`,
-  the reason `permission denied`): the first account's owner-only records, seen
-  from a second account. `create`, a resume of a released run and `recover` are
-  refused with the path and the reason, and every other operation on that run says
-  the same. It is not damage and not a run to recover. Completing or releasing the
-  run only ends its claim and leaves its records unreadable here, so the way
-  forward is to make them readable to this account (a mode or an ACL) or, once the
-  run is closed, to have an account that may delete them remove them; never
-  overwrite them.
+- A record exists that this account cannot read (`access_denied` names it on
+  whatever the classification is, `corrupt` where nothing decides first, the
+  reason `permission denied`): the first account's records seen from a second
+  account, owner-only on POSIX and, on Windows, kept from it by the access list
+  they inherit from the directory. `create`, a resume of a released run and
+  `recover` are refused with the path and the reason, and every other operation on
+  that run says the same. It is not damage and not a run to recover. Completing or
+  releasing the run only ends its claim and leaves its records unreadable here, so
+  the way forward is to make them readable to this account (a mode or an ACL) or,
+  once the run is closed, to have an account that may delete them remove them;
+  never overwrite them.
 - The write lock is busy: `refused`, with a message to retry, after waiting
   `--lock-timeout` seconds. Another `save_run.py` process holds
   `skillset-saves/_write.lock`; the operating system releases it when that
   process exits, so retry, and look for a stuck process only if it persists.
 - The lock is stale (heartbeat older than 30 minutes, or dated more than five
   minutes ahead of the clock). Reclaim only with
-  `recover --reason`, which records the stale lock's path, heartbeat, owner, and
-  sha256 in the audit trail before issuing a new one. A reclaim with no recorded
-  reason, or a blank one, is refused.
+  `recover --reason`, which publishes the new lock and state first (the state's
+  `recovered_from` names the stale lock's path, heartbeat, owner, and sha256) and
+  then appends that evidence to the audit trail as the `recover` event. If the
+  append fails the result is `degraded` with the lock already reclaimed: the
+  journal stays, and `recover --rollback` rolls the reclaim forward. A reclaim
+  with no recorded reason, or a blank one, is refused.
 - Two runs are active, or one is active beside a stale one. The state is
-  `conflicting` and neither is pinnable. Reclaim the old run and close it with
-  `complete`, `block`, or `release` before creating a new one.
+  `conflicting` and neither is pinnable, though a fresh one still reinforces the
+  session pin. Close the old run as its owner with `complete`, `block`, or
+  `release` before creating a new one (`recover --reason` reclaims a stale one
+  only once it is the only held run); `create` names each held run and its way
+  out.
 - The pointer is stale, missing, or contradicts `runs/`. It is only a pointer:
   scan `runs/`, prove the target run, and let `heartbeat` rewrite the pointer
   from the run. Never rebuild the pointer by hand to name a run you have not
-  verified.
+  verified. A damaged pointer makes the save root `corrupt` and hides no run
+  behind it: `held_runs` names each held one, `create` refuses beside it, and a
+  fresh one keeps the session pin reinforced. While that one is the only
+  coherent held run, the hooks' heartbeat refresh keeps it fresh and rewrites
+  the pointer from it.
+- A directory (a junction, or a link to one) stands where a record belongs.
+  It is damage, said the same way on every platform: `corrupt`,
+  `<path> is a directory, not a file`. Every operation on that run refuses with
+  that reason, `create` refuses it for a new run, and at the pointer or the
+  audit trail the write is `degraded` with it. Preserve it and escalate, as for
+  any damaged record. At the journal of a held run whose records agree, it
+  leaves the pin held: `create` refuses beside the run and names the directory,
+  and a fresh lock keeps the session pin reinforced.
 - An evidence path named in a checkpoint no longer exists or has moved outside
   the project root. The operation is refused before publication, and that
   includes a path registered at an earlier checkpoint, which stays in the run

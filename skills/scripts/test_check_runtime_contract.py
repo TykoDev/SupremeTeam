@@ -2,9 +2,10 @@
 
 ``check()`` compares the interpreter with the catalog's declared floor and reports
 optional dependencies and launchers; the inspection modes it also fronts are
-covered in ``test_check_runtime_detection.py``. These tests use temporary catalogs
-so each manifest shape is reachable, and one smoke test runs the command the
-manifest documents against the real catalog.
+covered in ``test_stack_detection.py``, ``test_project_classification.py``,
+``test_start_commands.py`` and ``test_project_walk.py``. These tests use
+temporary catalogs so each manifest shape is reachable, and one smoke test runs
+the command the manifest documents against the real catalog.
 """
 from __future__ import annotations
 
@@ -18,8 +19,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import _runtime_fixtures as fixtures
 import check_runtime
-import test_check_runtime_detection as fixtures
 
 CURRENT = f"{sys.version_info.major}.{sys.version_info.minor}"
 
@@ -210,22 +211,18 @@ class InspectionThroughCheckTests(fixtures.FixtureTreeCase):
         self.assertEqual(inspection["root"], target.as_posix())
         self.assertEqual([stack["slug"] for stack in inspection["stacks"]], ["vite-spa"])
 
-    def test_the_three_modes_run_together_and_fill_their_own_fields(self):
-        tree = {
-            "package.json": fixtures.package_json(dev={"vite": "^7"}, scripts={"dev": "vite"}),
-            "src/app.js": "// TODO wire this\n",
-        }
-        inspection = self.inspect_tree(tree, detect=True, start=True, scaffold=True)
+    def test_the_two_modes_run_together_and_fill_their_own_fields(self):
+        tree = {"package.json": fixtures.package_json(dev={"vite": "^7"}, scripts={"dev": "vite"})}
+        inspection = self.inspect_tree(tree, detect=True, start=True)
         self.assertEqual(
             sorted(inspection),
             [
                 "ambiguities", "classification", "classification_evidence", "configs", "errors", "manifests", "ok",
-                "root", "scaffold_markers", "stacks", "start_commands", "warnings",
+                "root", "stacks", "start_commands", "warnings",
             ],
         )
         self.assertEqual([stack["slug"] for stack in inspection["stacks"]], ["vite-spa"])
         self.assertEqual(len(inspection["start_commands"]), 1)
-        self.assertEqual([row["marker"] for row in inspection["scaffold_markers"]], ["TODO"])
 
     def test_inspection_errors_fail_the_run_and_warnings_do_not(self):
         broken = self.report({"package.json": "{"})
@@ -260,7 +257,7 @@ class DocumentedCommandTests(CommandLineCase):
         lines = self.lines(process)
         self.assertEqual(process.returncode, 0, process.stdout)
         self.assertIn(f"Inspecting: {root.as_posix()}", lines)
-        self.assertIn("Inspection: frontend-only; stacks=vite-spa; start candidates=0; scaffold markers=0", lines)
+        self.assertIn("Inspection: frontend-only; stacks=vite-spa; start candidates=0", lines)
         self.assertIn("Ready: yes", lines)
 
     def test_the_documented_command_form_with_an_explicit_root_gives_the_same_answer(self):
@@ -276,7 +273,7 @@ class DocumentedCommandTests(CommandLineCase):
         lines = self.lines(process)
         self.assertEqual(process.returncode, 0)
         self.assertIn(f"Inspecting: {empty.as_posix()}", lines)
-        self.assertIn("Inspection: library/CLI; stacks=none; start candidates=0; scaffold markers=0", lines)
+        self.assertIn("Inspection: library/CLI; stacks=none; start candidates=0", lines)
         warnings = [line for line in lines if line.startswith("Inspection warning: no project evidence found")]
         self.assertEqual(len(warnings), 1)
         self.assertIn("--project-root", warnings[0])
@@ -311,11 +308,6 @@ class DocumentedCommandTests(CommandLineCase):
         self.assertIn(f"Candidate package.json:scripts.dev: touch {marker}", lines)
         self.assertFalse((root / marker).exists())
 
-    def test_the_scaffold_scan_reports_its_count(self):
-        root = self.project({"app.py": "# TODO\n# FIXME\n"})
-        process = self.cli("--project-root", ".", "--scan-scaffold", cwd=root, catalog=self.catalog)
-        self.assertIn("Inspection: not classified; stacks=none; start candidates=0; scaffold markers=2", self.lines(process))
-
     def test_a_missing_project_root_fails_the_run(self):
         holder = self.project({})
         process = self.cli("--project-root", str(holder / "absent"), "--detect-project", cwd=holder, catalog=self.catalog)
@@ -331,7 +323,7 @@ class DocumentedCommandTests(CommandLineCase):
         process = self.cli("--detect-project", cwd=root, catalog=self.catalog)
         lines = self.lines(process)
         self.assertEqual(process.returncode, 0, process.stdout)
-        self.assertIn("Inspection: frontend-only; stacks=vite-spa; start candidates=0; scaffold markers=0", lines)
+        self.assertIn("Inspection: frontend-only; stacks=vite-spa; start candidates=0", lines)
         self.assertIn("Ready: yes", lines)
 
     def test_a_walk_cut_short_is_not_ready_and_says_so(self):

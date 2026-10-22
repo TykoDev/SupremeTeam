@@ -162,59 +162,10 @@ for _name, _description in DESCRIPTION.items():
 # Routing-class table
 # --------------------------------------------------------------------------
 
-def _routing_rows():
-    """(class label, skills cell) for every row of the routing-class table."""
-    section = re.search(r"^## Routing classes\s*$(.*?)(?=^## )", DOCTRINE, re.S | re.M)
-    if section is None:
-        return []
-    rows = []
-    for line in section.group(1).splitlines():
-        if not line.startswith("|"):
-            continue
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        if len(cells) < 2 or cells[0] == "Routing class" or set(cells[0]) <= set("- "):
-            continue
-        rows.append((cells[0], cells[1]))
-    return rows
-
-
-def _routing_classes():
-    """class label -> set of skill names, resolving the cell's three shorthands.
-
-    The cell is written to be mechanically comparable, but it is prose: a bare
-    name, a directory glob (`safety-guardrails/*`), a path that disambiguates a
-    name (`taste/taste-review`), a manifest role in parentheses, `except
-    `ship``, and `not named in a row above`. A backticked token that is a
-    key of team-manifest.yaml is a role annotation, never a skill, which is why
-    the two are told apart against the manifest rather than by a hand-kept list.
-    """
-    labels = set(TEAM)
-    assigned, per_class = {}, {}
-    for label, cell in _routing_rows():
-        excepted = set(re.findall(r"\bexcept\s+`([^`]+)`", cell))
-        tokens = re.findall(r"`([^`]+)`", re.sub(r"\bexcept\s+`[^`]+`", " ", cell))
-        members = set()
-        for token in tokens:
-            if token in labels:
-                continue
-            if token.endswith("/*") or token.endswith("/"):
-                prefix = token.rstrip("*").rstrip("/")
-                members |= {n for n, d in DIRS.items()
-                            if d == prefix or d.startswith(prefix + "/")}
-            elif "/" in token:
-                members |= {n for n, d in DIRS.items() if d == token}
-            elif token in DIRS:
-                members.add(token)
-        if "not named in a row above" in cell:
-            members -= set(assigned)
-        members -= excepted
-        per_class[label] = members
-        for member in members:
-            assigned.setdefault(member, []).append(label)
-    return per_class, assigned
-
-
-ROUTING_CLASSES, ROUTING_ASSIGNMENT = _routing_classes()
+#: class label -> skill names, and skill name -> the labels that claim it, read
+#: by `_catalog.routing_classes`, which `test_orchestration.py` resolves the
+#: internal specialists with too.
+ROUTING_CLASSES, ROUTING_ASSIGNMENT = _catalog.routing_classes()
 CLASS_OF = {name: label
             for label, members in ROUTING_CLASSES.items() for name in members}
 
@@ -387,12 +338,8 @@ class AdvertisedTriggerTests(unittest.TestCase):
     @staticmethod
     def advertised_bullets(text: str):
         """Quoted phrasings, grouped by the bullet that advertises them."""
-        section = re.search(r"^##+\s*Use This Skill When\s*$(.*?)(?=^##\s|\Z)",
-                            text, re.S | re.M)
-        if section is None:
-            return []
         groups = []
-        for line in section.group(1).splitlines():
+        for line in (_catalog.section(text, "Use This Skill When") or "").splitlines():
             if not re.match(r"\s*[-*]\s", line):
                 continue
             quoted = [_normalise(q)
@@ -618,7 +565,7 @@ class RoutingClassTableTests(unittest.TestCase):
     """
 
     def test_the_table_parses(self):
-        rows = _routing_rows()
+        rows = _catalog.routing_rows()
         self.assertGreater(len(rows), 5,
                            "the routing-class table did not parse - check the heading")
         self.assertIn("Every skill in the catalog falls in exactly one row.", DOCTRINE,
@@ -645,7 +592,7 @@ class RoutingClassTableTests(unittest.TestCase):
     def test_every_name_in_the_table_exists(self):
         labels = set(TEAM)
         missing = []
-        for label, cell in _routing_rows():
+        for label, cell in _catalog.routing_rows():
             for token in re.findall(r"`([^`]+)`", cell):
                 if token in labels or token.endswith(("/*", "/")):
                     continue
@@ -696,7 +643,7 @@ class RoutingClassTableTests(unittest.TestCase):
         labels = set(TEAM)
         checked, wrong = 0, []
         claimed_by_key = defaultdict(set)
-        for label, cell in _routing_rows():
+        for label, cell in _catalog.routing_rows():
             for segment in cell.split(";"):
                 key = re.search(r"\(`([^`]+)`\)\s*$", segment.strip())
                 if not key or key.group(1) not in labels:
@@ -741,8 +688,6 @@ class EntryRoutingConsistencyTests(unittest.TestCase):
     believes the skill will decline a direct request.
     """
 
-    ENTRY_ROUTING = re.compile(r"^##+\s*Entry Routing\s*$", re.M)
-
     #: Sentences asserting this skill may not be entered directly. Deliberately
     #: narrow. The bare word `handoff` is not one of these: a standalone tool
     #: legitimately writes "owner handoff notes" and "session handoff
@@ -764,8 +709,9 @@ class EntryRoutingConsistencyTests(unittest.TestCase):
         self.assertGreater(len(ROUTING_CLASSES.get("Standalone tools", ())), 8)
 
     def test_every_internal_specialist_states_its_entry_routing(self):
+        """The loop guard lives in the `## Entry Routing` section; a heading with nothing under it states no rule."""
         missing = sorted(name for name in ROUTING_CLASSES["Internal specialists"]
-                         if not self.ENTRY_ROUTING.search(BODY[name]))
+                         if not (_catalog.section(BODY[name], "Entry Routing") or "").strip())
         self.assertEqual(missing, [],
                          "a skill reached only through an owner must say so under "
                          "`## Entry Routing`: " + ", ".join(missing))
@@ -875,30 +821,21 @@ class AdvertisedCorpusTests(unittest.TestCase):
     A duplicate here is worse than a description overlap, because the eval cannot
     score it at all — whichever skill the router picks, one of the two is marked
     wrong for a phrase both were told to claim.
+
+    The phrases are read by `_catalog.advertised_triggers`, the extractor
+    `trigger_eval.py` builds its corpus with, so these tests check exactly the
+    corpus the eval asks. A bullet the eval drops (prose about routing, or more
+    than twelve words) is not checked here either.
     """
 
     @staticmethod
     def _advertised():
-        """Bullet phrases per skill, quoted or bare, as the eval extracts them."""
+        """Bullet phrases per skill that has a `## Use This Skill When` section, as the eval extracts them."""
         found = {}
         for skill in sorted(SKILLS.rglob("SKILL.md")):
             text = skill.read_text(encoding="utf-8", errors="replace")
-            section = re.search(r"^## Use This Skill When\s*$(.*?)^## ", text, re.M | re.S)
-            if not section:
-                continue
-            phrases = []
-            for line in section.group(1).splitlines():
-                line = line.strip()
-                if not line.startswith("- "):
-                    continue
-                body = line[2:]
-                quoted = re.findall(r'"([^"]{4,90})"', body)
-                if quoted:
-                    phrases.extend(quoted)
-                else:
-                    body = re.sub(r"\s+[\u2014-]\s+.*$", "", body)
-                    phrases.append(re.sub(r"[`*]", "", body).strip(" ."))
-            found[skill.parent.relative_to(SKILLS).as_posix()] = phrases
+            if _catalog.section(text, "Use This Skill When") is not None:
+                found[skill.parent.relative_to(SKILLS).as_posix()] = _catalog.advertised_triggers(text)
         return found
 
     def test_the_scan_found_bullets_to_check(self):

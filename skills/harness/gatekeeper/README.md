@@ -159,14 +159,15 @@ at the four with a phase gatekeeper it revalidates after that gatekeeper, and
 at the other six it is the only gatekeeper. Its scope is not limited to the
 phase-to-phase handoffs.
 
-Thirty-three evidence keys are artifact-backed, meaning the value must reference
+Thirty-eight evidence keys are artifact-backed, meaning the value must reference
 a path in the package's `artifact_hashes` map rather than a bare claim:
-`decisions`, `architecture`, `plan`, `taste_snapshot`, `design_inventory`,
-`taste_grilling`, `design_directions`, `mock_set`, `mock_parity`,
-`mock_rendering`, `selection`, `selected_variant`, `parity_evidence`, `tests`,
-`runtime`, `executed_probes`, `rendered_verification`, `threat_model`,
+`decisions`, `architecture`, `interfaces`, `plan`, `acceptance`, `taste_snapshot`,
+`design_inventory`, `taste_grilling`, `design_directions`, `mock_set`, `mock_parity`,
+`mock_rendering`, `selection`, `selected_variant`, `parity_evidence`,
+`approved_design_revision`, `implementation`, `tests`, `runtime`,
+`executed_probes`, `rendered_verification`, `threat_model`,
 `denial_path_evidence`, `reproduction`, `evidence_chain`, `test_matrix`,
-`link_report`, `validation_report`, `deploy_config`, `verification_plan`,
+`link_report`, `validation_report`, `approved_delivery`, `deploy_config`, `verification_plan`,
 `rollback_plan`, `preference_diff`, `confirmation`, `conflict_analysis`,
 `persistence_result`, `effective_profile`, and `taste_review_record`. Fifteen
 keys accept a sanctioned applicability record instead (`security_evidence`,

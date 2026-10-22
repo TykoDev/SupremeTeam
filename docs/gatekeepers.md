@@ -4,7 +4,7 @@ Four gatekeepers. Approval is earned against evidence on disk, never asserted.
 
 | Gatekeeper | Sits at | Judges |
 |---|---|---|
-| `gatekeeper-design` | design phase exit | Design specs, architecture decisions, design-system coherence, requirement completeness |
+| `gatekeeper-design` | design phase exit and `redesign-review` | Design specs, architecture decisions, design-system coherence, requirement completeness |
 | `gatekeeper-build` | build phase exit | Production code, test quality, hardening evidence, completeness claims |
 | `gatekeeper-code` | review phase exit | Review accuracy, finding evidence, severity calibration |
 | `gatekeeper-admiral` | every boundary | The crossing: lineage, boundary-to-package match, blocked phrases, the next consumer's contract |
@@ -20,7 +20,8 @@ maps `SHIP`, `ITERATE` and `BLOCKED` to APPROVED, REVISE and ESCALATE.
 keys, artifact-backed keys, sanctioned fallbacks, typed records, finding and
 revise policy, and the one submitter. `skills/harness/gatekeeper/check.py` loads
 it; a missing or malformed spec is an engine error, never a pass. The table
-mirrors the file and is drift-tested against it.
+mirrors the file; its boundary, submitter and evidence columns are drift-tested
+against it.
 
 | Boundary | Guards | Submitter | Required evidence |
 | --- | --- | --- | --- |
@@ -29,7 +30,7 @@ mirrors the file and is drift-tested against it.
 | `build-to-review` | BUILD to REVIEW | build-management | `approved_design_revision` `implementation` `tests` `runtime` `traceability` `security_evidence` |
 | `review-to-delivery` | REVIEW to GATE to COMPLETE | code-chief | `review_verdict` `findings` `executed_probes` `rendered_verification` `residual_risk` `revision_lineage` |
 | `security-review` | security pipeline to GATE to COMPLETE | cso | `scope` `threat_model` `findings` `vulnerability_scan` `denial_path_evidence` `remediation_plan` `residual_risk` |
-| `investigation-review` | investigation to the owning phase | investigate | `scope` `reproduction` `mechanism` `evidence_chain` `fix_path` `residual_uncertainty` |
+| `investigation-review` | investigation to GATE to the owning phase, or COMPLETE | investigate | `scope` `reproduction` `mechanism` `evidence_chain` `fix_path` `residual_uncertainty` |
 | `qa-review` | testing pipeline to GATE to COMPLETE | qa | `scope` `test_matrix` `executed_probes` `defects` `fixes_applied` `residual_risk` |
 | `taste-review` | TASTE to GATE to COMPLETE or consuming pipeline | taste | `scope` `intent` `before_revision` `preference_diff` `confirmation` `conflict_analysis` `policy_check` `persistence_result` `effective_profile` `consumer_handoff` `taste_review_record` `residual_uncertainty` |
 | `skill-maker-to-delivery` | skill-maker pipeline to GATE to COMPLETE | skill-maker | `skills` `team_manifest` `link_report` `validation_report` |
@@ -56,17 +57,21 @@ Waivable keys carry a typed applicability record (`applicable: false`, `reason`,
 `before_revision`, `consumer_handoff`, `residual_uncertainty`; at
 `redesign-review`, `selected_variant`, `parity_evidence`, `rendered_verification`
 and `accessibility_evidence` stand down together on the wording for a `merge` or
-`deferred` selection, and `mock_rendering` has no fallback. Any other string, or
-any other wording, fails. `confirmation` has no fallback. Hashes fold text line
-endings to LF; `python skills/scripts/content_hash.py <path>` prints one.
+`deferred` selection, and `mock_rendering` has no fallback. A record with any
+other reason fails, and at schema 2 so does the bare wording without a record.
+`confirmation` has no fallback. Hashes fold text line endings to LF;
+`python skills/scripts/content_hash.py <path>` prints one.
 
 ## Typed evidence records
 
 A manifest inside a run declares schema 2 and is checked as schema 2 either way.
 The one place schema 1 still passes is a flat package outside a run: exit 0 there
-means the keys are present and the hashes hold, and the result warns that no typed
-record, waiver wording or finding policy was checked; a gatekeeper returns REVISE
-for a schema-2 manifest instead of approving it.
+means the keys are present and the hashes hold. The result warns that typed
+records and the finding policy were not checked and that boundary and owner were
+not required, and a bare sanctioned wording passes there without an applicability
+record; an applicability record, and a boundary or owner the manifest declares,
+are still checked. A gatekeeper returns REVISE for a schema-2 manifest instead of
+approving it.
 
 | Type | Keys | Must carry |
 |---|---|---|
@@ -84,7 +89,7 @@ for a schema-2 manifest instead of approving it.
 | `trace_map` | `traceability` | Every approved `AC-<n>` traced to changes and to tests in the tests log; every changed file traced |
 | `security_seed` | `security_seed` | `applicable`, `scope`, `decided_by`, `architecture_revision`, `reason`, `boundaries` with id and control |
 | `human_go` | `human_go_required` | `decision: go`, approver, approval reference, ISO timestamp, revision equal to `approved_delivery` |
-| `preference_diff`, `confirmation`, `conflict_analysis`, `persistence_result`, `effective_profile`, `consumer_handoff` | the Taste keys | The record shapes in [`taste-doctrine.md`](../skills/taste-doctrine.md) |
+| `preference_diff`, `confirmation`, `conflict_analysis`, `persistence_result`, `effective_profile`, `consumer_handoff` | the Taste keys | The record shapes in [`gates.yaml`](../skills/gates.yaml) `evidence_type_rules` |
 | `variant_set` | `mock_set`, `selected_variant` | Exactly four mocks or exactly one variant, each with hashed files |
 | `selection` | `selection` | Hashed report, `decision` of `variant`, `merge` or `deferred`, `chosen` and `recommended` ids, `decided_by`, `decided_at`, `basis` |
 
@@ -130,8 +135,9 @@ does not write it as a verdict.
 | REVISE | Back to the owner with every finding at once, grouped by owner; only for a mechanical failure, a Critical, or an unresolved Major |
 | ESCALATE | Comes to you |
 
-Two REVISE rounds per boundary, then the dispute is escalated with both
-positions. Gatekeepers never edit a package.
+Three REVISE rounds per boundary, then the dispute is escalated with all three
+packets and their verdict records; there is no fourth submission. Gatekeepers
+never edit a package.
 
 A verdict record carries `verdict_id`, `package_fingerprint` and
 `gate_spec_digest`: sha256 of public inputs, not signatures. It is reusable only
@@ -154,7 +160,7 @@ when `check.py --prior` reports `prior_reusable: true`. At delivery, re-run
 | `rerun_scope` | The lead re-runs only the stages the packet names or that depend on changed evidence; a key it authors itself is fixed in place |
 | `cross_stage_scope` | `gatekeeper-admiral` judges the crossing and carries the phase gate's adequacy judgment, read from the phase verdict record's own `judgment`, unless evidence changed or the phase verdict was not APPROVED; at the six boundaries with no phase gatekeeper it judges every key |
 | `grounding` | Every judgment finding cites a decision, an acceptance row, a contract section or a contradiction, plus hashed anchors when it blocks; `check.py --judgment` checks it |
-| `cycle_cap` | Two rounds, then escalate |
+| `cycle_cap` | Three rounds, then escalate |
 
 The phase verdict (`verdict_<boundary>.json`) and the cross-stage verdict
 (`verdict_<boundary>.cross-stage.json`) sit side by side; the second reads the
@@ -163,8 +169,8 @@ first through `--prior` and never overwrites it.
 ## Posture
 
 Every gatekeeper demands evidence for every claim, grades findings Critical,
-Major, Minor or Info, enforces the cycle cap, writes its verdict to the audit
-trail, and rejects a cross-cutting constraint that names no lifecycle layer
+Major, Minor or Info, writes its verdict record through `check.py --verdict-out`,
+and rejects a cross-cutting constraint that names no lifecycle layer
 ([`harness-doctrine.md`](../skills/harness-doctrine.md) §5). A package that
 passed both validators with only Minor or Info findings is approved with them
 attached.

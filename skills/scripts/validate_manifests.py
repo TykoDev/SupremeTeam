@@ -9,7 +9,7 @@ Checks five contracts and the agreements between them:
   runtime-manifest.yaml  runtime floor, launchers, commands, CI matrix
   package-manifest.yaml  include/exclude and the delivery contract
 
-It also confirms that every skill path named in the Admiral agent manifest's
+It also confirms that every skill path named in an agent manifest's
 ``delegates_to`` list resolves to a SKILL.md on disk.
 
 Two groups of checks read files that sit beside ``skills/`` rather than inside
@@ -18,6 +18,25 @@ documentation mirrors. An installed copy carries only ``skills/`` (Install.md), 
 they run when the directory holding ``skills/`` looks like a repository checkout
 and the report says ``repository_checks: false`` when they were skipped.
 
+An installed copy may hold only the teams chosen at install time (``--team``).
+The installers record what they put there in ``.supremeteam-manifest``, one
+``item <name>`` line per top-level entry, and an installed copy is checked against
+that record. Only the recorded items are read, so the user's own skills beside them
+do not count. The record names items, not the skills inside them, so each roster
+skill is placed: at the skill_path an agent manifest in a recorded item gives it,
+else at its ``UNDELEGATED_SKILLS`` path, else at the top level under its own name.
+A skill placed in a recorded item that has no SKILL.md there is an error; one placed
+in an item the record leaves out is listed under ``not_installed``. A checkout is
+always checked in full, and so is an installed copy whose record is missing (a hand
+copy) or cannot be read; ``install_record`` in the report says which applied.
+
+Checked in full, every skill must sit where that placement would put it in any
+install that holds its item: a skill nested in an item is named at its path by an
+agent manifest in the same item or in admiral's, which every install holds, or is
+listed in ``UNDELEGATED_SKILLS``. So a skill no recorded manifest names is either at
+the top level or inside an item the install does not hold, and the top-level place
+decides the same way for both.
+
 Output: a JSON report on stdout. Exit 0 when clean, 1 when a contract is
 violated or unreadable.
 """
@@ -25,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -54,6 +74,18 @@ CI_PYYAML_VARIANTS = {"with", "without"}
 # A command carrying one of these cannot run as written.
 PLACEHOLDER_MARKS = ("<", "[")
 REPOSITORY_MARKERS = ("README.md", "docs", ".github")
+# The record install.sh and install.ps1 write into every install root, and the item
+# names they accept: one path component that starts with neither a dot nor a dash.
+INSTALL_RECORD = ".supremeteam-manifest"
+INSTALL_RECORD_HEADER = "supremeteam-manifest 1"
+INSTALL_ITEM_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*")
+# The front door's agent manifest. admiral is installed with every team, so the
+# skills it delegates to are placed in any install.
+FRONT_DOOR_MANIFEST = "admiral/agent/agent-manifest.yaml"
+# A skill nested in an item that no agent manifest delegates to, and its path. Every
+# other skill is placed by the manifests or sits at the top level under its own
+# name; check_skill_places holds a catalog checked in full to that.
+UNDELEGATED_SKILLS = {"taste-review": "taste/taste-review"}
 DOCUMENTATION_MIRRORS = (
     "AGENTS.md", "README.md", "docs/architecture.md", "docs/skills.md",
     "docs/gatekeepers.md", "docs/directory-structure.md",
@@ -214,9 +246,9 @@ def check_gates(gates: dict[str, Any], owners: set[str], errors: list[str]) -> N
         if kind not in type_names and kind not in declared:
             errors.append(f"gates.yaml: evidence_type_params for unknown record type or evidence key {kind!r}")
     policy = gates.get("revise_policy")
-    if not isinstance(policy, dict) or policy.get("cycle_cap") != 2 or not all(
+    if not isinstance(policy, dict) or policy.get("cycle_cap") != 3 or not all(
             str(policy.get(k, "")).strip() for k in ("self_check", "one_packet", "parallel_fix", "delta_review")):
-        errors.append("gates.yaml: revise_policy must declare self_check, one_packet, parallel_fix, delta_review, and cycle_cap 2")
+        errors.append("gates.yaml: revise_policy must declare self_check, one_packet, parallel_fix, delta_review, and cycle_cap 3")
 
 
 def _skills_path(root: Path, value: str) -> Path:
@@ -237,6 +269,39 @@ def is_repository(root: Path) -> bool:
     checkout, and the check that reads the missing file fails loudly.
     """
     return any((root.parent / name).exists() for name in REPOSITORY_MARKERS)
+
+
+def install_record(root: Path) -> tuple[set[str] | None, str]:
+    """The top-level items the installer recorded in ``root``, and what was read.
+
+    None means check every skill: there is no record, as a hand copy leaves it, or
+    the record cannot be read, which is no reason to check less. The second value
+    says which, for the report.
+    """
+    path = root / INSTALL_RECORD
+    if not path.exists() and not path.is_symlink():
+        return None, "no install record: every skill is checked"
+    try:
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("not a regular file")
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError, ValueError) as exc:
+        return None, f"install record unreadable ({exc}): every skill is checked"
+    if not lines or lines[0] != INSTALL_RECORD_HEADER:
+        return None, f"install record unreadable (no {INSTALL_RECORD_HEADER!r} header): every skill is checked"
+    names = (line.removeprefix("item ").strip() for line in lines if line.startswith("item "))
+    items = {name for name in names if INSTALL_ITEM_RE.fullmatch(name)}
+    if not items:
+        return None, "install record unreadable (it lists no items): every skill is checked"
+    teams = next((line.removeprefix("teams ").split() for line in lines if line.startswith("teams ")), [])
+    return items, f"install record: teams {' '.join(teams) or 'not named'}; the recorded items are checked"
+
+
+def skill_directories(root: Path, installed: set[str] | None) -> list[str]:
+    """The directory name of every SKILL.md in the catalog, or in the recorded items only."""
+    if installed is None:
+        return [path.parent.name for path in root.glob("**/SKILL.md")]
+    return [path.parent.name for item in sorted(installed) for path in (root / item).glob("**/SKILL.md")]
 
 
 def _command_text(text: Any) -> str:
@@ -542,7 +607,7 @@ def pipeline_dependency_errors(name: str, pipeline: dict[str, Any]) -> list[str]
 
 
 def check_pipeline_mirrors(root: Path, team: dict[str, Any], ownership: dict[str, Any],
-                           gates: dict[str, Any], errors: list[str]) -> int:
+                           gates: dict[str, Any], errors: list[str], installed: set[str] | None = None) -> int:
     pipelines = _load(root / "pipelines.yaml", errors).get("pipelines", {})
     save = _load(root / "save-ownership.yaml", errors)
     if not isinstance(pipelines, dict) or not pipelines:
@@ -580,9 +645,19 @@ def check_pipeline_mirrors(root: Path, team: dict[str, Any], ownership: dict[str
         if pipeline not in phases:
             errors.append(f"save-ownership.yaml: missing phase directory {pipeline!r} for {pipeline}")
 
-    skill_count = len(list(root.glob("**/SKILL.md")))
-    if team.get("skill_count") != skill_count or len(members) != skill_count:
-        errors.append(f"team-manifest.yaml: skill_count/members must match {skill_count} skill directories")
+    skill_count = len(skill_directories(root, None))
+    if installed is None:
+        if team.get("skill_count") != skill_count or len(members) != skill_count:
+            errors.append(f"team-manifest.yaml: skill_count/members must match {skill_count} skill directories")
+    else:
+        # An install of chosen teams holds part of the roster, so the count on disk is
+        # not the roster's: the roster has to agree with itself, and every installed
+        # skill has to be on it.
+        if team.get("skill_count") != len(members):
+            errors.append(f"team-manifest.yaml: skill_count must match its {len(members)} distinct members")
+        unlisted = sorted(set(skill_directories(root, installed)) - members)
+        if unlisted:
+            errors.append(f"team-manifest.yaml: installed skills {unlisted} are not in the roster")
     if is_repository(root):
         texts: dict[str, str] = {}
         for name in DOCUMENTATION_MIRRORS:
@@ -653,24 +728,96 @@ def documentation_gaps(texts: dict[str, str], skill_count: int, taste_skills: in
     return gaps
 
 
-def check_agent_manifest(root: Path, errors: list[str]) -> int:
-    path = root / "admiral" / "agent" / "agent-manifest.yaml"
-    agent = _load(path, errors)
-    delegates = agent.get("delegates_to", [])
-    if not isinstance(delegates, list) or not delegates:
-        errors.append("admiral/agent/agent-manifest.yaml: delegates_to must be a non-empty list")
-        return 0
-    for entry in delegates:
-        if not isinstance(entry, dict):
-            errors.append("admiral agent manifest: delegates_to row must be a mapping")
+def agent_manifests(root: Path, installed: set[str] | None) -> list[Path]:
+    """The front door's agent manifest, then every other one in the catalog or in the recorded items."""
+    front = root / FRONT_DOOR_MANIFEST
+    if installed is None:
+        found = root.glob("**/agent/agent-manifest.yaml")
+    else:
+        found = (path for item in sorted(installed) for path in (root / item).glob("**/agent/agent-manifest.yaml"))
+    return [front, *sorted(path for path in found if path != front)]
+
+
+def check_agent_manifests(root: Path, errors: list[str],
+                          installed: set[str] | None = None) -> tuple[int, dict[str, set[tuple[str, str]]]]:
+    """Every delegate's skill_path holds a SKILL.md, unless the install record leaves its item out.
+
+    The front door's manifest must delegate; every other agent manifest is read the
+    same way. Returns the front door's delegate count, and where the manifests place
+    each skill: by skill name, every (skill_path, item of the manifest that names it).
+    """
+    places: dict[str, set[tuple[str, str]]] = {}
+    front_count = 0
+    for path in agent_manifests(root, installed):
+        relative = path.relative_to(root).as_posix()
+        owner = path.parent.parent.name
+        delegates = _load(path, errors).get("delegates_to", [])
+        if relative == FRONT_DOOR_MANIFEST:
+            if not isinstance(delegates, list) or not delegates:
+                errors.append(f"{relative}: delegates_to must be a non-empty list")
+                continue
+            front_count = len(delegates)
+        elif not isinstance(delegates, list):
+            errors.append(f"{relative}: delegates_to must be a list")
             continue
-        skill_path = str(entry.get("skill_path", "")).strip()
-        if not skill_path:
-            errors.append(f"admiral agent manifest: {entry.get('name')!r} has no skill_path")
+        for entry in delegates:
+            if not isinstance(entry, dict):
+                errors.append(f"{owner} agent manifest: delegates_to row must be a mapping")
+                continue
+            skill_path = str(entry.get("skill_path", "")).strip()
+            if not skill_path:
+                errors.append(f"{owner} agent manifest: {entry.get('name')!r} has no skill_path")
+                continue
+            places.setdefault(skill_path.rsplit("/", 1)[-1], set()).add((skill_path, relative.split("/", 1)[0]))
+            if installed is not None and skill_path.split("/", 1)[0] not in installed:
+                continue
+            if not (root / skill_path / "SKILL.md").is_file():
+                errors.append(f"{owner} agent manifest: skill_path {skill_path!r} has no SKILL.md")
+    return front_count, places
+
+
+def check_skill_places(root: Path, members: set[str], places: dict[str, set[tuple[str, str]]],
+                       errors: list[str]) -> None:
+    """Every skill sits where an install that holds its item would place it.
+
+    An install reads only the agent manifests in the items it holds, so a skill
+    nested in an item must be named at its path by a manifest in that item or in the
+    front door's, or be listed in UNDELEGATED_SKILLS. Otherwise an install that lost
+    it could not tell it missing from left out.
+    """
+    front = FRONT_DOOR_MANIFEST.split("/", 1)[0]
+    for name, path in UNDELEGATED_SKILLS.items():
+        if not (root / path / "SKILL.md").is_file():
+            errors.append(f"UNDELEGATED_SKILLS places {name} at {path}, which has no SKILL.md")
+    for skill in sorted(root.glob("**/SKILL.md")):
+        path = skill.parent.relative_to(root).as_posix()
+        name, item = skill.parent.name, path.split("/", 1)[0]
+        if name not in members or path == name or UNDELEGATED_SKILLS.get(name) == path:
             continue
-        if not (root / skill_path / "SKILL.md").is_file():
-            errors.append(f"admiral agent manifest: skill_path {skill_path!r} has no SKILL.md")
-    return len(delegates)
+        if not any(place == path and owner in (item, front) for place, owner in places.get(name, ())):
+            errors.append(f"{path}/SKILL.md: no agent manifest in {item}/ or {front}/ delegates to it there, "
+                          "so an install could not tell it missing from left out")
+
+
+def left_out_skills(root: Path, members: set[str], places: dict[str, set[tuple[str, str]]],
+                    installed: set[str], errors: list[str]) -> list[str]:
+    """The roster skills placed in an item the install record leaves out.
+
+    A skill with no SKILL.md in the recorded items is placed at the skill_paths the
+    recorded agent manifests give it, else at its UNDELEGATED_SKILLS path, else at
+    the top level under its own name. A place inside a recorded item is an error:
+    check_agent_manifests reports a skill_path, and this the places no manifest gives.
+    """
+    left_out = []
+    for name in sorted(members - set(skill_directories(root, installed))):
+        named = {place for place, _ in places.get(name, ())}
+        held = [place for place in sorted(named or {UNDELEGATED_SKILLS.get(name, name)})
+                if place.split("/", 1)[0] in installed]
+        if not held:
+            left_out.append(name)
+        elif not named:
+            errors.append(f"{INSTALL_RECORD}: {held[0].split('/', 1)[0]!r} is installed but has no {held[0]}/SKILL.md")
+    return left_out
 
 
 def validate(root: Path) -> dict[str, Any]:
@@ -690,18 +837,30 @@ def validate(root: Path) -> dict[str, Any]:
         if data and data.get("schema_version") != 1:
             errors.append(f"{name}: schema_version must be 1")
 
+    repository = is_repository(root)
+    if repository:
+        installed, record = None, "not read: a repository checkout is checked in full"
+    else:
+        installed, record = install_record(root)
+
     members = check_team(team, errors)
     artifact_ids = check_ownership(ownership, members, errors)
     check_gates(gates, set(ownership.get("owners", {}) or {}), errors)
     check_runtime(runtime, root, errors)
     check_package(package, errors)
-    pipeline_count = check_pipeline_mirrors(root, team, ownership, gates, errors)
-    delegate_count = check_agent_manifest(root, errors)
-    repository = is_repository(root)
+    pipeline_count = check_pipeline_mirrors(root, team, ownership, gates, errors, installed)
+    delegate_count, places = check_agent_manifests(root, errors, installed)
+    if installed is None:
+        check_skill_places(root, members, places, errors)
+        not_installed: list[str] = []
+    else:
+        not_installed = left_out_skills(root, members, places, installed, errors)
     if repository:
         check_ci_workflow(runtime, root.parent, errors)
 
     return {
+        "install_record": record,
+        "not_installed": not_installed,
         "repository_checks": repository,
         "root": str(root),
         "team_member_count": len(members),

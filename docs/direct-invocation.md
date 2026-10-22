@@ -41,16 +41,17 @@ required.
 | A root cause | `admiral`, delegating `investigate` | `Find the root cause of this failure.` |
 | A security audit | `admiral`, delegating `cso` | `Audit this codebase for security issues.` |
 | Product testing | `admiral`, delegating `qa` | `Test this product and fix what's broken.` |
-| A new skill or team | `skill-maker` | `Create a skill that [behavior].` |
-| Save or resume | `session-memory` | `Save where we are.` / `Resume from saved state.` |
+| A new skill or team | `admiral`, delegating `skill-maker` | `Create a skill that [behavior].` |
+| Save or resume | `admiral`, engaging `session-memory` | `Save where we are.` / `Resume from saved state.` |
 
 Each closes at its own boundary ([gatekeepers.md](gatekeepers.md)).
 
 ## Internal specialists
 
-Skills under `design/`, `build/` and `review/`, plus `taste-review`,
-`skill-creator` and `skill-reviewer`, are reached through their owning
-sub-orchestrator. A host that scans one level deep never lists them.
+Skills under `design/`, `build/` and `review/` other than their pipeline owners
+and gatekeepers, plus `taste-review`, `skill-creator` and `skill-reviewer`, are
+reached through their owning sub-orchestrator. A host that scans one level deep
+never lists them.
 
 ## Without skill routing
 
@@ -58,6 +59,6 @@ From a checkout, provide `AGENTS.md` and the `SKILL.md` as context:
 
 ```text
 Provide AGENTS.md and skills/admiral/SKILL.md, then ask: "Run the full pipeline for [description]."
-Provide AGENTS.md and skills/review/code-chief/SKILL.md, then ask: "Review this codebase."
-Provide AGENTS.md and skills/skill-maker/SKILL.md, then ask: "Create a skill that [behavior]."
+Provide AGENTS.md and skills/admiral/SKILL.md, then ask: "Review this codebase."
+Provide AGENTS.md and skills/admiral/SKILL.md, then ask: "Create a skill that [behavior]."
 ```

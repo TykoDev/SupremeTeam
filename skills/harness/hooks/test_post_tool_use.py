@@ -1,33 +1,38 @@
 #!/usr/bin/env python3
-"""The post-tool and prompt-submit hooks: the coverage sweep, the text they put in front of the model, and their fault trace.
+"""The post-tool hook (``post_tool_use.py``): trajectory hints, the coverage sweep, the text it shows the model, and its
+fault trace, through the registered script where the wiring matters and in this process where the decision does.
 
+Trajectory hints  A failing or empty command repeated, or an oscillation, gets a recovery hint; history is kept per
+        host session, so independent processes without one share none.
+Coverage sweep  Coverage data is run evidence, never project-root residue: the sweep moves it into the active run's
+        phase (or the declared scratch class), keeps its structure, deletes nothing and is bounded per call.
 SEC-10  The sweep moved project-root files while a run was recorded read-only, and ran ``python -m coverage`` with an
         agent-writable directory first on ``sys.path`` (a planted ``coverage.py`` ran with the hook's authority).
 BUGH-23 The sweep filed residue under the run the pointer names without asking whether that run is active.
 SEC-18  Text taken from state files (run ids, file names) reached the model unescaped and unbounded.
 CR-13   Every ``except Exception: pass`` in these hooks failed open and left no trace; it now leaves a count by type.
-QR-PY-14 / QR-PY-04  Imports go through one bootstrap, never through a private name of another module, and the project
-        root is resolved in one place.
 """
 from __future__ import annotations
 
-import ast
 import json
 import os
 import subprocess
 import sys
-import tempfile
 import unittest
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
+import _state
+import _testkit as kit
+
 HOOK_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(HOOK_DIR))
-import _state  # noqa: E402
-import _testkit as kit  # noqa: E402
 
 BASH = {"session_id": "s", "tool_name": "Bash", "tool_input": {"command": "python -m pytest --cov"}, "tool_response": {"stdout": "ok", "exit_code": 0}}
+
+
+def bash_call(command: str = "python -m pytest --cov") -> dict:
+    return {"session_id": "sweep", "tool_name": "Bash", "tool_input": {"command": command},
+            "tool_response": {"stdout": "ok", "exit_code": 0}}
 
 
 def write(path: Path, value) -> None:
@@ -35,31 +40,17 @@ def write(path: Path, value) -> None:
     path.write_text(value if isinstance(value, str) else json.dumps(value), encoding="utf-8")
 
 
-def write_run(root: Path, run_id: str, *, status: str = "active", pointer: bool = True, phase_state: "str | None" = None) -> None:
-    """A coherent saved run: pointer, state, lock and a fresh heartbeat."""
-    saves = root / "skillset-saves"
-    now = datetime.now(timezone.utc).isoformat()
-    state = {"schema_version": 1, "run_id": run_id, "status": status, "session_pin": status == "active", "execution_mode": "test",
-             "active_owner": "test", "evidence_paths": ["skillset-saves"], "revision": 1, "timestamp": now}
-    if phase_state:
-        state["phase_state"] = phase_state
-    write(saves / "runs" / run_id / "_state.md", state)
-    write(saves / "runs" / run_id / "_lock.md", {"schema_version": 1, "run_id": run_id, "owner": "test", "revision": 1,
-                                                "status": "held" if status == "active" else "released", "session_pin": status == "active",
-                                                "heartbeat": now})
-    if pointer:
-        write(saves / "_latest.md", {"schema_version": 1, "run_id": run_id, "revision": 1, "updated_at": now})
-
-
-def drop_residue(root: Path) -> None:
-    for index in range(4):
+def drop_residue(root: Path, fragments: int = 4) -> None:
+    """Reproduce the observed explosion in miniature: parallel-mode fragments, a `.coverage/` tree with nested files,
+    and the HTML and nyc reports at the project root."""
+    for index in range(fragments):
         (root / f".coverage.host.1.{index}x").write_text(f"fragment-{index}", encoding="utf-8")
     nested = root / ".coverage" / "nested"
-    nested.mkdir(parents=True)
+    nested.mkdir(parents=True, exist_ok=True)
     (nested / "a.json").write_text("{}", encoding="utf-8")
-    (root / "htmlcov").mkdir()
+    (root / "htmlcov").mkdir(exist_ok=True)
     (root / "htmlcov" / "index.html").write_text("<html></html>", encoding="utf-8")
-    (root / ".nyc_output").mkdir()
+    (root / ".nyc_output").mkdir(exist_ok=True)
     (root / ".nyc_output" / "out.json").write_text("{}", encoding="utf-8")
 
 
@@ -67,16 +58,15 @@ def residue(root: Path) -> list:
     return sorted(p.name for p in root.iterdir() if p.name == ".coverage" or p.name.startswith(".coverage.") or p.name in ("htmlcov", ".nyc_output"))
 
 
+def post(payload, project: Path) -> subprocess.CompletedProcess:
+    """The registered script, as a host runs it."""
+    return kit.run_hook("post_tool_use.py", payload, project, text=True)
+
+
 class Project(unittest.TestCase):
     def setUp(self):
-        manager = kit.project()
-        self.root = manager.__enter__()
-        self.addCleanup(manager.__exit__, None, None, None)
-        patcher = mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": str(self.root), "HOME": str(self.root / "home")})
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        for name in ("SUPREMETEAM_PROJECT_DIR", "CODEX_WORKSPACE_DIR", "GITHUB_WORKSPACE", "SUPREMETEAM_SESSION_ID", "CLAUDE_SESSION_ID"):
-            os.environ.pop(name, None)
+        self.root = self.enterContext(kit.project())
+        self.enterContext(kit.in_project(self.root, HOME=str(self.root / "home")))
 
     def sweep(self, payload=None) -> str:
         output = kit.decide(payload or BASH, self.root, module="post_tool_use")
@@ -87,6 +77,203 @@ class Project(unittest.TestCase):
         return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
 
 
+class TrajectoryHintTests(unittest.TestCase):
+    def test_repeated_failing_command_emits_recovery_hint(self):
+        payload = {"session_id": "repeat", "tool_name": "Bash", "tool_input": {"command": "ls /nope"},
+                   "tool_response": {"stderr": "No such file or directory"}}
+        with kit.project() as project:
+            post(payload, project)
+            post(payload, project)
+            result = post(payload, project)
+        self.assertIn("same input", result.stdout)
+
+    def test_empty_output_streak_emits_recovery_hint(self):
+        with kit.project() as project:
+            for i in range(3):
+                result = post({"session_id": "empty", "tool_name": "Bash", "tool_input": {"command": f"true {i}"},
+                               "tool_response": {"stdout": "", "stderr": "", "exit_code": 0}}, project)
+        self.assertIn("empty output", result.stdout)
+
+    def test_nonprogressing_oscillation_emits_recovery_hint(self):
+        with kit.project() as project:
+            for command in ("cat missing-a", "cat missing-b", "cat missing-a", "cat missing-b"):
+                result = post({"session_id": "osc", "tool_name": "Bash", "tool_input": {"command": command},
+                               "tool_response": {"stderr": "No such file or directory"}}, project)
+        self.assertIn("oscillating", result.stdout)
+
+
+class TrajectoryIsolationTests(unittest.TestCase):
+    def _fail_payload(self) -> str:
+        return json.dumps({"tool_name": "Bash", "tool_input": {"command": "make test"},
+                           "tool_response": {"exit_code": 1, "stdout": "boom"}})
+
+    def _spawn_via_fresh_parent(self, project: Path) -> str:
+        """Run the post hook from a distinct parent process (an independent host)."""
+        wrapper = (
+            "import subprocess, sys, json;"
+            f"r = subprocess.run([sys.executable, r'{HOOK_DIR / 'post_tool_use.py'}'], input=sys.stdin.read(), text=True, capture_output=True);"
+            "sys.stdout.write(r.stdout)"
+        )
+        proc = subprocess.run([sys.executable, "-c", wrapper], input=self._fail_payload(), text=True, capture_output=True,
+                              env=kit.clean_env(project), check=False)
+        return proc.stdout
+
+    def test_independent_processes_without_session_id_do_not_share_history(self):
+        with kit.project() as project:
+            outputs = [self._spawn_via_fresh_parent(project) for _ in range(3)]
+        self.assertTrue(all(out.strip() == "" for out in outputs), outputs)
+
+    def test_same_session_id_still_accumulates(self):
+        with kit.project() as project:
+            payload = json.loads(self._fail_payload())
+            payload["session_id"] = "s-1"
+            outputs = []
+            for _ in range(3):
+                proc = post(payload, project)
+                outputs.append(proc.stdout)
+            self.assertIn("failed 3 times", outputs[-1])
+            files = list((project / ".harness-state" / "trajectories").rglob("*.json"))
+            self.assertEqual(len(files), 1)
+            self.assertNotIn("s-1", files[0].name, "identity is hashed, not embedded")
+
+    def test_environment_session_id_scopes_history(self):
+        with kit.project() as project:
+            payload = self._fail_payload()
+            for session in ("a", "a", "b"):
+                proc = kit.run_hook("post_tool_use.py", payload, project, text=True, SUPREMETEAM_SESSION_ID=session)
+            self.assertEqual(proc.stdout.strip(), "")
+            files = list((project / ".harness-state" / "trajectories").rglob("*.json"))
+            self.assertEqual(len(files), 2)
+
+
+class CoverageResidueSweepTests(unittest.TestCase):
+    """Coverage data is run evidence; the project root is never where it lives.
+
+    The observed failure was a `.coverage` tree of over 3000 files appearing at a
+    target project's root in under two minutes — parallel/per-process coverage
+    with nothing combining or relocating the fragments. The prose rule stops it
+    being created; this sweep is the mechanical backstop that repairs it on the
+    next tool call.
+    """
+
+    def _context(self, result) -> str:
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(result.stdout.strip(), "sweep produced no envelope")
+        return json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+
+    def test_residue_moves_into_the_active_run_keeping_relative_structure(self):
+        with kit.project() as project:
+            kit.write_run(project, "2026-09-17_sweep_a1b2c3")
+            drop_residue(project, 12)
+            result = post(bash_call(), project)
+            context = self._context(result)
+            dest = project / "skillset-saves" / "runs" / "2026-09-17_sweep_a1b2c3" / "build" / "evidence" / "coverage"
+            self.assertEqual(residue(project), [], "project root still holds coverage residue")
+            self.assertTrue(dest.is_dir(), context)
+            self.assertEqual(len(list(dest.glob(".coverage.host.1.*"))), 12)
+            # Relative structure survives the move.
+            self.assertEqual((dest / ".coverage" / "nested" / "a.json").read_text(encoding="utf-8"), "{}")
+            self.assertEqual((dest / "htmlcov" / "index.html").read_text(encoding="utf-8"), "<html></html>")
+            self.assertEqual((dest / ".nyc_output" / "out.json").read_text(encoding="utf-8"), "{}")
+            # Nothing is deleted: every fragment's bytes are still readable.
+            self.assertEqual((dest / ".coverage.host.1.0x").read_text(encoding="utf-8"), "fragment-0")
+        self.assertIn("build/evidence/coverage", context)
+        self.assertIn("Nothing was deleted", context)
+        self.assertIn("COVERAGE_FILE", context)
+        self.assertIn("never run coverage in parallel", context.lower())
+
+    def test_the_sweep_is_bounded_per_call(self):
+        """Bounded work is a doctrine requirement, not an optimisation: the hook
+        runs on every command action and must never walk an unbounded tree."""
+        import post_tool_use
+
+        cap = 12
+
+        def scan(entries: int) -> tuple:
+            with kit.project() as project:
+                for number in range(entries):
+                    (project / f".coverage.host.{number}").write_text("", encoding="utf-8")
+                with mock.patch.object(post_tool_use, "_RESIDUE_CAP", cap):
+                    found, truncated = post_tool_use._scan_root(project)
+            return len(found), truncated
+
+        self.assertEqual(scan(cap + 30), (cap, True), "the scan looks at no more entries than the bound and says it stopped")
+        self.assertEqual(scan(cap), (cap, False), "a root with exactly the bound's entries is read in full")
+        self.assertGreater(post_tool_use._RESIDUE_CAP, 0)
+
+    def test_unrecognised_phase_state_falls_back_to_build(self):
+        with kit.project() as project:
+            kit.write_run(project, "dispute-run", phase_state="DISPUTED_AWAITING_USER")
+            drop_residue(project, 12)
+            self._context(post(bash_call(), project))
+            self.assertTrue((project / "skillset-saves" / "runs" / "dispute-run" / "build" / "evidence" / "coverage").is_dir())
+
+    def test_without_an_active_run_residue_goes_to_the_declared_scratch_class(self):
+        with kit.project() as project:
+            drop_residue(project, 12)
+            context = self._context(post(bash_call(), project))
+            scratch = project / ".harness-state" / "test-work" / "coverage-residue"
+            self.assertEqual(residue(project), [])
+            stamps = list(scratch.iterdir())
+            self.assertEqual(len(stamps), 1, stamps)
+            self.assertEqual(len(list(stamps[0].glob(".coverage.host.1.*"))), 12)
+        self.assertIn("coverage-residue", context)
+        self.assertIn("No active run", context)
+
+    def test_frozen_boundary_entries_are_never_moved(self):
+        with kit.project() as project:
+            kit.write_guard(project, {"frozen_globs": ["htmlcov/**"], "blocked_globs": [".nyc_output/**"]})
+            kit.write_run(project, "frozen-run")
+            drop_residue(project, 12)
+            context = self._context(post(bash_call(), project))
+            dest = project / "skillset-saves" / "runs" / "frozen-run" / "build" / "evidence" / "coverage"
+            self.assertEqual(residue(project), [".nyc_output", "htmlcov"])
+            self.assertTrue((project / "htmlcov" / "index.html").is_file())
+            self.assertFalse((dest / "htmlcov").exists())
+            self.assertFalse((dest / ".nyc_output").exists())
+            self.assertEqual(len(list(dest.glob(".coverage.host.1.*"))), 12)
+        self.assertIn("frozen or blocked boundary", context)
+
+    def test_non_command_tools_sweep_nothing(self):
+        with kit.project() as project:
+            kit.write_run(project, "edit-run")
+            drop_residue(project, 12)
+            before = residue(project)
+            result = post({"session_id": "edit", "tool_name": "Edit", "tool_input": {"file_path": "src/app.py", "new_string": "x"},
+                           "tool_response": {"stdout": "ok", "exit_code": 0}}, project)
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(residue(project), before)
+
+    def test_clean_root_stays_silent(self):
+        with kit.project() as project:
+            kit.write_run(project, "clean-run")
+            result = post(bash_call("python -m unittest discover"), project)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+
+    def test_generated_roots_are_the_destination_not_the_residue(self):
+        with kit.project() as project:
+            kit.write_run(project, "roots-run")
+            drop_residue(project, 12)
+            post(bash_call(), project)
+            self.assertTrue((project / "skillset-saves" / "_latest.md").is_file())
+            self.assertTrue((project / "skillset-saves" / "runs" / "roots-run" / "_state.md").is_file())
+            self.assertTrue((project / ".harness-state").is_dir())
+
+    def test_a_trajectory_hint_carries_the_sweep_report_rather_than_hiding_it(self):
+        with kit.project() as project:
+            kit.write_run(project, "both-run")
+            payload = {"session_id": "both", "tool_name": "Bash",
+                       "tool_input": {"command": "coverage run -p -m pytest"},
+                       "tool_response": {"stderr": "No such file or directory"}}
+            post(payload, project)
+            post(payload, project)
+            drop_residue(project, 12)
+            context = self._context(post(payload, project))
+        self.assertIn("same input", context)
+        self.assertIn("[harness:coverage-residue]", context)
+
+
 class ReadOnlySweepTests(Project):
     """SEC-10(a): a read-only run may change only its allow list; moving root files is a write outside it."""
 
@@ -94,7 +281,7 @@ class ReadOnlySweepTests(Project):
         kit.write_guard(self.root, {"read_only": [{"run_id": "r1", "owner": "ops", "allow": allow, **extra}]})
 
     def test_residue_is_left_in_place_and_the_hint_says_why(self):
-        write_run(self.root, "r1")
+        kit.write_run(self.root, "r1")
         self.record_read_only(["skillset-saves/runs/r1/**"])
         drop_residue(self.root)
         before = residue(self.root)
@@ -108,7 +295,7 @@ class ReadOnlySweepTests(Project):
         self.assertIn("Nothing was moved or deleted", context)
 
     def test_the_hint_counts_what_it_left_and_names_only_the_fixed_classes(self):
-        write_run(self.root, "r1")
+        kit.write_run(self.root, "r1")
         self.record_read_only(["skillset-saves/runs/r1/**"])
         drop_residue(self.root)
         context = self.sweep()
@@ -118,14 +305,14 @@ class ReadOnlySweepTests(Project):
         self.assertNotIn("host.1", context)
 
     def test_a_released_read_only_record_no_longer_holds_the_sweep_back(self):
-        write_run(self.root, "r1")
+        kit.write_run(self.root, "r1")
         self.record_read_only(["skillset-saves/runs/r1/**"], released_at="2026-09-05T00:00:00Z")
         drop_residue(self.root)
         self.sweep()
         self.assertEqual(residue(self.root), [])
 
     def test_an_entry_inside_the_allow_list_is_moved_and_the_rest_are_not(self):
-        write_run(self.root, "r1")
+        kit.write_run(self.root, "r1")
         self.record_read_only(["skillset-saves/runs/r1/**", ".coverage.*"])
         drop_residue(self.root)
         context = self.sweep()
@@ -135,7 +322,7 @@ class ReadOnlySweepTests(Project):
         self.assertIn("in place", context)
 
     def test_an_allow_list_that_does_not_cover_the_destination_holds_everything_back(self):
-        write_run(self.root, "r1")
+        kit.write_run(self.root, "r1")
         self.record_read_only([".coverage.*", ".coverage", "htmlcov", ".nyc_output"])
         drop_residue(self.root)
         before = residue(self.root)
@@ -143,7 +330,7 @@ class ReadOnlySweepTests(Project):
         self.assertEqual(residue(self.root), before)
 
     def test_without_a_read_only_record_the_sweep_is_unchanged(self):
-        write_run(self.root, "r1")
+        kit.write_run(self.root, "r1")
         kit.write_guard(self.root, {"frozen_globs": ["docs/**"]})
         drop_residue(self.root)
         self.sweep()
@@ -239,7 +426,7 @@ class SweepDestinationTests(Project):
         return sorted(str(p.relative_to(base)) for p in base.rglob("*") if p.is_file()) if base.is_dir() else []
 
     def test_an_active_pinned_run_receives_the_residue(self):
-        write_run(self.root, "live")
+        kit.write_run(self.root, "live")
         drop_residue(self.root)
         self.sweep()
         self.assertIn(".nyc_output", self.moved_to("live"))
@@ -251,7 +438,7 @@ class SweepDestinationTests(Project):
                 case = self.root / status
                 case.mkdir()
                 with mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": str(case)}):
-                    write_run(case, "done", status=status)
+                    kit.write_run(case, "done", status=status)
                     drop_residue(case)
                     context = json.loads(kit.decide(BASH, case, module="post_tool_use"))["hookSpecificOutput"]["additionalContext"]
                 self.assertFalse((case / "skillset-saves" / "runs" / "done" / "build").exists(), status)
@@ -268,7 +455,7 @@ class SweepDestinationTests(Project):
         self.assertTrue(self.scratch())
 
     def test_a_run_whose_lock_went_stale_is_not_active(self):
-        write_run(self.root, "old")
+        kit.write_run(self.root, "old")
         lock = self.root / "skillset-saves" / "runs" / "old" / "_lock.md"
         data = json.loads(lock.read_text(encoding="utf-8"))
         data["heartbeat"] = "2020-01-01T00:00:00+00:00"
@@ -279,15 +466,15 @@ class SweepDestinationTests(Project):
         self.assertTrue(self.scratch())
 
     def test_the_active_run_is_used_even_when_the_pointer_names_a_finished_one(self):
-        write_run(self.root, "live", pointer=False)
-        write_run(self.root, "old", status="complete")
+        kit.write_run(self.root, "live", pointer=False)
+        kit.write_run(self.root, "old", status="complete")
         drop_residue(self.root)
         self.sweep()
         self.assertIn(".coverage", self.moved_to("live"))
         self.assertEqual(self.moved_to("old"), [])
 
     def test_the_run_phase_still_comes_from_the_recorded_phase_state(self):
-        write_run(self.root, "live", phase_state="QA_GATE_PENDING")
+        kit.write_run(self.root, "live", phase_state="QA_GATE_PENDING")
         drop_residue(self.root)
         context = self.sweep()
         self.assertIn(".coverage", self.moved_to("live", "qa"))
@@ -319,7 +506,7 @@ class ContextTextTests(Project):
         self.skipTest("no hostile run name this file system will hold")
 
     def test_a_hostile_run_directory_name_cannot_inject_text_into_the_hint(self):
-        write_run(self.root, self.hostile_name())
+        kit.write_run(self.root, self.hostile_name())
         drop_residue(self.root)
         context = self.sweep()
         self.assertIn("[harness:coverage-residue]", context)
@@ -328,16 +515,18 @@ class ContextTextTests(Project):
         self.assertEqual(context.count("\n"), 0)
 
     def test_a_very_long_run_name_is_capped_in_the_hint(self):
-        # As long a name as this path budget holds — at least 110 characters, far past the 60 the hint caps at, so
-        # the assertion is the cap doing the work and not a name that never reached the hint. The budget leaves
-        # room for the run's own record files below the platform's path limit.
-        room = 240 - len(str(self.root / "skillset-saves" / "runs" / "x"))
-        name = "r" * min(200, room)
-        self.assertGreaterEqual(len(name), 110, "this fixture cannot build a name past the cap")
-        write_run(self.root, name)
+        # As long a name as the path budget holds, and past the 60 characters the hint caps at. The budget is set by the
+        # deepest file the sweep moves into the run, which has to stay below the Windows path limit: set by the run
+        # directory alone, the move failed there, the hint was empty and an assertion that the name was cut held anyway.
+        deepest = self.root / "skillset-saves" / "runs" / "x" / "build" / "evidence" / "coverage" / ".coverage" / "nested" / "a.json"
+        name = "r" * min(200, 245 - len(str(deepest)) + 1)
+        self.assertGreater(len(name), 60, "this fixture cannot build a name past the cap")
+        kit.write_run(self.root, name)
         drop_residue(self.root)
         context = self.sweep()
-        self.assertNotIn("r" * 100, context)
+        self.assertIn("[harness:coverage-residue]", context)
+        self.assertIn("r" * 57 + "...", context, "the run's name reaches the hint, capped at the hint's 60 characters")
+        self.assertNotIn("r" * 58, context)
 
     def test_size_audit_names_are_neutralised_and_capped(self):
         import size_audit
@@ -380,12 +569,7 @@ class FaultTraceTests(Project):
 
     def test_the_registered_script_fails_open_with_exit_zero_and_a_count(self):
         """Run the file as ``__main__`` the way a host does, with one internal step made to fail."""
-        code = ("import runpy, sys, _state\n"
-                "def broken(*a, **k):\n    raise RuntimeError('SECRET-PAYLOAD-MUST-NOT-BE-RECORDED')\n"
-                "_state.record_observation = broken\n"
-                f"sys.argv = ['post_tool_use.py']\nrunpy.run_path({str(HOOK_DIR / 'post_tool_use.py')!r}, run_name='__main__')\n")
-        proc = subprocess.run([sys.executable, "-c", code], input=json.dumps(BASH).encode(), capture_output=True, cwd=HOOK_DIR,
-                              env=kit.clean_env(self.root, PYTHONPATH=str(HOOK_DIR)), check=False)
+        proc = kit.run_broken("post_tool_use.py", "record_observation", BASH, self.root, message=self.SECRET)
         self.assertEqual(proc.returncode, 0, proc.stderr.decode())
         self.assertEqual(proc.stdout, b"")
         self.assertNotIn(b"Traceback", proc.stderr)
@@ -430,27 +614,6 @@ class FaultTraceTests(Project):
                 kit.decide(payload, self.root, module="post_tool_use")
         self.assertCounted("PostToolUse", "KeyError")
 
-    def test_a_fault_in_user_prompt_submit_exits_zero_and_is_counted(self):
-        with mock.patch.object(_state, "record_observation", side_effect=RuntimeError(self.SECRET)):
-            self.assertEqual(kit.decide({"prompt": "build"}, self.root, module="user_prompt_submit", entry="run"), "")
-        self.assertCounted("UserPromptSubmit", "RuntimeError")
-
-    def test_a_fault_in_the_audit_improve_trigger_is_counted_and_the_prompt_proceeds(self):
-        import audit_improve
-
-        with mock.patch.object(audit_improve, "maybe_audit", side_effect=OSError(self.SECRET)):
-            output = kit.decide({"prompt": "/audit-improve now"}, self.root, module="user_prompt_submit")
-        self.assertEqual(output, "")
-        self.assertCounted("UserPromptSubmit", "OSError")
-
-    def test_a_payload_that_does_not_parse_is_counted_for_the_event_that_read_it(self):
-        proc = subprocess.run([sys.executable, str(HOOK_DIR / "user_prompt_submit.py")], input=b"{not json", capture_output=True,
-                              env=kit.clean_env(self.root), check=False)
-        self.assertEqual(proc.returncode, 0)
-        record = json.loads((self.root / ".harness-state" / "observations" / "UserPromptSubmit.json").read_text(encoding="utf-8"))
-        self.assertEqual(record["faults"], 1)
-        self.assertEqual(record["last_fault"]["type"], "JSONDecodeError")
-
     def test_a_clean_run_records_no_fault(self):
         kit.decide(BASH, self.root, module="post_tool_use")
         kit.decide({"prompt": "build something"}, self.root, module="user_prompt_submit")
@@ -485,105 +648,6 @@ class MaintenanceStateTests(Project):
         kit.write_guard(self.root, {"frozen_globs": ["a/**", {"glob": "b/**"}, {"glob": "c/**", "released_at": "x"}],
                                     "blocked_globs": [{"glob": "d/**", "released": True}, {"glob": "e/**"}]})
         self.assertEqual(sorted(size_audit._guard_globs(self.root)), ["a/**", "b/**", "e/**"])
-
-    def test_audit_improve_reports_the_guard_summary_with_the_same_predicate(self):
-        import audit_improve
-
-        kit.write_guard(self.root, {"blocked_globs": [{"glob": "d/**", "released": True}, {"glob": "e/**"}]})
-        self.assertEqual(audit_improve.audit(self.root)["guard_state"], {"blocked_globs": 1})
-
-
-class ImportStructureTests(unittest.TestCase):
-    """QR-PY-14 / QR-PY-04: one bootstrap, no private cross-module imports, one project-root resolver."""
-
-    OWNED = ("guard_hook", "guard_state", "pre_tool_use", "post_tool_use", "user_prompt_submit", "size_audit", "audit_improve",
-             "_state", "_cmdscan", "_paths", "_fsutil", "_bootstrap", "save_run", "_saves", "verify_registration", "repair_registration",
-             "run_heartbeat")
-    HOOK_MODULES = {path.stem for path in HOOK_DIR.glob("*.py")} | {"data_formats", "save_taxonomy"}
-
-    def tree(self, name: str) -> ast.Module:
-        return ast.parse((HOOK_DIR / f"{name}.py").read_text(encoding="utf-8"))
-
-    def imported(self, name: str) -> set:
-        """Every module ``name`` imports, wherever in the file: a function-local import is an edge too."""
-        found = set()
-        for node in ast.walk(self.tree(name)):
-            if isinstance(node, ast.Import):
-                found.update(alias.name.split(".")[0] for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-                found.add(node.module.split(".")[0])
-        return found
-
-    def test_the_state_helper_imports_no_hook_module_above_it(self):
-        """`_state` is the lowest hook module. It imported `save_run`, which imports it, for the one heartbeat function."""
-        allowed = {"_bootstrap", "_fsutil", "save_taxonomy", "data_formats"}
-        self.assertEqual(self.imported("_state") & (self.HOOK_MODULES - allowed), set())
-        self.assertFalse(hasattr(_state, "refresh_run_heartbeat"), "the move leaves no alias behind")
-
-    def test_the_heartbeat_module_is_above_the_state_helper_and_the_writer_not_below(self):
-        self.assertLessEqual({"_state", "save_run"}, self.imported("run_heartbeat"))
-        for lower in ("_state", "save_run", "_saves", "_fsutil", "_bootstrap"):
-            with self.subTest(lower=lower):
-                self.assertNotIn("run_heartbeat", self.imported(lower))
-
-    def test_no_owned_module_imports_a_private_name_from_another_module(self):
-        offenders = []
-        for name in self.OWNED:
-            for node in ast.walk(self.tree(name)):
-                if isinstance(node, ast.ImportFrom) and node.module in self.HOOK_MODULES:
-                    offenders += [f"{name}: from {node.module} import {alias.name}" for alias in node.names
-                                  if alias.name.startswith("_") and not alias.name.startswith("__")]
-        self.assertEqual(offenders, [])
-
-    def test_owned_modules_import_what_a_module_defines_not_what_it_re_exports(self):
-        saves = self.tree("_saves")
-        defined = {node.name for node in saves.body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
-        defined |= {target.id for node in saves.body if isinstance(node, ast.Assign) for target in node.targets if isinstance(target, ast.Name)}
-        offenders = []
-        for name in self.OWNED:
-            for node in ast.walk(self.tree(name)):
-                if isinstance(node, ast.ImportFrom) and node.module == "_saves":
-                    offenders += [f"{name}: {alias.name}" for alias in node.names if alias.name not in defined]
-        self.assertEqual(offenders, [])
-
-    def test_only_the_bootstrap_edits_sys_path(self):
-        offenders = []
-        for name in self.OWNED:
-            if name == "_bootstrap":
-                continue
-            for node in ast.walk(self.tree(name)):
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("insert", "append", "extend"):
-                    owner = node.func.value
-                    if isinstance(owner, ast.Attribute) and owner.attr == "path" and isinstance(owner.value, ast.Name) and owner.value.id == "sys":
-                        offenders.append(f"{name}:{node.lineno}")
-        self.assertEqual(offenders, [])
-
-    def test_the_project_root_is_resolved_in_one_place(self):
-        names = set(_state.PROJECT_ENV)
-        offenders = []
-        for name in self.OWNED:
-            if name == "_state":
-                continue
-            for node in ast.walk(self.tree(name)):
-                if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in names:
-                    offenders.append(f"{name}:{node.lineno} {node.value}")
-        self.assertEqual(offenders, [])
-
-    def test_the_documented_environment_order_is_the_code_order(self):
-        self.assertEqual(_state.PROJECT_ENV, ("SUPREMETEAM_PROJECT_DIR", "CLAUDE_PROJECT_DIR", "CODEX_WORKSPACE_DIR", "GITHUB_WORKSPACE"))
-        readme = (HOOK_DIR / "README.md").read_text(encoding="utf-8")
-        positions = [readme.find(name) for name in _state.PROJECT_ENV]
-        self.assertTrue(all(position >= 0 for position in positions), positions)
-
-    def test_scripts_run_by_path_import_cleanly_from_another_directory(self):
-        with tempfile.TemporaryDirectory() as elsewhere:
-            for script in ("post_tool_use.py", "user_prompt_submit.py", "size_audit.py", "audit_improve.py", "guard_state.py"):
-                with self.subTest(script=script):
-                    proc = subprocess.run([sys.executable, str(HOOK_DIR / script), "--help"] if script in ("size_audit.py", "audit_improve.py", "guard_state.py")
-                                          else [sys.executable, str(HOOK_DIR / script)],
-                                          input=b"{}", capture_output=True, cwd=elsewhere, env=kit.clean_env(Path(elsewhere)), check=False)
-                    self.assertEqual(proc.returncode, 0, proc.stderr.decode())
-                    self.assertNotIn(b"Traceback", proc.stderr)
 
 
 if __name__ == "__main__":

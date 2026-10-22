@@ -16,10 +16,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-HOOKS = Path(__file__).resolve().parent
-sys.path.insert(0, str(HOOKS))
-import _testkit as tk  # noqa: E402
+import _testkit as tk
 
+HOOKS = Path(__file__).resolve().parent
 VERDICT = "skillset-saves/runs/r1/design/verdict_design-to-build.json"
 CROSS = "skillset-saves/runs/r1/design/verdict_design-to-build.cross-stage.json"
 DRAFT = "skillset-saves/runs/r1/design/verdict_design-to-build.judgment.json"
@@ -58,10 +57,7 @@ class VerdictWriterTests(Project):
 class GateWatchTests(Project):
     def setUp(self):
         super().setUp()
-        saved = os.environ.get("CLAUDE_PROJECT_DIR")
-        os.environ["CLAUDE_PROJECT_DIR"] = str(self.root)
-        self.addCleanup(lambda: os.environ.__setitem__("CLAUDE_PROJECT_DIR", saved) if saved is not None
-                        else os.environ.pop("CLAUDE_PROJECT_DIR", None))
+        self.enterContext(tk.in_project(self.root))
         import gate_watch
         self.watch = gate_watch
 

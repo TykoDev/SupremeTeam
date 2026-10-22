@@ -8,9 +8,10 @@ SupremeTeam/
 ├── QUICK-START.md                        # Install and first run
 ├── Install.md                            # The full installation procedure
 ├── AGENTS.md                             # Flat skill index for a checkout (not installed)
-├── BENCHMARK.md                          # Scores, routing accuracy, how each was measured
+├── BENCHMARK.md                          # Measured test, validator and lint results
 ├── CHANGELOG.md                          # What changed
 ├── CONTRIBUTING.md                       # Running the suites, fail-open and fail-loud, commits
+├── Test-Guide.md                         # End-to-end test session: a pipeline to deploy, then the log audit
 ├── LICENSE                               # MIT
 ├── ruff.toml                             # Lint rules CI enforces
 ├── .gitattributes                        # LF text in the repository, binary file types
@@ -21,8 +22,10 @@ SupremeTeam/
 │   ├── install.sh                        # macOS and Linux installer
 │   ├── install-items.txt                 # What the installers copy
 │   ├── install_hooks.py                  # Registers hooks, then verifies them
-│   ├── superseded/                       # Registry texts earlier releases shipped; an unedited copy is replaced on upgrade
 │   └── test_install.py                   # Installer suite
+├── tools/                                # Checkout-only utilities, each with a README and its own tests
+│   ├── run-audit/                        # Audits saved-run history and harness observations
+│   └── rescan-compare/                   # Compares a later re-scan report with the release-time one
 ├── docs/
 │   ├── architecture.md                   # Pipelines, tiers, execution modes
 │   ├── skills.md                         # Every skill and what it owns
@@ -32,7 +35,7 @@ SupremeTeam/
 │   ├── persistent-saves.md               # Save layout, locks, resume
 │   ├── direct-invocation.md              # Calling skills directly
 │   ├── directory-structure.md            # This file
-│   └── assets/                           # Diagrams used across the docs
+│   └── assets/                           # The logo and the diagrams used across the docs
 └── skills/
     ├── gates.yaml                        # Gate spec: 10 boundaries
     ├── pipelines.yaml                    # Pipeline map: 10 pipelines
@@ -54,7 +57,8 @@ SupremeTeam/
     ├── contracts/                        # Six canonical cross-phase contracts
     ├── tech-stacks/                      # 14 stack overlays + registry.yaml
     ├── scripts/                          # Shared deterministic tooling; its test_*.py suite sits in the same folder
-    │   ├── data_formats.py               # JSON and YAML with a stdlib fallback
+    │   ├── data_formats.py               # JSON and the catalog's YAML subset, no PyYAML
+    │   ├── file_safety.py                # Link test and atomic record write the scripts share
     │   ├── output_paths.py               # Resolves every generated destination
     │   ├── check_runtime.py              # Runtime contract check and the command line
     │   ├── project_inspection.py         # Read-only inspection behind --detect-project and friends
@@ -62,7 +66,6 @@ SupremeTeam/
     │   ├── language_entrypoints.py       # Python, Go and Rust entrypoints and start commands
     │   ├── script_commands.py            # Package-script and Makefile command reading
     │   ├── project_files.py              # Bounded read-only walk, text reads, path classes
-    │   ├── scaffold_scan.py              # Scaffold and placeholder marker scan
     │   ├── redaction.py                  # Secret redaction for every check_runtime report
     │   ├── scan_record.py                # Typed scan evidence records
     │   ├── check_parity.py               # Redesign mock and prototype parity against the inventory
@@ -71,10 +74,11 @@ SupremeTeam/
     │   ├── contract_floor.py             # Independent safety floor for the shipped gate spec
     │   ├── mcp_registry.py               # Read-only project MCP freshness/identity diagnostic
     │   ├── validate_manifests.py         # Manifest and cross-reference contracts
-    │   └── package_check.py              # Packaging enumeration and residue check
+    │   ├── package_check.py              # Packaging enumeration and residue check
+    │   └── _runtime_fixtures.py          # Test support for the check_runtime suites
     ├── validation/                       # Contract test suites and the two paid evals
     │   ├── __init__.py                   # Package marker
-    │   ├── _catalog.py                   # Reads the catalog with the production parser, for the suite
+    │   ├── _catalog.py                   # Shared readers for the suite and trigger_eval.py, on the production parser
     │   ├── run_eval.py                   # Run-level eval: which skills a real session registers
     │   ├── trigger_eval.py               # Trigger eval: does the right skill win
     │   └── test_*.py                     # The validation suite, listed under The test suites
@@ -100,7 +104,7 @@ SupremeTeam/
     │   │   ├── verify_registration.py    # Inspects host hook config without changing it
     │   │   ├── repair_registration.py    # Previews or applies a registration repair
     │   │   ├── check_readiness.py        # Python, hooks and saves as a capability map
-    │   │   ├── _testkit.py               # Test support for the guard suites
+    │   │   ├── _testkit.py               # Test support for the hooks suite: isolated runners and shared fixtures
     │   │   ├── README.md                 # Rules, limits, fault trace, and a manifest of every file here
     │   │   ├── .gitignore                # Runtime observations and bytecode caches
     │   │   └── test_*.py                 # The hooks suite, listed under The test suites
@@ -138,12 +142,10 @@ are in [CONTRIBUTING.md](../CONTRIBUTING.md#run-the-suites).
 - **Hooks**, `skills/harness/hooks/`:
   - the guard: `test_guard_rules.py`, `test_guard_cmdscan.py`, `test_guard_paths.py`,
     `test_guard_harness_files.py`, `test_guard_state.py`, `test_pre_tool_entry.py`,
-    `test_hooks_robustness.py`, `test_quality_audit.py`, `test_program_paths.py`
-  - the hooks and their state: `test_hooks.py`, `test_hooks_hardening.py`,
-    `test_hooks_observed.py`, `test_state_hardening.py`, `test_fsutil.py`,
-    `test_hooks_maintenance.py`
-  - the run record and its reader: `test_hooks_lifecycle.py`, `test_run_state.py`,
-    `test_saves_reader.py`, `test_quality_state.py`
+    `test_hooks_robustness.py`, `test_program_paths.py`
+  - the hooks and their state: `test_post_tool_use.py`, `test_user_prompt_submit.py`,
+    `test_run_heartbeat.py`, `test_state_hardening.py`, `test_fsutil.py`
+  - the run record and its reader: `test_run_state.py`, `test_saves_reader.py`
   - registration and readiness: `test_registration_contract.py`,
     `test_registration_hardening.py`, `test_installer_hooks.py`, `test_documented_flags.py`
   - maintenance audits: `test_size_audit.py`, `test_audit_improve.py`,
@@ -158,18 +160,18 @@ are in [CONTRIBUTING.md](../CONTRIBUTING.md#run-the-suites).
   `test_eval_tools.py`, `test_repository_hygiene.py`, `test_docs_inventory.py`,
   `test_lint_config.py`, `test_stdlib_only.py`, `test_contract_mirrors.py`
 - **Scripts**, `skills/scripts/`: `test_check_runtime_contract.py`,
-  `test_check_runtime_detection.py`, `test_check_runtime_layout.py`,
-  `test_check_runtime_redaction.py`, `test_check_runtime_scaffold.py`,
-  `test_check_parity.py`, `test_data_formats.py`, `test_package_check.py`,
-  `test_runtime_utilities.py`, `test_scan_record.py`, `test_validate_manifests.py`,
-  `test_contract_floor.py`, `test_mcp_registry.py`, `test_quality_examples.py`
-- **Taste**, `skills/taste/`: `test_taste_prefs.py`, `test_taste_store.py`
+  `test_check_runtime_layout.py`, `test_check_runtime_redaction.py`,
+  `test_stack_detection.py`, `test_project_classification.py`, `test_start_commands.py`,
+  `test_project_walk.py`, `test_check_parity.py`, `test_data_formats.py`,
+  `test_output_paths.py`, `test_package_check.py`, `test_scan_record.py`,
+  `test_validate_manifests.py`, `test_contract_floor.py`, `test_mcp_registry.py`
+- **Taste**, `skills/taste/`: `test_taste_prefs.py`, `test_taste_store.py`, `test_lock_contracts.py`
 - **Installers**, `scripts/`: `test_install.py`
 - **Skill-creator**, `skills/skill-maker/skill-creator/scripts/`: `test_aggregate_benchmark.py`,
-  `test_documentation.py`, `test_encoding.py`, `test_entry_points.py`, `test_generate_review.py`,
-  `test_improve_description.py`, `test_older_interpreters.py`, `test_package_skill.py`,
-  `test_quick_validate.py`, `test_regressions.py`, `test_run_eval.py`, `test_run_loop.py`,
-  `test_utils.py`
+  `test_cross_platform_packaging.py`, `test_documentation.py`, `test_encoding.py`,
+  `test_entry_points.py`, `test_generate_review.py`, `test_improve_description.py`,
+  `test_older_interpreters.py`, `test_package_skill.py`, `test_quick_validate.py`,
+  `test_regressions.py`, `test_run_eval.py`, `test_run_loop.py`, `test_utils.py`
 
 ## The `.yaml` specs
 
@@ -184,7 +186,7 @@ in the format it is in.
 |---|---|---|
 | `skillset-saves/` | Run state, locks, audit trails, evidence, gate packages | Ignored. Never commit |
 | `.harness-state/` | Guard records and trajectory observations | Ignored. Never commit |
-| `.harness-state/test-work/`, `eval-reports/`, `eval-workspaces/`, `packages/` | Test scratch, skill-creator reports and workspaces, packages built outside a run | Ignored. Never commit |
+| `test-work/`, `eval-reports/`, `eval-workspaces/`, `packages/` under `.harness-state/` | Test scratch, skill-creator reports and workspaces, packages built outside a run | Ignored. Never commit |
 | `**/__pycache__/`, `*.pyc` | Interpreter caches | Ignored. Never publish |
 
 `python skills/scripts/package_check.py --root .` enumerates what
@@ -203,7 +205,7 @@ files; a flattened or renamed tree breaks them.
   `review/`).
 - Standalone tools sit directly under `skills/` so a host that scans one level
   deep registers them by name: the 22 root-level skills register, the 31 nested
-  specialists are reached by path through the skill that delegates to them.
+  skills are reached by path through the skill that delegates to them.
 - Contracts, doctrines, manifests, `scripts/`, `validation/`, `tech-stacks/`, and
   `harness/` live at the skill-set root so every skill can resolve them.
 - `AGENTS.md` is a flat index of a checkout. The installers do not copy it and no
@@ -229,12 +231,12 @@ Supreme Team files or you name the host.
 
 | Component | Needs |
 |---|---|
-| Every skill | The root doctrines: `routing-doctrine.md`, `grill-me-doctrine.md`, `save-protocol.md`, and where relevant `design-doctrine.md`, `taste-doctrine.md`, `harness-doctrine.md`, `mcp-tools.md`. `performance-doctrine.md` is reached through `contracts/universal-frameworks.md`; no `SKILL.md` links it |
+| Every skill | The root doctrines it applies: `routing-doctrine.md` in every skill outside the standalone tools, and where relevant `grill-me-doctrine.md`, `save-protocol.md`, `design-doctrine.md`, `taste-doctrine.md`, `harness-doctrine.md`, `mcp-tools.md`. `performance-doctrine.md` is reached through `contracts/universal-frameworks.md`; of the `SKILL.md` files, only `build-management` and `code-chief` name it |
 | Every gate boundary | `gates.yaml` and `harness/gatekeeper/check.py` |
 | Every `gatekeeper-*` skill | `harness/gatekeeper/_gatecheck.py`, found by walking up to the skill-set root |
 | `admiral` at intake | `harness/hooks/verify_registration.py`, `check_readiness.py`, `save_run.py`, `mcp-tools.md` |
 | `session-memory` | `harness/hooks/save_run.py` as the only writer of the run record |
 | `commander` for the stack lock | `tech-stacks/registry.yaml`, `scripts/check_runtime.py` |
 | `architect` for UI work | `design-doctrine.md` |
-| Shared tooling | `scripts/data_formats.py` for every JSON and YAML read |
+| Shared tooling | `scripts/data_formats.py` for every `.yaml` spec and every YAML read |
 | Deterministic routing and guards | `harness/hooks/` registered with `-RegisterHooks` or `--register-hooks` |

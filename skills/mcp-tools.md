@@ -50,9 +50,9 @@ the first `checkpoint`; otherwise record `use-cache`, `not-needed`, or
 
 Use `Server:tool_name` in instructions for a discovered tool. Confirm its live
 availability and authorization before invoking it even when the cache is fresh.
-Installers preserve user-modified copies; they may replace an unedited shipped
-copy from a recognized prior release. Project caches are runtime state and are
-never installed or committed.
+Installers never replace an installed copy, edited or not; delete it and re-run
+the installer to get the blank template back. Project caches are runtime state
+and are never installed or committed.
 
 ## Global tools
 

@@ -52,7 +52,7 @@ session: `tools/run-audit/`) or in git-ignored scratch (`harness-test-work/`).
   `verified`, `not-applicable`, or `deferred` with an owner and a reopen
   trigger before a gate will pass.
 - Verdicts: `APPROVED | REVISE | ESCALATE`. A REVISE is one packet per round,
-  cycle cap 2, then escalate to the user.
+  cycle cap 3, then escalate to the user.
 - Gate results come in pairs at phase-gated boundaries: the phase gatekeeper's
   record and the cross-stage record, each written only by
   `skills/harness/gatekeeper/check.py --verdict-out`.

@@ -8,7 +8,7 @@ description: >-
   owner, not directly, even when the request is only "build it". Defers test
   authoring to `build/test-builder`, hardening to `build/security-builder`, and
   failure diagnosis to `build/debugger`.
-version: 1.1.0
+version: 1.1.1
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -108,7 +108,7 @@ Do not skip a mandatory build activity inside the canonical path; route scope ch
 | Scenario | Response |
 | --- | --- |
 | Invoked cold with no `### Save Context` block, no active run lock, and no named delegating owner | Write nothing and edit nothing. Return to `build/build-management` for the change list and the save path, then accept the delegation back. A cold caller supplies no approved scope, so any edit made here is unapproved production code. |
-| `build/gatekeeper-build` returns a REVISE naming the `implementation` key | Read the packet's `by_owner` group for this key only, fix every finding in it in one pass, re-hash each changed artifact, and hand the updated set back for a single resubmission. `../../gates.yaml` `revise_policy.cycle_cap` is 2; a third cycle escalates to the build owner instead of resubmitting. |
+| `build/gatekeeper-build` returns a REVISE naming the `implementation` key | Read the packet's `by_owner` group for this key only, fix every finding in it in one pass, re-hash each changed artifact, and hand the updated set back for a single resubmission. `../../gates.yaml` `revise_policy.cycle_cap` is 3; a third cycle escalates to the build owner instead of resubmitting. |
 | A required runner, linter, compiler, or migration tool is absent or fails to start in this environment | Do not infer the result. Record which check could not run, the command attempted, and the observed error, mark the affected surface unverified in the returned set, and escalate the environment gap to `build/build-management`. An unrun check is a gap, never a pass. |
 | The approved scope is missing a contract, migration dependency, or environment prerequisite required for a safe implementation | Stop before coding the risky surface, name the missing prerequisite, and hand the gap back to the build owner. |
 | The change requires generated code, vendored edits, or a third-party patch not covered by the approved scope | Isolate the non-first-party surface and require explicit approval instead of folding it silently into the implementation. |

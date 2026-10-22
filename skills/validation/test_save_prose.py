@@ -16,8 +16,11 @@ is the follow-up.
 """
 from __future__ import annotations
 
+import json
 import re
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -25,6 +28,7 @@ SKILLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILLS / "scripts"))
 sys.path.insert(0, str(SKILLS / "harness" / "hooks"))
 from data_formats import load_data  # noqa: E402
+from _catalog import number_word  # noqa: E402
 
 # An upper-case event name ordered appended: "append `SESSION_PIN_RELEASE`", "appends the `X`".
 ORDERED_APPEND = re.compile(r"\bappend(?:s|ed)?\s+(?:the\s+)?`([A-Z][A-Z_]{5,})`")
@@ -96,13 +100,29 @@ class ProseMatchesTheWriterTests(unittest.TestCase):
         patterns = next(entry for entry in policy["classes"] if entry["id"] == "core-run-record")["patterns"]
         self.assertEqual(quoted, sorted(patterns))
 
+    def test_save_protocol_class_count_matches_save_ownership(self):
+        declared = len(load_data(SKILLS / "save-ownership.yaml")["classes"])
+        stated = re.search(r"([A-Za-z-]+)\s+are declared;\s*the run-facing",
+                           (SKILLS / "save-protocol.md").read_text(encoding="utf-8"))
+        self.assertIsNotNone(stated, "save-protocol.md lost its 'N are declared; the run-facing' sentence")
+        self.assertEqual(number_word(declared), stated.group(1).lower())
+
+    @staticmethod
+    def default_owner() -> str:
+        """The owner `save_run.py create` records when it is given none, read from a run made in a scratch project."""
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "evidence.md").write_text("probe\n", encoding="utf-8")
+            proc = subprocess.run([sys.executable, str(SKILLS / "harness" / "hooks" / "save_run.py"), "create",
+                                   "--project-root", tmp, "--run-id", "probe-1", "--evidence", "evidence.md"],
+                                  cwd=tmp, capture_output=True, text=True, check=False)
+        return json.loads(proc.stdout)["owner"]
+
     def test_every_documented_save_command_names_the_lock_holder_as_owner(self):
         """Twelve skills told their agent to checkpoint with `--owner <self>`. `save_run.py` refuses every owner but the
         lock holder, and admiral takes the lock at `create` and keeps it, so each of those commands failed with
         `lock is owned by 'admiral'` at the first checkpoint of every delegated phase. A delegate records itself with
         `--set delegated_to=`; `--owner` is always the lock holder, which is the writer's default."""
-        writer = (SKILLS / "harness" / "hooks" / "save_run.py").read_text(encoding="utf-8")
-        holder = re.search(r'add_argument\("--owner",\s*default="([a-z-]+)"\)', writer).group(1)
+        holder = self.default_owner()
         command = re.compile(r"save_run\.py\s+(?:create|checkpoint|heartbeat|complete|block|release|recover)\b[^`\n]*")
         roots = [SKILLS, SKILLS.parent / "docs"]
         files = [path for root in roots if root.is_dir() for path in sorted(root.rglob("*.md"))]

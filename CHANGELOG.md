@@ -7,6 +7,242 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ## [Unreleased]
 
+### Installers run again (`scripts/`)
+
+- Both installers stopped before copying anything: commit 7f52033 deleted the archive
+  of old registry texts that `install-items.txt` still named and both installers
+  required. The archive is retired, not restored: the record that named it, the
+  comparison against it and their tests are gone. An installed `mcp-tools.md` is now
+  always kept as the user's, edited or not; delete it and re-run the installer to get
+  the blank template back.
+- `install.ps1` stopped at the first item with `Cannot bind argument to parameter 'Path'
+  because it is an empty string` on every run that moved nothing aside: `Move-IntoPlace`
+  joined a path under a backup folder that only exists when something is moved aside.
+  It now builds that path only for an item it moves aside. `scripts/test_install.py`
+  still never runs `install.ps1`; the fix was run by hand under Windows PowerShell 5.1
+  and PowerShell 7.6 (fresh install, existing registry kept, foreign item moved aside).
+- `scripts/test_install.py` and `test_installer_hooks.py` took the first `bash` on
+  `PATH`, which on Windows can be WSL's `System32\bash.exe`; it reads `C:\...` as a
+  relative name, so the `install.sh` parse check failed there. They now take the first
+  bash that can open a Windows path, else Git for Windows' own.
+
+### Documentation, logo and lint
+
+- `QUICK-START.md` is a short guide: install with the hooks, restart and check, first
+  use. Options, hosts, uninstalling and troubleshooting stay in `Install.md`.
+- `BENCHMARK.md` holds only results measured on the current tree: the seven suites,
+  the three validators and lint. The rubric scores, the routing figure and the earlier
+  run records are gone, because none of them was re-run on this tree.
+- `docs/assets/Logo.png` is the official logo and replaces `favicon.jpg` in the README
+  header. The image-budget tests read PNG headers as well as JPEG ones.
+- Every page in `docs/` was checked against `skills/` and the code it describes, and
+  the claims that no longer held are corrected. Among them: the routing example and
+  the loop-guard signal, the front-door rows for skill creation, saves and releases,
+  the cap of three in `gatekeepers.md`, the guard's behaviour with no record and what
+  `unfreeze` does, `save_run.py`'s degraded result and what `status` reports, the
+  roles of `researcher`, `prototyper` and `session-memory`, and the tree drawing,
+  which now shows `Test-Guide.md`, `tools/` and five test files it left out.
+- `ruff check .` failed at the CI pin (0.16.9): an unused import in
+  `test_cross_platform_packaging.py` and four `# noqa: E402` markers that suppressed
+  nothing, in `taste/test_lock_contracts.py` and `tools/run-audit/tests/test_run_audit.py`.
+  All five are removed.
+
+### Text corrected to match the code
+
+Each statement below disagreed with the code it describes. The code was taken as
+right and the text changed, and every corrected statement was checked by running
+that code: the installers, `save_run.py`, the guard and prompt hooks, `check.py`,
+`output_paths.py` and the pipeline graph. Behaviour is unchanged; the only runtime
+changes are message strings.
+
+- Inventory: the 31 nested skills are 23 internal specialists, five pipeline owners
+  and three phase gatekeepers, not 31 specialists (`routing-doctrine.md`,
+  `AGENTS.md`, `Install.md`). `AGENTS.md` lists `Test-Guide.md`, `tools/` and the
+  dotfiles among the checkout-only files and says the standalone tools sit directly
+  under `skills/`.
+- `Install.md`: `--register-hooks` on a machine with no detected host prints no
+  banner, only `Hook registration: skipped (no host detected)`.
+- `design/architect`: the Taste snapshot is not a start condition. `pipelines.yaml`
+  runs it beside research, and only the design `phase-gate` requires it.
+- Saves (`save-protocol.md`, `session-memory`, `admiral`, `save_run.py`, `_saves.py`,
+  the hooks README):
+  - records are owner-only on POSIX; on Windows they keep the directory's access list;
+  - a `degraded` result can follow a published revision, because the pointer write
+    and the audit append come after the state and lock;
+  - only `status --run-id` reports `interrupted`;
+  - a record carrying `access_denied` holds the session pin, and so does a fresh
+    run that a stale or missing pointer leaves `orphaned` (for a damaged pointer,
+    see the next section);
+  - `recover --reason` publishes the new lock and state before it appends its
+    audit event;
+  - no `refused` or `degraded` line is written when the audit append itself is what
+    failed;
+  - the pointer-failure and audit-failure reasons now say what the reader shows and
+    what settles it.
+- Guard (`harness-doctrine.md`, `guard_hook.py`, `guard_state.py`, `_state.py`,
+  `docs/harness.md`, the `careful` example): with no usable guard record only the
+  frozen, blocked and read-only rules go inert. The destructive-command and
+  single-writer rules apply anyway, the hook-file rule while a run is active, and
+  the unplaced-write rule while a run is active or a single-writer record is on disk.
+  `user_prompt_submit.py` and the hooks README state its order of checks and what
+  `/audit-improve` does; `repair_registration.py` and its docs say which failures
+  exit 2 and which exit 1.
+- Gates (`check.py`, `gates.yaml`, `docs/gatekeepers.md`, the three gatekeepers): a
+  schema-1 result checks applicability records and a declared boundary or owner, but
+  not typed records, the finding policy or the selection rule, and a bare sanctioned
+  wording still waives a key there. No fallback map names `mock_rendering`.
+- Paths (`output_paths.py`, `save-ownership.yaml`, `save-protocol.md`):
+  `global_preferences` resolves under the per-user data root outside the checkout,
+  and `--help` names that root.
+
+### Saves: a second run no longer starts beside a held one (`save_run.py`, `_saves.py`, the hooks)
+
+- `create`, a `checkpoint` that resumes a released run, and `recover --reason`
+  refused a second pin only when the save root read `active`, `orphaned`,
+  `conflicting` or `stale`. A damaged pointer (malformed, naming a missing run or a
+  revision the run does not have, or a directory) makes the root `corrupt`, which
+  hid the held run, so a second run could start beside a live one. They now refuse
+  beside every run in `held_runs`, whatever the pointer says, and name each with its
+  way out: complete, block or release it; `recover --reason` once it is the only
+  held run; `recover --rollback` for an interrupted publish; preserve and escalate
+  for a directory at its journal.
+- The same pointer hid the run from the hooks. `has_active_run`, which the guard's
+  hook-file rule and the prompt hook's pin reminder ask, now answers yes while any
+  held run's lock is fresh, mid-publish included, or while a record this account
+  cannot read may be one. The hook heartbeat keeps the one coherent held run alive
+  whatever the pointer says, and the write rewrites the damaged pointer from it;
+  never beside a second coherent held run, never a stale lock, never over a pointer
+  this account cannot read.
+- `access_denied` is carried on every classification, not only the one that stopped
+  at it, so a damaged pointer no longer hides a record this account cannot read.
+  `next_step`, `check_readiness` (`saves_next`, `saves_readable` and the
+  `--require-active-run` blocker) and the writer's refusals give the same access
+  step wherever it is present.
+- A directory, or a junction or link to one, where `_lock.md`, `_state.md`,
+  `_journal.json`, `_latest.md` or the audit trail belongs is damage on every
+  platform: `corrupt`, `<path> is a directory, not a file`, and the writer refuses or
+  degrades in those words. On Windows it was reported as `permission denied`, and a
+  junction there was read as a record this account may not read, so as a possible
+  held run. On Windows a write to one fails at once instead of retrying the replace
+  for about three seconds. A live run beside a directory at its journal still blocks
+  a second run, as before.
+- `status` JSON gains `held_runs` (`run_id`, `state`, `fresh`, `interrupted`,
+  `directory_at`); `status --run-id` reports `interrupted` only for a journal that is
+  a file; the `stale` next step says `recover --reason` reclaims only once the run is
+  the only held one.
+
+### Test suites and scripts consolidated (`skills/harness/hooks/`, `skills/scripts/`, `skills/validation/`)
+
+Fixed:
+
+- Hook tests could write into a real project. Their hand-written runners kept
+  `SUPREMETEAM_PROJECT_DIR`, so with it set in the shell the suite wrote into that
+  project, and one test registered hooks in its `.claude/settings.json`. Every runner
+  now goes through one clean environment in `_testkit.py`.
+- `test_documented_flags` took WSL's `bash` on Windows when started from PowerShell or
+  cmd.
+- Guard: inline Python that only calls string, list or dict methods
+  (`'s'.replace('a','b')`, `lst.remove('a')`, `{}.copy()`) was refused in a read-only
+  run or under a freeze, read as a file operation; so were `copy.copy(x)` and a
+  `replace` with no target, such as `datetime.now().replace(tzinfo=None)`. In the
+  other direction, a file function imported by name (`from shutil import rmtree as
+  r`), used as a value (`f = os.remove`) or reached through `getattr`, and Python
+  3.14's `Path.copy_into` and `move_into`, reached a frozen path. They are now read
+  as the functions they are, and a use the reader cannot place fails closed, so a few
+  harmless uses such as `help(os.remove)` are refused under a freeze or in a
+  read-only run. Shell commands launched through a function imported by name
+  (`from subprocess import run`, `from os import system as s`) or held in a variable,
+  a file function reached through a namespace (`vars(os)['remove']`), `exec` reached
+  under another name, `os.renames`, `os.mkfifo`, `os.mknod` and a temporary file made
+  with `dir=` are now read the same way. A write after `chdir`, or from a launcher
+  given a computed `cwd=`, cannot be placed and is refused there too. The hooks README
+  lists what the reader does not follow.
+- `save_run.py`: on POSIX the audit append followed a symbolic link at
+  `_audit-trail.md`, a dangling one included, and wrote elsewhere. It now refuses the
+  append (`degraded`, `<path> is a link, not a file`).
+- `verify_registration.py` hashed the test helper `_testkit.py`, so editing it read
+  as an enforcement change. An older record that lists it is not reported.
+- Six tests that could not fail now can; each was shown failing against a mutation.
+- `package_check.py`:
+  - on Windows a junction let files from outside the root into the archive. It now
+    refuses every link (a symlink, a junction or another name-surrogate reparse
+    point); cloud placeholders such as OneDrive files are packaged as before;
+  - a directory it cannot list exits 2 instead of passing;
+  - required assets are matched by their exact name;
+  - with `--out`, a file it cannot read exits 2 with an `engine_error` and leaves an
+    existing archive as it was, where it stopped with a traceback and a partial zip.
+- `check_parity.py` reads an inventory that starts with a byte-order mark (Windows
+  PowerShell 5.1 writes one) or is in the YAML subset, refuses duplicate JSON keys,
+  and leaves no `<out>.tmp` behind when the record cannot be moved into place; its
+  write errors read like `scan_record.py`'s.
+- `mcp_registry.py`: a workspace path containing `---` broke the cache's
+  frontmatter, so a fresh cache read as `mismatch`.
+- `check_runtime.py`:
+  - a script error in a nested `package.json` was blamed on the root `package.json`.
+    It is reported once, under its own path, and `"scripts": null` is a package with
+    no scripts;
+  - package scripts and Makefile recipes share one command vocabulary. A recipe that
+    starts a server with `fastapi`, `django`, `nest`, `ng serve`, or `python -m` with
+    uvicorn, gunicorn, flask, django or fastapi, now counts toward the
+    classification and is offered as a start command, and a package script that runs
+    `fastapi` is a backend signal. A FastAPI service started from a Makefile read as
+    `library/CLI`, so commander's `stack_lock` input changes for such projects.
+- `validate_manifests.py` failed the documented post-install check on a team-subset
+  install (`--team review`). In an installed copy it now reads the installer's record,
+  `.supremeteam-manifest`, and checks the recorded items: a skill whose item is
+  installed but whose `SKILL.md` is missing fails, and the skills of the items left
+  out are listed under `not_installed`. A checkout, and an installed copy with no
+  record or one it cannot read, are checked in full.
+
+Removed:
+
+- `scaffold_scan.py` and `check_runtime.py --scan-scaffold`, with their 29 tests. No
+  skill, document, manifest, CI step or hook used them.
+
+Changed:
+
+- The seven suites hold 2,556 tests where they held 2,586, and the three
+  reworked suites run faster: hooks in about 7.5 minutes instead of 10, scripts in
+  69 seconds instead of 85, validation in 29 instead of 40.
+  - hooks: the files named after audit rounds are merged into the files for their
+    subject; `test_hooks*` is re-cut by hook script (`test_post_tool_use.py`,
+    `test_user_prompt_submit.py`, `test_run_heartbeat.py`); the runners and
+    environments live in `_testkit.py`; the table-driven guard tests take a fast path;
+    the unused `_saves.classify_saves` and `_state._ROOT_MARKERS` are gone;
+  - scripts: one reader, atomic writer and link check in the new `file_safety.py`,
+    shared fixtures in `_runtime_fixtures.py`, the detection tests split by subject,
+    and `test_output_paths.py` for the path resolver;
+  - validation: a test that repeated another suite's check is removed only after the
+    test kept in its place was shown failing on the same mutation;
+    `test_repaired_findings.py` is split by subject; the revision-cap phrases are
+    computed from `gates.yaml`; pinned phrases became checks of the facts they state;
+    `_catalog.py` is the one shared reader and takes its checkout test from
+    `validate_manifests.py`; tests of a single program moved next to that program.
+- Upgrading: `verify_registration.py` and `check_readiness.py` report the hook files
+  this release changes as changed since registration. Record them with
+  `repair_registration.py --host <host> --record-hashes`, or reinstall with
+  `--register-hooks`.
+
+### REVISE cycle cap of three, stated everywhere (`gates.yaml` `revise_policy.cycle_cap`)
+
+- 90e1e4b raised `revise_policy.cycle_cap` from 2 to 3 and added the tests that pin the
+  three-round wording, but left `validate_manifests.py`, a gate test and 57 documents on
+  2: the validator rejected the shipped spec and 29 tests failed. Every restatement now
+  says 3. The third `REVISE` round on a boundary escalates with all three packets and all
+  corresponding verdict records, and there is no fourth submission. The 25 skills that
+  restate the cap carry a patch bump. `admiral` still said "escalate on the second failed
+  round" and "stop after two failed revision attempts"; both now name the third round,
+  and the cap test bans both phrasings.
+- The other repairs those tests pin, also left out of that commit: the `review/design-qa`,
+  `review/mr-robot` and `review/security-review` findings templates offered `blocking`, a
+  status `check.py` rejects; `setup-deploy` no longer quotes an unparseable config
+  verbatim in the replacement preview, showing its path, sha256 and parser error and only
+  what a redaction pass leaves; the gatekeeper README lists all 38 artifact-backed keys,
+  not 33; `review/cso`'s description carries the `even when` cue within its budget;
+  `design/prototyper`'s command templates no longer nest backticks; and six sentences in
+  `freeze`, `guard`, `gatekeeper-admiral` and `design/gatekeeper-design` no longer
+  address the reader.
+
 ### run-audit 1.0.0 (`tools/run-audit/`)
 
 - New zero-dependency console (Python >= 3.13, standard library only) that audits
@@ -239,8 +475,7 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   paths, peer platform support and post-persistence Taste review. The rubric TOC
   example was already correct and was revalidated, not re-scored.
 - `audit-improve` is declared as a standalone tool, not an internal specialist.
-  MCP template upgrades preserve edited seeds and recognize the prior unedited
-  template through an exact archived copy in `scripts/superseded/`.
+  MCP template upgrades preserve edited seeds.
 - Added explicit `adopt-legacy` guard recovery: recorded project-owner approval
   attributes bare globs without releasing protection or transferring owned records.
   CLI approval references are attested, not authenticated.
@@ -249,7 +484,7 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   computed-destination gaps without executing the commands. No sandbox is claimed.
 - Verification: 83 focused contract/documentation tests (2 skips), 6 MCP/example
   tests passed and 2 legacy-adoption tests passed. A full contract retry exceeded
-  300 seconds and is incomplete. MCP template and unedited-seed upgrade checks
+  300 seconds and is incomplete. MCP template checks
   passed; the edited-seed preservation retry exceeded 180 seconds and is incomplete.
   Historical scores, performance budgets and the
   outstanding suitable-host/CI matrix requirement are unchanged.
@@ -390,9 +625,8 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   (`install_hooks.py --claude-settings`, `--codex-hooks`, `--copilot-hooks`), and refused at project and
   local scope.
   `output_paths.py --kind product` refuses the version-control directory, the generated
-  roots, `skills/harness/` and the host registration files. The installers replace an
-  unedited registry from an earlier release (`scripts/superseded/`), report a failed
-  hook registration in the summary and exit with its status, and say whether an item
+  roots, `skills/harness/` and the host registration files. The installers report a
+  failed hook registration in the summary and exit with its status, and say whether an item
   was removed because it was not selected or is no longer shipped; `install.ps1`
   follows links on a destination before judging it.
 - The hook-hash record also covers the two `skills/scripts` modules the hooks import
@@ -428,10 +662,6 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
   have to be made readable to it (a mode or an ACL) or, once the run is closed, removed by an
   account that may delete them; never overwrite them. A hook refresh by an account that may not
   search the saves is no longer counted as a fault.
-- The installers recognise an unedited registry from an earlier release whatever line endings its
-  checkout gave it: a CRLF copy compares equal once the CR of each CRLF is dropped, in
-  `install.sh` and in `install.ps1`; a carriage return that ends no line, or a byte-order mark,
-  is still an edit.
 - The hook-hash record lives in the project the registration ran from, so another project reads
   `unrecorded` for the same hook files and an edit of them is not noticed there.
   `verify_registration.py` now prints an `integrity:` line naming the record it compared with, its
@@ -803,12 +1033,12 @@ bump for new behaviour, a patch for a fix. Skills not listed are unchanged at 1.
 test compares this list with the `version:` of every `SKILL.md`, so a bump that is not
 recorded here, or a record the skill does not carry, fails it.
 
-- `admiral` 2.3.0: the intake log is parsed as four fixed tables, and the verdict is read from the gate's own record; previously ceremony scaled to the change and a bounded cross-stage pass; previously native delegation grants and non-blocking MCP template intake; previously startup classification and shared-cap clarification; previously how its commands read in an installed copy, the eleven save-directory
+- `admiral` 2.3.1: escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second, and startup names `status --run-id` as the only form that reports `interrupted`, an `access_denied` record and a held run with a fresh lock, whatever the pointer says (`held_runs`), as holding the session pin, and `recover --reason` as reclaiming a stale lock only once it is the only held run; previously the intake log is parsed as four fixed tables, and the verdict is read from the gate's own record; previously ceremony scaled to the change and a bounded cross-stage pass; previously native delegation grants and non-blocking MCP template intake; previously startup classification and shared-cap clarification; previously how its commands read in an installed copy, the eleven save-directory
   classes, and what `create` carries.
-- `design/architect` 1.1.0: `interfaces` is a typed `interface_set` with `IF-<n>` ids that stand in the hashed artifact; previously directions use the reports destination; previously works from the stack the project already fixes, not a lock
+- `design/architect` 1.1.1: the Taste snapshot is not a start condition, because `pipelines.yaml` runs `taste-snapshot` beside research and requires it only at the design `phase-gate`; a snapshot that has not arrived yet is not the absent-snapshot failure; previously `interfaces` is a typed `interface_set` with `IF-<n>` ids that stand in the hashed artifact; previously directions use the reports destination; previously works from the stack the project already fixes, not a lock
   that comes later in the pipeline.
 - `design/engineer` 1.0.2: key-owner REVISE corrections arrive through commander; previously works from the detected stack, not a lock that comes later.
-- `design/commander` 1.2.0: `decisions`, `interfaces` and `acceptance` are typed source-of-truth records, and the verdict is read from the gate's own record; previously both validators in the self-check, concurrent taste/research and seed/plan stages, rerun scope on REVISE; previously native delegation grants; previously confirmed Admiral intake, explicit Taste snapshot and unconditional security assessment; previously states the stack-lock rule the engine enforces (every
+- `design/commander` 1.2.1: escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second; previously `decisions`, `interfaces` and `acceptance` are typed source-of-truth records, and the verdict is read from the gate's own record; previously both validators in the self-check, concurrent taste/research and seed/plan stages, rerun scope on REVISE; previously native delegation grants; previously confirmed Admiral intake, explicit Taste snapshot and unconditional security assessment; previously states the stack-lock rule the engine enforces (every
   declared version is one the registry offers), and its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
 - `design/planner` 1.1.0: every acceptance row carries a stable `AC-<n>` id that gate findings cite, and `acceptance` is a typed `acceptance_table` read from the hashed plan.
 - `design/design-mapper` 1.0.2: parity examples use real run paths; previously states what `check_parity.py` now refuses in an inventory.
@@ -826,48 +1056,51 @@ recorded here, or a record the skill does not carry, fails it.
   modules the hooks import, and Rule C reads a command aimed at the project root by what
   it would put into or remove from the record directories.
 - `unfreeze` 1.1.1: explicit legacy adoption keeps protection active; previously releases by the normalised glob and records the cap on a grant.
-- `gatekeeper-admiral` 1.3.0: judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; carries the phase judgment from the phase gate's own record; previously bounded cross-stage scope, severity threshold and resubmission batch rule; previously independent spec floor and typed security/human-go records; previously audit fixes for input containment, BOM manifests and confirmation-id consistency; previously a REVISE row for a schema-1 result, the typed-record
+- `gatekeeper-admiral` 1.3.1: a schema-1 result is read as checking applicability records while still letting a bare sanctioned wording stand in for one, and no fallback map names `mock_rendering`; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; carries the phase judgment from the phase gate's own record; previously bounded cross-stage scope, severity threshold and resubmission batch rule; previously independent spec floor and typed security/human-go records; previously audit fixes for input containment, BOM manifests and confirmation-id consistency; previously a REVISE row for a schema-1 result, the typed-record
   roster and what a typed record leaves unchecked.
-- `design/gatekeeper-design` 1.3.0: judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously no invented mock-rendering fallback; previously spec floor, exact layer citation and corrected research/UI slots; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, and the stack-lock and
+- `design/gatekeeper-design` 1.3.1: no fallback map, global or boundary, sanctions a wording for `mock_rendering`, and a schema-1 result is read as checking applicability records while still letting a bare sanctioned wording stand in for one; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously no invented mock-rendering fallback; previously spec floor, exact layer citation and corrected research/UI slots; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, and the stack-lock and
   selection rules the engine now enforces.
 - `build/gatekeeper-build` 1.3.0: judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously shared gate safety floor and layer-citation correction; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, with its package guard and
   optional slots.
-- `review/gatekeeper-code` 1.3.0: judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously selection-dependent redesign render applicability; previously safety floor and corrected CSO/security attribution; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, with its package guard and
+- `review/gatekeeper-code` 1.3.1: a schema-1 result is read as checking applicability records while still letting a bare sanctioned wording stand in for one; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously selection-dependent redesign render applicability; previously safety floor and corrected CSO/security attribution; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, with its package guard and
   optional slots.
-- `session-memory` 1.1.1: the writer lock, `checkpoint --drop-evidence`, the
+- `session-memory` 1.1.2: records are owner-only on POSIX only (on Windows they keep the directory's access list), a `degraded` result can follow a published revision, only `status --run-id` reports `interrupted`, an `access_denied` record also holds the session pin, so does a held run whatever the pointer says (`held_runs`, which `create` refuses beside and the hooks keep alive), a directory where a record belongs is damage and never `access_denied`, `recover --reason` publishes before it appends its audit event, and no audit line is written when the audit append itself fails; previously the writer lock, `checkpoint --drop-evidence`, the
   `uninitialized` class, the refusal reasons and the `access_denied` mark; its checkpoint
   example names the lock holder as `--owner` and a project-relative evidence path.
 - `taste` 1.1.2: structured set examples and native delegation grants; previously unconditional design snapshot producer; previously `propose` validation, redaction by shape, lock reclaim and the error codes.
-- `build/security-builder` 1.0.1: typed applicable/no-boundary security-seed assessments.
-- `qa` 1.0.2: session-pin admission and native delegation grants; previously unconditional probes and defects; only browser/report-only delegation is conditional.
-- `ship` 1.1.0: `approved_delivery` binds the APPROVED review cross-stage verdict over an unchanged review package; previously the `setup` stage runs on every release, as `pipelines.yaml` and `setup-deploy` already said, not only on a first deployment or on drift; previously native delegation grants, and before that the typed, revision-bound human-go record and repeat-release snapshots.
-- `setup-deploy` 1.0.1: re-verification and current-run snapshots on every release.
+- `build/security-builder` 1.0.2: escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second; previously typed applicable/no-boundary security-seed assessments.
+- `qa` 1.0.3: escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second; previously session-pin admission and native delegation grants; previously unconditional probes and defects; only browser/report-only delegation is conditional.
+- `ship` 1.1.1: escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second; previously `approved_delivery` binds the APPROVED review cross-stage verdict over an unchanged review package; previously the `setup` stage runs on every release, as `pipelines.yaml` and `setup-deploy` already said, not only on a first deployment or on drift; previously native delegation grants, and before that the typed, revision-bound human-go record and repeat-release snapshots.
+- `setup-deploy` 1.0.2: escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second, and an unparseable config is shown by path, sha256 and parser error, never echoed verbatim; previously re-verification and current-run snapshots on every release.
 - `skill-maker/skill-reviewer` 1.0.2: no cold isolated scoring; previously explicit harness-doctrine rejection duties.
 - `skill-maker` 1.0.2: native delegation, package-stage ownership and evidence paths; previously the Stage 5 hand-off names the output directory as an absolute path, the
   parent of the `path` that `output_paths.py` prints, and leaves it out outside a run.
 - `skill-maker/skill-creator` 1.1.1: absolute optimizer input paths; previously the packager takes an absolute output directory and
   refuses symlinks, secrets and run state; failed eval runs are not scored.
-- `review/security-review` 1.1.1: finding status and canonical rule references; previously `scan_record.py` names its output relative to the
+- `review/security-review` 1.1.2: states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the findings template offers only statuses `check.py` accepts (`blocking` was not one); previously finding status and canonical rule references; previously `scan_record.py` names its output relative to the
   manifest and gains `--fail-on-output` and `--manifest-root`.
-- `review/cso` 1.0.4: the verdict is read from the gate's own record; previously single-validator verdict naming and delegation grants; previously the waiver reason must be the sanctioned wording, scan output
+- `review/cso` 1.0.5: states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the description keeps its `even when` cue within the 600-character budget; previously the verdict is read from the gate's own record; previously single-validator verdict naming and delegation grants; previously the waiver reason must be the sanctioned wording, scan output
   paths follow the manifest, and its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
-- `design/redesign` 1.1.1: the verdict is read from the gate's own record; previously both validators in the self-check and rerun scope on REVISE; previously no fabricated unavailable parity record and native delegation grants; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
-- `build/build-management` 1.2.0: `approved_design_revision` binds the APPROVED design cross-stage verdict, `traceability` is a `trace_map` over every approved `AC-<n>`, and the verdict is read from the gate's own record; previously both validators in the self-check, concurrent test and security stages, rerun scope on REVISE; previously performance doctrine discovery and delegation grants; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
-- `review/code-chief` 1.1.1: the verdict is read from the gate's own record; previously both validators in the self-check, every lens scheduled at once, rerun scope on REVISE; previously canonical lens filename, performance doctrine and delegation grants; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
-- `investigate` 1.0.3: the verdict is read from the gate's own record; previously owns its reproduction capture and grants delegation; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
-- `build/bob-the-builder` 1.1.0: `implementation` is a typed `change_set` whose files are re-hashed and named by the hashed diff; previously canonical text/binary hash semantics; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
-- `build/test-builder` 1.0.2: explicit report deliverable and canonical hashing; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
-- `build/debugger` 1.0.2: candidate teardown preserves implementation ownership; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
-- `build/health-check` 1.0.2: authorized library consumption smoke and canonical hashing; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
-- `build/cross-check-build-confirm` 1.0.3: `traceability` is now a checked `trace_map`; the proven/unproven column stays an ownership contract; previously no-code decisions still owe non-waivable proof; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
-- `qa-only` 1.0.4: dual-mode routing and session-pin admission; previously the read-only boundary reference states what the hook now denies,
+- `design/redesign` 1.1.2: escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second; previously the verdict is read from the gate's own record; previously both validators in the self-check and rerun scope on REVISE; previously no fabricated unavailable parity record and native delegation grants; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `build/build-management` 1.2.1: escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second; previously `approved_design_revision` binds the APPROVED design cross-stage verdict, `traceability` is a `trace_map` over every approved `AC-<n>`, and the verdict is read from the gate's own record; previously both validators in the self-check, concurrent test and security stages, rerun scope on REVISE; previously performance doctrine discovery and delegation grants; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `review/code-chief` 1.1.2: escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second; previously the verdict is read from the gate's own record; previously both validators in the self-check, every lens scheduled at once, rerun scope on REVISE; previously canonical lens filename, performance doctrine and delegation grants; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `investigate` 1.0.4: escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second; previously the verdict is read from the gate's own record; previously owns its reproduction capture and grants delegation; previously its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
+- `build/bob-the-builder` 1.1.1: states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously `implementation` is a typed `change_set` whose files are re-hashed and named by the hashed diff; previously canonical text/binary hash semantics; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `build/test-builder` 1.0.3: states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously explicit report deliverable and canonical hashing; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `build/debugger` 1.0.3: states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously candidate teardown preserves implementation ownership; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `build/health-check` 1.0.3: states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously authorized library consumption smoke and canonical hashing; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `build/cross-check-build-confirm` 1.0.4: states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously `traceability` is now a checked `trace_map`; the proven/unproven column stays an ownership contract; previously no-code decisions still owe non-waivable proof; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `qa-only` 1.0.5: escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second; previously dual-mode routing and session-pin admission; previously the read-only boundary reference states what the hook now denies,
   including index-only git commands, package-manager installs and writes with no named
   target.
 - `design/prototyper` 1.0.1: exact gate file-field scope and executable run-path self-checks.
 - `design/researcher` 1.0.1: Admiral-owned intake, all required architecture inputs and commander-routed corrections.
-- `review/bug-review` 1.0.1: canonical filename is not a uniqueness guarantee.
-- `review/quality-review` 1.0.1: matcher limits and canonical findings rule reference.
-- `review/design-qa` 1.0.1: accepted finding statuses in packet and example.
-- `review/mr-robot` 1.0.1: finding statuses and same-pipeline delta review.
+- `review/bug-review` 1.0.2: states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously canonical filename is not a uniqueness guarantee.
+- `review/quality-review` 1.0.2: states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously matcher limits and canonical findings rule reference.
+- `review/design-qa` 1.0.2: states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the findings template offers only statuses `check.py` accepts (`blocking` was not one); previously accepted finding statuses in packet and example.
+- `review/mr-robot` 1.0.2: states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the findings template offers only statuses `check.py` accepts (`blocking` was not one); previously finding statuses and same-pipeline delta review.
 - `setup-browser-cookies` 1.0.1: Linux, macOS and Windows are peer platforms.
 - `taste/taste-review` 1.0.1: review follows persistence and precedes gate approval.
+- `review/code-review` 1.0.1: states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2.
+- `review/devex-review` 1.0.1: states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2.
+- `review/frontier` 1.0.1: states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2.

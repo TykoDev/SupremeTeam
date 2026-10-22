@@ -99,8 +99,9 @@ def _load() -> dict:
             f"{path} is not valid JSON ({exc}). This writer never overwrites a corrupt "
             "boundary record, and pre_tool_use.py denies edit-tool writes to it, so the "
             "repair happens outside the agent's tool loop: an owner fixes or removes the "
-            "file directly. Until then every boundary in it is unreadable and the hook "
-            "falls back to the built-in destructive-pattern guard alone."
+            "file directly. Until then no frozen, blocked or read-only boundary in it is "
+            "enforced; the hook still applies its destructive-command, single-writer and "
+            "unplaced-write rules, and its hook-file rule while a run is active."
         )
     if not isinstance(state, dict):
         _refuse(f"{path} must contain a JSON object, found {type(state).__name__}.")

@@ -56,56 +56,69 @@ python skills/harness/hooks/save_run.py recover    --run-id <run> --reason "<why
 ```
 
 `create` needs at least one `--evidence` path and a run id of 1 to 128 letters,
-digits, `.`, `_` or `-`; it runs a write, read and delete probe, refuses while
-another run holds the session pin, and persistence is active only once it
-returns `ok`. Checkpoint before every delegation and at every returned boundary:
-each checkpoint snapshots the previous revision into `_history/`, registers
-evidence hashes, refreshes the heartbeat and publishes state, lock and pointer
-atomically behind `_journal.json`. `--drop-evidence <path> --reason <why>`
-retires a moved or pruned path; a run keeps at least one.
+digits, `.`, `_` or `-`, starting with a letter, digit or `_`; it runs a write,
+read and delete probe, refuses while another run holds the session pin, whatever
+the pointer says, naming each such run and its way out, and persistence is
+active only once it returns `ok`. Checkpoint before every
+delegation and at every returned boundary: each checkpoint snapshots the
+previous revision into `_history/`, registers evidence hashes, refreshes the
+heartbeat and publishes the lock and state as one revision behind
+`_journal.json`, then the pointer and the audit event; if either of those fails,
+the revision stays published and the result is `degraded`. `--drop-evidence <path> --reason <why>` retires a moved or
+pruned path; a run keeps at least one.
 
 An interrupted publish is `interrupted`; repair it with `recover --rollback`.
-While the journal exists every other operation is refused.
+While the journal exists every other write to the run is refused.
 
 Exit codes: 0 `ok`; 1 `refused`, a contract violation to resolve, never to work
-around by hand-editing; 2 `degraded`, the write failed and nothing was published;
-3 engine error, JSON on stderr. Read `result` in the JSON before treating a 2 as
-degraded, because a mistyped option is argparse's own exit 2.
+around by hand-editing; 2 `degraded`, the write did not complete and its reason
+says what was and was not published; 3 engine error, JSON on stderr. Read
+`result` in the JSON before treating a 2 as degraded, because a mistyped option
+is argparse's own exit 2.
 
 ## Locks and staleness
 
 A lock records owner, status, session pin, revision and an ISO-8601 heartbeat.
 Active state needs a pinned, held lock; terminal state an unpinned, released one.
 A lock is stale when its heartbeat is older than 30 minutes or more than five
-minutes in the future. Reclaiming one needs `recover --reason`, which writes the
-stale lock's path, heartbeat, owner and sha256 to the audit trail first.
+minutes in the future. Reclaiming one needs `recover --reason`, which records the
+stale lock's path, heartbeat, owner and sha256 in the audit trail.
 
 Every write holds the `_write.lock` mutex from reading the run to its last write
 and re-checks the revision inside it; a stale `--expect-revision` is refused, and
 the OS releases the mutex when its holder exits. With hooks registered, every hook
 refreshes the heartbeat from real host activity, throttled to once every five
-minutes; a hook waits a quarter second for the mutex and skips rather than hold
-up the host, and never revives a stale lock.
+minutes, for the one coherent held run whatever the pointer says, and the write
+rewrites a damaged pointer from that run; a hook waits a quarter second for the
+mutex and skips rather than hold up the host, and never revives a stale lock.
 
-Records are readable by their owner alone. In a project shared by two accounts,
-a record the second account cannot read is classified `corrupt` with
-`access_denied` naming the file, never as missing. `access_denied` is carried by
-the records that may hold the session pin (the pointer, a lock, a state beside a
-held lock); a state the account cannot read beside a readable released lock is
-`corrupt` without `access_denied`, so `create` is allowed. Completing or
-releasing the run only ends the first account's claim: a closed run's records
-are owner-only too, so the second account can create a run again only once those
-records are readable to it or an account that may delete them has removed them;
-never overwrite them.
+On POSIX systems, records are readable by their owner alone. In a project
+shared by two accounts, a record the second account cannot read is never
+classified as missing: `access_denied` names the file whatever the
+classification, which is `corrupt` where nothing decides first.
+`access_denied` is carried by the records that may hold the session pin (the
+pointer, a lock, a state beside a held lock); a state the account cannot read
+beside a readable released lock is `corrupt` without `access_denied`, so
+`create` is allowed. Completing or releasing the run only ends the first
+account's claim: a closed run's records are owner-only too, so the second
+account can create a run again only once those records are readable to it or an
+account that may delete them has removed them; never overwrite them.
 
 ## What startup sees
 
 `save_run.py status` (and the readiness diagnostic) classifies saved state as
 `active`, `inactive`, `complete`, `stale`, `orphaned`, `conflicting`, `corrupt`,
-`interrupted`, `missing`, `uninitialized` or `unreadable`, and names the next
-step. Only a coherent fresh `active` or `orphaned` record reinforces the session
-pin. `_latest.md` is a pointer, not the truth: when it is missing or stale, scan
-`runs/` before concluding there is nothing to resume.
+`missing`, `uninitialized` or `unreadable`; `status --run-id <id>` also reports
+`interrupted` while that run's `_journal.json` file exists, and names the next step.
+A held run whose lock is fresh reinforces the session pin whatever the pointer
+says, so beside a damaged pointer (`corrupt`) or a second held run
+(`conflicting`) too, mid-publish or beside a directory where its journal
+belongs as well, and so does a record carrying `access_denied` (it may be a
+held run); `held_runs` in the result names each run that holds the pin, and
+whether its lock is fresh. A directory where a record belongs is `corrupt` on
+every platform (`<path> is a directory, not a file`). `_latest.md` is a
+pointer, not the truth: when it is missing or stale, scan `runs/` before
+concluding there is nothing to resume.
 
 ## Resume and rewind
 

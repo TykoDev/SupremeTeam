@@ -13,29 +13,19 @@ installed skill tree, so the tests that invoke it skip when it is absent.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
+
+import _testkit as kit
+import repair_registration as repair
+import verify_registration as verify
 
 HOOK_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(HOOK_DIR))
-import repair_registration as repair  # noqa: E402
-import verify_registration as verify  # noqa: E402
-
 INSTALLER = HOOK_DIR.parents[2] / "scripts" / "install_hooks.py"
 HAS_INSTALLER = INSTALLER.is_file()
-
-
-def run_installer(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, str(INSTALLER), "--hook-root", str(HOOK_DIR), *args],
-        capture_output=True,
-        text=True,
-    )
 
 
 class SharedDefinitionTests(unittest.TestCase):
@@ -93,6 +83,33 @@ class LauncherQuotingTests(unittest.TestCase):
         self.assertTrue(verify.analyse(command, "pre_tool_use.py")["executable"], command)
 
 
+class SpacedLauncherTests(unittest.TestCase):
+    """``launcher_parts`` on the shapes a host machine actually holds."""
+
+    def test_a_spaced_non_python_interpreter_is_one_command(self):
+        """The pi bridge spawns node from `C:\\Program Files\\...`; splitting at the space gave `C:\\Program`."""
+        parts = repair.launcher_parts(r"C:\Program Files\nodejs\node.exe --no-warnings C:\work\driver.mjs")
+        self.assertEqual(parts[0], r"C:\Program Files\nodejs\node.exe")
+        self.assertEqual(parts[1:], ["--no-warnings", r"C:\work\driver.mjs"])
+
+    def test_a_spaced_unc_launcher_is_one_command(self):
+        parts = repair.launcher_parts(r"\\host\share\tools\py.exe -X dev")
+        self.assertEqual(parts, [r"\\host\share\tools\py.exe", "-X", "dev"])
+
+    def test_bare_command_names_are_still_split(self):
+        for launcher, expected in (("py -3", ["py", "-3"]), ("python -X utf8", ["python", "-X", "utf8"]),
+                                   ("node --version", ["node", "--version"])):
+            with self.subTest(launcher=launcher):
+                self.assertEqual(repair.launcher_parts(launcher), expected)
+
+    def test_a_wrapper_still_starts_the_next_word(self):
+        self.assertEqual(repair.launcher_parts("/usr/bin/env python3 -E"), ["/usr/bin/env", "python3", "-E"])
+
+    def test_the_quoted_token_names_only_the_spaced_command(self):
+        token = repair.launcher_token(r"C:\Program Files\nodejs\node.exe --no-warnings")
+        self.assertEqual(token, '"C:\\Program Files\\nodejs\\node.exe" --no-warnings')
+
+
 class PlanTests(unittest.TestCase):
     def test_plan_adds_every_required_hook_to_an_empty_config(self):
         _, added = repair.plan({}, "claude", sys.executable)
@@ -117,10 +134,11 @@ class InstallerContractTests(unittest.TestCase):
         self.tmp = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)
         # A registration records the hook hashes under the project's .harness-state;
-        # point it at the scratch directory so no run writes into the checkout.
-        patcher = mock.patch.dict(os.environ, {"SUPREMETEAM_PROJECT_DIR": str(self.tmp / "project")})
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        # every run is given a scratch project, so none writes into the checkout.
+        self.project = self.tmp / "project"
+
+    def run_installer(self, *args: str, hook_root: Path = HOOK_DIR) -> subprocess.CompletedProcess:
+        return kit.run_cli(INSTALLER, "--hook-root", str(hook_root), *args, env=kit.clean_env(self.project))
 
     def load_installer(self):
         import importlib.util
@@ -138,7 +156,7 @@ class InstallerContractTests(unittest.TestCase):
 
     def test_registration_verifies_after_writing(self):
         settings = self.tmp / "settings.json"
-        result = run_installer("--target", "claude", "--claude-settings", str(settings))
+        result = self.run_installer("--target", "claude", "--claude-settings", str(settings))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("status: REGISTERED", result.stdout)
         for _, script in verify.REQUIRED:
@@ -146,25 +164,19 @@ class InstallerContractTests(unittest.TestCase):
 
     def test_a_second_run_changes_nothing(self):
         settings = self.tmp / "settings.json"
-        run_installer("--target", "claude", "--claude-settings", str(settings))
+        self.run_installer("--target", "claude", "--claude-settings", str(settings))
         first = settings.read_text(encoding="utf-8")
-        result = run_installer("--target", "claude", "--claude-settings", str(settings))
+        result = self.run_installer("--target", "claude", "--claude-settings", str(settings))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("no changes: already registered", result.stdout)
         self.assertEqual(settings.read_text(encoding="utf-8"), first)
 
     def test_repair_finds_nothing_to_add_after_an_install(self):
         # The drift this whole module exists to prevent: two writers, two answers.
-        project = self.tmp / "project"
-        (project / ".claude").mkdir(parents=True)
-        settings = project / ".claude" / "settings.json"
-        run_installer("--target", "claude", "--claude-settings", str(settings))
-        env = os.environ.copy()
-        env["CLAUDE_PROJECT_DIR"] = str(project)
-        result = subprocess.run(
-            [sys.executable, str(HOOK_DIR / "repair_registration.py"), "--host", "claude", "--scope", "project"],
-            capture_output=True, text=True, env=env,
-        )
+        (self.project / ".claude").mkdir(parents=True)
+        settings = self.project / ".claude" / "settings.json"
+        self.run_installer("--target", "claude", "--claude-settings", str(settings))
+        result = kit.run_cli("repair_registration.py", "--host", "claude", "--scope", "project", env=kit.clean_env(self.project))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("no changes", result.stdout)
 
@@ -175,7 +187,7 @@ class InstallerContractTests(unittest.TestCase):
             "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo mine"}]}]},
         }
         settings.write_text(json.dumps(original), encoding="utf-8")
-        result = run_installer("--target", "claude", "--claude-settings", str(settings))
+        result = self.run_installer("--target", "claude", "--claude-settings", str(settings))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         after = json.loads(settings.read_text(encoding="utf-8"))
         self.assertEqual(after["permissions"], original["permissions"])
@@ -185,7 +197,7 @@ class InstallerContractTests(unittest.TestCase):
     def test_an_overwrite_leaves_a_backup(self):
         settings = self.tmp / "settings.json"
         settings.write_text(json.dumps({"permissions": {"allow": []}}), encoding="utf-8")
-        run_installer("--target", "claude", "--claude-settings", str(settings))
+        self.run_installer("--target", "claude", "--claude-settings", str(settings))
         backups = list(self.tmp.glob("settings.json.bak-*"))
         self.assertEqual(len(backups), 1, f"expected exactly one backup, found {backups}")
         self.assertEqual(json.loads(backups[0].read_text(encoding="utf-8")), {"permissions": {"allow": []}})
@@ -193,7 +205,7 @@ class InstallerContractTests(unittest.TestCase):
     def test_invalid_json_is_refused_and_left_untouched(self):
         settings = self.tmp / "settings.json"
         settings.write_text("{ not json", encoding="utf-8")
-        result = run_installer("--target", "claude", "--claude-settings", str(settings))
+        result = self.run_installer("--target", "claude", "--claude-settings", str(settings))
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("refusing to overwrite", result.stdout)
         self.assertEqual(settings.read_text(encoding="utf-8"), "{ not json")
@@ -201,13 +213,13 @@ class InstallerContractTests(unittest.TestCase):
     def test_a_non_object_config_is_refused(self):
         settings = self.tmp / "settings.json"
         settings.write_text("[1, 2, 3]", encoding="utf-8")
-        result = run_installer("--target", "claude", "--claude-settings", str(settings))
+        result = self.run_installer("--target", "claude", "--claude-settings", str(settings))
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertEqual(settings.read_text(encoding="utf-8"), "[1, 2, 3]")
 
     def test_dry_run_writes_nothing_and_prints_a_diff(self):
         settings = self.tmp / "settings.json"
-        result = run_installer("--target", "claude", "--claude-settings", str(settings), "--dry-run")
+        result = self.run_installer("--target", "claude", "--claude-settings", str(settings), "--dry-run")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("PreToolUse", result.stdout)
         self.assertIn("dry run: nothing written", result.stdout)
@@ -216,21 +228,18 @@ class InstallerContractTests(unittest.TestCase):
     def test_dry_run_reports_invalid_config_as_failure(self):
         settings = self.tmp / "settings.json"
         settings.write_text("{ not json", encoding="utf-8")
-        result = run_installer("--target", "claude", "--claude-settings", str(settings), "--dry-run")
+        result = self.run_installer("--target", "claude", "--claude-settings", str(settings), "--dry-run")
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("refusing to overwrite", result.stdout)
         self.assertEqual(settings.read_text(encoding="utf-8"), "{ not json")
 
     def test_a_missing_hook_root_is_refused(self):
-        result = subprocess.run(
-            [sys.executable, str(INSTALLER), "--hook-root", str(self.tmp), "--target", "claude"],
-            capture_output=True, text=True,
-        )
+        result = self.run_installer("--target", "claude", hook_root=self.tmp)
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("Hook root is missing", result.stdout)
 
     def test_plugin_hosts_are_reported_as_not_verifiable(self):
-        result = run_installer(
+        result = self.run_installer(
             "--target", "cursor", "--target", "opencode",
             "--cursor-plugin", str(self.tmp / "cursor"),
             "--opencode-plugin", str(self.tmp / "opencode.js"),
@@ -243,7 +252,7 @@ class InstallerContractTests(unittest.TestCase):
 
     def test_the_report_never_claims_the_host_fired_a_hook(self):
         settings = self.tmp / "settings.json"
-        result = run_installer("--target", "claude", "--claude-settings", str(settings))
+        result = self.run_installer("--target", "claude", "--claude-settings", str(settings))
         self.assertIn("observed: unverified", result.stdout)
 
 

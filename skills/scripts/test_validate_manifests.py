@@ -13,6 +13,10 @@ pipelines", two table rows), so editing a sentence broke the build and adding a
 pipeline needed an edit to the validator. They are table and count checks now, and
 the cases below pin that a re-wrapped row or a spelled-out number passes while a
 missing row fails.
+
+The pipeline dependency audit refuses a stage contract that is missing, scalar,
+duplicated, forward-referencing or moved ahead of the gate it waits for, and every
+shipped pipeline passes it.
 """
 from __future__ import annotations
 
@@ -392,7 +396,8 @@ class CiDeclarationTests(unittest.TestCase):
         self.assertGap(self.errors(), "ci must be a mapping")
 
     def test_a_workflow_path_must_stay_inside_the_repository(self):
-        for path in ("/etc/ci.yml", "../ci.yml", ""):
+        """Outside in every host spelling: Path.is_absolute alone misses "/etc/ci.yml" on Windows and "D:\\ci.yml" elsewhere."""
+        for path in ("/etc/ci.yml", "\\etc\\ci.yml", "C:/other/ci.yml", "D:\\ci.yml", "//host/share/ci.yml", "../ci.yml", ""):
             runtime = copy.deepcopy(self.runtime)
             runtime["ci"]["workflow"] = path
             with self.subTest(path=path):
@@ -473,6 +478,59 @@ class CiDeclarationTests(unittest.TestCase):
             path.relative_to(SKILLS).as_posix() for path in SKILLS.rglob("*.py")
             if not path.name.startswith(test_support) and re.search(r"^\s*import yaml\b", path.read_text(encoding="utf-8"), re.M))
         self.assertEqual(importers, sorted(used_by))
+
+
+class PipelineDependencyAuditTests(unittest.TestCase):
+    """Every stage declares what it requires and produces, and none of it can run ahead of its inputs or its gate."""
+
+    def setUp(self):
+        self.pipelines = load_data(SKILLS / "pipelines.yaml")["pipelines"]
+
+    def test_all_ten_pipelines_have_complete_checked_dependencies(self):
+        self.assertEqual(len(self.pipelines), 10)
+        for name, pipeline in self.pipelines.items():
+            with self.subTest(pipeline=name):
+                self.assertEqual(validate_manifests.pipeline_dependency_errors(name, pipeline), [])
+                for stage in pipeline["stages"]:
+                    contract = validate_manifests.stage_dependencies(pipeline, stage)
+                    self.assertIn("requires", contract)
+                    self.assertIn("produces", contract)
+
+    def test_scalar_dependencies_and_duplicate_steps_are_refused(self):
+        for name, original in self.pipelines.items():
+            for field in ("external_inputs", "requires", "produces"):
+                with self.subTest(pipeline=name, field=field):
+                    pipeline = copy.deepcopy(original)
+                    if field == "external_inputs":
+                        pipeline[field] = "request"
+                    else:
+                        validate_manifests.stage_dependencies(pipeline, pipeline["stages"][0])[field] = "request"
+                    self.assertTrue(validate_manifests.pipeline_dependency_errors(name, pipeline))
+            pipeline = copy.deepcopy(original)
+            pipeline["stages"].append(copy.deepcopy(pipeline["stages"][0]))
+            self.assertTrue(any("unique" in error for error in validate_manifests.pipeline_dependency_errors(name, pipeline)))
+
+    def test_deleting_or_forward_referencing_any_contract_fails(self):
+        for name, original in self.pipelines.items():
+            with self.subTest(pipeline=name):
+                pipeline = copy.deepcopy(original)
+                contract = validate_manifests.stage_dependencies(pipeline, pipeline["stages"][0])
+                contract.pop("requires")
+                self.assertTrue(validate_manifests.pipeline_dependency_errors(name, pipeline))
+                pipeline = copy.deepcopy(original)
+                validate_manifests.stage_dependencies(pipeline, pipeline["stages"][0])["requires"] = ["not-yet-produced"]
+                self.assertTrue(validate_manifests.pipeline_dependency_errors(name, pipeline))
+
+    def test_post_gate_stages_cannot_move_before_approval(self):
+        for name, step in (("release", "land-and-deploy"), ("release", "document"),
+                           ("investigation", "return-to-owning-phase")):
+            pipeline = copy.deepcopy(self.pipelines[name])
+            stage = next(stage for stage in pipeline["stages"] if stage["step"] == step)
+            stage.pop("after_boundary")
+            self.assertTrue(validate_manifests.pipeline_dependency_errors(name, pipeline))
+        pipeline = copy.deepcopy(self.pipelines["release"])
+        pipeline["external_inputs"].append("approved-boundary")
+        self.assertTrue(validate_manifests.pipeline_dependency_errors("release", pipeline))
 
 
 class DocumentationMirrorTests(unittest.TestCase):
@@ -621,8 +679,8 @@ class CommandLineTests(unittest.TestCase):
         self.assertIn("unrecognized arguments", proc.stderr)
 
 
-class LayoutTests(unittest.TestCase):
-    """A repository checkout runs the repository checks; an installed copy skips them, visibly."""
+class CatalogCopyCase(unittest.TestCase):
+    """A copy of the catalog made once per class, and fresh layouts built from it."""
 
     @classmethod
     def setUpClass(cls):
@@ -631,16 +689,22 @@ class LayoutTests(unittest.TestCase):
         cls.base = Path(cls.holder.name)
         shutil.copytree(SKILLS, cls.base / "skills", ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".harness-state"))
 
-    def layout(self, name: str) -> Path:
-        """A fresh directory whose ``skills`` is a copy of the catalog."""
+    def layout(self, name: str, *, leave_out: tuple[str, ...] = ()) -> Path:
+        """A fresh directory whose ``skills`` is a copy of the catalog without the top-level entries named."""
         root = self.base / name
-        shutil.copytree(self.base / "skills", root / "skills", dirs_exist_ok=True)
+        top = self.base / "skills"
+        shutil.copytree(top, root / "skills", dirs_exist_ok=True,
+                        ignore=lambda directory, names: [n for n in names if Path(directory) == top and n in leave_out])
         return root
 
     def run_cli(self, skills: Path) -> tuple[int, dict]:
         proc = subprocess.run([sys.executable, str(VALIDATOR), str(skills)], capture_output=True, text=True,
                               encoding="utf-8", errors="replace")
         return proc.returncode, json.loads(proc.stdout)
+
+
+class LayoutTests(CatalogCopyCase):
+    """A repository checkout runs the repository checks; an installed copy skips them, visibly."""
 
     def test_an_installed_copy_is_valid_and_says_the_repository_checks_were_skipped(self):
         report = validate_manifests.validate(self.layout("installed") / "skills")
@@ -697,6 +761,165 @@ class LayoutTests(unittest.TestCase):
         shutil.copytree(self.base / "skills", root / "catalog")
         report = validate_manifests.validate(root / "catalog")
         self.assertEqual([], report["errors"])
+
+
+class InstallRecordTests(CatalogCopyCase):
+    """An install of chosen teams (``--team review``) failed the check Install.md tells you to run after it.
+
+    The validator asked for every skill on disk. It now reads the record the
+    installers write and asks only for what that record says was installed, and
+    it checks everything when there is no record it can read. The record names
+    items, not skills, so the agent manifests in those items place the skills
+    inside them: a skill missing from an installed item still fails, and only a
+    skill placed in an item the record leaves out is listed as not installed.
+    """
+
+    DESIGN_DELEGATE = "admiral agent manifest: skill_path 'design/commander' has no SKILL.md"
+    # What `install.sh --team review` leaves out: the other teams' entries in scripts/install-items.txt.
+    REVIEW_ONLY = ("design", "build", "browse", "open-browser", "setup-browser-cookies", "pair-agent", "ship",
+                   "land-and-deploy", "setup-deploy", "document-release", "guard", "careful", "freeze", "unfreeze",
+                   "qa", "qa-only", "benchmark")
+
+    def record(self, skills: Path, text: str | None = None) -> Path:
+        """The record the installers write, naming every top-level entry of the copy, or the text given."""
+        if text is None:
+            items = sorted(path.name for path in skills.iterdir() if path.name != validate_manifests.INSTALL_RECORD)
+            text = "\n".join([validate_manifests.INSTALL_RECORD_HEADER, "installed_at 2026-10-01T00:00:00Z",
+                              "teams review", *(f"item {name}" for name in items)]) + "\n"
+        path = skills / validate_manifests.INSTALL_RECORD
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_an_install_without_a_team_is_valid_and_lists_the_skills_it_left_out(self):
+        skills = self.layout("review-only", leave_out=self.REVIEW_ONLY) / "skills"
+        self.record(skills)
+        report = validate_manifests.validate(skills)
+        self.assertEqual([], report["errors"])
+        self.assertEqual("install record: teams review; the recorded items are checked", report["install_record"])
+        roster = validate_manifests.team_members(load_data(skills / "team-manifest.yaml"))
+        on_disk = {path.parent.name for path in skills.glob("**/SKILL.md")}
+        self.assertEqual(sorted(roster - on_disk), report["not_installed"])
+        self.assertTrue({"commander", "prototyper", "bob-the-builder", "careful", "qa-only"} <= set(report["not_installed"]))
+        self.assertNotIn("code-chief", report["not_installed"])
+
+    def test_a_skill_missing_from_an_installed_item_fails(self):
+        """A full install without review/bug-review/SKILL.md passed, listing bug-review as not installed.
+
+        "full" is every item this copy of the catalog holds, so in an installed copy
+        of chosen teams the cases for the teams it left out are skipped.
+        """
+        full = self.layout("full-install") / "skills"
+        review = self.layout("review-install", leave_out=self.REVIEW_ONLY) / "skills"
+        for skills in (full, review):
+            self.record(skills)
+        record = validate_manifests.INSTALL_RECORD
+        for skills, place, error in (
+            (full, "review/bug-review", "code-chief agent manifest: skill_path 'review/bug-review' has no SKILL.md"),
+            (full, "design/researcher", "commander agent manifest: skill_path 'design/researcher' has no SKILL.md"),
+            (full, "careful", f"{record}: 'careful' is installed but has no careful/SKILL.md"),
+            (full, "taste/taste-review", f"{record}: 'taste' is installed but has no taste/taste-review/SKILL.md"),
+            (review, "review/bug-review", "code-chief agent manifest: skill_path 'review/bug-review' has no SKILL.md"),
+            (review, "skill-maker/skill-creator",
+             "skill-maker agent manifest: skill_path 'skill-maker/skill-creator' has no SKILL.md"),
+            (review, "audit-improve", f"{record}: 'audit-improve' is installed but has no audit-improve/SKILL.md"),
+            (review, "taste/taste-review", f"{record}: 'taste' is installed but has no taste/taste-review/SKILL.md"),
+        ):
+            with self.subTest(install=skills.parent.name, missing=place):
+                skill = skills / place / "SKILL.md"
+                if not skill.is_file():
+                    self.skipTest(f"{place} is not in this copy of the catalog")
+                aside = skill.with_name("SKILL.md.aside")
+                skill.rename(aside)
+                try:
+                    report = validate_manifests.validate(skills)
+                finally:
+                    aside.rename(skill)
+                self.assertFalse(report["ok"])
+                self.assertIn(error, report["errors"])
+                self.assertNotIn(Path(place).name, report["not_installed"])
+
+    def test_checked_in_full_every_nested_skill_sits_where_an_install_would_place_it(self):
+        """An install reads only the manifests in its items, so a skill they do not place would read as left out."""
+        skills = self.layout("placement") / "skills"
+        (skills / validate_manifests.INSTALL_RECORD).unlink(missing_ok=True)
+        before = validate_manifests.validate(skills)["errors"]
+        unplaced = ("{}/SKILL.md: no agent manifest in {}/ or admiral/ delegates to it there, "
+                    "so an install could not tell it missing from left out")
+        creator = unplaced.format("skill-maker/skill-creator", "skill-maker")
+        self.assertNotIn(creator, before)
+        maker = skills / "skill-maker" / "agent" / "agent-manifest.yaml"
+        investigate = skills / "investigate" / "agent" / "agent-manifest.yaml"
+        maker_text, investigate_text = maker.read_bytes(), investigate.read_bytes()
+        row = re.search(rb"  - name: skill-creator\r?\n    skill_path: skill-maker/skill-creator\r?\n", maker_text).group(0)
+        maker.write_bytes(maker_text.replace(row, b""))
+        self.assertIn(creator, validate_manifests.validate(skills)["errors"])
+        # Named by a manifest in another item: an install that held skill-maker alone would not read it.
+        investigate.write_bytes(re.sub(rb"delegates_to:[^\n]*\n", lambda m: m.group(0) + row, investigate_text, count=1))
+        report = validate_manifests.validate(skills)
+        self.assertNotIn("investigate agent manifest: skill_path 'skill-maker/skill-creator' has no SKILL.md",
+                         report["errors"])
+        self.assertIn(creator, report["errors"])
+        maker.write_bytes(maker_text)
+        investigate.write_bytes(investigate_text)
+        self.assertEqual(before, validate_manifests.validate(skills)["errors"])
+        shutil.move(skills / "taste" / "taste-review", skills / "skill-maker" / "taste-review")
+        errors = validate_manifests.validate(skills)["errors"]
+        self.assertIn("UNDELEGATED_SKILLS places taste-review at taste/taste-review, which has no SKILL.md", errors)
+        self.assertIn(unplaced.format("skill-maker/taste-review", "skill-maker"), errors)
+
+    def test_a_recorded_item_is_still_checked(self):
+        skills = self.layout("damaged", leave_out=("design",)) / "skills"
+        shutil.rmtree(skills / "review" / "code-chief")
+        self.record(skills)
+        report = validate_manifests.validate(skills)
+        self.assertIn("admiral agent manifest: skill_path 'review/code-chief' has no SKILL.md", report["errors"])
+        self.assertNotIn(self.DESIGN_DELEGATE, report["errors"])
+        (skills / "review" / "extra").mkdir()
+        (skills / "review" / "extra" / "SKILL.md").write_text("---\nname: extra\n---\n", encoding="utf-8")
+        report = validate_manifests.validate(skills)
+        self.assertIn("team-manifest.yaml: installed skills ['extra'] are not in the roster", report["errors"])
+
+    def test_without_a_record_it_can_read_every_skill_is_checked(self):
+        skills = self.layout("unrecorded", leave_out=("design",)) / "skills"
+        record = skills / validate_manifests.INSTALL_RECORD
+        record.unlink(missing_ok=True)
+        report = validate_manifests.validate(skills)
+        self.assertIn(self.DESIGN_DELEGATE, report["errors"])
+        self.assertEqual("no install record: every skill is checked", report["install_record"])
+        header = validate_manifests.INSTALL_RECORD_HEADER
+        for label, text in {
+            "another file's header": "not a record\nteams review\nitem review\n",
+            "no items": f"{header}\nteams review\n",
+            "only names an installer refuses": f"{header}\nitem ../design\nitem .hidden\n",
+        }.items():
+            with self.subTest(record=label):
+                self.record(skills, text)
+                report = validate_manifests.validate(skills)
+                self.assertIn(self.DESIGN_DELEGATE, report["errors"])
+                self.assertTrue(report["install_record"].startswith("install record unreadable ("), report["install_record"])
+                self.assertTrue(report["install_record"].endswith("): every skill is checked"))
+                self.assertEqual([], report["not_installed"])
+        record.unlink()
+        record.mkdir()
+        report = validate_manifests.validate(skills)
+        self.assertIn(self.DESIGN_DELEGATE, report["errors"])
+        self.assertEqual("install record unreadable (not a regular file): every skill is checked", report["install_record"])
+
+    def test_a_checkout_is_checked_in_full_whatever_record_it_holds(self):
+        root = self.layout("checkout", leave_out=("design",))
+        self.record(root / "skills")
+        (root / "README.md").write_text("# fixture\n", encoding="utf-8")
+        report = validate_manifests.validate(root / "skills")
+        self.assertIn(self.DESIGN_DELEGATE, report["errors"])
+        self.assertEqual("not read: a repository checkout is checked in full", report["install_record"])
+
+    def test_the_users_own_skills_beside_an_install_are_not_counted(self):
+        """Install.md: the installer leaves everything else in the folder alone, your own skills included."""
+        skills = self.layout("own-skill") / "skills"
+        self.record(skills)
+        (skills / "my-own-skill").mkdir()
+        (skills / "my-own-skill" / "SKILL.md").write_text("---\nname: my-own-skill\n---\n", encoding="utf-8")
+        self.assertEqual([], validate_manifests.validate(skills)["errors"])
 
 
 if __name__ == "__main__":

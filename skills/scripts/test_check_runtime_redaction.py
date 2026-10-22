@@ -2,8 +2,8 @@
 
 Two things keep a secret out of the report. Files that are sensitive by name or
 location are never read or listed, and every string that does flow from a project
-into the report (a start command, a scaffold context line, a diagnostic) goes
-through the redactor, which works from context: a secret-named key, a flag, an
+into the report (a start command, a diagnostic or a warning that quotes a path)
+goes through the redactor, which works from context: a secret-named key, a flag, an
 auth scheme, credentials in a URL. The tests cover both, end to end through
 ``check()``, and pin the redactor's forms directly.
 """
@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+import _runtime_fixtures as fixtures
 import check_runtime
-import test_check_runtime_detection as fixtures
+from redaction import redact, redact_value
 
 SECRET = "S3cr3tValue"
 #: How deep a structure is followed before its remainder is dropped from the report.
@@ -70,18 +72,18 @@ class RedactionFormTests(unittest.TestCase):
         }
         for name, (text, expected) in forms.items():
             with self.subTest(form=name):
-                redacted = check_runtime._redact(text)
+                redacted = redact(text)
                 self.assertNotIn(SECRET, redacted)
                 self.assertEqual(redacted, expected)
 
     def test_json_documents_are_redacted_structurally(self):
         self.assertEqual(
-            check_runtime._redact(f'{{"token": "{SECRET}", "name": "x"}}'), '{"name": "x", "token": "<redacted>"}'
+            redact(f'{{"token": "{SECRET}", "name": "x"}}'), '{"name": "x", "token": "<redacted>"}'
         )
         self.assertEqual(
-            check_runtime._redact(f'["--token", "{SECRET}", "--name", "x"]'), '["--token", "<redacted>", "--name", "x"]'
+            redact(f'["--token", "{SECRET}", "--name", "x"]'), '["--token", "<redacted>", "--name", "x"]'
         )
-        self.assertEqual(check_runtime._redact(f"{{not json token={SECRET}}}"), "{not json token=<redacted>}")
+        self.assertEqual(redact(f"{{not json token={SECRET}}}"), "{not json token=<redacted>}")
 
     def test_prose_that_only_names_a_credential_is_left_readable(self):
         for text in (
@@ -92,7 +94,7 @@ class RedactionFormTests(unittest.TestCase):
             "the token field is required",
         ):
             with self.subTest(text=text):
-                self.assertEqual(check_runtime._redact(text), text)
+                self.assertEqual(redact(text), text)
 
     def test_structured_values_are_redacted_by_key_and_by_flag_position(self):
         value = {
@@ -106,7 +108,7 @@ class RedactionFormTests(unittest.TestCase):
             "enabled": True,
             "nothing": None,
         }
-        redacted = check_runtime._redact_value(value)
+        redacted = redact_value(value)
         self.assertNotIn(SECRET, json.dumps(redacted))
         self.assertEqual(redacted["name"], "kept")
         self.assertEqual(redacted["nested"]["argv"], ["--token", "<redacted>", "--name", "kept"])
@@ -114,14 +116,14 @@ class RedactionFormTests(unittest.TestCase):
         self.assertEqual((redacted["count"], redacted["enabled"], redacted["nothing"]), (3, True, None))
 
     def test_non_finite_numbers_and_runaway_nesting_are_neutralised(self):
-        redacted = check_runtime._redact_value({"a": float("nan"), "b": float("inf"), "c": 1.5})
+        redacted = redact_value({"a": float("nan"), "b": float("inf"), "c": 1.5})
         self.assertEqual(redacted, {"a": "<non-finite>", "b": "<non-finite>", "c": 1.5})
         deep: dict = {}
         current = deep
         for _ in range(REDACTION_DEPTH_LIMIT + 50):
             current["x"] = {}
             current = current["x"]
-        result = check_runtime._redact_value(deep)
+        result = redact_value(deep)
         depth = 0
         while isinstance(result, dict):
             result = result["x"]
@@ -175,21 +177,11 @@ class ReportRedactionTests(fixtures.FixtureTreeCase):
         self.assertNotIn(SECRET, self.dumped(report))
         self.assertEqual(report["project_inspection"]["classification"], "backend-only")
 
-    def test_scaffold_context_is_redacted(self):
-        report = self.report(
-            {"app.py": f"password = '{SECRET}A'  # TODO rotate\nurl = 'https://u:{SECRET}B@h/db'  # FIXME\n"},
-            detect=False,
-            scaffold=True,
-        )
-        self.assertEqual(len(report["project_inspection"]["scaffold_markers"]), 2)
-        self.assertNotIn(SECRET, self.dumped(report))
-
     def test_diagnostics_that_quote_a_path_are_redacted(self):
-        name = f"api_key={SECRET}.txt"
-        report = self.report({name: b"caf\xe9"}, detect=False, scaffold=True)
+        report = self.report({f"api_key={SECRET}/package.json": b"caf\xe9"})
         inspection = report["project_inspection"]
         self.assertFalse(inspection["ok"])
-        self.assertTrue(inspection["errors"])
+        self.assertTrue(any("cannot read text" in error for error in inspection["errors"]), inspection["errors"])
         self.assertNotIn(SECRET, self.dumped(report))
 
     def test_warnings_that_quote_a_path_are_redacted(self):
@@ -218,7 +210,7 @@ class ReportRedactionTests(fixtures.FixtureTreeCase):
             },
             "launchers": {"ci": f"python3 --token={SECRET}B", "password": f"{SECRET}C"},
         }
-        with fixtures.tempfile.TemporaryDirectory() as holder:
+        with tempfile.TemporaryDirectory() as holder:
             report = check_runtime.check(fixtures.make_catalog(Path(holder), manifest=manifest))
         self.assertTrue(report["ok"])
         self.assertEqual(report["launchers"]["ci"], "python3 --token=<redacted>")
@@ -237,7 +229,7 @@ class ReportRedactionTests(fixtures.FixtureTreeCase):
             },
             "launchers": {"ci": f"python3 --token={SECRET}B"},
         }
-        with fixtures.tempfile.TemporaryDirectory() as holder:
+        with tempfile.TemporaryDirectory() as holder:
             report = check_runtime.check(fixtures.make_catalog(Path(holder), manifest=manifest))
         self.assertFalse(report["ok"])
         self.assertEqual(report["launchers"]["ci"], "python3 --token=<redacted>")
@@ -282,7 +274,7 @@ SENSITIVE_UPPERCASE_TREE = {
 class SensitiveFileTests(fixtures.FixtureTreeCase):
     def everything(self, tree) -> dict:
         tree = {**tree, "package.json": fixtures.package_json(dev={"vite": "^7"}, scripts={"dev": "vite"})}
-        return self.report(tree, detect=True, start=True, scaffold=True)
+        return self.report(tree, detect=True, start=True)
 
     def test_sensitive_files_and_directories_never_reach_any_report_mode(self):
         for label, tree in (("lower case", SENSITIVE_TREE), ("upper case", SENSITIVE_UPPERCASE_TREE)):
@@ -293,12 +285,6 @@ class SensitiveFileTests(fixtures.FixtureTreeCase):
                 self.assertEqual(inspection["errors"], [])
                 listed = {item["path"].lower() for item in inspection["manifests"] + inspection["configs"]}
                 self.assertEqual(listed, {"package.json"})
-
-    def test_only_the_non_sensitive_file_is_scanned_and_its_context_is_redacted(self):
-        report = self.everything(SENSITIVE_TREE)
-        markers = report["project_inspection"]["scaffold_markers"]
-        self.assertEqual({row["file"] for row in markers}, {"src/deploy.sh"})
-        self.assertEqual([row["marker"] for row in markers], ["TODO"])
 
     def test_sensitive_names_are_not_read_even_when_a_detector_would_want_them(self):
         """A deno.json or main.py that is sensitive by location gives the detector nothing."""

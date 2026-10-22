@@ -21,6 +21,31 @@ def table(text, header):
     return {row[0]: row for row in rows}
 
 
+def with_cell(text, header, name, column, value):
+    """``text`` with one cell of the row ``name`` set to ``value``, or that row removed when ``value`` is None.
+
+    The row is found the way ``table`` finds it, so a reworded row still gets
+    mutated, and a missing one fails here instead of leaving the text unchanged.
+    """
+    lines = text.splitlines(keepends=True)
+    start = next(i for i, line in enumerate(lines) if line.startswith(header))
+    for index in range(start + 2, len(lines)):
+        line = lines[index]
+        if not line.startswith("|"):
+            break
+        body = line.rstrip("\r\n")
+        cells = body.strip("|").split("|")
+        if cells[0].strip().strip("`") != name:
+            continue
+        if value is None:
+            lines[index] = ""
+        else:
+            cells[column] = f" {value} "
+            lines[index] = "|" + "|".join(cells) + "|" + line[len(body):]
+        return "".join(lines)
+    raise AssertionError(f"no row {name!r} under {header!r}")
+
+
 class ResponsibilityMirrorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -52,13 +77,17 @@ class ResponsibilityMirrorTests(unittest.TestCase):
         self.assert_mirrors(self.text)
 
     def test_owner_in_other_column_does_not_mask_owner_drift(self):
+        drifted = with_cell(self.text, "| Layer |", "RELEASE", 2, "invented")
+        owner = self.pipelines["release"]["owner"]
+        self.assertIn(owner, " ".join(table(drifted, "| Layer |")["RELEASE"]),
+                      "the RELEASE row no longer names its owner outside the Owner column, so this case tests nothing")
         with self.assertRaises(AssertionError):
-            self.assert_mirrors(self.text.replace("| RELEASE | Gate approves an externally visible delivery | ship |",
-                                                  "| RELEASE | Gate approves an externally visible delivery | invented |"))
+            self.assert_mirrors(drifted)
 
     def test_gate_columns_and_missing_rows_are_compared(self):
-        for replacement in ("| `design-to-build` | none | gatekeeper-admiral | yes |",
-                            "| `design-to-build` | gatekeeper-design | invented | yes |",
-                            "| `design-to-build` | gatekeeper-design | gatekeeper-admiral | no |", ""):
-            with self.subTest(replacement=replacement), self.assertRaises(AssertionError):
-                self.assert_mirrors(self.text.replace("| `design-to-build` | gatekeeper-design | gatekeeper-admiral | yes |", replacement))
+        for column, value in ((1, "none"), (2, "invented"), (3, "no"), (None, None)):
+            with self.subTest(column=column, value=value):
+                drifted = with_cell(self.text, "| Boundary |", "design-to-build", column, value)
+                self.assertNotEqual(self.text, drifted)
+                with self.assertRaises(AssertionError):
+                    self.assert_mirrors(drifted)

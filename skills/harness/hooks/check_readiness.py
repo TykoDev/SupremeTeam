@@ -37,7 +37,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _saves import inspect_saves, next_step
+from _saves import ACCESS_DENIED_STEP, inspect_saves, next_step, refused_detail
 import _state
 from verify_registration import HOSTS, MATCHERS, REQUIRED, declared_minimum, interpreter_warning, repair_command
 
@@ -197,10 +197,11 @@ def main() -> int:
     hook_status, hook_code, hook_output, hook_report = run_hook_verifier(args.host, project_root)
     saves = inspect_saves(project_root)
     saves_status, saves_detail = str(saves["status"]), str(saves["detail"])
-    # A record this account cannot read is classified corrupt but is not damage: it is named, and may hold the pin.
+    # A record this account cannot read is named whatever the classification says: it is not damage, and may hold the pin.
     access_denied = list(saves.get("access_denied") or [])
     # An active run needs no instruction; every other classification has a next step, the one `save_run.py status` prints.
-    saves_next = "" if saves_status == "active" else next_step(saves)
+    # Where a record this account cannot read is named, that step is the one the writer refuses with, `active` included.
+    saves_next = next_step(saves) if access_denied or saves_status != "active" else ""
 
     # Independent capabilities: a missing hook degrades deterministic
     # enforcement; it does not remove the ability to read saves or run the
@@ -251,6 +252,8 @@ def main() -> int:
         "hooks_interpreter": interpreter,
         "hooks_observed": observations["summary"],
         "hooks_faults": observations["faults"],
+        # Readable means neither `missing` nor `unreadable`, and no `access_denied`: a record this account cannot read makes
+        # it false whatever the classification, `active` included.
         "saves_readable": saves_status not in {"missing", "unreadable"} and not access_denied,
         "active_run": saves_status == "active",
         "deterministic_validators": True,
@@ -276,7 +279,9 @@ def main() -> int:
         elif interpreter in {"too_old", "not_found"}:
             blockers.append(f"the registered interpreter is {interpreter.replace('_', ' ')} (--require-hooks)")
     if args.require_active_run and saves_status != "active":
-        blockers.append(f"no active pinned run (saves are {saves_status}{f': {saves_detail}' if access_denied else ''}; --require-active-run)")
+        # A record this account cannot read is said in the writer's words, whatever the classification decided first.
+        refused = f": {refused_detail(saves)}: {ACCESS_DENIED_STEP}" if access_denied else ""
+        blockers.append(f"no active pinned run (saves are {saves_status}{refused}; --require-active-run)")
     ready = not blockers
 
     report = {

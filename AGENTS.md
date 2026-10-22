@@ -10,8 +10,9 @@ repository root; in an installed copy `skills/` is the install root (see
 install the tree (the installers copy `skills/` into `~/.agents/skills/`, or
 `%USERPROFILE%\.agents\skills\`, and mirror it into each host's directory) and keep
 the grouped layout intact. A host that scans one level deep registers the 22
-skills at the install root by name; the 31 nested specialists are reached by path
-through the skill that delegates to them. See [Install.md](Install.md).
+skills at the install root by name; the 31 nested skills (23 internal specialists,
+five pipeline owners and three phase gatekeepers) are reached by path through the
+skill that delegates to them. See [Install.md](Install.md).
 
 **Do not commit runtime state.** `skillset-saves/` and `.harness-state/` are
 generated and Git-ignored. Saved runs, locks, audit trails, and guard records stay
@@ -278,13 +279,17 @@ and the machine-readable specs.
 
 `admiral`, `gatekeeper-admiral`, `investigate`, `skill-maker`, `session-memory`,
 `taste`, and `audit-improve` sit directly under `skills/` because they are cross-cutting.
-Pipeline-stage skills nest under their category directory; standalone tools under
-their group. This manifest is the authoritative flat index regardless of depth.
+Pipeline-stage skills nest under their category directory; standalone tools sit
+directly under `skills/` too, grouped only in this manifest. This manifest is the
+authoritative flat index regardless of depth.
 
 The checkout also carries files outside `skills/`, which the installers do not copy:
-`README.md`, `QUICK-START.md`, `Install.md`, `BENCHMARK.md`,
-`CHANGELOG.md`, `CONTRIBUTING.md`, `LICENSE`, `ruff.toml`, `docs/`, the installers in `scripts/`
+this file, `README.md`, `QUICK-START.md`, `Install.md`, `BENCHMARK.md`,
+`Test-Guide.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `LICENSE`, `ruff.toml`,
+`.gitattributes`, `.gitignore`, `docs/`, the installers in `scripts/`
 (`install.sh`, `install.ps1`, `install_hooks.py`, `install-items.txt`,
-`test_install.py`) and the CI workflow `.github/workflows/ci.yml`.
+`test_install.py`), the checkout utilities in `tools/` (`run-audit/` and
+`rescan-compare/`, each with a README and its own tests) and the CI workflow
+`.github/workflows/ci.yml`.
 
 Full tree in [docs/directory-structure.md](docs/directory-structure.md).

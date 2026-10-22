@@ -214,9 +214,9 @@ def check_gates(gates: dict[str, Any], owners: set[str], errors: list[str]) -> N
         if kind not in type_names and kind not in declared:
             errors.append(f"gates.yaml: evidence_type_params for unknown record type or evidence key {kind!r}")
     policy = gates.get("revise_policy")
-    if not isinstance(policy, dict) or policy.get("cycle_cap") != 2 or not all(
+    if not isinstance(policy, dict) or policy.get("cycle_cap") != 3 or not all(
             str(policy.get(k, "")).strip() for k in ("self_check", "one_packet", "parallel_fix", "delta_review")):
-        errors.append("gates.yaml: revise_policy must declare self_check, one_packet, parallel_fix, delta_review, and cycle_cap 2")
+        errors.append("gates.yaml: revise_policy must declare self_check, one_packet, parallel_fix, delta_review, and cycle_cap 3")
 
 
 def _skills_path(root: Path, value: str) -> Path:

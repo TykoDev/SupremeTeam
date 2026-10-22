@@ -30,7 +30,12 @@ Behaviour:
   * is idempotent: a second run reports "no changes".
 
 Exit 0 = nothing to do or applied, 1 = changes needed but --apply not given,
-2 = refused/engine error.
+2 = a usage error, a refusal (a scope the host does not define, a config that
+cannot be read as a UTF-8 JSON object with its hooks in the expected shape, a
+link it will not replace, --record-hashes before the hooks are registered) or an
+--apply write that raised OSError. Nothing else is caught: any other exception,
+a failed --record-hashes write included, exits 1 with Python's traceback on
+stderr and no JSON on stdout.
 """
 from __future__ import annotations
 

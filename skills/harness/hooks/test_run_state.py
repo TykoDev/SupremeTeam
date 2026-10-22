@@ -37,6 +37,7 @@ import sys
 import tempfile
 import time
 import unittest
+from collections.abc import Callable
 from contextlib import contextmanager, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -105,7 +106,7 @@ def crash_when_writing(name: str):
 
 @contextmanager
 def refusing(*tails: str):
-    """Reads of the records ending in these paths raise PermissionError, as they do for an account that owner-only records exclude."""
+    """Reads of the records ending in these paths raise PermissionError, as they do on POSIX for an account that owner-only records exclude."""
     real = Path.read_text
 
     def read_text(self, *args, **kwargs):
@@ -115,6 +116,70 @@ def refusing(*tails: str):
 
     with mock.patch.object(Path, "read_text", read_text):
         yield
+
+
+# Each system's way of failing the read of a directory, so a test reads one as every system would, whichever runs it.
+SYSTEMS = ("this system", "Windows", "POSIX")
+
+
+@contextmanager
+def read_as(system: str, *tails: str):
+    """Reads of the records ending in these paths fail as ``system`` fails the read of a directory: Windows with the
+    PermissionError it gives a file this account may not read, POSIX with IsADirectoryError, this system as it does."""
+    if system == "this system":
+        yield
+        return
+    error, code = (PermissionError, errno.EACCES) if system == "Windows" else (IsADirectoryError, errno.EISDIR)
+    real = Path.read_text
+
+    def read_text(self, *args, **kwargs):
+        if any(self.as_posix().endswith(tail) for tail in tails):
+            raise error(code, os.strerror(code), str(self))
+        return real(self, *args, **kwargs)
+
+    with mock.patch.object(Path, "read_text", read_text):
+        yield
+
+
+@functools.cache
+def links_allowed() -> bool:
+    """Whether this account may make a link to a directory: Windows asks for a privilege most accounts lack."""
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            os.symlink(tmp, Path(tmp, "link"), target_is_directory=True)
+        except (OSError, NotImplementedError):
+            return False
+        return True
+
+
+def directory_kinds() -> dict[str, Callable[[Path], None]]:
+    """The ways a directory can stand where a record belongs on this system, each made at the path it is given: a plain
+    one, a junction and a junction whose directory is gone (Windows), and a link to a directory where this account may
+    make one. A target sits beside the record, so the project's cleanup removes it."""
+    def plain(path: Path) -> None:
+        path.mkdir()
+
+    def junction(path: Path, *, dangling: bool = False) -> None:
+        import _winapi
+
+        target = path.with_name(f"{path.name}.target")
+        target.mkdir()
+        _winapi.CreateJunction(str(target), str(path))
+        if dangling:
+            target.rmdir()
+
+    def link(path: Path) -> None:
+        target = path.with_name(f"{path.name}.target")
+        target.mkdir()
+        path.symlink_to(target, target_is_directory=True)
+
+    kinds: dict[str, Callable[[Path], None]] = {"a directory": plain}
+    if os.name == "nt":
+        kinds["a junction"] = junction
+        kinds["a dangling junction"] = functools.partial(junction, dangling=True)
+    if links_allowed():
+        kinds["a link to a directory"] = link
+    return kinds
 
 
 def modes_are_enforced() -> bool:
@@ -200,6 +265,14 @@ class RunStateCase(unittest.TestCase):
         proc = subprocess.run(self.command(run_id, *args), text=True, capture_output=True, check=False)
         text = (proc.stdout or proc.stderr).strip()
         return proc.returncode, json.loads(text[text.index("{"):])
+
+    def in_process(self, *args: str, run_id: str = "run-1") -> tuple[int, dict]:
+        """The writer's own entry point, run here so a read this module refuses is refused for it."""
+        argv = ["save_run.py", *args, "--project-root", str(self.project), f"--run-id={run_id}"]
+        out = io.StringIO()
+        with mock.patch.object(sys, "argv", argv), redirect_stdout(out):
+            code = save_run.main()
+        return code, json.loads(out.getvalue())
 
     def store(self, run_id: str = "run-1", **options) -> save_run.RunStore:
         return save_run.RunStore(self.project, run_id, **options)
@@ -888,21 +961,13 @@ class SavedFileModeTests(RunStateCase):
 
 
 class SecondAccountTests(RunStateCase):
-    """RR3-state-1: records are owner-only since SEC-19, so a second account sharing the project directory read the first
-    one's run as no run: its `create` passed the one-held-run check, and the hook-file gate went quiet for it.
+    """RR3-state-1: records are owner-only on POSIX since SEC-19, so a second account sharing the project directory read the
+    first one's run as no run: its `create` passed the one-held-run check, and the hook-file gate went quiet for it.
 
     The refused read is simulated where it happens, so these run for every account; the cases below the line use a
     real file with no permission bits and run wherever the file modes bind the process."""
 
     OWNER_ONLY = ("run-1/_state.md", "run-1/_lock.md", "/_latest.md")
-
-    def in_process(self, *args: str, run_id: str = "run-1") -> tuple[int, dict]:
-        """The writer's own entry point, run here so a read this module refuses is refused for it."""
-        argv = ["save_run.py", *args, "--project-root", str(self.project), f"--run-id={run_id}"]
-        out = io.StringIO()
-        with mock.patch.object(sys, "argv", argv), redirect_stdout(out):
-            code = save_run.main()
-        return code, json.loads(out.getvalue())
 
     def test_create_refuses_beside_a_record_it_cannot_read_and_names_it(self):
         self.create()
@@ -942,7 +1007,7 @@ class SecondAccountTests(RunStateCase):
 
     def test_closing_the_run_does_not_lift_the_refusal_because_its_records_stay_unreadable(self):
         """RR3-state-7: the step used to name the owner completing or releasing the run as the way forward, and the second
-        account met the same refusal afterwards: a closed run's records are as owner-only as a held one's."""
+        account met the same refusal afterwards: on POSIX a closed run's records are as owner-only as a held one's."""
         for close in ("complete", "release"):
             with self.subTest(close):
                 self.create()
@@ -1024,14 +1089,16 @@ class SecondAccountTests(RunStateCase):
         self.assertEqual(result["next_step"], _saves.ACCESS_DENIED_STEP)
 
     def test_a_directory_where_a_record_belongs_is_not_called_a_permission_problem(self):
-        """Windows raises PermissionError for the read of a directory; the writer still says what is wrong."""
+        """Windows raises PermissionError for the read of a directory; the writer says what is there, as the readers do,
+        where it used to say the run had no lock."""
         self.create()
         lock = self.run_dir / "_lock.md"
         lock.unlink()
         lock.mkdir()
         with refusing("run-1/_lock.md"), self.assertRaises(save_run.Refused) as caught:
             self.store().checkpoint("admiral", None, [], "active", None, {})
-        self.assertEqual(str(caught.exception), "run has no lock; create it first")
+        self.assertEqual(str(caught.exception), "skillset-saves/runs/run-1/_lock.md is a directory, not a file: "
+                                                "preserve the record and escalate; never overwrite it")
 
     def test_status_says_a_record_cannot_be_read_and_what_to_do(self):
         self.create()
@@ -1179,6 +1246,394 @@ class UnsearchableDirectoryTests(RunStateCase):
                 saves = json.loads(ready.stdout)
                 self.assertEqual(saves["saves"]["status"], "corrupt", saves)
                 self.assertTrue(saves["saves"]["access_denied"] and not saves["capabilities"]["saves_readable"], saves)
+
+
+class DamagedPointerCase(RunStateCase):
+    """run-1 beside a pointer each defect leaves, made on disk as a failure leaves it, and the held runs beside it."""
+
+    DEFECTS = ("malformed", "unsafe id", "missing target", "incoherent target", "revision mismatch", "directory at the pointer")
+    FRESH = "run run-1 holds a fresh lock: complete, block, or release it"
+    STALE = ("run run-1 holds a stale lock: complete, block, or release it as its owner, or reclaim it with recover --run-id "
+             "run-1 --reason <why> once it is the only held run")
+
+    def setUp(self):
+        super().setUp()
+        self.pointer = self.project / "skillset-saves" / "_latest.md"
+
+    def start(self) -> None:
+        self.assertEqual(self.in_process("create", "--evidence", "README.md")[0], 0)
+
+    def damage(self, defect: str) -> None:
+        """Leave the pointer as ``defect`` leaves it, beside run-1."""
+        if defect == "directory at the pointer":
+            self.pointer.unlink()
+            self.pointer.mkdir()
+            return
+        if defect == "incoherent target":
+            (self.run_dir.parent / "broken").mkdir()
+            (self.run_dir.parent / "broken" / "_state.md").write_text("{", encoding="utf-8")
+        names = {"schema_version": 1, "run_id": "run-1", "revision": 1, "updated_at": datetime.now(timezone.utc).isoformat()}
+        self.pointer.write_text({
+            "malformed": "{",
+            "unsafe id": json.dumps({**names, "run_id": "../run-1"}),
+            "missing target": json.dumps({**names, "run_id": "ghost"}),
+            "incoherent target": json.dumps({**names, "run_id": "broken"}),
+            "revision mismatch": json.dumps({**names, "revision": 5}),
+        }[defect], encoding="utf-8")
+
+    def interrupt(self) -> None:
+        """A checkpoint that died after it wrote the lock and before the state: a held run mid-publish, whose lock and
+        state are at different revisions."""
+        with crash_when_writing("_state.md"), self.assertRaises(save_run.Degraded):
+            self.store().checkpoint("admiral", 1, [], "active", None, {})
+
+    def second_held_run(self) -> None:
+        """A second held run, which the writer no longer makes: run-1's records under another id."""
+        other = self.run_dir.parent / "run-2"
+        other.mkdir()
+        for name in ("_state.md", "_lock.md"):
+            record = json.loads((self.run_dir / name).read_text(encoding="utf-8"))
+            (other / name).write_text(json.dumps({**record, "run_id": "run-2"}), encoding="utf-8")
+
+    def pointer_bytes(self) -> bytes | None:
+        return self.pointer.read_bytes() if self.pointer.is_file() else None
+
+
+class DamagedPointerTests(DamagedPointerCase):
+    """A damaged pointer was decided first and ended the reading, so no run behind it was looked at. The save root read
+    `corrupt`, which the writer let through: a second `create` took the session pin beside a live run, and the hook-file
+    gate and the pin reminder went quiet for it. A record this account could not read was dropped from that answer too.
+    Each defect is made on disk as a failure leaves it; the classification itself does not move."""
+
+    def test_create_is_refused_beside_a_held_run_whatever_the_pointer_says(self):
+        variants = {
+            "fresh": (lambda: None, self.FRESH, True),
+            "stale": (lambda: self.age_records(45), self.STALE, False),
+            "interrupted": (self.interrupt, "run run-1 has an interrupted publish: settle it with recover --run-id run-1 "
+                                            "--rollback", True),
+            "interrupted, stale": (lambda: (self.interrupt(), self.age_records(45)), "run run-1 has an interrupted publish: "
+                                   "settle it with recover --run-id run-1 --rollback", False),
+        }
+        for variant, (make, way_out, counted) in variants.items():
+            for defect in self.DEFECTS:
+                with self.subTest(variant=variant, defect=defect):
+                    self.setUp()
+                    self.start()
+                    make()
+                    self.damage(defect)
+                    before = self.pointer_bytes()
+                    self.assertEqual(_saves.inspect_saves(self.project)["status"], "corrupt")
+                    code, out = self.in_process("create", "--evidence", "README.md", run_id="run-2")
+                    self.assertEqual((code, out["result"]), (1, "refused"), out)
+                    self.assertEqual(out["reason"], f"another run holds the session pin ({way_out})")
+                    self.assertFalse((self.run_dir.parent / "run-2").exists(), "a refused create leaves no directory")
+                    self.assertEqual(self.pointer_bytes(), before, "the pointer is not written")
+                    # A fresh lock counts as a live run for the hooks, mid-publish too; a stale one does not.
+                    self.assertEqual(_saves.has_active_run(self.project), counted)
+
+    def test_a_released_run_is_not_resumed_beside_a_held_run_the_pointer_does_not_show(self):
+        self.start()
+        self.assertEqual(self.in_process("release")[0], 0)
+        self.assertEqual(self.in_process("create", "--evidence", "README.md", run_id="run-2")[0], 0)
+        self.pointer.write_text("{", encoding="utf-8")
+        code, out = self.in_process("checkpoint")
+        self.assertEqual((code, out["result"]), (1, "refused"), out)
+        self.assertEqual(out["reason"], "cannot resume a released run while another run holds the session pin (run run-2 "
+                                        "holds a fresh lock: complete, block, or release it)")
+        self.assertEqual(self.lock()["status"], "released")
+
+    def test_a_record_this_account_cannot_read_beside_a_damaged_pointer_refuses_create(self):
+        refusals = {
+            "the lock of the held run": (lambda: refusing("run-1/_lock.md"), "skillset-saves/runs/run-1/_lock.md"),
+            "the state of the held run": (lambda: refusing("run-1/_state.md"), "skillset-saves/runs/run-1/_state.md"),
+            "the listing of runs": (lambda: mock.patch.object(Path, "iterdir", side_effect=PermissionError(
+                errno.EACCES, "Permission denied", str(self.run_dir.parent))), "skillset-saves/runs"),
+        }
+        for label, (refused, path) in refusals.items():
+            for defect in self.DEFECTS:
+                with self.subTest(refused=label, defect=defect):
+                    self.setUp()
+                    self.start()
+                    self.damage(defect)
+                    with refused():
+                        held = _saves.has_active_run(self.project)
+                        code, out = self.in_process("create", "--evidence", "README.md", run_id="run-2")
+                    self.assertTrue(held)
+                    self.assertEqual((code, out["result"]), (1, "refused"), out)
+                    self.assertEqual(out["reason"], f"{path} exists but this account cannot read it (permission denied); "
+                                                    f"{_saves.PIN_MAY_BE_HELD}: {_saves.ACCESS_DENIED_STEP}")
+                    self.assertFalse((self.run_dir.parent / "run-2").exists())
+
+    def test_the_hook_file_gate_and_the_pin_reminder_stay_on_beside_a_damaged_pointer_and_for_conflicting_runs(self):
+        """Both ask `has_active_run`, which answered no for `corrupt` and for `conflicting`."""
+        hook_script = f"{HOOK_DIR.as_posix()}/guard_hook.py"
+        saved = os.environ.pop("SUPREMETEAM_HARNESS_DEV", None)
+        if saved is not None:
+            self.addCleanup(os.environ.__setitem__, "SUPREMETEAM_HARNESS_DEV", saved)
+        for arrangement in (*self.DEFECTS, "conflicting"):
+            with self.subTest(arrangement):
+                self.setUp()
+                self.start()
+                if arrangement == "conflicting":
+                    self.second_held_run()
+                else:
+                    self.damage(arrangement)
+                status = _saves.inspect_saves(self.project)["status"]
+                self.assertEqual(status, "conflicting" if arrangement == "conflicting" else "corrupt")
+                self.assertTrue(kit.denied(kit.decide(kit.edit(hook_script), self.project)), "the hook-file gate")
+                prompt = kit.run_hook("user_prompt_submit.py", {"prompt": "continue"}, self.project)
+                self.assertIn("a run is active (session pin held)",
+                              json.loads(prompt.stdout)["hookSpecificOutput"]["additionalContext"])
+        code, out = self.in_process("create", "--evidence", "README.md", run_id="run-3")
+        self.assertEqual(out["reason"], f"another run holds the session pin ({self.FRESH}; "
+                                        f"{self.FRESH.replace('run-1', 'run-2')})")
+
+    def test_a_run_whose_records_disagree_does_not_block_unless_it_is_mid_publish(self):
+        """Only a held run blocks: a coherent one, one mid-publish, or one whose records agree beside a directory where its
+        journal belongs. A run damaged in any other way is preserved for escalation, and `create` goes ahead beside it, as
+        it always has."""
+        self.start()
+        state = self.state()
+        state["revision"] = 7
+        (self.run_dir / "_state.md").write_text(json.dumps(state), encoding="utf-8")
+        self.assertEqual(_saves.inspect_run(self.project, "run-1")["detail"], "state and lock revisions differ")
+        self.assertEqual(self.lock()["status"], "held")
+        code, out = self.in_process("create", "--evidence", "README.md", run_id="run-2")
+        self.assertEqual((code, out["result"]), (0, "ok"), out)
+
+    def test_the_way_out_of_a_stale_lock_is_true_beside_one_held_run_and_beside_two(self):
+        """It said to reclaim the lock with `recover --reason`, which refuses while another run holds the pin: beside two
+        stale runs each refused the other. Its owner closing it works either way, and the reclaim once it is the only one."""
+        self.start()
+        self.age_records(45)
+        code, out = self.in_process("create", "--evidence", "README.md", run_id="run-2")
+        self.assertEqual((code, out["reason"]), (1, f"another run holds the session pin ({self.STALE})"), out)
+        self.assertEqual(self.in_process("recover", "--reason", "its session is gone")[0], 0, "the only held run is reclaimed")
+        self.assertEqual(self.in_process("complete")[0], 0)
+
+        self.setUp()
+        self.start()
+        self.second_held_run()
+        self.age_records(45, self.run_dir.parent / "run-2" / "_lock.md")
+        code, out = self.in_process("create", "--evidence", "README.md", run_id="run-3")
+        self.assertEqual(out["reason"], f"another run holds the session pin ({self.STALE}; {self.STALE.replace('run-1', 'run-2')})")
+        code, out = self.in_process("recover", "--reason", "its session is gone")
+        self.assertEqual((code, out["reason"]), (1, f"another run holds the session pin ({self.STALE.replace('run-1', 'run-2')}); "
+                                                    f"recovery would create a conflicting active set"), out)
+        self.assertEqual(self.in_process("complete")[0], 0, "its owner closes it whatever else holds the pin")
+        self.assertEqual(self.in_process("recover", "--reason", "its session is gone", run_id="run-2")[0], 0,
+                         "the other is reclaimed once it is the only held run")
+        self.assertEqual(self.in_process("complete", run_id="run-2")[0], 0)
+        self.assertEqual(self.in_process("create", "--evidence", "README.md", run_id="run-3")[0], 0)
+
+    def test_a_held_run_beside_a_directory_at_its_journal_blocks_create_and_counts_while_its_lock_is_fresh(self):
+        """At HEAD the directory read as a journal: the run was active, mid-publish, and blocked `create`. Read as damage it
+        stopped blocking and counting, though its lock still said held. It holds its pin again, and the way out is the
+        damage's: no rollback settles a directory."""
+        for kind, make in directory_kinds().items():
+            with self.subTest(kind):
+                self.setUp()
+                self.start()
+                make(self.run_dir / "_journal.json")
+                way_out = ("run run-1 holds a lock, but a directory stands at skillset-saves/runs/run-1/_journal.json: "
+                           "preserve the record and escalate")
+                for fresh in (True, False):
+                    if not fresh:
+                        self.age_records(45)
+                    self.assertEqual(_saves.has_active_run(self.project), fresh)
+                    code, out = self.in_process("create", "--evidence", "README.md", run_id="run-2")
+                    self.assertEqual((code, out["reason"]), (1, f"another run holds the session pin ({way_out})"), out)
+                    self.assertFalse((self.run_dir.parent / "run-2").exists())
+                code, out = self.in_process("status")
+                self.assertEqual((out["requested_run"]["state"], out["interrupted"]), ("corrupt", False), out)
+                code, out = self.in_process("recover", "--rollback")
+                self.assertEqual((code, out["reason"]), (1, "skillset-saves/runs/run-1/_journal.json is a directory, not a file: "
+                                                            "preserve the record and escalate; never overwrite it"), out)
+
+
+class HeartbeatBesideADamagedPointerTests(DamagedPointerCase):
+    """The hook refresh kept a run alive only where the save root read `active` or `orphaned`, so behind a damaged pointer
+    a live run went stale under real host activity while it still held the pin. The one coherent held run is kept alive
+    whatever the pointer says, and the heartbeat rewrites the pointer from it: never beside a second coherent held run,
+    never a stale lock, and never where the classification stopped at a record this account cannot read."""
+
+    def setUp(self):
+        super().setUp()
+        patch = mock.patch.dict(os.environ, {"SUPREMETEAM_PROJECT_DIR": str(self.project)})
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def refresh(self):
+        return run_heartbeat.refresh({"session_id": "host-1"}, "PreToolUse")
+
+    def faults(self) -> int:
+        return _state.load_observations(self.project).get("PreToolUse", {}).get("faults", 0)
+
+    @staticmethod
+    def aged(lock: Path, minutes: int) -> None:
+        record = json.loads(lock.read_text(encoding="utf-8"))
+        record["heartbeat"] = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+        lock.write_text(json.dumps(record), encoding="utf-8")
+
+    def test_the_lone_live_run_behind_each_damaged_pointer_is_kept_alive_and_the_pointer_rewritten(self):
+        for defect in self.DEFECTS[:-1]:
+            with self.subTest(defect):
+                self.setUp()
+                self.start()
+                self.age_records(12)
+                self.damage(defect)
+                self.assertEqual(_saves.inspect_saves(self.project)["status"], "corrupt")
+                result = self.refresh()
+                self.assertEqual(result["source"], "hook:PreToolUse", result)
+                self.assertEqual(self.lock()["heartbeat_source"], "hook:PreToolUse")
+                pointer = json.loads(self.pointer.read_text(encoding="utf-8"))
+                self.assertEqual((pointer["run_id"], pointer["revision"], pointer["updated_at"]),
+                                 ("run-1", 1, self.lock()["heartbeat"]))
+                self.assertEqual(_saves.inspect_saves(self.project)["status"], "active")
+                self.assertEqual(self.faults(), 0)
+
+    def test_a_directory_at_the_pointer_still_lets_the_lock_be_kept_alive_and_the_failed_pointer_write_is_counted(self):
+        """The lock is written before the pointer; the directory stays where it is, said as the damage it is. The failed
+        pointer write waits for nothing: on Windows the replace was retried for about three seconds inside the hook, as a
+        permission problem."""
+        self.start()
+        self.age_records(12)
+        self.damage("directory at the pointer")
+        with mock.patch.object(save_run._fsutil.time, "sleep") as sleep:
+            self.assertIsNone(self.refresh())
+        sleep.assert_not_called()
+        self.assertEqual(self.lock()["heartbeat_source"], "hook:PreToolUse")
+        self.assertTrue(_saves.not_a_file(self.pointer))
+        self.assertEqual(self.faults(), 1)
+
+    def test_never_beside_a_second_coherent_held_run_whatever_the_pointer_says(self):
+        for arrangement in ("conflicting", "a stale second run behind a damaged pointer"):
+            with self.subTest(arrangement):
+                self.setUp()
+                self.start()
+                self.second_held_run()
+                other = self.run_dir.parent / "run-2" / "_lock.md"
+                self.age_records(12, other)
+                if arrangement != "conflicting":
+                    self.aged(other, 45)
+                    self.damage("malformed")
+                before = (self.lock(), other.read_bytes(), self.pointer_bytes())
+                self.assertIsNone(self.refresh())
+                self.assertEqual((self.lock(), other.read_bytes(), self.pointer_bytes()), before)
+
+    def test_never_a_stale_lock_behind_a_damaged_pointer(self):
+        self.start()
+        self.age_records(45)
+        self.damage("malformed")
+        before = self.lock()
+        self.assertIsNone(self.refresh())
+        self.assertEqual((self.lock(), self.pointer_bytes()), (before, b"{"))
+
+    def test_never_over_a_pointer_this_account_cannot_read(self):
+        """It may name a run this account cannot see; the classification stops there, and nothing is written."""
+        self.start()
+        self.age_records(12)
+        before = (self.lock(), self.pointer_bytes())
+        with refusing("skillset-saves/_latest.md"):
+            self.assertIsNone(self.refresh())
+        self.assertEqual((self.lock(), self.pointer_bytes()), before)
+
+    def test_a_held_run_mid_publish_beside_it_does_not_leave_the_live_run_to_go_stale(self):
+        """A run whose records disagree is no second coherent one: it keeps its own way out (`recover --rollback`)."""
+        self.start()
+        self.second_held_run()
+        other = self.run_dir.parent / "run-2"
+        lock = json.loads((other / "_lock.md").read_text(encoding="utf-8"))
+        (other / "_lock.md").write_text(json.dumps({**lock, "revision": 2}), encoding="utf-8")
+        (other / "_journal.json").write_text('{"revision": 2, "step": "begin"}', encoding="utf-8")
+        self.age_records(12)
+        self.damage("malformed")
+        self.assertEqual([(run["run_id"], run["state"]) for run in _saves.inspect_saves(self.project)["held_runs"]],
+                         [("run-1", "active"), ("run-2", "corrupt")])
+        self.assertEqual(self.refresh()["source"], "hook:PreToolUse")
+        self.assertEqual(json.loads(self.pointer.read_text(encoding="utf-8"))["run_id"], "run-1")
+
+
+class DirectoryWhereARecordBelongsTests(RunStateCase):
+    """A directory where a record of the run belongs (a plain one, a junction, or a link to one) is damage, which no
+    operation writes over. Windows refuses the read of one with the PermissionError it gives a file this account may not
+    read, which the writer took for no record (`run has no lock; create it first`) or, for a journal, for an interrupted
+    publish that no rollback could settle; POSIX raises IsADirectoryError, which it took for no record. Each is read here
+    as this system reads it and as each system would, and said one way."""
+
+    OPERATIONS = (("checkpoint",), ("heartbeat",), ("complete",), ("release",), ("block",), ("recover", "--reason", "why"),
+                  ("recover", "--rollback"))
+
+    def damaged(self, name: str) -> str:
+        return f"skillset-saves/runs/run-1/{name} is a directory, not a file: preserve the record and escalate; never overwrite it"
+
+    def test_every_operation_refuses_a_directory_at_the_state_the_lock_or_the_journal(self):
+        for name in ("_state.md", "_lock.md", "_journal.json"):
+            for kind, make in directory_kinds().items():
+                for system in SYSTEMS:
+                    with self.subTest(record=name, kind=kind, read_as=system):
+                        self.setUp()
+                        self.assertEqual(self.in_process("create", "--evidence", "README.md")[0], 0)
+                        path = self.run_dir / name
+                        path.unlink(missing_ok=True)
+                        make(path)
+                        kept = {other: (self.run_dir / other).read_bytes() for other in ("_state.md", "_lock.md") if other != name}
+                        for operation, *extra in self.OPERATIONS:
+                            with read_as(system, name):
+                                code, out = self.in_process(operation, *extra)
+                            self.assertEqual((code, out["result"], out["reason"]), (1, "refused", self.damaged(name)), operation)
+                        self.assertTrue(_saves.not_a_file(path), "nothing was written over it")
+                        self.assertEqual({other: (self.run_dir / other).read_bytes() for other in kept}, kept)
+
+    def test_create_refuses_a_directory_where_a_record_of_the_new_run_belongs_and_writes_no_record(self):
+        """Create used to say the run already existed, or to publish into a dangling junction and leave an interrupted
+        first revision behind."""
+        for name in ("_state.md", "_lock.md", "_journal.json"):
+            for kind, make in directory_kinds().items():
+                with self.subTest(record=name, kind=kind):
+                    self.setUp()
+                    self.run_dir.mkdir(parents=True)
+                    make(self.run_dir / name)
+                    code, out = self.in_process("create", "--evidence", "README.md")
+                    self.assertEqual((code, out["result"], out["reason"]), (1, "refused", self.damaged(name)), out)
+                    self.assertFalse((self.project / "skillset-saves" / "_latest.md").exists())
+                    for record in {"_state.md", "_lock.md", "_journal.json"} - {name}:
+                        self.assertFalse(os.path.lexists(self.run_dir / record), record)
+
+    def test_a_directory_at_the_pointer_or_the_trail_degrades_the_write_and_says_what_stands_there(self):
+        """The cause was the system's word for it: `Permission denied` on Windows, as for a record this account may not
+        write, and `Is a directory` on POSIX. A rename replaces a link, so a link stays out of the pointer's cases."""
+        cases =[("_latest.md", kind, make) for kind, make in directory_kinds().items() if "link" not in kind]
+        cases += [("_audit-trail.md", kind, make) for kind, make in directory_kinds().items()]
+        for name, kind, make in cases:
+            with self.subTest(record=name, kind=kind):
+                self.setUp()
+                self.assertEqual(self.in_process("create", "--evidence", "README.md")[0], 0)
+                path = self.project / "skillset-saves" / name if name == "_latest.md" else self.run_dir / name
+                path.unlink()
+                make(path)
+                code, out = self.in_process("checkpoint")
+                self.assertEqual((code, out["result"]), (2, "degraded"), out)
+                cause = ("pointer not updated (write failed for _latest.md: _latest.md is a directory, not a file)"
+                         if name == "_latest.md" else
+                         "(audit append failed: skillset-saves/runs/run-1/_audit-trail.md is a directory, not a file)")
+                self.assertIn(cause, out["reason"])
+                self.assertNotIn("ermission denied", out["reason"])
+
+    def test_status_reports_a_directory_at_the_journal_as_damage_not_as_an_interrupted_publish(self):
+        """`status --run-id` read it as `interrupted` and named `recover --rollback`, which then found no revision in it."""
+        for kind, make in directory_kinds().items():
+            with self.subTest(kind):
+                self.setUp()
+                self.assertEqual(self.in_process("create", "--evidence", "README.md")[0], 0)
+                make(self.run_dir / "_journal.json")
+                result = self.store().status()
+                self.assertFalse(result["interrupted"], result)
+                self.assertEqual((result["status"], result["detail"]),
+                                 ("corrupt", "skillset-saves/runs/run-1/_journal.json is a directory, not a file"), result)
+                self.assertEqual(result["requested_run"]["state"], "corrupt")
+                self.assertEqual(result["next_step"], _saves.NEXT_STEPS["corrupt"])
+                self.assertNotIn("access_denied", result)
 
 
 class TrailVocabularyTests(RunStateCase):

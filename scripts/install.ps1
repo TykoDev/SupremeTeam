@@ -49,7 +49,6 @@ $stageMarkerName = ".supremeteam-stage"
 # install-items.txt is the one item list; install.sh reads the same file.
 $script:coreItems = @()
 $script:seedItems = @()
-$script:supersededItems = [ordered]@{}
 $script:teamItems = [ordered]@{}
 $script:legacyItems = [ordered]@{}
 $script:allTeamNames = @()
@@ -106,24 +105,6 @@ function Import-ItemList {
                 $script:seedItems += $name
             }
         }
-        elseif ($kind -eq "supersedes") {
-            if ($rest.Count -eq 0) {
-                throw "'$kind $name' lists no files in $itemsFile."
-            }
-
-            foreach ($member in $rest) {
-                if (-not (Test-ValidName -Name $member)) {
-                    throw "Invalid name '$member' in $itemsFile."
-                }
-            }
-
-            if ($script:supersededItems.Contains($name)) {
-                $script:supersededItems[$name] = @($script:supersededItems[$name]) + $rest
-            }
-            else {
-                $script:supersededItems[$name] = $rest
-            }
-        }
         elseif ($kind -eq "team" -or $kind -eq "legacy") {
             if ($rest.Count -eq 0) {
                 throw "'$kind $name' lists no items in $itemsFile."
@@ -171,19 +152,6 @@ function Import-ItemList {
     foreach ($dir in $script:legacyItems.Keys) {
         if ($script:managedItems -contains $dir) {
             throw "Legacy directory '$dir' is also an installed item in $itemsFile."
-        }
-    }
-
-    foreach ($seedName in $script:supersededItems.Keys) {
-        if ($script:seedItems -notcontains $seedName) {
-            throw "'supersedes $seedName' names a file that is not a seed in $itemsFile."
-        }
-
-        foreach ($copyName in $script:supersededItems[$seedName]) {
-            $copyPath = Join-Path (Join-Path $PSScriptRoot "superseded") $copyName
-            if (-not (Test-Path -LiteralPath $copyPath -PathType Leaf)) {
-                throw "Missing superseded copy '$copyName' at '$copyPath'."
-            }
         }
     }
 }
@@ -442,55 +410,6 @@ function Get-ItemState {
     return "foreign"
 }
 
-# SHA-256 of a file's bytes with the CR of every CRLF dropped, the fold the catalog's
-# own hashes use and install.sh's same_text applies. Latin-1 turns each byte into one
-# character and back, so nothing but the CRLF pairs changes.
-function Get-FoldedHash {
-    param(
-        [string]$Path
-    )
-
-    $latin1 = [System.Text.Encoding]::GetEncoding("iso-8859-1")
-    $folded = $latin1.GetString([System.IO.File]::ReadAllBytes($Path)).Replace("`r`n", "`n")
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        return [System.BitConverter]::ToString($sha.ComputeHash($latin1.GetBytes($folded)))
-    }
-    finally {
-        $sha.Dispose()
-    }
-}
-
-# True when $Root\$Name is a regular file that is a copy an earlier release shipped
-# (install-items.txt, supersedes), whichever line endings its checkout gave it: it was
-# never edited, so it is the installer's own. Folded hashes are compared, the same
-# proof install.sh gets from cmp.
-function Test-SupersededSeed {
-    param(
-        [string]$Root,
-        [string]$Name
-    )
-
-    $item = Get-EntryInfo -Root $Root -Name $Name
-    if ($null -eq $item -or $item.PSIsContainer -or (Test-ReparsePoint -Item $item)) {
-        return $false
-    }
-
-    if (-not $script:supersededItems.Contains($Name)) {
-        return $false
-    }
-
-    $installed = Get-FoldedHash -Path $item.FullName
-    foreach ($copyName in $script:supersededItems[$Name]) {
-        $copy = Join-Path (Join-Path $PSScriptRoot "superseded") $copyName
-        if ((Get-FoldedHash -Path $copy) -eq $installed) {
-            return $true
-        }
-    }
-
-    return $false
-}
-
 # A directory from an older layout is recognised only while it holds nothing but
 # the entries that layout put there.
 function Test-LegacyDirectory {
@@ -674,7 +593,12 @@ function Move-IntoPlace {
     $targetPath = Join-Path $Root $ItemName
     $stagedPath = Join-Path (Join-Path $script:stage "new") $ItemName
     $retiredPath = Join-Path (Join-Path $script:stage "old") $ItemName
-    $backupPath = Join-Path $script:backupDir $ItemName
+    # The backup folder exists only when this run moves something foreign aside,
+    # and Join-Path refuses the empty path it is left as otherwise.
+    $backupPath = ""
+    if ($State -eq "foreign") {
+        $backupPath = Join-Path $script:backupDir $ItemName
+    }
 
     if ($State -eq "owned") {
         Move-Item -LiteralPath $targetPath -Destination $retiredPath
@@ -759,7 +683,6 @@ function Install-SupremeTeam {
     $addItems = @()
     $replaceItems = @()
     $keptItems = @()
-    $refreshedItems = @()
     $foreignItems = @()
     $staleItems = @()
     $unselectedItems = @()
@@ -769,14 +692,7 @@ function Install-SupremeTeam {
     foreach ($item in $Items) {
         $state = Get-ItemState -Root $root -Name $item
         if ($state -ne "absent" -and $script:seedItems -contains $item) {
-            if (Test-SupersededSeed -Root $root -Name $item) {
-                $replaceItems += $item
-                $refreshedItems += $item
-            }
-            else {
-                $keptItems += $item
-            }
-
+            $keptItems += $item
             continue
         }
 
@@ -818,7 +734,6 @@ function Install-SupremeTeam {
     if ($DryRun) {
         Write-ItemList -Label "would add" -Items $addItems
         Write-ItemList -Label "would replace" -Items $replaceItems
-        Write-ItemList -Label "would replace, an unedited copy from an earlier release" -Items $refreshedItems
         Write-ItemList -Label "would keep, yours" -Items $keptItems
         Write-ItemList -Label "would remove, not selected this run" -Items $unselectedItems
         Write-ItemList -Label "would remove, no longer shipped" -Items $retiredItems
@@ -872,7 +787,6 @@ function Install-SupremeTeam {
     Write-Host "  installed $($newCount + $replaceItems.Count) items ($newCount new, $($replaceItems.Count) replaced)"
     Write-Host "  recorded in $(Join-Path $root $manifestName)"
     Write-ItemList -Label "kept, yours" -Items $keptItems
-    Write-ItemList -Label "replaced, an unedited copy from an earlier release" -Items $refreshedItems
     Write-ItemList -Label "removed, not selected this run" -Items $unselectedItems
     Write-ItemList -Label "removed, no longer shipped" -Items $retiredItems
     if ($script:backupDir -ne "") {

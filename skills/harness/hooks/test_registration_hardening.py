@@ -281,6 +281,45 @@ class ReadinessSemanticsTests(Scratch):
         self.assertEqual(code, 1, as_json)
         self.assert_said_plainly(json.loads(as_json), report()[1])
 
+    def test_a_refused_record_beside_a_damaged_pointer_or_an_active_run_gets_the_step_the_writer_refuses_with(self):
+        """Beside a damaged pointer the next step and the `--require-active-run` blocker gave the pointer's damage step
+        (preserve and escalate), while `create` refused with the access step; beside an active run there was no step at
+        all. Both give the writer's step now, and `saves_readable` stays false for either."""
+        self.run_with_a_lock_to_refuse()
+        saves = self.project / "skillset-saves"
+
+        def report(*args: str) -> tuple[int, str]:
+            out = io.StringIO()
+            argv = ["check_readiness.py", "--host", "claude", "--project-root", str(self.project), *args]
+            with (fixtures.refusing("runs/r1/_lock.md"), mock.patch.object(sys, "argv", argv),
+                  mock.patch.dict(os.environ, plain_env(self.home), clear=True), contextlib.redirect_stdout(out)):
+                return check_readiness.main(), out.getvalue()
+
+        refused = f"{self.LOCK} exists but this account cannot read it (permission denied); {_saves.PIN_MAY_BE_HELD}"
+        (saves / "_latest.md").write_text("{", encoding="utf-8")
+        code, as_json = report("--json", "--require-active-run")
+        data = json.loads(as_json)
+        self.assertEqual((code, data["saves"]["status"], data["saves"]["detail"]), (1, "corrupt", "pointer missing or malformed"))
+        self.assertEqual(data["saves"]["next_step"], _saves.ACCESS_DENIED_STEP)
+        self.assertIn(f"no active pinned run (saves are corrupt: {refused}: {_saves.ACCESS_DENIED_STEP}; --require-active-run)",
+                      data["blockers"])
+        self.assertFalse(data["capabilities"]["saves_readable"])
+        self.assertIn(f"  next: {_saves.ACCESS_DENIED_STEP}", report()[1])
+
+        # The refused lock is now a second run's, beside the run the pointer names, which is active.
+        shutil.copytree(saves / "runs" / "r1", saves / "runs" / "r0")
+        for name in ("_state.md", "_lock.md"):
+            record = json.loads((saves / "runs" / "r0" / name).read_text(encoding="utf-8"))
+            (saves / "runs" / "r0" / name).write_text(json.dumps({**record, "run_id": "r0"}), encoding="utf-8")
+        (saves / "_latest.md").write_text(json.dumps({"schema_version": 1, "run_id": "r0", "revision": 1,
+                                                      "updated_at": json.loads((saves / "runs" / "r0" / "_lock.md").read_text(
+                                                          encoding="utf-8"))["heartbeat"]}), encoding="utf-8")
+        code, as_json = report("--json", "--require-active-run")
+        data = json.loads(as_json)
+        self.assertEqual((code, data["saves"]["status"], data["saves"]["access_denied"]), (0, "active", [self.LOCK]), data["saves"])
+        self.assertEqual(data["saves"]["next_step"], _saves.ACCESS_DENIED_STEP)
+        self.assertEqual((data["capabilities"]["active_run"], data["capabilities"]["saves_readable"]), (True, False))
+
     def test_project_root_reaches_the_hook_inspection(self):
         # BUGH-19: the hooks live in the other project; the working directory is a bare one.
         other = self.tmp / "other"

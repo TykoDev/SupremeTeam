@@ -163,7 +163,7 @@ other groups belong to `build/bob-the-builder`, `build/test-builder`, or
 Re-probe against the **same authorized target**: a REVISE is not fresh
 authorization for a different environment, and re-probing elsewhere makes the
 resubmission incomparable to the original. Re-hash the log, hand the record back
-once. `revise_policy.cycle_cap` is 2; a third cycle escalates to the build owner
+once. `revise_policy.cycle_cap` is 3; a third cycle escalates to the build owner
 rather than resubmitting.
 
 ## Decision Rules

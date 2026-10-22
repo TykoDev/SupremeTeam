@@ -11,7 +11,7 @@ first.
 2. Directions returned for insufficient differentiation
 3. Full-parity build of the selected variant
 4. Browserless host
-5. Second REVISE on the same keys
+5. Third REVISE on the same keys
 6. A deferral, and the four keys that carry a string instead
 7. A merge, and the brief that goes to the design pipeline
 
@@ -61,15 +61,15 @@ first.
 - Comparison matrix: rendering is marked unobserved for every mock, so the recommendation rests on mock parity coverage and Taste conformance alone, and says so.
 - `residual_risk` recorded: rendering unverified across all four mocks and on the selected variant; owner is `review/design-qa`, and the reopen trigger is a capture run at the same hashes on a host with a browser.
 
-## Example 5 — Second REVISE on the same keys
+## Example 5 — Third REVISE on the same keys
 
-**User request:** (continuation) the gate came back REVISE again on `design_directions` and `mock_set`
+**User request:** (continuation) the gate came back REVISE a third time on `design_directions` and `mock_set`
 
 **Output:**
-- Cycle state: this is the second `REVISE` on `redesign-review`, which exhausts `../../../gates.yaml` `revise_policy.cycle_cap` of 2.
-- Action: stop resubmitting. Escalate to Admiral with both revise packets, both verdict records, and the unclosed keys named with their owners (`design_directions` → `design/architect`, `mock_set` → `design/prototyper`).
-- Why the cap exists: two failed cycles on the same keys mean the disagreement is about the requirement — where the differentiation bar sits, what the mock parity contract covers — rather than about the artifact.
-- What Admiral receives: the dispute, the recommended default for each key, and both revisions preserved as evidence rather than overwritten into one history.
+- Cycle state: this is the third `REVISE` on `redesign-review`, which exhausts `../../../gates.yaml` `revise_policy.cycle_cap` of 3.
+- Action: stop resubmitting. Escalate to Admiral with all three revise packets, all corresponding verdict records, and the unclosed keys named with their owners (`design_directions` → `design/architect`, `mock_set` → `design/prototyper`).
+- Why the cap exists: three failed cycles on the same keys mean the disagreement is about the requirement — where the differentiation bar sits, what the mock parity contract covers — rather than about the artifact.
+- What Admiral receives: the dispute, the recommended default for each key, and all three revisions preserved as evidence rather than overwritten into one history.
 
 ## Example 6 — A deferral, and the four keys that carry a string instead
 

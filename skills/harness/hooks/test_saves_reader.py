@@ -28,7 +28,7 @@ HOOK_DIR = Path(__file__).resolve().parent
 SAVE_RUN = HOOK_DIR / "save_run.py"
 sys.path.insert(0, str(HOOK_DIR))
 import _saves  # noqa: E402
-from test_run_state import refusing, unsearchable  # noqa: E402
+from test_run_state import SYSTEMS, directory_kinds, read_as, refusing, unsearchable  # noqa: E402
 
 NOW = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
 
@@ -219,9 +219,8 @@ class ClassificationTests(unittest.TestCase):
 class HasActiveRunTests(unittest.TestCase):
     """QR-PY-07: a prompt, and a guarded write, classified every saved run to learn whether one is active.
 
-    The answer must stay the classification's, because the guard's hook-file protection and the
-    session-pin reminder both read it (a conflicting set, for one, never counts), so the saving
-    is in what is read, not in what is decided."""
+    The answer must stay the one the full classification finds, because the guard's hook-file protection
+    and the session-pin reminder both read it, so the saving is in what is read, not in what is decided."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -253,43 +252,70 @@ class HasActiveRunTests(unittest.TestCase):
         self.assertEqual(self.classified_runs(), 0)
         self.assertFalse(self.answer)
 
-    def test_it_agrees_with_the_classification_in_every_arrangement(self):
-        """Each case is judged against the full classification of the same directory."""
+    def test_it_agrees_with_what_the_full_classification_found_in_every_arrangement(self):
+        """Each case is judged against the full classification of the same directory: a held run whose lock is fresh
+        anywhere, whatever the pointer says, or a record this account cannot read. Beside a damaged pointer (`corrupt`) or a
+        second held run (`conflicting`) the answer was no, and so it was for a run mid-publish or beside a directory where
+        its journal belongs, so the hook-file gate and the pin reminder went quiet for a live run."""
+        def malformed(p: SavedProject) -> None:
+            (p.root / "skillset-saves" / "_latest.md").write_text("{", encoding="utf-8")
+
+        def mid_publish(p: SavedProject, **run) -> None:
+            p.run("r", lock_revision=2, **run)
+            p.pointer("r")
+            (p.runs / "r" / "_journal.json").write_text('{"revision": 2, "step": "begin"}', encoding="utf-8")
+
+        def journal_directory(p: SavedProject, **run) -> None:
+            p.run("r", **run)
+            p.pointer("r")
+            (p.runs / "r" / "_journal.json").mkdir()
+
         cases = {
-            "one live run": lambda p: (p.run("r"), p.pointer("r")),
-            "paused": lambda p: (p.run("r", status="paused"), p.pointer("r")),
-            "awaiting input": lambda p: (p.run("r", status="awaiting-input"), p.pointer("r")),
-            "orphaned": lambda p: p.run("r"),
-            "pointer behind": lambda p: (p.run("r"), p.pointer("r", updated=-45)),
-            "stale": lambda p: (p.run("r", heartbeat=-45), p.pointer("r", updated=-45)),
-            "future heartbeat": lambda p: (p.run("r", heartbeat=120), p.pointer("r")),
-            "released": lambda p: (p.run("r", status="released"), p.pointer("r")),
-            "blocked": lambda p: (p.run("r", status="blocked"), p.pointer("r")),
-            "complete": lambda p: (p.run("r", status="complete"), p.pointer("r")),
-            "two held runs": lambda p: (p.run("a"), p.run("b"), p.pointer("a")),
-            "a stale held run beside the live pointed one": lambda p: (p.run("a"), p.run("b", heartbeat=-45), p.pointer("a")),
-            "an orphan beside a pointer to a closed run": lambda p: (p.run("a"), p.pointer("closed-03")),
-            "a stale held run only": lambda p: (p.run("a", heartbeat=-45), p.pointer("closed-03")),
-            "pointer names nothing": lambda p: (p.run("r"), p.pointer("ghost")),
-            "pointer is not a plain name": lambda p: (p.run("r"), p.pointer("../r")),
-            "pointer at another revision": lambda p: (p.run("r", revision=3), p.pointer("r", revision=2)),
-            "pointer is malformed": lambda p: (p.run("r"), (p.root / "skillset-saves" / "_latest.md").write_text("{", encoding="utf-8")),
-            "pointed run lost its evidence": lambda p: (p.run("r", evidence=("gone.md",)), p.pointer("r")),
-            "held lock, closed state": lambda p: (p.run("r", status="complete").joinpath("_lock.md").write_text(json.dumps(
+            "one live run": (lambda p: (p.run("r"), p.pointer("r")), True),
+            "paused": (lambda p: (p.run("r", status="paused"), p.pointer("r")), True),
+            "awaiting input": (lambda p: (p.run("r", status="awaiting-input"), p.pointer("r")), True),
+            "orphaned": (lambda p: p.run("r"), True),
+            "pointer behind": (lambda p: (p.run("r"), p.pointer("r", updated=-45)), True),
+            "stale": (lambda p: (p.run("r", heartbeat=-45), p.pointer("r", updated=-45)), False),
+            "future heartbeat": (lambda p: (p.run("r", heartbeat=120), p.pointer("r")), False),
+            "released": (lambda p: (p.run("r", status="released"), p.pointer("r")), False),
+            "blocked": (lambda p: (p.run("r", status="blocked"), p.pointer("r")), False),
+            "complete": (lambda p: (p.run("r", status="complete"), p.pointer("r")), False),
+            "two held runs": (lambda p: (p.run("a"), p.run("b"), p.pointer("a")), True),
+            "a stale held run beside the live pointed one": (lambda p: (p.run("a"), p.run("b", heartbeat=-45), p.pointer("a")), True),
+            "two stale held runs": (lambda p: (p.run("a", heartbeat=-45), p.run("b", heartbeat=-45), p.pointer("a", updated=-45)),
+                                    False),
+            "an orphan beside a pointer to a closed run": (lambda p: (p.run("a"), p.pointer("closed-03")), True),
+            "a stale held run only": (lambda p: (p.run("a", heartbeat=-45), p.pointer("closed-03")), False),
+            "pointer names nothing": (lambda p: (p.run("r"), p.pointer("ghost")), True),
+            "pointer is not a plain name": (lambda p: (p.run("r"), p.pointer("../r")), True),
+            "pointer at another revision": (lambda p: (p.run("r", revision=3), p.pointer("r", revision=2)), True),
+            "pointer is malformed": (lambda p: (p.run("r"), malformed(p)), True),
+            "pointer is malformed beside a stale run": (lambda p: (p.run("r", heartbeat=-45), malformed(p)), False),
+            "pointed run lost its evidence": (lambda p: (p.run("r", evidence=("gone.md",)), p.pointer("r")), False),
+            "held lock, closed state": (lambda p: (p.run("r", status="complete").joinpath("_lock.md").write_text(json.dumps(
                 {"schema_version": 1, "run_id": "r", "owner": "admiral", "status": "held", "session_pin": True, "revision": 1,
-                 "heartbeat": p.at(-1)}), encoding="utf-8"), p.pointer("r")),
-            "unreadable lock beside a live run": lambda p: (p.run("a"), p.pointer("a"), p.run("b").joinpath("_lock.md").write_bytes(b"\xff\xfe")),
+                 "heartbeat": p.at(-1)}), encoding="utf-8"), p.pointer("r")), False),
+            "unreadable lock beside a live run": (lambda p: (p.run("a"), p.pointer("a"),
+                                                             p.run("b").joinpath("_lock.md").write_bytes(b"\xff\xfe")), True),
+            "a held run mid-publish": (mid_publish, True),
+            "a held run mid-publish whose lock is stale": (lambda p: mid_publish(p, heartbeat=-45), False),
+            "a directory at a held run's journal": (journal_directory, True),
+            "a directory at a stale held run's journal": (lambda p: journal_directory(p, heartbeat=-45), False),
+            "a directory at a closed run's journal": (lambda p: journal_directory(p, status="complete"), False),
         }
-        for label, build in cases.items():
+        for label, (build, expected) in cases.items():
             with self.subTest(label):
                 self.setUp()
                 build(self.project)
-                expected = self.project.classify()["status"] in {"active", "orphaned"}
-                self.assertEqual(_saves.has_active_run(self.project.root), expected, self.project.classify())
+                full = self.project.classify()
+                found = any(run["fresh"] for run in full.get("held_runs", ())) or bool(full.get("access_denied"))
+                self.assertEqual(found, expected, full)
+                self.assertEqual(_saves.has_active_run(self.project.root), expected, full)
 
 
 class RefusedRecordTests(unittest.TestCase):
-    """RR3-state-1: records are owner-only since SEC-19, and an account that could not read one read it as no run.
+    """RR3-state-1: records are owner-only on POSIX since SEC-19, and an account that could not read one read it as no run.
 
     The permission error is simulated at the read, which is the same call that fails for a second account (and for
     a process that bypasses file modes, as root does, so these run everywhere)."""
@@ -442,7 +468,8 @@ class RefusedRecordTests(unittest.TestCase):
             self.assertFalse(_saves.is_directory(there), "a caller that was refused already asks only whether it is a directory")
 
     def test_a_directory_where_a_record_belongs_is_damage_not_a_refusal_even_where_the_system_says_permission_denied(self):
-        """Windows raises PermissionError for the read of a directory; only a file this account is refused is a refusal."""
+        """Windows raises PermissionError for the read of a directory; only a file this account is refused is a refusal.
+        The pointer read as missing, and the live run beside it as no held run at all."""
         self.project.run("a")
         self.project.pointer("a")
         pointer = self.project.root / "skillset-saves" / "_latest.md"
@@ -450,9 +477,11 @@ class RefusedRecordTests(unittest.TestCase):
         pointer.mkdir()
         with refusing("skillset-saves/_latest.md"):
             result = self.project.classify()
-            self.assertFalse(_saves.has_active_run(self.project.root))
-        self.assertEqual((result["status"], result["detail"]), ("corrupt", "pointer missing or malformed"), result)
+            self.assertTrue(_saves.has_active_run(self.project.root))
+        self.assertEqual((result["status"], result["detail"]), ("corrupt", "skillset-saves/_latest.md is a directory, not a file"),
+                         result)
         self.assertNotIn("access_denied", result)
+        self.assertEqual(result["held_runs"], [{"run_id": "a", "state": "active", "fresh": True, "interrupted": False}], result)
 
     def test_one_run_is_classified_corrupt_with_the_path_when_its_record_is_refused(self):
         self.project.run("a")
@@ -487,9 +516,160 @@ class RefusedRecordTests(unittest.TestCase):
                     self.assertEqual(full["status"] in {"active", "orphaned"} or bool(full.get("access_denied")), expected, full)
 
 
+class DamagedPointerTests(unittest.TestCase):
+    """A damaged pointer was decided first and ended the reading, so a held run behind it and a record this account could
+    not read never reached the answer: `has_active_run` said no, and the writer let a second pin through. The
+    classification does not move; what the reading found is carried on it (``held_runs``, ``access_denied``)."""
+
+    DEFECTS = {
+        "malformed": (lambda p: (p.root / "skillset-saves" / "_latest.md").write_text("{", encoding="utf-8"),
+                      "pointer missing or malformed"),
+        "unsafe id": (lambda p: p.pointer("../a"), "pointer run_id is not a safe directory name"),
+        "missing target": (lambda p: p.pointer("ghost"), "pointer target run ghost does not exist"),
+        "incoherent target": (lambda p: (p.run("broken", status="complete", revision=2, lock_revision=1),
+                                         p.pointer("broken", revision=2)), "state and lock revisions differ"),
+        "revision mismatch": (lambda p: p.pointer("a", revision=5), "pointer revision 5 does not match run revision 1"),
+        "directory at the pointer": (lambda p: (p.root / "skillset-saves" / "_latest.md").mkdir(),
+                                     "skillset-saves/_latest.md is a directory, not a file"),
+    }
+
+    def project(self, **run) -> SavedProject:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        project = SavedProject(Path(tmp.name).resolve(), now=datetime.now(timezone.utc))
+        project.run("a", **run)
+        return project
+
+    def test_a_held_run_behind_each_defect_is_found_and_the_classification_does_not_move(self):
+        for label, (damage, detail) in self.DEFECTS.items():
+            with self.subTest(label):
+                project = self.project()
+                damage(project)
+                result = project.classify()
+                self.assertEqual((result["status"], result["detail"]), ("corrupt", detail), result)
+                self.assertEqual(result["held_runs"], [{"run_id": "a", "state": "active", "fresh": True, "interrupted": False}],
+                                 result)
+                self.assertNotIn("access_denied", result)
+                self.assertEqual(_saves.next_step(result), _saves.NEXT_STEPS["corrupt"])
+                self.assertTrue(_saves.has_active_run(project.root))
+
+    def test_a_stale_interrupted_or_journal_damaged_held_run_is_found_too_and_counts_while_its_lock_is_fresh(self):
+        """An interrupted run is one whose lock says held beside a publish journal, whatever its state and lock say of each
+        other: here the lock reached revision 2 and the state did not. A run whose records agree beside a directory where
+        its journal belongs holds its pin too. Each is a live run while its lock is fresh, as a coherent one is."""
+        journal = "skillset-saves/runs/a/_journal.json"
+        variants = {
+            "stale": ({"heartbeat": -45}, "", {"run_id": "a", "state": "stale", "fresh": False, "interrupted": False}),
+            "interrupted": ({"lock_revision": 2}, "file", {"run_id": "a", "state": "corrupt", "fresh": True, "interrupted": True}),
+            "interrupted, stale": ({"lock_revision": 2, "heartbeat": -45}, "file",
+                                   {"run_id": "a", "state": "corrupt", "fresh": False, "interrupted": True}),
+            "a directory at the journal": ({}, "directory", {"run_id": "a", "state": "corrupt", "fresh": True, "interrupted": False,
+                                                             "directory_at": journal}),
+            "a directory at the journal, stale": ({"heartbeat": -45}, "directory",
+                                                  {"run_id": "a", "state": "corrupt", "fresh": False, "interrupted": False,
+                                                   "directory_at": journal}),
+        }
+        for variant, (run, kind, held) in variants.items():
+            for label, (damage, _) in self.DEFECTS.items():
+                with self.subTest(variant=variant, defect=label):
+                    project = self.project(**run)
+                    if kind == "file":
+                        (project.runs / "a" / "_journal.json").write_text('{"revision": 2, "step": "begin"}', encoding="utf-8")
+                    elif kind == "directory":
+                        (project.runs / "a" / "_journal.json").mkdir()
+                    damage(project)
+                    result = project.classify()
+                    self.assertEqual(result["status"], "corrupt", result)
+                    self.assertEqual(result["held_runs"], [held], result)
+                    self.assertEqual(_saves.has_active_run(project.root), held["fresh"])
+
+    def test_a_record_this_account_cannot_read_is_carried_beside_each_defect(self):
+        """The pointer's own answer stands where it is decided before the refused record is met. A pointer that names the
+        run whose record is refused, or a listing refused before the run the pointer names could be read, stops at the
+        refusal, as it always has. Either way the next step is the one the writer refuses with, not the damage step."""
+        refusals = {
+            "the lock": (lambda p: refusing("runs/a/_lock.md"), "skillset-saves/runs/a/_lock.md", {"revision mismatch"}),
+            "the state": (lambda p: refusing("runs/a/_state.md"), "skillset-saves/runs/a/_state.md", {"revision mismatch"}),
+            "the listing of runs": (lambda p: mock.patch.object(Path, "iterdir", side_effect=PermissionError(
+                errno.EACCES, "Permission denied", str(p.runs))), "skillset-saves/runs", {"incoherent target", "revision mismatch"}),
+        }
+        for refused_label, (refused, path, stops) in refusals.items():
+            for label, (damage, detail) in self.DEFECTS.items():
+                with self.subTest(refused=refused_label, defect=label):
+                    project = self.project()
+                    damage(project)
+                    with refused(project):
+                        result = project.classify()
+                        held = _saves.has_active_run(project.root)
+                    refusal = f"{path} exists but this account cannot read it (permission denied); {_saves.PIN_MAY_BE_HELD}"
+                    stopped = label in stops
+                    self.assertEqual((result["status"], result["detail"]), ("corrupt", refusal if stopped else detail), result)
+                    self.assertEqual(result["access_denied"], [path], result)
+                    self.assertEqual(_saves.refused_detail(result), refusal)
+                    self.assertEqual(_saves.next_step(result), _saves.ACCESS_DENIED_STEP)
+                    self.assertTrue(held)
+
+    def test_a_record_this_account_cannot_read_is_carried_beside_conflicting_runs(self):
+        project = self.project()
+        project.run("b")
+        project.run("c")
+        project.pointer("a")
+        with refusing("runs/c/_lock.md"):
+            result = project.classify()
+            held = _saves.has_active_run(project.root)
+        self.assertEqual((result["status"], result["detail"]), ("conflicting", "multiple coherent held runs: a, b"), result)
+        self.assertEqual(result["access_denied"], ["skillset-saves/runs/c/_lock.md"], result)
+        self.assertEqual([run["run_id"] for run in result["held_runs"]], ["a", "b"], result)
+        self.assertEqual(_saves.next_step(result), _saves.ACCESS_DENIED_STEP)
+        self.assertTrue(held)
+
+
+class DirectoryWhereARecordBelongsTests(unittest.TestCase):
+    """A directory where a record belongs (a plain one, a junction, or a link to one) is damage, said one way on every
+    system. POSIX raises IsADirectoryError for the read of one, which read as an absent record; Windows raises the
+    PermissionError it gives a file this account may not read, which read as an absent record too, and for a junction
+    whose directory is gone as a refused one (`access_denied`, a possible held run). Each is read as this system reads it
+    and as each system would. A journal is never read as a file, only looked at; a run whose records agree beside a
+    directory at its journal still holds its pin, as it did when the directory read as a journal."""
+
+    RECORDS = ("_latest.md", "runs/a/_state.md", "runs/a/_lock.md", "runs/a/_journal.json")
+
+    def test_each_is_corrupt_in_the_same_words_and_never_access_denied(self):
+        for record in self.RECORDS:
+            for kind, make in directory_kinds().items():
+                for system in SYSTEMS:
+                    with self.subTest(record=record, kind=kind, read_as=system), tempfile.TemporaryDirectory() as tmp:
+                        project = SavedProject(Path(tmp).resolve(), now=datetime.now(timezone.utc))
+                        project.run("a")
+                        project.pointer("a")
+                        path = project.root / "skillset-saves" / record
+                        path.unlink(missing_ok=True)
+                        make(path)
+                        with read_as(system, record):
+                            result = project.classify()
+                            single = _saves.inspect_run(project.root, "a", now=project.now)
+                            held = _saves.has_active_run(project.root)
+                        said = f"skillset-saves/{record} is a directory, not a file"
+                        self.assertEqual((result["status"], result["detail"]), ("corrupt", said), result)
+                        self.assertNotIn("access_denied", result)
+                        if record == "_latest.md":
+                            self.assertEqual(single["state"], "active", single)
+                            self.assertTrue(held, "the run behind the damaged pointer still holds the pin")
+                            continue
+                        self.assertEqual((single["state"], single["detail"]), ("corrupt", said), single)
+                        self.assertNotIn("access_denied", single)
+                        if record.endswith("_journal.json"):
+                            self.assertEqual(result["held_runs"], [{"run_id": "a", "state": "corrupt", "fresh": True,
+                                                                    "interrupted": False, "directory_at": f"skillset-saves/{record}"}])
+                            self.assertTrue(held, "a run whose records agree still holds the pin beside a directory at its journal")
+                        else:
+                            self.assertNotIn("held_runs", result)
+                            self.assertFalse(held, "a run whose state or lock cannot be read holds no pin")
+
+
 class AccessDeniedProseTests(unittest.TestCase):
     """RR3-state-7: the way forward named for a record this account cannot read was the owner completing or releasing the
-    run, which changes nothing for a second account: the records of a closed run are as owner-only as a held run's."""
+    run, which changes nothing for a second account: on POSIX the records of a closed run are as owner-only as a held run's."""
 
     DOCUMENTS = ("docs/persistent-saves.md", "skills/save-protocol.md", "skills/session-memory/SKILL.md",
                  "skills/session-memory/references/run-record.md")

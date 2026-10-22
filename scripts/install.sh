@@ -41,7 +41,6 @@ carriage_return=$'\r'
 # install-items.txt is the one item list; install.ps1 reads the same file.
 core_items=()
 seed_items=()
-superseded_pairs=()
 all_teams=()
 team_pairs=()
 legacy_dirs=()
@@ -162,15 +161,6 @@ load_items() {
                     seed_items+=("$name")
                 fi
                 ;;
-            supersedes)
-                members=()
-                read -r -a members <<< "$rest"
-                [[ ${#members[@]} -gt 0 ]] || die "'$kind $name' lists no files in $items_file."
-                for member in ${members[@]+"${members[@]}"}; do
-                    valid_name "$member" || die "Invalid name '$member' in $items_file."
-                    superseded_pairs+=("$name:$member")
-                done
-                ;;
             team|legacy)
                 members=()
                 read -r -a members <<< "$rest"
@@ -198,11 +188,6 @@ load_items() {
     done < "$items_file"
 
     [[ ${#core_items[@]} -gt 0 && ${#team_pairs[@]} -gt 0 ]] || die "$items_file lists no core or team items."
-
-    for pair in ${superseded_pairs[@]+"${superseded_pairs[@]}"}; do
-        contains_value "${pair%%:*}" ${seed_items[@]+"${seed_items[@]}"} || die "'supersedes ${pair%%:*}' names a file that is not a seed in $items_file."
-        [[ -f "$script_dir/superseded/${pair#*:}" ]] || die "Missing superseded copy '${pair#*:}' at '$script_dir/superseded/${pair#*:}'."
-    done
 
     managed_items=()
     for item in ${core_items[@]+"${core_items[@]}"}; do
@@ -419,34 +404,6 @@ item_state() {
     fi
 }
 
-# True when two files hold the same text once the CR of every CRLF is dropped, the
-# fold the catalog's own hashes use: a copy from an earlier release that a Windows
-# checkout gave CRLF line endings is the same file. install.ps1 folds the same way.
-same_text() {
-    local cr
-    cr="$(printf '\r')"
-
-    cmp -s <(sed "s/$cr\$//" < "$1") <(sed "s/$cr\$//" < "$2")
-}
-
-# True when $1/$2 is a regular file that is a copy an earlier release shipped
-# (install-items.txt, supersedes), whichever line endings its checkout gave it: it was
-# never edited, so it is the installer's own. cmp rather than a digest, so the proof
-# needs no hashing tool.
-superseded_seed() {
-    local path="$1/$2" pair
-
-    [[ -f "$path" && ! -L "$path" ]] || return 1
-
-    for pair in ${superseded_pairs[@]+"${superseded_pairs[@]}"}; do
-        if [[ "${pair%%:*}" == "$2" ]] && same_text "$path" "$script_dir/superseded/${pair#*:}"; then
-            return 0
-        fi
-    done
-
-    return 1
-}
-
 # A directory from an older layout is recognised only while it holds nothing
 # but the entries that layout put there.
 legacy_dir_matches() {
@@ -634,7 +591,7 @@ report_list() {
 install_supreme_team() {
     local root item state
     local add_items=() replace_items=() kept_items=() foreign_items=() stale_items=() aside_items=()
-    local refreshed_items=() unselected_items=() retired_items=()
+    local unselected_items=() retired_items=()
 
     root="$(resolve_path "$1")"
     read_manifest "$root"
@@ -646,12 +603,7 @@ install_supreme_team() {
     for item in ${install_items[@]+"${install_items[@]}"}; do
         state="$(item_state "$root" "$item")"
         if [[ "$state" != absent ]] && contains_value "$item" ${seed_items[@]+"${seed_items[@]}"}; then
-            if superseded_seed "$root" "$item"; then
-                replace_items+=("$item")
-                refreshed_items+=("$item")
-            else
-                kept_items+=("$item")
-            fi
+            kept_items+=("$item")
             continue
         fi
         case "$state" in
@@ -693,7 +645,6 @@ install_supreme_team() {
     if [[ $dry_run -eq 1 ]]; then
         report_list "would add" ${add_items[@]+"${add_items[@]}"}
         report_list "would replace" ${replace_items[@]+"${replace_items[@]}"}
-        report_list "would replace, an unedited copy from an earlier release" ${refreshed_items[@]+"${refreshed_items[@]}"}
         report_list "would keep, yours" ${kept_items[@]+"${kept_items[@]}"}
         report_list "would remove, not selected this run" ${unselected_items[@]+"${unselected_items[@]}"}
         report_list "would remove, no longer shipped" ${retired_items[@]+"${retired_items[@]}"}
@@ -748,7 +699,6 @@ install_supreme_team() {
         "${#replace_items[@]}"
     printf '  recorded in %s\n' "$root/$manifest_name"
     report_list "kept, yours" ${kept_items[@]+"${kept_items[@]}"}
-    report_list "replaced, an unedited copy from an earlier release" ${refreshed_items[@]+"${refreshed_items[@]}"}
     report_list "removed, not selected this run" ${unselected_items[@]+"${unselected_items[@]}"}
     report_list "removed, no longer shipped" ${retired_items[@]+"${retired_items[@]}"}
     if [[ -n "$backup_dir" ]]; then

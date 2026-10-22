@@ -123,7 +123,7 @@ ownership boundary the gate can see.
 
 Fix every finding in the group in a single pass, re-run the affected matrix
 rows, re-hash each changed artifact, and hand the updated set back once.
-`revise_policy.cycle_cap` is 2; a third cycle escalates to the build owner
+`revise_policy.cycle_cap` is 3; a third cycle escalates to the build owner
 rather than resubmitting, because two failed repair attempts on the same key
 means the finding is not an implementation defect.
 

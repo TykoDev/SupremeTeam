@@ -363,7 +363,7 @@ class RevisePacketTests(unittest.TestCase):
         for name, boundary in spec["boundaries"].items():
             with self.subTest(boundary=name):
                 self.assertEqual(set(spec["evidence_owners"][name]), set(boundary["required_evidence"]))
-        self.assertEqual(spec["revise_policy"]["cycle_cap"], 2)
+        self.assertEqual(spec["revise_policy"]["cycle_cap"], 3)
         params = spec["evidence_type_params"]
         self.assertEqual(params["mock_set"]["required_count"], 4)
         self.assertEqual(params["selected_variant"]["required_count"], 1)

@@ -98,5 +98,5 @@ route each.
 
 **Output:**
 - Constraint: preserve architectural lineage across every handoff; record it in the Save Context `Risks` field so it survives each delegation.
-- Gate behavior: if build output no longer matches the approved design package, route the package back for revision instead of allowing review to absorb the inconsistency. Two failed cycles exhaust `revise_policy.cycle_cap` and the run checkpoints to `phase_state: DISPUTED_AWAITING_USER`, which keeps the session pin while the user decides.
+- Gate behavior: if build output no longer matches the approved design package, route the package back for revision instead of allowing review to absorb the inconsistency. Three failed cycles exhaust `revise_policy.cycle_cap` and the run checkpoints to `phase_state: DISPUTED_AWAITING_USER`, which keeps the session pin while the user decides.
 - Final package: approved artifacts, rewound boundaries, and any disputed items that still require user judgment, kept separate from the approved set.

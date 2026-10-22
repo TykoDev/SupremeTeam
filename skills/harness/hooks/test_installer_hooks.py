@@ -57,8 +57,27 @@ def _node_strips_types() -> bool:
     return done.returncode == 0
 
 
+def _find_bash() -> "str | None":
+    """The first bash on PATH that can open a Windows path, else Git for Windows' own.
+
+    On Windows `System32\\bash.exe` and its `WindowsApps` alias start WSL, whose bash reads
+    `C:\\...` as a relative name, so the install.sh tests failed wherever WSL came first on
+    PATH. A default Git install puts only `Git\\cmd` on PATH; its bash sits in `Git\\bin`.
+    """
+    if os.name != "nt":
+        return shutil.which("bash")
+    windows = os.path.normcase(os.environ.get("SystemRoot", r"C:\Windows"))
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        found = shutil.which("bash", path=entry) if entry else None
+        if found and not os.path.normcase(found).startswith(windows) and "windowsapps" not in os.path.normcase(found):
+            return found
+    git = shutil.which("git")
+    bundled = Path(git).resolve().parent.parent / "bin" / "bash.exe" if git else None
+    return str(bundled) if bundled and bundled.is_file() else None
+
+
 NODE_TS = _node_strips_types()
-BASH = shutil.which("bash")
+BASH = _find_bash()
 POSIX = os.name == "posix"
 _STRIP = ("CLAUDE", "CODEX_", "COPILOT", "GITHUB_COPILOT", "SUPREMETEAM_", "GITHUB_WORKSPACE")
 
@@ -763,7 +782,6 @@ class ShellWrapperTests(unittest.TestCase):
         (cls.repo / "scripts").mkdir(parents=True)
         shutil.copy2(INSTALL_SH, cls.repo / "scripts" / "install.sh")
         shutil.copy2(REPO / "scripts" / "install-items.txt", cls.repo / "scripts" / "install-items.txt")
-        shutil.copytree(REPO / "scripts" / "superseded", cls.repo / "scripts" / "superseded")
         (cls.repo / "scripts" / "install_hooks.py").write_text(cls.STUB, encoding="utf-8")
         shutil.copytree(REPO / "skills", cls.repo / "skills", ignore=shutil.ignore_patterns("__pycache__", ".harness-state", "skillset-saves"))
         # install.sh looks for a Python 3.13 under the name python3 or python.

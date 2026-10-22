@@ -20,7 +20,7 @@ Kinds and destinations (relative to the project root):
     packages    skillset-saves/runs/<run>/<phase>/packages/<name>                  exported archives
     verdict     skillset-saves/runs/<run>/<phase>/verdict_<boundary>.json          writer: gatekeeper
     project_preferences skillset-saves/preferences/{taste.json,taste.md}           writer: taste via skills/taste/taste_prefs.py
-    global_preferences <deterministic user-data>/SupremeTeam/preferences/{taste.json,taste.md}
+    global_preferences <per-user data root>/preferences/{taste.json,taste.md}      outside the checkout; the root is described below
     trajectory  .harness-state/trajectories/<run>/<session>.json                   writer: post_tool_use hook
     guards      .harness-state/guard-state.json                                    writer: guard/freeze/unfreeze
     test_work   .harness-state/test-work/<name>                                    regression-test scratch
@@ -29,13 +29,24 @@ Kinds and destinations (relative to the project root):
     standalone_packages .harness-state/packages/<name>                             .skill or zip archives built outside a run
     product     <project>/<name>  (application source stays in the application's layout; snapshot into evidence with provenance)
 
-Every kind except product resolves under skillset-saves/ or .harness-state/
-(GENERATED_ROOTS); a durable design specification is the run's
-<phase>/reports/design-system.md, not a file at the project root. `product` is open
-except for what naming a path "product" must not bless: the version-control
-directory (a hook there runs code), the generated roots, `skills/harness/` (the guard
-and the gate validators) and the host hook-registration files. A name under any of
-them is refused, however it is spelled or reached through a link.
+Every kind except product and global_preferences resolves under skillset-saves/
+or .harness-state/ (GENERATED_ROOTS); a durable design specification is the run's
+<phase>/reports/design-system.md, not a file at the project root.
+global_preferences resolves outside the checkout altogether, under the per-user
+data root global_data_root() picks, and is refused when that root lies inside the
+project. `product` is open except for what naming a path "product" must not bless:
+the version-control directory (a hook there runs code), the generated roots,
+`skills/harness/` (the guard and the gate validators) and the host
+hook-registration files. A name under any of them is refused, however it is
+spelled or reached through a link.
+
+The per-user data root is $SUPREMETEAM_HOME itself when that is set; otherwise
+$CODEX_HOME/supremeteam, then $AGENTS_HOME/supremeteam; otherwise
+%LOCALAPPDATA%/SupremeTeam on Windows (%APPDATA%, then ~/AppData/Local, standing
+in when LOCALAPPDATA is unset), ~/Library/Application Support/SupremeTeam on
+macOS, and $XDG_DATA_HOME/supremeteam elsewhere (~/.local/share/supremeteam when
+XDG_DATA_HOME is unset or not absolute). A variable set to an empty string counts
+as unset.
 
 The phase-scoped kinds accept the phase directories save-ownership.yaml declares
 and no others. The grilling log is `--kind phase_report --phase intake --name
@@ -64,8 +75,9 @@ from pathlib import Path
 
 import save_taxonomy as taxonomy
 
-# Every generated kind resolves under one of these project-relative roots; the
-# only exception is `product`, which is the application's own source layout.
+# Every generated kind resolves under one of these project-relative roots except
+# `product`, which is the application's own source layout, and
+# `global_preferences`, which resolves under the per-user data root outside the checkout.
 GENERATED_ROOTS = taxonomy.GENERATED_ROOTS
 KINDS = {"core", "manifest", "phase_report", "reports", "artifacts", "evidence", "coverage", "packages", "verdict", "project_preferences", "global_preferences", "trajectory", "guards", "test_work", "eval_reports", "eval_workspace", "standalone_packages", "product"}
 PHASES = set(taxonomy.PHASE_DIRECTORIES)

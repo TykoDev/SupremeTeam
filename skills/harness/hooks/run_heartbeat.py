@@ -13,7 +13,12 @@ these hold:
 * the scan that does classify every run has not run in the last ``SCAN_EVERY``
   seconds, because an idle project with a long history would otherwise pay for it on
   every host event;
-* ``skillset-saves`` holds exactly one coherent active or orphaned run;
+* exactly one coherent run holds the pin, whatever the pointer says (the one coherent
+  entry in ``held_runs``): a run the pointer leaves ``orphaned``, or a damaged pointer
+  leaves ``corrupt``, is kept alive, and the write rewrites the pointer from it. A
+  second coherent held run (``conflicting``, or behind a damaged pointer) keeps
+  either from being refreshed, and so does a classification that stopped at a record
+  this account cannot read, which may be the pointer;
 * its lock is held, pinned, not interrupted, and *not yet stale*: a stale lock is
   reclaimed only through ``save_run.py recover --reason`` so the reclaim leaves audit
   evidence, and the hook never revives one;
@@ -53,7 +58,7 @@ def refresh(data: dict, event: str) -> dict | None:
         runs = root / "skillset-saves" / "runs"
         if not runs.is_dir():
             return None
-        from _saves import heartbeat_is_stale, inspect_saves, parse_timestamp, pointed_heartbeat
+        from _saves import heartbeat_is_stale, inspect_saves, parse_timestamp, pointed_heartbeat, stopped_at_refusal
 
         now = datetime.now(timezone.utc)
         pointed = pointed_heartbeat(root)
@@ -66,9 +71,10 @@ def refresh(data: dict, event: str) -> dict | None:
             return None
         _state.write_json(scanned, {"checked_at": time.time()})
         result = inspect_saves(root)
-        run_id = str(result.get("run_id") or "")
-        if result.get("status") not in {"active", "orphaned"} or not run_id:
+        coherent = [run for run in result.get("held_runs") or () if run.get("state") in {"active", "stale"}]
+        if len(coherent) != 1 or coherent[0].get("state") != "active" or stopped_at_refusal(result):
             return None
+        run_id = str(coherent[0].get("run_id") or "")
         run_dir = runs / run_id
         if (run_dir / "_journal.json").exists():
             return None

@@ -17,7 +17,6 @@ under whatever bash `BASH` names, so they execute under bash 3.2 only on a Mac
 """
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import shutil
@@ -36,17 +35,35 @@ SKILLS = REPO / "skills"
 INSTALL_SH = SCRIPTS / "install.sh"
 INSTALL_PS1 = SCRIPTS / "install.ps1"
 ITEMS_FILE = SCRIPTS / "install-items.txt"
-SUPERSEDED = SCRIPTS / "superseded"
 
 MANIFEST = ".supremeteam-manifest"
 MARKER = ".supremeteam-managed"
 STAGE_MARKER = ".supremeteam-stage"
 BACKUP_SUFFIX = ".supremeteam-backup"
 
+def find_bash() -> str | None:
+    """The first bash on PATH that can open a Windows path, else Git for Windows' own.
+
+    On Windows `System32\\bash.exe` and its `WindowsApps` alias start WSL, whose bash reads
+    `C:\\...` as a relative name, so the parse check failed wherever WSL came first on PATH.
+    A default Git install puts only `Git\\cmd` on PATH; its bash sits in `Git\\bin`.
+    """
+    if os.name != "nt":
+        return shutil.which("bash")
+    windows = os.path.normcase(os.environ.get("SystemRoot", r"C:\Windows"))
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        found = shutil.which("bash", path=entry) if entry else None
+        if found and not os.path.normcase(found).startswith(windows) and "windowsapps" not in os.path.normcase(found):
+            return found
+    git = shutil.which("git")
+    bundled = Path(git).resolve().parent.parent / "bin" / "bash.exe" if git else None
+    return str(bundled) if bundled and bundled.is_file() else None
+
+
 # On macOS the behavioural tests run under the system bash, which is 3.2: the shell
 # the installer has to keep working under. SUPREMETEAM_TEST_BASH points them at any
 # other bash, such as a locally built old one.
-BASH = os.environ.get("SUPREMETEAM_TEST_BASH") or ("/bin/bash" if sys.platform == "darwin" else shutil.which("bash"))
+BASH = os.environ.get("SUPREMETEAM_TEST_BASH") or ("/bin/bash" if sys.platform == "darwin" else find_bash())
 RUNS_BASH = BASH is not None and os.path.exists(BASH) and os.name == "posix"
 
 
@@ -69,7 +86,6 @@ class ItemList:
         self.seeds: list[str] = []
         self.teams: dict[str, list[str]] = {}
         self.legacy: dict[str, list[str]] = {}
-        self.superseded: dict[str, list[str]] = {}
         for raw in text.splitlines():
             line = raw.strip()
             if not line or line.startswith("#"):
@@ -83,8 +99,6 @@ class ItemList:
                 self.teams.setdefault(name, []).extend(members)
             elif kind == "legacy":
                 self.legacy.setdefault(name, []).extend(members)
-            elif kind == "supersedes":
-                self.superseded.setdefault(name, []).extend(members)
             else:
                 raise AssertionError(f"unknown record {kind!r} in install-items.txt")
 
@@ -149,7 +163,7 @@ def write_source(repo: Path, items: ItemList, version: str) -> None:
             target.write_text(body, encoding="utf-8")
 
 
-NEEDED_TOOLS = ("basename", "cat", "cmp", "cp", "date", "dirname", "head", "ls", "mkdir", "mktemp", "mv", "rm", "sed", "tr")
+NEEDED_TOOLS = ("basename", "cat", "cp", "date", "dirname", "head", "ls", "mkdir", "mktemp", "mv", "rm", "sed", "tr")
 
 
 def build_path_directory(directory: Path) -> None:
@@ -180,7 +194,6 @@ class Sandbox:
         (self.repo / "scripts").mkdir(parents=True)
         shutil.copy2(INSTALL_SH, self.repo / "scripts" / "install.sh")
         shutil.copy2(ITEMS_FILE, self.repo / "scripts" / "install-items.txt")
-        shutil.copytree(SUPERSEDED, self.repo / "scripts" / "superseded")
         write_source(self.repo, ITEMS, version)
         self.bin = self.root / "bin"
         build_path_directory(self.bin)
@@ -520,79 +533,34 @@ class InstallerBehaviourTests(unittest.TestCase):
         box.install()
         self.assertEqual(registry.read_text(encoding="utf-8"), "mcp-tools.md v2\n")
 
-    def superseded_copy(self, index: int = 0, newline: bytes = b"\n") -> bytes:
-        return (SUPERSEDED / ITEMS.superseded["mcp-tools.md"][index]).read_bytes().replace(b"\n", newline)
-
-    def test_an_untouched_registry_from_an_earlier_release_is_replaced_by_the_template(self):
-        """An upgrade kept the Codex snapshot an earlier installer wrote, as "kept, yours", for ever.
-
-        RR3-state-2: the three releases predate .gitattributes, so an install made from a checkout with CRLF line endings
-        (Git for Windows' default) holds a CRLF copy, which is no less the installer's own."""
-        for index, name in enumerate(ITEMS.superseded["mcp-tools.md"]):
-            for label, newline in (("LF", b"\n"), ("CRLF", b"\r\n")):
-                with self.subTest(copy=name, endings=label):
-                    box = Sandbox(self)
-                    box.install()
-                    registry = box.dest / "mcp-tools.md"
-                    registry.write_bytes(self.superseded_copy(index, newline))
-                    result = box.install()
-                    self.assertEqual(result.returncode, 0, listing(result))
-                    self.assertEqual(registry.read_text(encoding="utf-8"), "mcp-tools.md v1\n")
-                    self.assertIn("replaced, an unedited copy from an earlier release: mcp-tools.md", result.stdout)
-                    self.assertNotIn("kept, yours: mcp-tools.md", result.stdout)
-                    self.assertEqual(box.backups(), [], "an unedited copy of a shipped file is not the user's to keep")
-                    self.assertEqual(box.stages(), [])
-
-    def test_a_registry_that_differs_by_a_single_byte_from_a_shipped_copy_stays_the_users(self):
+    def test_a_registry_left_as_an_earlier_release_shipped_it_is_kept_too(self):
+        """No archive of earlier templates ships to recognise one by, so whatever the registry holds is the user's."""
         box = Sandbox(self)
         box.install()
+        box.publish("v2")
         registry = box.dest / "mcp-tools.md"
-        for label, content in (("an annotation", self.superseded_copy() + b"my note\n"), ("one byte changed", b"X" + self.superseded_copy()[1:]),
-                               ("empty", b""), ("an annotation in a CRLF copy", self.superseded_copy(0, b"\r\n") + b"my note\r\n"),
-                               ("one byte changed in a CRLF copy", b"X" + self.superseded_copy(0, b"\r\n")[1:]),
-                               ("a carriage return that ends no line", self.superseded_copy().replace(b" ", b"\r ", 1))):
+        for label, content in (("the v1 template, untouched", b"mcp-tools.md v1\n"),
+                               ("that template with CRLF line endings", b"mcp-tools.md v1\r\n"), ("empty", b"")):
             with self.subTest(label):
                 registry.write_bytes(content)
                 result = box.install()
+                self.assertEqual(result.returncode, 0, listing(result))
                 self.assertEqual(registry.read_bytes(), content)
                 self.assertIn("kept, yours: mcp-tools.md", result.stdout)
-                self.assertNotIn("an unedited copy", result.stdout)
+        self.assertEqual(box.backups(), [], "a kept registry is never moved aside")
+        self.assertEqual(box.stages(), [])
 
-    def test_a_link_where_the_registry_belongs_is_never_taken_for_an_unedited_copy(self):
+    def test_a_link_where_the_registry_belongs_is_kept_and_its_target_left_alone(self):
         box = Sandbox(self)
         box.install()
         kept = box.root / "my-registry.md"
-        kept.write_bytes(self.superseded_copy())
+        kept.write_text("mcp-tools.md v1\n", encoding="utf-8")
         (box.dest / "mcp-tools.md").unlink()
         (box.dest / "mcp-tools.md").symlink_to(kept)
         result = box.install()
         self.assertTrue((box.dest / "mcp-tools.md").is_symlink())
-        self.assertEqual(kept.read_bytes(), self.superseded_copy())
+        self.assertEqual(kept.read_text(encoding="utf-8"), "mcp-tools.md v1\n")
         self.assertIn("kept, yours: mcp-tools.md", result.stdout)
-
-    def test_an_install_from_before_the_ownership_records_refreshes_the_registry_and_moves_the_rest_aside(self):
-        box = Sandbox(self)
-        box.dest.mkdir(parents=True)
-        (box.dest / "mcp-tools.md").write_bytes(self.superseded_copy(2))
-        (box.dest / "admiral").mkdir()
-        (box.dest / "admiral" / "SKILL.md").write_text("old admiral\n", encoding="utf-8")
-        result = box.install()
-        self.assertEqual(result.returncode, 0, listing(result))
-        self.assertEqual((box.dest / "mcp-tools.md").read_text(encoding="utf-8"), "mcp-tools.md v1\n")
-        self.assertEqual((self.only_backup(box) / "admiral" / "SKILL.md").read_text(encoding="utf-8"), "old admiral\n")
-        self.assertFalse((self.only_backup(box) / "mcp-tools.md").exists())
-
-    def test_a_dry_run_names_the_registry_it_would_replace(self):
-        box = Sandbox(self)
-        box.install()
-        for newline in (b"\n", b"\r\n"):
-            with self.subTest(newline=newline):
-                (box.dest / "mcp-tools.md").write_bytes(self.superseded_copy(0, newline))
-                before = snapshot(box.root)
-                result = box.install("--dry-run")
-                self.assertEqual(snapshot(box.root), before)
-                self.assertIn("would replace, an unedited copy from an earlier release: mcp-tools.md", result.stdout)
-                self.assertNotIn("would keep, yours", result.stdout)
 
     def test_the_summary_says_whether_an_item_left_because_it_was_not_selected_or_is_no_longer_shipped(self):
         box = Sandbox(self)
@@ -1048,24 +1016,6 @@ class ItemListTests(unittest.TestCase):
         for team, members in ITEMS.teams.items():
             self.assertEqual(len(members), len(set(members)), team)
 
-    def test_every_superseded_copy_is_a_file_of_a_seed_and_none_is_the_shipped_template(self):
-        """The record names copies kept in scripts/superseded/; the one the finding described is among them."""
-        self.assertEqual(sorted(ITEMS.superseded), ["mcp-tools.md"])
-        self.assertTrue(set(ITEMS.superseded) <= set(ITEMS.seeds))
-        shipped = (SKILLS / "mcp-tools.md").read_bytes()
-        digests = set()
-        for name in ITEMS.superseded["mcp-tools.md"]:
-            path = SUPERSEDED / name
-            self.assertRegex(name, r"^[A-Za-z0-9_][A-Za-z0-9._-]*$")
-            self.assertTrue(path.is_file(), name)
-            self.assertNotEqual(path.read_bytes(), shipped, f"{name} is the template this release ships, not one it supersedes")
-            digests.add(hashlib.sha256(path.read_bytes()).hexdigest())
-        self.assertEqual(len(digests), len(ITEMS.superseded["mcp-tools.md"]), "two records name the same text")
-        self.assertIn("7cf94e3d9ea0bcda01ad1a7b51148f42880f8c1410e517fadb0e681dd244671d", digests,
-                      "the Codex snapshot the previous installer shipped (2026-06-30, workspace SupremeTeam)")
-        for path in SUPERSEDED.iterdir():
-            self.assertIn(path.name, ITEMS.superseded["mcp-tools.md"], f"{path.name} is kept but no record names it")
-
     def test_the_installed_licence_is_the_repository_licence(self):
         """An install carries only skills/, so the licence notice travels as the core item skills/LICENSE."""
         self.assertIn("LICENSE", ITEMS.core)
@@ -1335,69 +1285,13 @@ class PowerShellParityTests(unittest.TestCase):
                      "Hook registration: ", "not requested", "skipped (no host detected)", "completed",
                      "Dry run: nothing will be written.", "Dry run complete: nothing was written.",
                      "would add", "would replace", "would keep, yours", "would remove, no longer shipped", "would move aside to",
-                     "would remove, not selected this run", "would replace, an unedited copy from an earlier release",
+                     "would remove, not selected this run",
                      "kept, yours", "removed, no longer shipped", "removed, not selected this run", "recorded in",
-                     "replaced, an unedited copy from an earlier release",
                      "failed (exit status", "Supreme Team skills are installed, but hook registration failed.",
                      "or newer is required to register runtime harness hooks",
                      "moved aside, not recorded as installed by Supreme Team and unchanged, to"):
             self.assertIn(line, self.sh)
             self.assertIn(line, self.ps)
-
-    def test_both_read_the_superseded_record_and_compare_content_not_names(self):
-        self.assertIn("supersedes", self.sh)
-        self.assertIn("supersedes", self.ps)
-        self.assertIn("$script_dir/superseded/", self.sh)
-        self.assertIn('(Join-Path $PSScriptRoot "superseded")', self.ps)
-        self.assertIn("cmp -s", self.sh)
-        self.assertIn("Get-FoldedHash", self.ps)
-        for text, fail_loud in ((self.sh, "is not a seed"), (self.ps, "is not a seed")):
-            self.assertIn(fail_loud, text, "a record naming a file that is not a seed stops the install")
-        body = re.search(r"function Test-SupersededSeed \{\n(.*?)\n\}\n", self.ps, re.S).group(1)
-        self.assertIn("Test-ReparsePoint", body, "a link is never an unedited copy")
-        self.assertIn("PSIsContainer", body)
-
-    def test_both_fold_line_endings_before_they_compare_a_superseded_copy(self):
-        """RR3-state-2: a CRLF copy of an earlier release is still that release's file. install.ps1 is not run here; the
-        fold it applies is written out below and compared with the real `same_text` of install.sh on the same inputs."""
-        shell = re.search(r"\nsame_text\(\) \{\n.*?\n\}\n", self.sh, re.S).group(0)
-        self.assertIn("cmp -s", shell)
-        seeded = re.search(r"\nsuperseded_seed\(\) \{\n.*?\n\}\n", self.sh, re.S).group(0)
-        self.assertIn('same_text "$path"', seeded)
-        self.assertNotIn("cmp -s", seeded, "the registry is compared through the fold, not as it is on disk")
-        fold = re.search(r"function Get-FoldedHash \{\n(.*?)\n\}\n", self.ps, re.S).group(1)
-        self.assertIn('.Replace("`r`n", "`n")', fold)
-        self.assertIn("iso-8859-1", fold, "a byte-for-byte text, so a BOM or an odd byte is not folded away")
-        self.assertIn("SHA256", fold)
-        self.assertIn("Get-FoldedHash", re.search(r"function Test-SupersededSeed \{\n(.*?)\n\}\n", self.ps, re.S).group(1))
-        self.assertNotIn("Get-FileHash", strip_comments(self.ps))
-        if not RUNS_BASH:
-            self.skipTest("bash is not available")
-
-        def powershell_fold(data: bytes) -> bytes:
-            return data.decode("iso-8859-1").replace("\r\n", "\n").encode("iso-8859-1")
-
-        original = (SUPERSEDED / ITEMS.superseded["mcp-tools.md"][0]).read_bytes()
-        pairs = {
-            "the same bytes": (original, original),
-            "CRLF against LF": (original.replace(b"\n", b"\r\n"), original),
-            "LF against CRLF": (original, original.replace(b"\n", b"\r\n")),
-            "a mixed file": (original.replace(b"\n", b"\r\n", 3), original),
-            "an annotation": (original + b"note\n", original),
-            "an annotated CRLF copy": (original.replace(b"\n", b"\r\n") + b"note\r\n", original),
-            "a carriage return inside a line": (original.replace(b" ", b"\r ", 1), original),
-            "a byte-order mark": (b"\xef\xbb\xbf" + original, original),
-            "empty": (b"", original),
-        }
-        with tempfile.TemporaryDirectory() as tmp:
-            for label, (left, right) in pairs.items():
-                with self.subTest(label):
-                    first, second = Path(tmp) / "first", Path(tmp) / "second"
-                    first.write_bytes(left)
-                    second.write_bytes(right)
-                    run = subprocess.run([BASH, "-c", shell + '\nsame_text "$1" "$2"', "bash", str(first), str(second)],
-                                         capture_output=True, text=True)
-                    self.assertEqual(run.returncode == 0, powershell_fold(left) == powershell_fold(right), label)
 
     def test_powershell_follows_links_before_it_judges_a_destination(self):
         """RR-V3-8: install.sh judges the physical path (cd -P); a junction to the profile directory passed Assert-SafeRoot here.
@@ -1476,10 +1370,10 @@ class DocumentationTests(unittest.TestCase):
         for seed in ITEMS.seeds:
             self.assertRegex(" ".join(step.split()), rf"`item <name>` line of its `\.supremeteam-manifest` except `{re.escape(seed)}`")
 
-    def test_the_install_guide_says_what_happens_to_an_untouched_and_an_edited_registry(self):
+    def test_the_install_guide_says_an_installed_registry_is_never_replaced(self):
         text = " ".join(self.install.split()).lower()
-        self.assertIn("an unedited copy of a registry an earlier release shipped is replaced", text)
-        self.assertIn("a registry you changed is never replaced", text)
+        self.assertIn("an installed registry is never replaced, edited or not", text)
+        self.assertIn("delete it and re-run to get the blank template back", text)
 
     def test_the_remote_recipe_pins_a_ref_and_fails_on_http_errors(self):
         self.assertFalse("refs/heads" in self.install, "a branch archive moves; the recipe must download a tag or commit")

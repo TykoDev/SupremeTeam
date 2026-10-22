@@ -303,7 +303,8 @@ class GateProseTests(unittest.TestCase):
     def test_the_gates_page_says_a_flat_schema_1_pass_is_the_structural_half(self):
         text = " ".join((REPO / "docs" / "gatekeepers.md").read_text(encoding="utf-8").split())
         self.assertIn("flat package outside a run", text)
-        self.assertIn("no typed record, waiver wording or finding policy was checked", text)
+        self.assertIn("typed records and the finding policy were not checked", text)
+        self.assertIn("a bare sanctioned wording passes there without an applicability record", text)
 
 
 @CHECKOUT_ONLY

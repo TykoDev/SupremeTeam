@@ -66,7 +66,7 @@ python skills/harness/hooks/guard_state.py freeze --glob "src/payments/**" --own
 python skills/harness/hooks/guard_state.py status
 ```
 
-**Spell a glob however you like; the writer records it one way.** This is a Windows-first
+**Spell a glob in any form; the writer records it one way.** This is a Windows-first
 repository, so the backslash form is the one a contributor is most likely to paste. The writer
 (`guard_state.py`) normalises every glob before it compares or stores it: backslashes become
 forward slashes, `./` and doubled or inner `.` segments disappear, `..` segments are resolved, and
@@ -79,8 +79,8 @@ the root of a drive or of the file system, or an absolute path under a top-level
 have. The last is the trap: `/src/payments/**` starts at the file system root, not the project root, so the
 writer refuses it and names the project-relative spelling, `src/payments/**`. The same mistake where the directory does exist (`/lib/payments/**` on a machine with a `/lib`) is recorded, because an absolute path outside the project is a real boundary (`/etc/**`), but never in silence: the writer prints a warning on stderr (exit status unchanged) that the glob guards the file system's `/lib/payments` and not the project's `lib/payments/**`, and `status` repeats it under `absolute_entries`. Read that warning, and re-record with the relative spelling if the project's path was meant; the refusal for a missing directory stays because it is the stronger signal. The hook matches the same way: it resolves
 `..`, links and case before it compares, so a spelling of a path inside a frozen glob does not
-get around it. Prefer the forward-slash form in what you write down, because that is what you will
-read back.
+get around it. Prefer the forward-slash form when recording a glob, because that is the form `status`
+prints back.
 
 Each run appends one owned record to `frozen_globs`. Two fields decide who can ever lift it: `owner`, and the `approvers` the writer records from `--approver`. A release is authorized by either, so a boundary whose owner may go off-shift is recorded with a named delegate at freeze time rather than negotiated later. A record stays effective until `released_at` is recorded by its owner **or by one of its approvers** — the same two-field authority the sentence above describes, and what `references/enforcement.md` § Authority fields enforces. Age alone never expires a protection.
 

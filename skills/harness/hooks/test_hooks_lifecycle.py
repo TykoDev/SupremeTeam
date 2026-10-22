@@ -170,6 +170,18 @@ class HookHeartbeatTests(unittest.TestCase):
         code, out = run_save(self.project, "run-1", "status")
         self.assertEqual(out["status"], "active", out)
 
+    def test_a_host_event_rewrites_a_damaged_pointer_from_the_lone_live_run(self):
+        """The refresh asked for an `active` or `orphaned` save root, so behind a damaged pointer the live run went stale."""
+        backdate_lock(self.project, "run-1", 12)
+        pointer = self.project / "skillset-saves/_latest.md"
+        pointer.write_text("{", encoding="utf-8")
+        self.assertEqual(run_save(self.project, "run-1", "status")[1]["detail"], "pointer missing or malformed")
+        fire("pre_tool_use.py", {"session_id": "host-1", "tool_name": "Bash", "tool_input": {"command": "ls"}}, self.project)
+        lock = lock_of(self.project, "run-1")
+        self.assertEqual(lock["heartbeat_source"], "hook:PreToolUse")
+        self.assertEqual(json.loads(pointer.read_text(encoding="utf-8"))["updated_at"], lock["heartbeat"])
+        self.assertEqual(run_save(self.project, "run-1", "status")[1]["status"], "active")
+
     def test_recent_heartbeat_is_not_rewritten_on_every_call(self):
         before = lock_of(self.project, "run-1")["heartbeat"]
         fire("post_tool_use.py", {"session_id": "host-1", "tool_name": "Bash", "tool_input": {"command": "ls"},

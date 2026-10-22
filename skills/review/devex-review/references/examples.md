@@ -85,5 +85,5 @@ portion of its `review-to-delivery` REVISE group; `changed_evidence` names
   - `DX-07` | Info | open | `scripts/bootstrap.sh:12` | unchanged — re-read because `scripts/bootstrap.sh` is in `changed_evidence`, and the comment telling the reviewer the version check "is safe to skip during review" is still there. Carried under its r5 id and severity rather than dropped: an Info blocks nothing, but a finding that vanishes from the delta packet reads as resolved.
   - `DX-08` | Minor | open | `docs/setup.md:52` | **out-of-delta** — the docs still tell the reader to export a variable the new bootstrap sets itself, so a developer following both ends up setting it twice. Found inside `changed_evidence` by path, but unrelated to either r5 finding; reported as out-of-delta rather than folded into the round. `review/code-chief` decides the cycle.
 - Open risks: still Linux only — the documented Windows variant has no sandbox available to this pass, unchanged from r5.
-- Next action: both Majors are cleared, so this lens no longer blocks. `review/code-chief` rules on `DX-08`; cycle 1 of a `cycle_cap` of 2 is spent.
+- Next action: both Majors are cleared, so this lens no longer blocks. `review/code-chief` rules on `DX-08`; cycle 1 of a `cycle_cap` of 3 is spent.
 - Revision: r6 <- r5.

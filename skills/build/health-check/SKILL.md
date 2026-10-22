@@ -8,7 +8,7 @@ description: >-
   `build/build-management`, not directly, even when the request is only "does it
   actually run?". Defers test authoring to `build/test-builder` and package
   completeness to `build/cross-check-build-confirm`.
-version: 1.0.2
+version: 1.0.3
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -114,7 +114,7 @@ Do not skip a mandatory build activity inside the canonical path; route scope ch
 | Scenario | Response |
 | --- | --- |
 | Invoked cold with no `### Save Context` block, no active run lock, and no named delegating owner | Send no request of any kind. Return to `build/build-management` for the target, the revision, and the authorization, then accept the delegation back. A guessed environment is somebody's real system, and a probe against it cannot be recalled. |
-| `build/gatekeeper-build` returns a REVISE naming the `runtime` key | Read the packet's `by_owner` group for this key only, fix every finding in it in one pass, re-run the affected probes against the same authorized target, re-hash the log, and hand it back for a single resubmission. `../../gates.yaml` `revise_policy.cycle_cap` is 2; a third cycle escalates to the build owner instead of resubmitting. |
+| `build/gatekeeper-build` returns a REVISE naming the `runtime` key | Read the packet's `by_owner` group for this key only, fix every finding in it in one pass, re-run the affected probes against the same authorized target, re-hash the log, and hand it back for a single resubmission. `../../gates.yaml` `revise_policy.cycle_cap` is 3; a third cycle escalates to the build owner instead of resubmitting. |
 | The handoff names no probe target, or the only reachable environment is production or shared and no authorization for it is recorded | Send no authenticated request. Because `runtime` has no sanctioned fallback, this is a hard block on `build-to-review`, not a caveat: report the readiness contract as unverified, state that the boundary cannot be submitted until a target is authorized, and name the owner who can authorize it. Readiness that was never proven is a fixable reporting outcome; traffic sent at an unauthorized environment is not. |
 | The target is authorized but unreachable, or the required credential reference resolves empty, so no probe can execute | Record the attempted command, the observed error, and the reference that came back empty, named by reference only. Produce no `runtime` evidence — an unavailable check is a data gap, never a pass — and return the environmental gap to `build/build-management`. The boundary stays blocked until a clean pass completes. |
 | Startup and liveness probes pass, but the critical dependency path fails once the application handles real traffic or authenticated flows | Treat the service as not ready and require proof for the real runtime boundary rather than trusting shallow green checks. |

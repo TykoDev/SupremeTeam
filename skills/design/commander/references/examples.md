@@ -11,7 +11,7 @@ example assumes an active Admiral handoff; a cold invocation hands off to
 2. Resume at architecture
 3. Backend-only service, no UI surface
 4. No saved Taste profile
-5. Second REVISE on the same keys
+5. Third REVISE on the same keys
 
 ## Example 1 — Full design with a user-facing surface
 
@@ -54,12 +54,12 @@ example assumes an active Admiral handoff; a cold invocation hands off to
 - Presentation choices in this run: taken from explicit run instructions and documented architect judgment, recorded in the traceability table with their provenance kind and no invented Taste id.
 - Feedback captured during design: emitted as Taste candidate records and routed through Admiral to the Taste pipeline; nothing is treated as an effective preference unless Taste confirms it and Commander re-resolves before the gate.
 
-## Example 5 — Second REVISE on the same keys
+## Example 5 — Third REVISE on the same keys
 
-**User request:** (continuation) the gate came back REVISE again on interfaces and acceptance
+**User request:** (continuation) the gate came back REVISE a third time on interfaces and acceptance
 
 **Output:**
-- Cycle state: this is the second `REVISE` on `design-to-build`, which exhausts `../../../gates.yaml` `revise_policy.cycle_cap` of 2.
-- Action: stop resubmitting. Escalate to Admiral with both revise packets, both verdict records, and the unclosed keys named with their owners (`interfaces` → `design/architect`, `acceptance` → `design/planner`).
-- Why the cap exists: two failed cycles on the same keys indicate disagreement about the requirement rather than a defect in the artifact, and a third submission would spend the gatekeeper's judgment on the same dispute.
-- What Admiral receives: the dispute, the recommended default for each key, and the evidence preserved at both revisions rather than overwritten into one history.
+- Cycle state: this is the third `REVISE` on `design-to-build`, which exhausts `../../../gates.yaml` `revise_policy.cycle_cap` of 3.
+- Action: stop resubmitting. Escalate to Admiral with all three revise packets, all corresponding verdict records, and the unclosed keys named with their owners (`interfaces` → `design/architect`, `acceptance` → `design/planner`).
+- Why the cap exists: three failed cycles on the same keys indicate disagreement about the requirement rather than a defect in the artifact, and a fourth submission would spend the gatekeeper's judgment on the same dispute.
+- What Admiral receives: the dispute, the recommended default for each key, and the evidence preserved at all three revisions rather than overwritten into one history.

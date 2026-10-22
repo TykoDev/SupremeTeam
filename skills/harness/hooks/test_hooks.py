@@ -589,12 +589,13 @@ class UserPromptSubmitTests(unittest.TestCase):
             result = _run_hook("user_prompt_submit.py", {"prompt": "continue"}, project)
         self.assertIn("no active run", self._ctx(result))
 
-    def test_conflicting_active_runs_do_not_reinforce_session_pin(self):
+    def test_conflicting_held_runs_keep_the_session_pin_reminder_on(self):
+        # Two fresh held runs are still held runs: the reminder used to go quiet for `conflicting`.
         with _project_dir() as project:
             _write_run_state(project, "one", "state: DESIGN_ACTIVE\n")
             _write_run_state(project, "two", "state: DESIGN_ACTIVE\n", latest=False)
             result = _run_hook("user_prompt_submit.py", {"prompt": "continue"}, project)
-        self.assertIn("no active run", self._ctx(result))
+        self.assertIn("a run is active", self._ctx(result))
 
     def test_malformed_json_fails_open(self):
         with _project_dir() as project:

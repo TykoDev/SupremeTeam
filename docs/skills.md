@@ -18,14 +18,14 @@ flat index with paths is [AGENTS.md](../AGENTS.md).
 | Skill | What it does |
 |---|---|
 | **commander** | Owns the design pipeline, locks the stack, owns the gatekeeper-design cycle |
-| **researcher** | Requirements and domain analysis grounded in the repository |
+| **researcher** | Requirements and domain analysis as a sourced, confidence-tiered brief |
 | **planner** | Milestones, rollout, decision gates, risk handling |
 | **architect** | System architecture, API contracts, the frontend design system |
 | **engineer** | Implementation spec: delivery slices, dependency order, operational constraints |
 | **gatekeeper-design** | Design phase-exit gate; also gates `redesign-review` |
 | **redesign** | Owns the redesign pipeline: inventory, taste grilling, four mocks, the user's decision, one living prototype |
 | **design-mapper** | Stable-id inventory of the current design with baseline captures; verifies parity |
-| **prototyper** | Builds one variant: tokens, framework-free component library, living single-page prototype |
+| **prototyper** | Builds one draft per delegation: a static mock of one direction, or the living single-page prototype for the selected one |
 
 The design system belongs to **architect** ([`design-doctrine.md`](../skills/design-doctrine.md)).
 
@@ -66,7 +66,7 @@ The design system belongs to **architect** ([`design-doctrine.md`](../skills/des
 | **skill-maker** | Creation, review, improvement and packaging of skills and teams |
 | **skill-creator** | Drafts and improves skills: authoring, supporting files, evals, packaging |
 | **skill-reviewer** | Adversarial quality gate; scores 0 to 100 across ten dimensions |
-| **session-memory** | Run record and durable learnings; writes only through `save_run.py` |
+| **session-memory** | Run record and durable learnings; writes the run record only through `save_run.py` |
 
 ## Taste (2)
 
@@ -77,8 +77,9 @@ The design system belongs to **architect** ([`design-doctrine.md`](../skills/des
 
 ## Standalone tools (16)
 
-Directly callable at any time. `qa`, `qa-only` and `ship` also own a gated
-pipeline when `admiral` delegates to them ([routing.md](routing.md)).
+Directly callable at any time. `qa` and `ship` also own a gated pipeline when
+`admiral` delegates to them, and `qa-only` runs the report-only sweep inside
+`qa`'s ([routing.md](routing.md)).
 
 ### Harness audit (1)
 

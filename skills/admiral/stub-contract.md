@@ -34,7 +34,7 @@ Admiral owns stage selection, cross-stage gate routing, persistence-aware resume
 - Every handoff record must capture approval state, revision count, and the current package revision identifier.
 - Verdict vocabulary is limited to APPROVED, REVISE, and ESCALATE.
 - Skill-creation verdicts map: SHIP → APPROVED, ITERATE → REVISE, BLOCKED → ESCALATE.
-- Maximum revisions per cross-stage handoff: 2.
+- Maximum revisions per cross-stage handoff: 3.
 
 ## Delivery Contract
 
@@ -95,7 +95,7 @@ Every `### Save Context` block delivered to a sub-orchestrator or specialist car
 | `Risks` | known risks \| `none declared` | Carried forward, never dropped |
 | `Return boundary` | gate boundary | Where the returned package is validated |
 
-A specialist that receives a Save Context block with `Persistence active: no` treats every save call as a no-op and surfaces its deliverable inline in the response, because with nothing being written the response is the entire record of the work. A specialist that receives `Session pin: true` honors admiral routing and does not spawn parallel skills: the pin marks a held run lock, and a skill that starts its own run beside it leaves two runs competing for the pin, which `../save-protocol.md` §2 resolves only by reclaiming one through `save_run.py recover --reason`.
+A specialist that receives a Save Context block with `Persistence active: no` treats every save call as a no-op and surfaces its deliverable inline in the response, because with nothing being written the response is the entire record of the work. A specialist that receives `Session pin: true` honors admiral routing and does not spawn parallel skills: the pin marks a held run lock, and a skill that starts its own run beside it leaves two runs competing for the pin, which `../save-protocol.md` §2 resolves only by closing all but one with `complete`, `block`, or `release`: `save_run.py recover --reason` reclaims a stale lock only once it is the only held run.
 
 ### Session-Memory Integration
 

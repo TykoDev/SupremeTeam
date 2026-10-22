@@ -40,11 +40,9 @@ creates carries a `.supremeteam-managed` marker. On an upgrade:
   install made before these records existed moves that whole old install there once,
   so that list is long and includes copies an earlier Supreme Team installer wrote;
   delete the folder when you have checked that nothing in it is yours.
-- `mcp-tools.md` is the tool registry your assistant fills in, so a registry you
-  changed is never replaced; delete it and re-run to get the blank template back. An
-  unedited copy of a registry an earlier release shipped is replaced by the blank
-  template, because it is the installer's own file: the older releases shipped one
-  machine's tool list, and the summary names the file when it swaps one out.
+- `mcp-tools.md` is the tool registry your assistant fills in, so an installed
+  registry is never replaced, edited or not; delete it and re-run to get the blank
+  template back.
 - `--destination` refuses the filesystem root, your home directory or one of its
   parents, any folder that overlaps the checkout, and `.` unless the current
   directory already holds an install (a full path to it is always accepted).
@@ -145,10 +143,11 @@ single-team install: every skill resolves the root doctrine files, and every
 `gatekeeper-*` depends on `harness/gatekeeper/`.
 
 **What a host sees.** A host that scans its skill directory one level deep
-registers the 22 skills that sit at the install root, by name. The 31 internal
-specialists stay nested one level below, so no host lists them; they are reached by
-path through the skill that delegates to them (`skills/routing-doctrine.md`,
-"Host registration"). `AGENTS.md` is a checkout-only index: the installers do not
+registers the 22 skills that sit at the install root, by name. The other 31 (the
+internal specialists, plus the pipeline owners and phase gatekeepers under
+`design/`, `build/` and `review/`) stay nested one level below, so no host lists
+them; they are reached by path through the skill that delegates to them
+(`skills/routing-doctrine.md`, "Host registration"). `AGENTS.md` is a checkout-only index: the installers do not
 copy it, and nothing is discovered from it unless your tool is pointed at a
 checkout.
 
@@ -206,9 +205,13 @@ and what you are left with when it is not registered:
 | `user_prompt_submit.py` | Reminds the assistant on every fresh turn to enter lifecycle work through `admiral` and honours the session pin | A request can land on a specialist and skip intake, persistence and the gates |
 | `post_tool_use.py` | Refreshes the run heartbeat from real tool activity, records trajectory degeneration, sweeps coverage residue | A run goes stale between checkpoints and is reclaimed as abandoned |
 
-Both installers end with a capital-letter banner when hooks were not registered,
-declined or failed, and `check_readiness.py --require-hooks` reports such a host as
-not ready. The gate validators do not depend on the hooks and run either way.
+Both installers end with a capital-letter banner when registration was not
+requested, was declined or failed, and `check_readiness.py --require-hooks` reports
+such a host as not ready. `--register-hooks` (`-RegisterHooks`) on a machine where
+no host is detected prints no banner, only the summary line
+`Hook registration: skipped (no host detected)`; `check_readiness.py --require-hooks`
+reports that machine as not ready too, because it finds no host configuration. The
+gate validators do not depend on the hooks and run either way.
 
 ```bash
 # Inspect current state (checks the hosts that have a config file or a host variable)

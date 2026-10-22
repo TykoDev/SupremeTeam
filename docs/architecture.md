@@ -40,7 +40,8 @@ For anything above Tier 0, `admiral`:
 7. Assembles only approved packages into the delivery package.
 
 Ceremony scales with the change, not the mode: a bounded change to an existing
-codebase runs every stage and gate, sized to the change.
+codebase runs every unconditional stage and meets every gate, sized to the
+change.
 
 ### Tiers
 
@@ -57,13 +58,12 @@ codebase runs every stage and gate, sized to the change.
 |---|---|---|
 | Full | "run the full pipeline", "ship this end to end" | design, build, review, delivery |
 | Partial | "just design", "just review this code" | The earliest incomplete boundary of the requested subset |
-| Resume | A coherent active or orphaned run exists | Earliest incomplete boundary after lock and lineage checks |
+| Resume | A coherent active or orphaned run, or existing approved artifacts | Earliest incomplete boundary after lock and lineage checks |
 | Create-skill | "create a skill" | Intake, skill-maker, delivery |
 | Create-team | "create a team", "build me a pipeline" | Intake, skill-maker team mode, delivery |
 
-A supplied approved design skips to build; an existing codebase skips to review.
-A skip is honored only when the upstream artifact is approved, complete and valid
-for the next boundary.
+A supplied approved design skips to build. A skip is honored only when the
+upstream artifact is approved, complete and valid for the next boundary.
 
 ### Execution modes
 
@@ -76,9 +76,9 @@ every boundary and on resume.
 
 Stage order in `pipelines.yaml` is a topological order of each stage's
 `requires`, not a queue (`scheduling`). Stages whose requires are satisfied are
-delegated together: all review lenses on the approved build; the test surface,
-security checkpoint and runtime smoke on the implementation; the taste snapshot
-and research on the decisions; the security seed and the plan on the
+delegated together: every applicable review lens on the approved build; the test
+surface, security checkpoint and runtime smoke on the implementation; the taste
+snapshot and research on the decisions; the security seed and the plan on the
 architecture. A pipeline's wall-clock is its longest dependency chain.
 
 ## Design
@@ -151,7 +151,7 @@ behavior or surface changed, devex-review when a developer-facing surface change
 
 | Subsystem | Where |
 |---|---|
-| Entry routing, tiers, loop guard | [routing.md](routing.md), `skills/routing-doctrine.md` |
+| Entry routing, Tier 0, loop guard | [routing.md](routing.md), `skills/routing-doctrine.md` |
 | Gate spec and verdicts | [gatekeepers.md](gatekeepers.md), `skills/gates.yaml` |
 | Hooks and validators | [harness.md](harness.md), `skills/harness-doctrine.md` |
 | Saves, locks, resume | [persistent-saves.md](persistent-saves.md), `skills/save-protocol.md` |

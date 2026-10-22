@@ -17,7 +17,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.package_skill import refusal_class, should_exclude
 from scripts.utils import PROJECT_MARKERS, ProjectRootError, find_project_root, load_residue_classes
-from scripts.test_package_skill import PackagingCase, make_skill, names, package  # noqa: E402
+from scripts.test_package_skill import PackagingCase, make_skill, package
 
 
 class RefusalMessageTests(PackagingCase):

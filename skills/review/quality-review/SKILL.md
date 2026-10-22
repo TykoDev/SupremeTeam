@@ -8,7 +8,7 @@ description: >-
   work in?". Takes the multi-change health view; gating one diff for merge goes to
   `review/code-review`, concrete defects to `review/bug-review`, and security
   exposure to `review/security-review`.
-version: 1.0.1
+version: 1.0.2
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -116,7 +116,7 @@ A clean pass asserts the boundaries were assessed and hold. When there is no str
 
 ## REVISE Rounds
 
-`check.py` groups a REVISE packet by evidence key and routes each group to that key's owner in `../../gates.yaml` `evidence_owners`. At `review-to-delivery` every key belongs to `code-chief` or `design-qa`, so no group is addressed to this lens directly: `code-chief` receives the group and sub-delegates the part this lens owns, under a `cycle_cap` of 2. `revise_policy.parallel_fix` is what lets that sub-delegation run alongside the other lenses rather than in sequence. A REVISE round is a delta pass, not a fresh assessment:
+`check.py` groups a REVISE packet by evidence key and routes each group to that key's owner in `../../gates.yaml` `evidence_owners`. At `review-to-delivery` every key belongs to `code-chief` or `design-qa`, so no group is addressed to this lens directly: `code-chief` receives the group and sub-delegates the part this lens owns, under a `cycle_cap` of 3. `revise_policy.parallel_fix` is what lets that sub-delegation run alongside the other lenses rather than in sequence. A REVISE round is a delta pass, not a fresh assessment:
 
 1. Re-assess only the modules and keys named in `changed_evidence` for this group, plus any boundary whose drift judgment depended on them. Unchanged evidence keeps its prior judgment, mirroring how the gatekeeper re-judges under `delta_review`.
 2. Carry prior finding ids forward. A resolved item returns with status `verified` and the structural evidence that verifies it; an unresolved one returns under its original id and severity, never renumbered, and a Major that has since acquired an owner and reopen trigger returns as deferred rather than as resolved.

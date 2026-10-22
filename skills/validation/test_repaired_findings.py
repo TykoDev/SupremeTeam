@@ -173,6 +173,8 @@ class CycleCapPhrasingTests(unittest.TestCase):
         exact_wrong = (
             "second REVISE round reaches",
             "second failed round escalates",
+            "escalate on the second failed round",
+            "stop after two failed revision attempts",
             "returns `REVISE` twice, exhausting",
             "returns `REVISE` twice on the same package",
             "A second `REVISE` ends the cycle",
@@ -229,22 +231,6 @@ class CycleCapPhrasingTests(unittest.TestCase):
                 if int(match.group(1)) != cap:
                     bad.append(f"{path.relative_to(CATALOG)}")
         self.assertEqual(sorted(set(bad)), [])
-
-
-class RestoredAssetTests(unittest.TestCase):
-    """C-1: install-items.txt names four superseded copies that must ship."""
-
-    def test_every_superseded_copy_declared_by_install_items_exists(self):
-        items = read("scripts/install-items.txt")
-        declared = []
-        for line in items.splitlines():
-            if line.startswith("supersedes "):
-                declared.extend(line.split()[2:])
-        self.assertTrue(declared, "install-items.txt declares no superseded copies")
-        for name in declared:
-            path = CATALOG / "scripts" / "superseded" / name
-            self.assertTrue(path.is_file(), f"missing superseded copy: {path}")
-            self.assertGreater(path.stat().st_size, 0, f"empty superseded copy: {path}")
 
 
 class RepairedWordingTests(unittest.TestCase):

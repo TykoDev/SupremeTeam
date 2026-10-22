@@ -1698,10 +1698,10 @@ def _advise(notes: list) -> None:
 
 _UNREADABLE_NOTE = (
     "[harness:guard-state] .harness-state/guard-state.json exists but cannot be read, so no frozen, blocked or "
-    "read-only boundary is enforced for this call. The destructive-command, single-writer and hook-file rules "
-    "still are. Tell the owner: the record has to be repaired or recreated through guard_state.py "
-    "(an agent write to it is denied) and each boundary recorded again. Until then treat every boundary as "
-    "not enforced."
+    "read-only boundary is enforced for this call. The destructive-command, single-writer and unplaced-write rules "
+    "still are; the hook-file rule is only while a run is pinned. Tell the owner: the record has to be repaired or "
+    "recreated through guard_state.py (an agent write to it is denied) and each boundary recorded again. Until then "
+    "treat every boundary as not enforced."
 )
 
 

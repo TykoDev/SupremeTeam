@@ -12,12 +12,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import run_audit  # noqa: E402
+import run_audit
 
 CATALOG_SCRIPTS = Path(__file__).resolve().parents[3] / "skills" / "scripts"
 if (CATALOG_SCRIPTS / "data_formats.py").is_file():
     sys.path.insert(0, str(CATALOG_SCRIPTS))
-    import data_formats  # noqa: E402
+    import data_formats
 else:  # the deployed copy ships without the catalog
     data_formats = None
 

@@ -91,15 +91,19 @@ through an opt-out.
 `.claude/skills/<name>/SKILL.md`, one level deep, so where a skill sits decides
 whether the user can name it. The catalog's layout follows its routing classes:
 of its 53 skills, the 22 a user may reach directly sit at the catalog root, and
-the 31 internal specialists stay nested one level below, where the loader does
-not offer them. That is the intended reading of "reached only through the owning
+the other 31 stay nested one level below, where the loader does not offer them.
+Those 31 are the 23 internal specialists plus the eight `design/`, `build/` and
+`review/` skills of other classes: five pipeline owners (`design/commander`,
+`design/redesign`, `build/build-management`, `review/code-chief`, `review/cso`),
+which `admiral` delegates to, and three phase gatekeepers, which their phase
+owners call. That is the intended reading of "reached only through the owning
 sub-orchestrator" expressed in the filesystem rather than only in prose.
 
-Nesting costs those specialists nothing, because delegation never used the skill
+Nesting costs those skills nothing, because delegation never used the skill
 loader. `admiral` holds `Read`, `Grep`, `Glob`, `Bash`, `Write` and `Edit` — and no
 `Skill` tool, which is the part that matters here: its delegation surface names
 `build/build-management` and it reads that file. A
-specialist is reachable because its path resolves, not because the host
+nested skill is reachable because its path resolves, not because the host
 registered it.
 
 Relative pointers move with the skill. A skill at the catalog root is one

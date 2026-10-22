@@ -456,8 +456,10 @@ class Package:
             self.schema = RUN_MANIFEST_SCHEMA
         elif self.schema < 2:
             self.warnings.append(
-                "schema 1 manifest: typed records, applicability records, the finding policy, boundary and owner "
-                "were not checked; declare schema_version 2")
+                "schema 1 manifest: typed records and the finding policy were not checked; boundary and owner were "
+                "not required (a declared one was still compared); bare sanctioned fallback strings were accepted in "
+                "place of applicability records; paths in records under keys that are not artifact-backed were not "
+                "required to be hashed; a non-string run_id was not refused; declare schema_version 2")
         self.root, self.root_kind, self.run_dir, self.project_root = self._evidence_root()
         self.artifact_hashes: dict[str, str] = {}
         self.hashed_ok: set[str] = set()

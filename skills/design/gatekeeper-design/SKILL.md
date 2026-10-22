@@ -8,7 +8,7 @@ description: >-
   readiness, or challenge the packet — even when they only ask "is the design
   done?". Defers the other gates to `build/gatekeeper-build`,
   `review/gatekeeper-code`, `gatekeeper-admiral`.
-version: 1.3.0
+version: 1.3.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -94,10 +94,12 @@ reason, scope, and decided_by. The other six accept no fallback.
 **At `redesign-review`**, eleven of the fourteen keys in the table above are
 artifact-backed — every one except the last three, `accessibility_evidence`,
 `recommendation`, and `residual_risk`. Only `taste_snapshot` is waivable. `../../gates.yaml` lists `mock_rendering` under this boundary's
-`no_fallback`: there it accepts neither the sanctioned fallback string nor an
-applicability record, even though a global fallback exists for it elsewhere. The
-four mocks are always built, so "no visible surface changed" can never be true of
-them.
+`no_fallback`: there it accepts neither a fallback string nor an applicability
+record. No fallback map, global or boundary, sanctions a wording for it, and the
+bar keeps one added later from opening a waiver; the boundary validator fails a
+record as `evidence not waivable` and a bare wording as
+`evidence not artifact-backed`. The four mocks are always built, so "no visible
+surface changed" can never be true of them.
 
 Four keys are not waivable but are **conditional on the decision**:
 `selected_variant`, `parity_evidence`, `rendered_verification`, and
@@ -310,8 +312,8 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 
 | Scenario | Response |
 | --- | --- |
-| The result reports `manifest_schema_version: 1`, so no typed record, waiver wording or finding policy was checked | Return `REVISE` to `commander` (or `redesign` at `redesign-review`) for a schema-2 manifest carrying `boundary` and `owner`. Exit 0 on a flat schema-1 package means the keys are present and the hashes hold, not that `stack_lock` was checked against the registry or that a waiver used the sanctioned wording. |
-| The result's `warnings` carry a stack-lock warning: the locked stack's support has ended (`support_ends` in `../../tech-stacks/registry.yaml`), or the registry was last verified longer ago than its `verification_ttl_days` | The validator still passes; the warning is a fact for you to act on, not a failure it raised. Do not approve silently. Name the warning in the verdict and return to `commander` for the owner's decision on the stack (a supported major, or an explicit acceptance recorded in `residual_risk`); approve only once that decision is in the package. |
+| The result reports `manifest_schema_version: 1`, so no typed record or finding policy was checked, and a bare sanctioned wording could stand in for an applicability record | Return `REVISE` to `commander` (or `redesign` at `redesign-review`) for a schema-2 manifest carrying `boundary` and `owner`. Exit 0 on a flat schema-1 package means the keys are present and the hashes hold, not that `stack_lock` was checked against the registry or that a waiver used the sanctioned wording. |
+| The result's `warnings` carry a stack-lock warning: the locked stack's support has ended (`support_ends` in `../../tech-stacks/registry.yaml`), or the registry was last verified longer ago than its `verification_ttl_days` | The validator still passes; the warning is a fact for this gate to act on, not a failure it raised. Do not approve silently. Name the warning in the verdict and return to `commander` for the owner's decision on the stack (a supported major, or an explicit acceptance recorded in `residual_risk`); approve only once that decision is in the package. |
 | The architecture describes components, flows, or interfaces that are absent from the plan or implementation spec | Return `REVISE` and require a single coherent system view before build can rely on it. |
 | The package claims API readiness but endpoints lack request/response schemas, auth/authorization, error envelope, idempotency, or contract tests | Return `REVISE` and require the API endpoint contract template before the design package can exit. |
 | The package claims frontend readiness but lacks route inventory, screen-state coverage, API/data dependency mapping, form validation behavior, or breakpoint evidence | Return `REVISE` and require the UI/UX Handoff section before the design package can exit. |

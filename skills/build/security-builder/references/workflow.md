@@ -100,7 +100,7 @@ sibling groups belong to other specialists and are fixed in parallel.
 
 Repair every finding in the group in one pass, re-run the focused check that
 proves each repair, refresh any scan record so its `inputs` match current
-digests, and hand the updated record back once. `revise_policy.cycle_cap` is 2;
+digests, and hand the updated record back once. `revise_policy.cycle_cap` is 3;
 a third cycle escalates to the delegating owner rather than resubmitting.
 
 ## Decision Rules

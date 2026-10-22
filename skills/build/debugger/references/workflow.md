@@ -78,7 +78,7 @@ specialist directly. The packet arrives already grouped by owner in
 
 Take only the findings routed here. Fix them in one pass, re-run the before/after
 capture on the same revision, re-reconcile the ledger against the new diff, and
-hand the updated report back once. `revise_policy.cycle_cap` is 2; a third cycle
+hand the updated report back once. `revise_policy.cycle_cap` is 3; a third cycle
 escalates to the build owner rather than resubmitting, because two failed
 repairs against the same finding mean the mechanism was not the one identified.
 

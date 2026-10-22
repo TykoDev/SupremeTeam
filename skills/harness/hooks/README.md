@@ -106,6 +106,7 @@ Every file in `skills/harness/hooks/` serves an explicit, non-overlapping archit
 | [`test_guard_paths.py`](test_guard_paths.py) | Test Suite | - | The path and glob canonicaliser: spellings, links, case, allow versus deny direction. |
 | [`test_guard_harness_files.py`](test_guard_harness_files.py) | Test Suite | - | Rule F: the hook scripts and registration files are protected while the guard is in use, and not otherwise. |
 | [`test_pre_tool_entry.py`](test_pre_tool_entry.py) | Test Suite | - | The registered PreToolUse entry runs the guard on any interpreter (the real scripts under each older Python installed) and fails open readably, counted, on a real fault; every hook module imports on an older interpreter. |
+| [`test_path_contracts.py`](test_path_contracts.py) | Test Suite | - | Cross-platform spellings of cases the `test_guard_*` tables hold: a spaced launcher that is not a Python, Windows path words in a shell command, the per-directory link resolver, leading-slash globs on a drive-rooted machine, the reach of Rule F, and neutralised state-file text. |
 | [`test_state_hardening.py`](test_state_hardening.py) | Test Suite | - | Hook input decoding, fault counting, trusted state directory, grant cap and the project-root order. |
 | [`test_fsutil.py`](test_fsutil.py) | Test Suite | - | The shared atomic write and advisory lock. |
 | [`test_hooks_maintenance.py`](test_hooks_maintenance.py) | Test Suite | - | The coverage sweep (read-only runs, active runs, isolated `coverage combine`), neutralised context text, the fault trace of the post-tool and prompt hooks, and import structure. |
@@ -260,18 +261,21 @@ Invoked after tool execution completes. Watches for execution pathologies and in
 
 ### `user_prompt_submit.py` (Entry Routing)
 
-Invoked on every user prompt turn before agent execution begins.
+Invoked on every user prompt turn before agent execution begins. The cases are
+checked in this order and the first match decides: an empty prompt (silent),
+`/audit-improve` as the first word, any other slash command, an active run, and
+otherwise the routing reminder.
 
 #### Features and Behaviors
 
 1. **Lifecycle Entry Routing:**
    - If no run is active, injects advisory context steering delivery lifecycle tasks (design, build, review, audit, security, QA, release, skill creation) to [`skills/admiral/SKILL.md`](../../admiral/SKILL.md), while noting the Tier 0 fast-path for minor reversible tasks.
 2. **Session Pin Reinforcement:**
-   - If a valid run is active (`session_pin: true` held in `_state.md`), reminds the model to treat input as session input to the active run and route work through the active sub-orchestrator.
+   - If `_saves.has_active_run` reports a run holding the pin (a run holding a fresh lock, whatever the pointer says, mid-publish too, or a record carrying `access_denied`, which may be a held run), reminds the model to treat input as session input to the active run and route work through the active sub-orchestrator.
 3. **Slash Command Pass-Through:**
-   - Explicit slash commands (e.g. `/admiral`, `/guard`, `/ship`) bypass routing reminders to allow host command handling.
+   - Any other explicit slash command (e.g. `/admiral`, `/guard`, `/ship`) gets no reminder, active run or not, so the host handles it.
 4. **`/audit-improve` Command Support:**
-   - Intercepts `/audit-improve` requests, forces an `audit_improve.py` execution, and injects the telemetry report as prompt context.
+   - When `/audit-improve` is the prompt's first word, active run or not, runs the read-only audit through `audit_improve.maybe_audit(force=True)`, which skips the cooldown and writes no cooldown marker, and injects its summary as prompt context. A fault there is counted in the hook's observation record and the hook stays silent.
 
 ---
 
@@ -407,7 +411,7 @@ python skills/harness/hooks/check_readiness.py --host auto --json
 - `hooks_interpreter`: `ok`, `too_old`, `not_found` (not on this PATH; a host may supply its own), or `unverified`.
 - `hooks_observed`: Real host execution observed (`observed`, `partial`, `simulated`, or `unverified`).
 - `hooks_faults`: Internal faults the hooks failed open on, when they record them. A hook that fires with faults is reported as `firing with N faults`.
-- `saves_readable`: `skillset-saves/` is structurally readable. The text report prints the next step for any saves classification but `active` under `Saves:` (`saves.next_step` in the JSON), the one `save_run.py status` gives.
+- `saves_readable`: `skillset-saves/` is structurally readable (neither `missing` nor `unreadable`) and the result carries no `access_denied`: a record this account cannot read makes it false whatever the classification, `active` included. The text report prints the next step under `Saves:` (`saves.next_step` in the JSON), the one `save_run.py status` gives, for any saves classification but `active`, and for any that carries `access_denied`, where it is the step the writer refuses with (`ACCESS_DENIED_STEP`), not the classification's own; the `--require-active-run` blocker names the refused record and that step too.
 - `active_run`: Valid active run pointer and unexpired lock held.
 - `deterministic_validators`: Catalog validator scripts are accessible.
 
@@ -465,9 +469,9 @@ python skills/harness/hooks/repair_registration.py --host claude --record-hashes
 - **Links:** a config file that is a symbolic link is never replaced by a regular file. The `user` file (a dotfiles manager's link) is written through to its target, with the backup beside the target and a warning that says so; a `project` or `local` file that is a link is refused (exit 2), because a cloned repository can plant one that points anywhere, and so is a link that leads to no file.
 
 #### Exit Codes
-- `0`: Nothing to do, or the change was applied.
-- `1`: Changes are needed and `--apply` was not given.
-- `2`: Refused (unreadable or invalid config, undefined scope) or a write failed.
+- `0`: Nothing to do, the change was applied, or the hashes were recorded.
+- `1`: Changes are needed and `--apply` was not given. Any exception the script does not catch, a failed `--record-hashes` write included, also exits 1, with Python's traceback on stderr and no JSON on stdout.
+- `2`: A usage error; a refusal (a scope the host does not define, a config that is not a UTF-8 JSON object with its hooks in the expected shape, a link it will not replace, `--record-hashes` before the hooks are registered); or an `--apply` write that raised `OSError`.
 
 ### `scripts/install_hooks.py` (Installer — Registration Writer)
 
@@ -562,8 +566,8 @@ Underlying fail-open utility for Layer 3 and Layer 4 hooks:
 ### `_saves.py` (Core Helper — Save Classifier)
 
 Shared parser for the canonical `skillset-saves/` layout:
-- `classify_saves(project_root)`: Classifies save directory status (`active`, `inactive`, `complete`, `stale`, `orphaned`, `conflicting`, `corrupt`, `interrupted`, `uninitialized`, `missing`, `unreadable`). A run record this account cannot read (records are owner-only) is classified `corrupt` and `inspect_saves` and `inspect_run` carry `access_denied` for it, naming the file and the permission, so it is never read as an absent record. `access_denied` is carried for the records that may hold the pin (the pointer, a lock, a state beside a lock that says held); a state this account cannot read beside a readable released lock is a closed run, `corrupt` without `access_denied`. Registered evidence under a directory this account may not search is reported as `evidence_unverifiable` beside the classification the run's own records give; it is not a record the account was refused.
-- `has_active_run(project_root)`: Boolean probe returning `True` when a coherent, fresh, unexpired run lock exists, and also for a record this account cannot read (a lock it cannot read, or a state it cannot read beside a lock that says held), which may be a held run: it errs toward held, so the protections that ask stay on. It is `False` for a refused record beside a readable released lock, which is a closed run. The guard's hook-file rule and the prompt hook ask it on every call, so it reads each run's lock and classifies in full only the runs whose lock is held and the one the pointer names (`inspect_saves(only_held=True)`), which gives the classification's answer in about a third of the time at a thousand runs.
+- `classify_saves(project_root)`: Classifies save directory status (`active`, `inactive`, `complete`, `stale`, `orphaned`, `conflicting`, `corrupt`, `uninitialized`, `missing`, `unreadable`; never `interrupted`, which only `save_run.py status --run-id <id>` reports while that run's `_journal.json` file exists). Every run is read before the pointer decides anything, and `inspect_saves` carries what the reading found on whatever it decides: `held_runs` names each run that holds the pin (a coherent held run, fresh or stale, one whose lock says held beside an interrupted publish's journal, or a held run whose records agree beside a directory where its journal belongs, `directory_at`), each with whether its lock is `fresh`, so a damaged pointer hides none. A run record this account cannot read (on POSIX the writer makes records owner-only; on Windows they inherit the directory's access list) is never read as an absent record: `inspect_saves` and `inspect_run` carry `access_denied` for it, naming the file and the permission, and the save root is `corrupt` with it where nothing decides first. `access_denied` is carried for the records that may hold the pin (the pointer, a lock, a state beside a lock that says held, a directory on the way to them); a state this account cannot read beside a readable released lock is a closed run, `corrupt` without `access_denied`. A directory (a junction, or a link to one) where a record belongs is damage, `corrupt` with `<path> is a directory, not a file`, on every platform. Registered evidence under a directory this account may not search is reported as `evidence_unverifiable` beside the classification the run's own records give; it is not a record the account was refused.
+- `has_active_run(project_root)`: Boolean probe returning `True` while any run in `held_runs` has a fresh lock, whatever the pointer says (the classification is `active` or `orphaned`, or `conflicting` beside a second held run, or `corrupt` beside a damaged pointer: none of them hides the run), mid-publish or beside a directory where its journal belongs included, or when the result carries `access_denied` (a record this account cannot read that may hold the pin: the pointer, a lock it cannot read, a state it cannot read beside a lock that says held, or a directory on the way to them), which may be a held run: it errs toward held, so the protections that ask stay on. A stale lock on its own answers `False` (its owner closes it, or `recover --reason` reclaims it), and so does a run whose state and lock disagree with no publish interrupted, and a refused record beside a readable released lock, which is a closed run. The guard's hook-file rule and the prompt hook ask it on every call, so it reads each run's lock and classifies in full only the runs whose lock is held and the one the pointer names (`inspect_saves(only_held=True)`), which gives the full classification's answer in about two fifths of the time at a thousand runs.
 - `read_latest_pointer(project_root)`: Safely extracts the active run ID from `skillset-saves/_latest.md`.
 
 ---
@@ -571,7 +575,7 @@ Shared parser for the canonical `skillset-saves/` layout:
 ## Heartbeat Refresh
 
 To prevent active runs from going stale during long autonomous workflows, all three registered hooks (`pre_tool_use.py`, `post_tool_use.py`, `user_prompt_submit.py`) refresh the active run's heartbeat through `run_heartbeat.refresh`:
-- **Conditions:** Only when the hook payload contains a valid host `session_id`, an active run lock is held, the lock is coherent and uncorrupted, and the run is not interrupted.
+- **Conditions:** Only when the hook payload contains a valid host `session_id`, exactly one coherent run holds the pin, whatever the pointer says (a second one, or a classification that stopped at a record this account cannot read, leaves both unrefreshed), its lock is held, pinned and not yet stale, and the run is not interrupted. The write rewrites the pointer from that run, so a damaged pointer beside it is healed by the next refresh that is due.
 - **Throttling:** Refreshes are throttled to at most once every 5 minutes.
 - **Execution:** Calls `save_run.py heartbeat --run-id <run> --owner <owner>` internally.
 - **Stale Expiry:** Without hook activity or checkpoints, a held run lock transitions to `stale` after 30 minutes.

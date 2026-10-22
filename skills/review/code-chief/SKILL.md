@@ -10,7 +10,7 @@ description: >-
   merge, or pressure-test this project — even when the user only says review the
   code. Defers to `admiral` when cold; security governance to
   `review/cso`.
-version: 1.1.1
+version: 1.1.2
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent, Task
 ---
 
@@ -162,7 +162,7 @@ in `references/failure-modes.md`, which repeats none of these rows.
 | The package claims security leadership signoff, accepted-risk readiness, or release security posture | Remove the unsupported leadership claim and escalate to `admiral` to open the `security` pipeline under `cso`, gated at `security-review`; the review pipeline has no cso stage and code-chief never signs that judgment. |
 | A visible surface changed but the host has no browser, so `review/design-qa` cannot capture it | Carry the record `design-qa` returns with `result.status: inferred`, its limitation statement, and the label `INFERRED - no browser available` that `../../gates.yaml` `evidence_type_rules.render` requires. State in `review_verdict` that rendering was not observed and carry the limitation into `residual_risk` with the condition that would close it. Never substitute `no visible surface changed - rendered verification not applicable`: that value asserts nothing visible changed, which is false here. |
 | The build package is missing, unapproved, or malformed — no `build-to-review` verdict, evidence spanning two revisions, or a manifest that does not parse | Schedule no lenses. `revision_lineage` cannot be stated over an input whose revision is unknown, so name which of the three it is and return it to Admiral, which rewinds to the build boundary. Reviewing a package assembled from guesses produces findings against code nobody approved. |
-| `review-to-delivery` returns `REVISE` twice, exhausting `../../gates.yaml` `revise_policy.cycle_cap` of 2 | Stop resubmitting and escalate to Admiral with both revise packets, both verdicts, and the unclosed keys named with their owners. Five of the six keys are code-chief's own, so a second failure on them is a disagreement about the standard rather than a defect in the artifact. |
+| `review-to-delivery` returns `REVISE` a third time, exhausting `../../gates.yaml` `revise_policy.cycle_cap` of 3 | Stop resubmitting and escalate to Admiral with all three revise packets, all corresponding verdict records, and the unclosed keys named with their owners. Five of the six keys are code-chief's own, so a third failure on them is a disagreement about the standard rather than a defect in the artifact. |
 | A required capability is unavailable: no sub-agent delegation for the lenses, no command execution for the probes, or no Python for the gate self-check | Run what the host allows and report the rest as unproven by name. A probe that could not execute is `result.status: unavailable`, which is a data gap and never a pass, so `executed_probes` fails the gate rather than carrying an inferred success. Without Python the self-check did not run, so the package is submitted as unverified rather than described as passing. |
 
 ## Save Protocol

@@ -320,8 +320,12 @@ def load_guard_state(root: "str | Path | None" = None, event: "str | None" = Non
     A bare glob string is still honored for backward compatibility but carries no
     owner, so a release cannot be authority-checked against it.
 
-    With no boundary set (the common case) every list is empty, so the hook is
-    inert until a guard/freeze skill explicitly records a boundary. The returned
+    With no boundary set (the common case) every list is empty, so the frozen,
+    blocked and read-only rules are inert until a guard/freeze skill explicitly
+    records a boundary. The hook is not: its destructive-command and single-writer
+    rules apply regardless, its hook-file rule while a run is active, and its
+    unplaced-write rule while a run is active or a single-writer record is on disk,
+    and always after a directory chain too long to follow. The returned
     ``frozen_globs``/``blocked_globs`` are the *effective* glob strings; the raw
     records are exposed under ``freeze_records`` for reporting. ``root`` reads
     another project's record, and nothing here creates a directory. A grant

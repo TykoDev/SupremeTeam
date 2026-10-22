@@ -151,7 +151,7 @@ groups belong to `build/bob-the-builder`, `build/health-check`, or
 
 Fix every finding in the group in a single pass, re-run the affected suites,
 re-hash the log, refresh `inputs` against the current source digests, and hand
-the record back once. `revise_policy.cycle_cap` is 2; a third cycle escalates to
+the record back once. `revise_policy.cycle_cap` is 3; a third cycle escalates to
 the build owner rather than resubmitting, because two failed repairs on the same
 key means the finding is not a coverage defect.
 

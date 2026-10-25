@@ -37,6 +37,47 @@
     "gatekeeper_unavailable": "The boundary cannot close. For the six pipelines with no phase gatekeeper there is no second validator to fall back to, so the run enters ESCALATE; a submitter self-check is never a verdict.",
     "spec_contradicts_skill_prose": "This file decides stages, owners, boundary, and scripts. The owning SKILL.md elaborates them and is the defect when the two disagree."
   },
+  "review_execution": {
+    "mode": "one-gate-per-review",
+    "specialists": {
+      "bug-review": [
+        "review-to-delivery"
+      ],
+      "code-review": [
+        "review-to-delivery"
+      ],
+      "quality-review": [
+        "review-to-delivery"
+      ],
+      "security-review": [
+        "review-to-delivery",
+        "security-review"
+      ],
+      "mr-robot": [
+        "review-to-delivery",
+        "security-review"
+      ],
+      "frontier": [
+        "redesign-review",
+        "review-to-delivery"
+      ],
+      "design-qa": [
+        "redesign-review",
+        "review-to-delivery"
+      ],
+      "devex-review": [
+        "review-to-delivery"
+      ],
+      "taste-review": [
+        "taste-review"
+      ],
+      "skill-reviewer": [
+        "skill-maker-to-delivery"
+      ]
+    },
+    "reuse": "Reuse the same lens, scoped surface, Intake digest and input hashes across phase and cross-stage gates; gatekeepers consume reports and never rerun the reviewer roster.",
+    "followup": "Reinvoke only changed evidence producers and affected dependents; carry hash-valid prior results. Full suites and audits require explicit user scope, a mandatory contract, or concrete dependency impact. See contracts/review-discipline.md."
+  },
   "pipelines": {
     "design": {
       "owner": "commander",

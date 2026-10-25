@@ -8,11 +8,15 @@ description: >-
   readiness, or challenge the packet — even when they only ask "is the design
   done?". Defers the other gates to `build/gatekeeper-build`,
   `review/gatekeeper-code`, `gatekeeper-admiral`.
-version: 1.3.1
+version: 2.0.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
 # Gatekeeper Design
+
+## Review discipline
+
+Apply [../../contracts/review-discipline.md](../../contracts/review-discipline.md): read and bind the hashed Intake log, return complete expected/observed/remediation/verification feedback for every blocker, and consume existing specialist reports. Always escalate to the user on the third consecutive REVISE. Persist final judgments with `--judgment` and `--verdict-out`; read `judgment.verdict` and `revision_cycle.held_for_user` before returning. A held boundary permits no fourth automatic cycle; only a new explicit user decision authorizes `--reopen-reference`.
 
 ## Purpose
 
@@ -200,7 +204,7 @@ sanctioned applicability record the boundary validator checks.
 `../../gates.yaml`:
 
 ```bash
-python skills/harness/gatekeeper/check.py --boundary <design-to-build|redesign-review> --package skillset-saves/runs/<run>/<phase>/manifest.json [--prior <prior-verdict-file>] --verdict-out skillset-saves/runs/<run>/<phase>/verdict_<boundary>.json
+python skills/harness/gatekeeper/check.py --boundary <design-to-build|redesign-review> --package skillset-saves/runs/<run>/<phase>/manifest.json [--prior <prior-verdict-file>]
 ```
 
 At `redesign-review` it mechanizes the four-mock `mock_set` record and the
@@ -359,9 +363,7 @@ submitter — `design/commander` at `design-to-build`, `design/redesign` at
 `redesign-review` — carries the semantic verdict into its next checkpoint, copied from the record's `judgment`, which is the gate's own account and the one every later reader trusts. The judgment record — this gate's verdict and every judgment finding with its basis and anchors — is written first as `verdict_<boundary>.judgment.json` beside the verdict (same `gate-verdict` class) and passed with `--judgment`; `check.py` embeds it in the verdict record under `judgment` and refuses to write a record whose judgment is ungrounded.
 `gatekeeper-admiral` later re-validates the same boundary with `--prior` pointed
 at the record above and writes its own beside it as
-`verdict_<boundary>.cross-stage.json`, which it never overwrites. When
-persistence is inactive, return the verdict inline and preserve the run and
-revision.
+`verdict_<boundary>.cross-stage.json`, which it never overwrites. Even when other Save Context persistence is inactive, final semantic judgments still require the canonical writable cycle history. Return the verdict inline only after persisting it through `--judgment` and `--verdict-out`; if that history cannot be written, ESCALATE to the user instead of issuing a stateless verdict.
 
 ## References
 
@@ -376,4 +378,4 @@ revision.
 
 ## Packaging Notes
 
-Package `SKILL.md`, `scripts/check.py`, `scripts/check_redesign.py`, `references/workflow.md`, `references/boundary-evidence.md`, `references/key-spaces.md`, and `references/examples.md` together. Both scripts depend on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which they locate by walking up from their own path to the catalog that holds `harness/gatekeeper/`; the engine reads `gates.yaml` and `pipelines.yaml` from that catalog and imports `scripts/data_formats.py`, so ship those alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.
+Package `SKILL.md`, `scripts/check.py`, `scripts/check_redesign.py`, `references/workflow.md`, `references/boundary-evidence.md`, `references/key-spaces.md`, and `references/examples.md` together. Both scripts depend on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which they locate by walking up from their own path to the catalog that holds `harness/gatekeeper/`; the engine reads `gates.yaml` and `pipelines.yaml` from that catalog and imports `scripts/data_formats.py`, so ship those alongside the gatekeeper skills. Final semantic verdicts also require `../../harness/gatekeeper/check.py`, `../../harness/gatekeeper/_gatecycle.py`, and `../../harness/hooks/_fsutil.py`, plus `../../contracts/review-discipline.md`; preserve the shared catalog layout. Keep generated reports and archives outside the skill directory.

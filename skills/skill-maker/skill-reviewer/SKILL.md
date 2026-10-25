@@ -9,11 +9,15 @@ description: >-
   "is this good enough to ship?". Reviews skill definitions, not
   application code — a codebase goes to `review/code-chief`. Reports findings; never
   applies fixes.
-version: 1.0.2
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
 # Skill Reviewer
+
+## Review discipline
+
+Apply [../../contracts/review-discipline.md](../../contracts/review-discipline.md). Bind specialist reviews to one producing gate; gatekeepers consume their reports. Follow-up verification, tests and audits run only for changed evidence and affected dependents, carrying unchanged hash-valid results. Intake controls scope and non-goals. A third consecutive REVISE always goes to the user through Admiral; stop automatic work while that decision is pending.
 
 ## Purpose
 

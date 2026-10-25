@@ -146,6 +146,31 @@ path, its `gate_spec_digest`, and whether that is the shipped spec), with a
 re-runs `check.py` with none of `--gates`, `--registry`, or `--prior` rather than
 trusting a stored verdict.
 
+## Review discipline and durable cycles
+
+Read [review-discipline.md](../../contracts/review-discipline.md) for the one-gate
+specialist rule, Intake precedence, focused follow-ups and the complete feedback
+contract. Every judgment includes `intake: {artifact: <hashed Intake log>}`;
+Critical/Major findings require `expected`, `observed`, `remediation`, and
+`verification`. The output includes full records in `revise_packet.actions_by_owner`.
+
+`_gatecycle.py` persists per-gate streaks and the shared boundary budget beside
+the manifest as `verdict_<boundary>.cycles.json`, guarded by an OS mutex at
+`verdict_<boundary>.cycles.lock`. It reuses the hook writers' `_fsutil.py` atomic
+replacement and locking. A final valid `--judgment` plus `--verdict-out` counts
+a distinct REVISE revision once. Self-checks and rejected judgments do not count.
+On the third round the effective judgment is ESCALATE to user (exit 1), even
+when all mechanical facts pass. Read `judgment.verdict`, not only `pass`.
+The record keeps `requested_verdict` and `revision_cycle.held_for_user`; all
+three actionable packets remain in history. A held boundary needs an explicit
+user decision and new `--reopen-reference` to resume. That reference is attested,
+not authenticated. Corrupt state or unavailable locking fails loud.
+
+Regression coverage: `test_gate_cycles.py` checks every gatekeeper's cap, retry
+deduplication, switching gatekeepers, resume without --prior, changed filenames,
+the user hold and authorized reopening. `test_gate_judgment.py` checks Intake
+and actionable feedback as well as source-of-truth grounding.
+
 ## Boundaries
 
 `gates.yaml` carries ten boundaries. Each names the

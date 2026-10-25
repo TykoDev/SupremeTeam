@@ -35,7 +35,7 @@ def _engine():
             return _gatecheck
     sys.stderr.write(
         "ERROR: could not locate harness/gatekeeper/_gatecheck.py above "
-        f"{here}. Gate cannot run; validate by hand.\n")
+        f"{here}. Gate cannot run; ESCALATE to user through admiral.\n")
     sys.exit(2)
 
 

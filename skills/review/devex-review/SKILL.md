@@ -8,12 +8,16 @@ description: >-
   say an API or SDK is "hard to get started with". Covers the experience of
   developers consuming the surface; end-user visual quality goes to
   `review/design-qa` and runtime frontend behavior to `review/frontier`.
-version: 1.0.1
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
 
 # DevEx Review
+
+## Review discipline
+
+Apply [../../contracts/review-discipline.md](../../contracts/review-discipline.md). Bind specialist reviews to one producing gate; gatekeepers consume their reports. Follow-up verification, tests and audits run only for changed evidence and affected dependents, carrying unchanged hash-valid results. Intake controls scope and non-goals. A third consecutive REVISE always goes to the user through Admiral; stop automatic work while that decision is pending.
 
 ## Purpose
 

@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TOOL_NAME = "run-audit"
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = "1.1.0"
 
 SEVERITIES = ("Critical", "Major", "Minor", "Info")
 SINK_LIMIT = 200
@@ -110,7 +110,7 @@ def _max_revision(events: list, state: dict) -> int:
     return best
 
 
-def _scan_manifest(path: Path, project_root: Path, findings: list) -> dict:
+def _scan_manifest(path: Path, project_root: Path, findings: list, artifacts: list[str] | None = None) -> dict:
     data = _load_json(path, findings, project_root, "manifest")
     result = {"manifest": _rel(path, project_root), "boundary": None, "schema_version": None,
               "evidence_drift": [], "declared_artifacts": 0}
@@ -124,6 +124,12 @@ def _scan_manifest(path: Path, project_root: Path, findings: list) -> dict:
                          "where": _rel(path, project_root)})
         return result
     result["declared_artifacts"] = len(hashes)
+    if artifacts:
+        for missing in sorted(set(artifacts) - set(hashes)):
+            findings.append({"severity": "Major", "statement": f"selected artifact is not declared: {missing}",
+                             "where": _rel(path, project_root)})
+        hashes = {key: value for key, value in hashes.items() if key in artifacts}
+    result["checked_artifacts"] = len(hashes)
     for rel, expected in sorted(hashes.items()):
         target = (path.parent / str(rel))
         entry = {"manifest": _rel(path, project_root), "path": str(rel), "expected": str(expected),
@@ -149,7 +155,8 @@ def _scan_manifest(path: Path, project_root: Path, findings: list) -> dict:
 
 def _scan_verdicts(phase_dir: Path, project_root: Path, findings: list) -> list:
     verdicts = []
-    for path in sorted(p for p in phase_dir.glob("verdict_*.json") if not p.name.endswith(".judgment.json")):
+    for path in sorted(p for p in phase_dir.glob("verdict_*.json")
+                       if not p.name.endswith((".judgment.json", ".cycles.json"))):
         data = _load_json(path, findings, project_root, "verdict record")
         if not isinstance(data, dict):
             continue
@@ -165,17 +172,27 @@ def _scan_verdicts(phase_dir: Path, project_root: Path, findings: list) -> list:
     return verdicts
 
 
-def scan_runs(project_root: Path) -> tuple[list, list]:
+def scan_runs(project_root: Path, run_ids: list[str] | None = None, phases: list[str] | None = None,
+              artifacts: list[str] | None = None) -> tuple[list, list]:
     """Every run under skillset-saves/runs with its revisions, terminal state,
     events, gate verdicts, and evidence drift. Parse errors become findings."""
     findings: list = []
     runs: list = []
+    for selector in (run_ids or []) + (phases or []):
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", selector):
+            raise ValueError("run and phase selectors must be single path components")
     runs_root = project_root / "skillset-saves" / "runs"
     if not runs_root.is_dir():
-        findings.append({"severity": "Info", "statement": "no saved runs directory to audit",
+        findings.append({"severity": "Major" if run_ids else "Info", "statement": "no saved runs directory to audit",
                          "where": _rel(runs_root, project_root)})
         return runs, findings
-    for run_dir in sorted(p for p in runs_root.iterdir() if p.is_dir()):
+    selected = [runs_root / name for name in sorted(set(run_ids))] if run_ids else sorted(runs_root.iterdir())
+    for run_dir in selected:
+        if run_dir.is_symlink() or not run_dir.is_dir():
+            if run_ids:
+                findings.append({"severity": "Major", "statement": "selected run is missing or a symlink",
+                                 "where": _rel(run_dir, project_root)})
+            continue
         state = _load_json(run_dir / "_state.md", findings, project_root, "run state")
         state = state if isinstance(state, dict) else {}
         trail = run_dir / "_audit-trail.md"
@@ -183,12 +200,21 @@ def scan_runs(project_root: Path) -> tuple[list, list]:
         manifests = []
         drift = []
         verdicts = []
-        for phase_dir in sorted(p for p in run_dir.iterdir() if p.is_dir()):
+        phase_dirs = [run_dir / name for name in sorted(set(phases))] if phases else sorted(run_dir.iterdir())
+        for phase_dir in phase_dirs:
+            if phase_dir.is_symlink() or not phase_dir.is_dir():
+                if phases:
+                    findings.append({"severity": "Major", "statement": "selected phase is missing or a symlink",
+                                     "where": _rel(phase_dir, project_root)})
+                continue
             manifest = phase_dir / "manifest.json"
             if manifest.is_file():
-                scanned = _scan_manifest(manifest, project_root, findings)
+                scanned = _scan_manifest(manifest, project_root, findings, artifacts)
                 manifests.append(scanned["manifest"])
                 drift.extend(scanned["evidence_drift"])
+            elif artifacts:
+                findings.append({"severity": "Major", "statement": "selected phase has no manifest for artifact audit",
+                                 "where": _rel(manifest, project_root)})
             verdicts.extend(_scan_verdicts(phase_dir, project_root, findings))
         runs.append({
             "run_id": run_dir.name,
@@ -234,9 +260,14 @@ def scan_harness(project_root: Path) -> dict:
     return harness
 
 
-def build_model(project_root: Path) -> dict:
-    runs, findings = scan_runs(project_root)
-    harness = scan_harness(project_root)
+def build_model(project_root: Path, run_ids: list[str] | None = None, phases: list[str] | None = None,
+                include_harness: bool = False, artifacts: list[str] | None = None) -> dict:
+    if phases and not run_ids:
+        raise ValueError("phase scope requires at least one run id")
+    if artifacts and (not run_ids or not phases or len(phases) != 1):
+        raise ValueError("artifact scope requires --run-id and exactly one --phase")
+    runs, findings = scan_runs(project_root, run_ids, phases, artifacts)
+    harness = scan_harness(project_root) if include_harness or not run_ids else {"not_run": "outside selected run scope"}
     for index, finding in enumerate(findings, start=1):
         finding["id"] = f"F-{index}"
     order = {name: pos for pos, name in enumerate(SEVERITIES)}
@@ -250,6 +281,8 @@ def build_model(project_root: Path) -> dict:
         "runs": runs,
         "harness": harness,
         "findings": findings,
+        "scope": {"run_ids": run_ids, "phases": phases, "artifacts": artifacts,
+                  "harness_included": include_harness or not run_ids},
     }
 
 
@@ -380,6 +413,10 @@ def main(argv=None) -> int:
     parser.add_argument("--format", choices=("json", "html", "both"), default="both")
     parser.add_argument("--fail-on", choices=("none", "high", "any"), default="none")
     parser.add_argument("--version", action="store_true")
+    parser.add_argument("--run-id", action="append", help="audit only this changed run; repeat to select several")
+    parser.add_argument("--phase", action="append", help="audit only this affected phase (requires --run-id)")
+    parser.add_argument("--include-harness", action="store_true", help="also audit global harness observations in a scoped run")
+    parser.add_argument("--artifact", action="append", help="hash only this changed manifest-relative artifact (requires one --phase)")
     args = parser.parse_args(argv)
     if args.version:
         print(f"{TOOL_NAME} {TOOL_VERSION}")
@@ -389,7 +426,10 @@ def main(argv=None) -> int:
     root = Path(args.project_root)
     if not root.is_dir():
         parser.error(f"--project-root is not a directory: {root}")
-    model = build_model(root)
+    try:
+        model = build_model(root, args.run_id, args.phase, args.include_harness, args.artifact)
+    except ValueError as exc:
+        parser.error(str(exc))
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     written = []

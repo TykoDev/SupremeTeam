@@ -199,15 +199,21 @@ Where a reader needs the exact guarded transition for a gate decision,
 
 ### Shared revision cap
 
-Phase and cross-stage gatekeepers share one owner-maintained counter per boundary:
-count REVISE **rounds**, counted per submitted revision, not per tool call. Two
-verdicts on the same revision count as one round. The third REVISE round reaches
-`cycle_cap: 3` and returns ESCALATE with all three packets; a fourth silent retry is
-forbidden. Submitter mechanical self-checks do not increment the counter. Only an
-explicit user-authorized reopen starts a new cycle, recorded in the run audit.
-`check.py` checks package facts and lineage, not this live counter; the declared
-cap is validated as 3 by `validate_manifests.py`. Escalation enforcement is an
-orchestrator duty, not a deterministic engine verdict.
+Every Gatekeeper always escalates to the user on the third consecutive REVISE
+round (`cycle_cap: 3`), using per-gate streaks and a shared boundary budget.
+The third REVISE round reaches the cap, counted per submitted revision;
+the declared cap is validated as 3 by `validate_manifests.py`.
+`check.py --judgment ... --verdict-out ...` persists this history independently of
+`--prior`, submission ids and verdict filenames. Repeated judgments on the same
+revision count once; mechanical self-checks never count. The third REVISE becomes
+an effective ESCALATE to user, with all three actionable packets retained.
+No fourth automatic repair or verification follows. Admiral checkpoints
+DISPUTED_AWAITING_USER and presents the decision packet. An intermediate phase
+APPROVED cannot reset the shared budget. A completed cross-stage APPROVED clears
+it before the cap; after the cap only an explicit user decision and a new
+`--reopen-reference` permit reopening. See
+[review-discipline.md](review-discipline.md) for history, Intake authority,
+review placement and follow-up scope.
 
 ## Revision lineage
 
@@ -248,7 +254,7 @@ evidence-incomplete, enter `ESCALATE` or `BLOCKED` and preserve the diagnosis.
 | A boundary's required evidence is present, artifact-backed, and hash-matched before approval | Machine-checked by [`../harness/gatekeeper/check.py`](../harness/gatekeeper/check.py) at submission. |
 | Mixed or stale revisions invalidate dependent verdicts | Machine-checked: `check.py` reports `mixed_revisions` and `stale verdict revision` and exits non-zero. |
 | An unchanged revision whose artifact hashes moved is drift | Machine-checked: `check.py` reports `idempotency_drift`. |
-| A `REVISE` is one packet with a cycle cap of three | Partly machine-checked: `validate_manifests.py` requires `revise_policy` to declare `self_check`, `one_packet`, `parallel_fix`, `delta_review`, and `cycle_cap: 3`; the `revise_threshold`, `batch_fix`, `rerun_scope` and `cross_stage_scope` entries, and whether a given run honors the packet discipline, are judgement. |
+| A `REVISE` is one packet with a cycle cap of three | Machine-checked at verdict persistence: `check.py` and `_gatecycle.py` turn the third consecutive REVISE into ESCALATE to user and hold the boundary. `validate_manifests.py` requires `cycle_cap: 3`. Runtime specialist reuse and command selection remain orchestration duties under `review-discipline.md`. |
 | One run pointer, one lock, one owner, monotonic revisions on resume | Machine-checked by `../harness/hooks/save_run.py` and exercised in `../harness/hooks/test_run_state.py`: a revision conflict, a competing session pin, a wrong owner, and an interrupted checkpoint are all refused. |
 | The state table and the allowed-transition sets | Partly machine-checked: `../validation/test_orchestration.py` `GuardedTransitionTests` parses this table and requires every `gates.yaml` `guards` string to name only states it declares and to walk only edges it allows. Whether a *run* takes an allowed edge is still judgement. |
 | The approval, release, and safety edges | Judgement. No parser reads that prose, and an invalid transition is caught only by the owner applying this contract. |

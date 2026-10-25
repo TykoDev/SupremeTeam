@@ -8,12 +8,16 @@ description: >-
   validate the review package, review delivery readiness, say whether the review is
   finished enough to deliver, gate the review output, or challenge this review
   packet. Whether work is ready to *enter* review is `build/gatekeeper-build`.
-version: 1.3.1
+version: 2.0.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
 
 # Gatekeeper Code
+
+## Review discipline
+
+Apply [../../contracts/review-discipline.md](../../contracts/review-discipline.md): read and bind the hashed Intake log, return complete expected/observed/remediation/verification feedback for every blocker, and consume existing specialist reports. Always escalate to the user on the third consecutive REVISE. Persist final judgments with `--judgment` and `--verdict-out`; read `judgment.verdict` and `revision_cycle.held_for_user` before returning. A held boundary permits no fourth automatic cycle; only a new explicit user decision authorizes `--reopen-reference`.
 
 ## Purpose
 
@@ -163,7 +167,7 @@ carry no frontmatter); when either side declares none the check reports
 `../../gates.yaml`:
 
 ```bash
-python skills/harness/gatekeeper/check.py --boundary review-to-delivery --package skillset-saves/runs/<run>/review/manifest.json [--prior <prior-verdict-file>] --verdict-out skillset-saves/runs/<run>/review/verdict_review-to-delivery.json
+python skills/harness/gatekeeper/check.py --boundary review-to-delivery --package skillset-saves/runs/<run>/review/manifest.json [--prior <prior-verdict-file>]
 ```
 
 It confirms the six required keys are present and non-falsy, that
@@ -259,7 +263,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | Scenario | Response |
 | --- | --- |
 | The result reports `manifest_schema_version: 1`, so no typed record or finding policy was checked, and a bare sanctioned wording could stand in for an applicability record | Return `REVISE` to `code-chief` for a schema-2 manifest carrying `boundary` and `owner`. Exit 0 on a flat schema-1 package means the keys are present and the hashes hold, not that `executed_probes` was ever read as a passing probe or that `review_verdict` carries its challenge record. |
-| A mandatory specialist report is missing or older than the package revision under review | Reject the submission, name the missing or stale report, and require the owning orchestrator to resubmit a coherent package set. |
+| A mandatory specialist report is missing or its relevant source, config, toolchain or Intake hashes are stale | Reject the submission, name the missing or stale report, and require the owning orchestrator to update only the affected evidence. Carry older reports whose relevant hashes still match. |
 | The package claims security leadership signoff, accepted-risk readiness, or release security posture without `review/cso` evidence or an explicit skip reason | Return REVISE to `review/code-chief`: remove the unsupported leadership claim, or escalate to `admiral` to open the `security` pipeline under `cso` and carry that engagement's packet into the package. The review pipeline has no cso stage, so there is no CSO lens for `code-chief` to run. |
 | Specialist findings conflict on severity, exploitability, or scope | Preserve the contradiction in the verdict record; return REVISE when the disputed finding is Critical or Major and evidence can settle it, ESCALATE when the conflict requires external judgment, and let a dispute over a Minor ride along on the verdict (`revise_threshold`). |
 | The package claims a skip without recording the reason or evidence boundary | Mark the package incomplete and require a skip justification before re-evaluating readiness. |
@@ -287,8 +291,7 @@ It never modifies the submission, its evidence, or the run record;
 `review/code-chief` records the semantic verdict in its next checkpoint, copied from the record's `judgment`, which is the gate's own account and the one every later reader trusts. The judgment record — this gate's verdict and every judgment finding with its basis and anchors — is written first as `verdict_<boundary>.judgment.json` beside the verdict (same `gate-verdict` class) and passed with `--judgment`; `check.py` embeds it in the verdict record under `judgment` and refuses to write a record whose judgment is ungrounded.
 `gatekeeper-admiral` later re-validates the same boundary with
 `--prior skillset-saves/runs/{run-id}/review/verdict_review-to-delivery.json` and writes its own record beside
-it as `verdict_review-to-delivery.cross-stage.json`. When persistence is
-inactive, return the verdict inline and preserve the run and revision.
+it as `verdict_review-to-delivery.cross-stage.json`. Even when other Save Context persistence is inactive, final semantic judgments still require the canonical writable cycle history. Return the verdict inline only after persisting it through `--judgment` and `--verdict-out`; if that history cannot be written, ESCALATE to the user instead of issuing a stateless verdict.
 
 ## References
 
@@ -300,4 +303,4 @@ inactive, return the verdict inline and preserve the run and revision.
 
 ## Packaging Notes
 
-Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which it locates by walking up from its own path to the catalog that holds `harness/gatekeeper/`; the engine reads `gates.yaml` and `pipelines.yaml` from that catalog and imports `scripts/data_formats.py`, so ship those alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.
+Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which it locates by walking up from its own path to the catalog that holds `harness/gatekeeper/`; the engine reads `gates.yaml` and `pipelines.yaml` from that catalog and imports `scripts/data_formats.py`, so ship those alongside the gatekeeper skills. Final semantic verdicts also require `../../harness/gatekeeper/check.py`, `../../harness/gatekeeper/_gatecycle.py`, and `../../harness/hooks/_fsutil.py`, plus `../../contracts/review-discipline.md`; preserve the shared catalog layout. Keep generated reports and archives outside the skill directory.

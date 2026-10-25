@@ -198,7 +198,8 @@ classes:
     patterns:
       - skillset-saves/runs/*/*/verdict_*.json
       - skillset-saves/runs/*/*/verdict_*.md
-    rule: The boundary's gatekeeper writes verdicts and never modifies the submission.
+      - skillset-saves/runs/*/*/verdict_*.cycles.lock
+    rule: The boundary's gatekeeper writes verdicts, cycle history and its mutex through check.py; it never modifies the submission.
   - id: mcp-registry-cache
     writer: admiral
     patterns:

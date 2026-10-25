@@ -54,6 +54,30 @@ def real_runtime() -> dict:
     return load_data(SKILLS / "runtime-manifest.yaml")
 
 
+class ReviewPlacementTests(unittest.TestCase):
+    def test_each_specialist_is_bound_to_its_producing_gate(self):
+        spec = load_data(SKILLS / "pipelines.yaml")
+        self.assertEqual(validate_manifests.review_execution_errors(spec), [])
+        policy = spec["review_execution"]["specialists"]
+        self.assertEqual(policy["bug-review"], ["review-to-delivery"])
+        self.assertEqual(policy["skill-reviewer"], ["skill-maker-to-delivery"])
+
+    def test_moving_a_review_to_every_gate_or_removing_the_reuse_policy_is_rejected(self):
+        for mutation in ("every-gate", "missing-specialist", "missing-reuse", "wrong-mode"):
+            with self.subTest(mutation=mutation):
+                spec = copy.deepcopy(load_data(SKILLS / "pipelines.yaml"))
+                policy = spec["review_execution"]
+                if mutation == "every-gate":
+                    policy["specialists"]["bug-review"] = [p["boundary"] for p in spec["pipelines"].values()]
+                elif mutation == "missing-specialist":
+                    del policy["specialists"]["design-qa"]
+                elif mutation == "missing-reuse":
+                    del policy["reuse"]
+                else:
+                    policy["mode"] = "every-gate"
+                self.assertTrue(validate_manifests.review_execution_errors(spec))
+
+
 def good_workflow(runtime: dict) -> dict:
     """A workflow built from the manifest alone, so it follows the manifest."""
     commands = runtime["commands"]

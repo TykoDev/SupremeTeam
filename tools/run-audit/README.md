@@ -19,6 +19,23 @@ python run_audit.py --version
   reached; 2 usage or engine error. Malformed saved records are findings, never
   crashes.
 
+## Follow-up scope
+
+After a change, audit only the affected run, phase and evidence:
+
+```bash
+python run_audit.py --project-root <checkout> --run-id <run> --phase build \
+  --artifact evidence/changed-test.log --out <report-dir> --fail-on high
+```
+
+Repeat `--run-id`, `--phase` or `--artifact` as needed. Artifact selection requires
+one phase; phase selection requires a run. A missing selection is a finding,
+not a clean empty audit. Scoped runs omit global harness observations unless
+`--include-harness` is passed. The report records its scope; other artifacts
+are not hashed or represented as freshly audited. Omit selectors for an initial
+full audit or an explicitly requested full audit. Cycle-history sidecars are
+not counted as additional gate verdicts.
+
 ## What it reports
 
 - Every run with its revision count, terminal state, and event history.

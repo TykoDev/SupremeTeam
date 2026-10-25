@@ -8,7 +8,7 @@ Skill-maker owns the full skill creation lifecycle: intake classification, deleg
 
 1. Create through skill-creator (Create mode)
 2. Review through skill-reviewer
-3. Improve through skill-creator (Improve mode) — loops back to Review, max 5 cycles
+3. Improve through skill-creator (Improve mode) — loops back to Review, max 3 consecutive revision requests, then user escalation
 4. Optimize through skill-creator (Optimize mode) — runs after 100/100
 5. Package and deliver through skill-creator (Package mode)
 
@@ -27,7 +27,7 @@ Skill-maker owns the full skill creation lifecycle: intake classification, deleg
 - Skill-maker never overrides a reviewer verdict without explicit user confirmation.
 - Verdict vocabulary from skill-reviewer: SHIP, ITERATE, BLOCKED.
 - When invoked by Admiral, verdicts map to: SHIP → APPROVED, ITERATE → REVISE, BLOCKED → ESCALATE.
-- Maximum review-improve cycles: 5.
+- Maximum consecutive review-improve revisions: 3, then always escalate to the user.
 - Plateau detection: score unchanged for 2 consecutive iterations triggers user escalation.
 
 ## Delivery Contract

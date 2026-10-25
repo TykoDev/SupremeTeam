@@ -9,11 +9,15 @@ description: >-
   and architect this project, even when Admiral is never named. Defers to
   `admiral` when reached cold; reworking an existing UI starts at
   `design/redesign`.
-version: 1.2.1
+version: 1.3.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 ---
 
 # Commander
+
+## Review discipline
+
+Apply [../../contracts/review-discipline.md](../../contracts/review-discipline.md). Bind specialist reviews to one producing gate; gatekeepers consume their reports. Follow-up verification, tests and audits run only for changed evidence and affected dependents, carrying unchanged hash-valid results. Intake controls scope and non-goals. A third consecutive REVISE always goes to the user through Admiral; stop automatic work while that decision is pending.
 
 ## Purpose
 
@@ -168,7 +172,7 @@ Taste-drift failures whose handling is procedural rather than routing are in
 | The Admiral/Taste profile request returns nothing — no project store, no global store, or a resolution that fails | Distinguish the two cases before recording anything. No stored profile is the sanctioned `taste_snapshot` fallback `no saved Taste profile available`, written as an applicability record with reason, scope, and decider. A resolution that errored, timed out, or returned an unverifiable digest is not that case: escalate to Admiral, and never synthesize a snapshot by reading the preference stores directly, because a digest Commander invented cannot be revalidated before the gate. |
 | `python skills/scripts/check_runtime.py --project-root . --detect-project` names a runtime that `../../tech-stacks/registry.yaml` has no slug for | An unregistered runtime is not "no new runtime": `stack_lock`'s only sanctioned fallback is `no new runtime or framework - existing stack unchanged`, and using it here would assert the opposite of the truth. Record the detected runtime, its versions, and the absent slug, and escalate the registry gap to Admiral as a blocked decision with the recommended default (add the overlay, or scope the design to an already-registered runtime). Do not submit `design-to-build` with an invented slug or overlay digest. |
 | The design input arrives without a product goal, target users, or scope — or the resume package carries a malformed manifest, an unparsable verdict, or evidence spanning two revisions | Assign no specialist work. Name the missing or unparsable field, resolve it through the grilling interview when the user can answer it and by exploring the codebase when it is discoverable, and rewind to the earliest coherent boundary when the defect is mixed revisions. A package assembled over an unread input is drift with a clean surface. |
-| `design-to-build` returns `REVISE` a third time, exhausting `../../gates.yaml` `revise_policy.cycle_cap` of 3 | Stop resubmitting and escalate to Admiral with all three revise packets, all corresponding verdict records, and the evidence keys still unclosed named with their owners. A fourth submission is not another attempt; the cap exists because three failed cycles on the same keys mean the disagreement is about the requirement, not the artifact. |
+| `design-to-build` returns `REVISE` a third time, exhausting `../../gates.yaml` `revise_policy.cycle_cap` of 3 | Stop resubmitting and escalate to the user through Admiral with all three revise packets, all corresponding verdict records, and the evidence keys still unclosed named with their owners. A fourth submission is not another attempt; the cap exists because three failed cycles on the same keys mean the disagreement is about the requirement, not the artifact. |
 | A specialist stage cannot run because the host lacks a required capability — no sub-agent delegation, no file writes, or no Python for `check_runtime.py` and the gate self-check | Run the stage inline in skill mode and say so, or return the stage's evidence key as unproven with the specific capability that is missing. Never approximate a mechanical check by reading the spec: without Python the self-check did not run, so the package is submitted as unverified rather than described as passing. |
 
 ## Save Protocol

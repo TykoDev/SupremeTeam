@@ -8,11 +8,15 @@ description: >-
   wants a whole security oversight pass — an audit, a threat model, a hardening round, a
   challenge to accepted risk — even when they only ask "is this system secure?". One
   dimension goes to its lens: `review/security-review` scans, `review/mr-robot` probes.
-version: 1.0.5
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent, Task
 ---
 
 # CSO
+
+## Review discipline
+
+Apply [../../contracts/review-discipline.md](../../contracts/review-discipline.md). Bind specialist reviews to one producing gate; gatekeepers consume their reports. Follow-up verification, tests and audits run only for changed evidence and affected dependents, carrying unchanged hash-valid results. Intake controls scope and non-goals. A third consecutive REVISE always goes to the user through Admiral; stop automatic work while that decision is pending.
 
 ## Purpose
 

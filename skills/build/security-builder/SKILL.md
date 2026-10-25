@@ -9,7 +9,7 @@ description: >-
   security inside a build; a dedicated engagement — a standalone audit or scoped
   remediation campaign — is `review/cso`, which delegates the authorized fixes
   here. Defers feature code to `build/bob-the-builder`.
-version: 1.0.2
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 

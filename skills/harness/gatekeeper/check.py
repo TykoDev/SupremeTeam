@@ -67,7 +67,9 @@ shipped one (``gate_spec_is_shipped``, ``registry_is_shipped``, ``prior_record``
 its digests are unkeyed, so a stored verdict is not authority by itself and the
 reader re-runs this script against the shipped spec.
 
-Exit codes: 0 = facts pass, 1 = defects found, 2 = engine error.
+Exit codes: 0 = facts pass without ESCALATE, 1 = defects or ESCALATE, 2 = engine error.
+Final --judgment requires --verdict-out and persists the revision cycle.
+--reopen-reference records a new explicit user decision reopening a held boundary.
 """
 from __future__ import annotations
 
@@ -90,6 +92,7 @@ for _path in (SKILLS_ROOT / "scripts", Path(__file__).resolve().parent):
 from _gatecheck import DEFAULT_BLOCKED_PHRASES, compile_blocked_phrases, is_blank_file  # noqa: E402
 from data_formats import DataFormatError, content_sha256, load_data  # noqa: E402
 from contract_floor import gate_floor_errors  # noqa: E402
+from _gatecycle import write_mechanical, write_verdict  # noqa: E402
 
 SUPPORTED_MANIFEST_SCHEMAS = {1, 2}
 #: The schema a manifest inside skillset-saves/runs/<run>/<phase>/ must declare.
@@ -1759,6 +1762,26 @@ def check_judgment(package: "Package", record: object, mechanical: list[str], sp
                 texts[relative] = ""
         return texts[relative]
 
+    # Read Intake even at downstream boundaries that do not require a
+    # decisions evidence key. A plan or review preference cannot replace it.
+    intake = record.get("intake")
+    intake_artifact = intake.get("artifact") if isinstance(intake, dict) else None
+    unavailable_intake = (verdict == "ESCALATE" and isinstance(intake, dict) and filled(intake.get("unavailable"))
+                          and isinstance(record.get("escalation"), dict)
+                          and record["escalation"].get("to") == "user")
+    if unavailable_intake:
+        pass  # A missing source can be reported honestly, never approved or revised around.
+    elif not isinstance(intake_artifact, str) or intake_artifact not in package.hashed_ok:
+        failures.append("judgment intake.artifact must name the correctly hashed Intake decision log")
+    else:
+        failures.extend(decision_log_defects(text_of(intake_artifact), "judgment intake"))
+        if "decisions" in required and intake_artifact not in set(evidence_strings(evidence.get("decisions"))):
+            failures.append("judgment intake.artifact is not the package's decisions evidence")
+        if package.root_kind == "run":
+            canonical = package.root / "intake" / "report_grilling.md"
+            if (package.manifest_path.parent / intake_artifact).resolve() != canonical.resolve():
+                failures.append("judgment intake.artifact must reference this run's canonical Intake log")
+
     normalised: list[dict] = []
     seen: set[str] = set()
     for index, item in enumerate(findings):
@@ -1803,6 +1826,10 @@ def check_judgment(package: "Package", record: object, mechanical: list[str], sp
                 failures.append(f"{label} anchor is a defective artifact: {anchor}")
         if _one_of(severity, BLOCKING_SEVERITIES) and not anchors:
             failures.append(f"{label} {severity} requires at least one evidence anchor")
+        if _one_of(severity, BLOCKING_SEVERITIES):
+            for field in ("expected", "observed", "remediation", "verification"):
+                if not filled(item.get(field)):
+                    failures.append(f"{label} {severity} requires actionable {field} feedback")
 
         basis = item.get("basis")
         if not isinstance(basis, dict) or not _one_of(basis.get("kind"), JUDGMENT_BASIS_KINDS):
@@ -1817,12 +1844,21 @@ def check_judgment(package: "Package", record: object, mechanical: list[str], sp
                 elif not filled(artifact) or artifact not in package.hashed_ok:
                     failures.append(f"{label} {kind} basis artifact is not a correctly hashed package artifact: {artifact!r}")
                 else:
+                    if kind == "decision" and artifact != intake_artifact:
+                        failures.append(f"{label} decision basis must cite judgment intake.artifact")
                     sources = [k for k in JUDGMENT_SOURCE_KEYS[kind] if k in required and evidence.get(k)]
                     named = {s for k in sources for s in evidence_strings(evidence.get(k))}
                     if sources and artifact not in named:
                         failures.append(f"{label} {kind} basis artifact {artifact} is not the package's {'/'.join(sources)} evidence")
                     elif not _cites(text_of(artifact), ref.strip()):
                         failures.append(f"{label} cites {ref.strip()}, which {artifact} does not contain")
+                    else:
+                        sections = DECISION_SECTIONS if kind == "decision" else (
+                            (ACCEPTANCE_SECTION[0], ACCEPTANCE_SECTION[1], 0),)
+                        ids = {row["ID"].strip() for title, columns, _ in sections
+                               for row in table_records(text_of(artifact), title, columns, label)[0]}
+                        if ref.strip() not in ids:
+                            failures.append(f"{label} cites {ref.strip()}, which is not a {kind} table row in {artifact}")
             elif kind == "contract":
                 if _catalog_file(basis.get("source")) is None:
                     failures.append(f"{label} contract basis source must be an existing catalog file: {basis.get('source')!r}")
@@ -1861,6 +1897,7 @@ def check_judgment(package: "Package", record: object, mechanical: list[str], sp
         "gate": gate, "verdict": verdict, "findings": normalised,
         "by_owner": {owner: sorted(ids) for owner, ids in sorted(by_owner.items())},
         "escalation": record.get("escalation"), "valid": not failures,
+        "intake": intake,
     }
     return summary, sorted(set(failures))
 
@@ -1924,8 +1961,13 @@ def main() -> int:
     parser.add_argument("--gates", default=str(GATE_SPEC_PATH))
     parser.add_argument("--verdict-out")
     parser.add_argument("--judgment")
+    parser.add_argument("--reopen-reference", help="new user-decision reference reopening a boundary held at the revision cap")
     parser.add_argument("--registry", default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.judgment and not args.verdict_out:
+        parser.error("--judgment requires --verdict-out so the gate's revision history is durable")
+    if args.reopen_reference is not None and not (args.judgment and args.verdict_out):
+        parser.error("--reopen-reference requires --judgment and --verdict-out")
     if args.intake_log:
         return intake_log_main(Path(args.intake_log).resolve())
     if not args.boundary or not args.package:
@@ -1988,6 +2030,11 @@ def main() -> int:
                 package, load_mapping(Path(args.judgment).resolve(), "judgment record"), failures, spec,
                 prior_data, changed_evidence)
             packet["judgment_by_owner"] = judgment.get("by_owner", {})
+            packet["actions_by_owner"] = {
+                owner: [item for item in judgment.get("findings", [])
+                        if item.get("owner") == owner and item.get("severity") in BLOCKING_SEVERITIES]
+                for owner in judgment.get("by_owner", {})
+            }
         verdict_id = hashlib.sha256("|".join([
             args.boundary, spec_digest, str(data.get("submission_id")), str(data.get("revision")), current_fingerprint,
         ]).encode()).hexdigest()
@@ -2018,12 +2065,13 @@ def main() -> int:
             print("judgment record rejected; verdict not written: " + "; ".join(judgment_failures), file=sys.stderr)
         elif args.verdict_out:
             out = Path(args.verdict_out)
-            out.parent.mkdir(parents=True, exist_ok=True)
-            tmp = out.with_suffix(out.suffix + ".tmp")
-            tmp.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
-            os.replace(tmp, out)
+            if judgment is not None:
+                write_verdict(result, manifest_path, out, args.reopen_reference)
+            else:
+                write_mechanical(result, manifest_path, out)
         print(json.dumps(result, indent=2, sort_keys=True))
-        return 0 if not failures and not judgment_failures else 1
+        escalated = isinstance(judgment, dict) and judgment.get("verdict") == "ESCALATE"
+        return 0 if not failures and not judgment_failures and not escalated else 1
     except Exception as exc:  # fail loud: an engine fault is exit 2, never a bare traceback or a hidden pass
         message = str(exc) if isinstance(exc, (OSError, ValueError)) else f"internal error: {type(exc).__name__}: {exc}"
         print(json.dumps({"boundary": args.boundary, "engine_error": message}, indent=2), file=sys.stderr)

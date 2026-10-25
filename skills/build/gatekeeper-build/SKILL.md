@@ -8,11 +8,15 @@ description: >-
   check build readiness, review build phase output, or challenge this build packet.
   Judges inside the build phase; the handoff between stages is `gatekeeper-admiral`,
   and a list of what is missing with no decision is `build/cross-check-build-confirm`.
-version: 1.3.0
+version: 2.0.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
 # Gatekeeper Build
+
+## Review discipline
+
+Apply [../../contracts/review-discipline.md](../../contracts/review-discipline.md): read and bind the hashed Intake log, return complete expected/observed/remediation/verification feedback for every blocker, and consume existing specialist reports. Always escalate to the user on the third consecutive REVISE. Persist final judgments with `--judgment` and `--verdict-out`; read `judgment.verdict` and `revision_cycle.held_for_user` before returning. A held boundary permits no fourth automatic cycle; only a new explicit user decision authorizes `--reopen-reference`.
 
 ## Purpose
 
@@ -75,9 +79,10 @@ require.
 type, its artifact-backing, and the exact sanctioned waiver text. Three
 decisions belong at the gate itself:
 
-- **`tests` and `runtime` cannot be satisfied by assertion.** They are the artifact-backed pair: each must name a path in the package's `artifact_hashes` map at any schema version, and at `schema_version: 2` each must additionally be a `probe` record at `result.status: pass`. `../../gates.yaml` `evidence_type_rules` fixes what each one is — `tests` is the test-runner log, `runtime` is the startup / entry-point smoke log, each a hashed file under `build/evidence/`. A passing count, a summary line, or a claim that the suite was green is not evidence; the executed log is.
+- **`tests` and `runtime` cannot be satisfied by assertion.** They are two of the four artifact-backed keys: each must name a path in the package's `artifact_hashes` map at any schema version, and at `schema_version: 2` each must additionally be a `probe` record at `result.status: pass`. `../../gates.yaml` `evidence_type_rules` fixes what each one is — `tests` is the test-runner log, `runtime` is the startup / entry-point smoke log, each a hashed file under `build/evidence/`. A passing count, a summary line, or a claim that the suite was green is not evidence; the executed log is.
 - **`runtime` is the key most often absent**, because a build that compiles is assumed to start. This gate does not grant that assumption.
-- **Only `security_evidence` accepts a waiver here**, as a typed applicability record naming reason, scope, and decided_by, for the exact reason `../../gates.yaml` `fallback_values` sanctions — no trust-boundary change, so `security-builder` was not engaged. On the other five an `{applicable: false, …}` record fails as `evidence not waivable: <key>`. - **The build is bound to its source of truth, mechanically, at `schema_version: 2`.** `approved_design_revision` is a `{revision, verdict}` record: the hashed `design/verdict_design-to-build.cross-stage.json` must hold `gatekeeper-admiral`'s valid APPROVED judgment for that revision in this run, and the approved design manifest and every artifact it hashed must still hash as approved. `implementation` is a `change_set` whose files are re-hashed and named by the hashed diff. `traceability` is a `trace_map` that must cover every `AC-<n>` of the approved acceptance table with changes from `implementation` and tests named in the `tests` log, and account for every changed file. A bare string on any of the three fails (`references/boundary-evidence.md` §1).
+- **Only `security_evidence` accepts a waiver here**, as a typed applicability record naming reason, scope, and decided_by, for the exact reason `../../gates.yaml` `fallback_values` sanctions — no trust-boundary change, so `security-builder` was not engaged. On the other five an `{applicable: false, …}` record fails as `evidence not waivable: <key>`.
+- **The build is bound to its source of truth, mechanically, at `schema_version: 2`.** `approved_design_revision` is a `{revision, verdict}` record: the hashed `design/verdict_design-to-build.cross-stage.json` must hold `gatekeeper-admiral`'s valid APPROVED judgment for that revision in this run, and the approved design manifest and every artifact it hashed must still hash as approved. `implementation` is a `change_set` whose files are re-hashed and named by the hashed diff. `traceability` is a `trace_map` that must cover every `AC-<n>` of the approved acceptance table with changes from `implementation` and tests named in the `tests` log, and account for every changed file. A bare string on any of the three fails (`references/boundary-evidence.md` §1).
 
 Ownership decides where a `REVISE` lands (`../../gates.yaml` `evidence_owners`):
 
@@ -169,7 +174,7 @@ the catalog may sit inside the project, beside it, or in `~/.agents/skills`.
 `../../gates.yaml`:
 
 ```bash
-python skills/harness/gatekeeper/check.py --boundary build-to-review --package skillset-saves/runs/<run>/<phase>/manifest.json [--prior <prior-verdict-file>] --verdict-out skillset-saves/runs/<run>/<phase>/verdict_build-to-review.json
+python skills/harness/gatekeeper/check.py --boundary build-to-review --package skillset-saves/runs/<run>/<phase>/manifest.json [--prior <prior-verdict-file>]
 ```
 
 At every schema version it confirms that the six required keys are present and
@@ -280,7 +285,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 
 | Scenario | Response |
 | --- | --- |
-| The completeness certification says the build is clean, but the attached tests or security evidence are missing or older than the implementation revision | Reject the package and require a coherent evidence set tied to the submitted code revision. |
+| The completeness certification says the build is clean, but the attached tests or security evidence are missing or their relevant source, config, toolchain or Intake hashes are stale | Reject the package and require a coherent evidence set tied to the submitted code revision. |
 | `runtime` is absent because the build compiles and was assumed to start | Return `REVISE` to `health-check` and require the startup / entry-point smoke log as a hashed `probe` artifact under `build/evidence/`. Compiling and starting are different facts, and this is the key most often missing. |
 | `tests` or `runtime` is supplied as a claim — a passing count, a summary line, or "suite green" — rather than a hashed log | Return `REVISE` to the key's owner. `../../gates.yaml` `evidence_type_rules` makes the executed log the evidence; a claim cannot be re-read by review, and the artifact-backing check fails it before judgment begins. |
 | `approved_design_revision` is empty, a bare string, or its `verdict` is not an APPROVED, valid, same-run, same-revision `gatekeeper-admiral` record, or the approved design changed after approval | Return `REVISE` to `build-management` (the validator names which). If the design changed after approval, the build has no approved design: route to `admiral` to re-gate `design-to-build` rather than rewriting the record. |
@@ -308,8 +313,7 @@ It never modifies the submission, its evidence, or the run record;
 `build/build-management` records the semantic verdict in its next checkpoint, copied from the record's `judgment`, which is the gate's own account and the one every later reader trusts. The judgment record — this gate's verdict and every judgment finding with its basis and anchors — is written first as `verdict_<boundary>.judgment.json` beside the verdict (same `gate-verdict` class) and passed with `--judgment`; `check.py` embeds it in the verdict record under `judgment` and refuses to write a record whose judgment is ungrounded.
 `gatekeeper-admiral` later re-validates the same boundary with
 `--prior build/verdict_build-to-review.json` and writes its own record beside it
-as `verdict_build-to-review.cross-stage.json`. When persistence is inactive,
-return the verdict inline and preserve the run and revision.
+as `verdict_build-to-review.cross-stage.json`. Even when other Save Context persistence is inactive, final semantic judgments still require the canonical writable cycle history. Return the verdict inline only after persisting it through `--judgment` and `--verdict-out`; if that history cannot be written, ESCALATE to the user instead of issuing a stateless verdict.
 
 ## References
 
@@ -321,4 +325,4 @@ return the verdict inline and preserve the run and revision.
 
 ## Packaging Notes
 
-Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which it locates by walking up from its own path to the catalog that holds `harness/gatekeeper/`; the engine reads `gates.yaml` and `pipelines.yaml` from that catalog and imports `scripts/data_formats.py`, so ship those alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.
+Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../../harness/gatekeeper/_gatecheck.py`, which it locates by walking up from its own path to the catalog that holds `harness/gatekeeper/`; the engine reads `gates.yaml` and `pipelines.yaml` from that catalog and imports `scripts/data_formats.py`, so ship those alongside the gatekeeper skills. Final semantic verdicts also require `../../harness/gatekeeper/check.py`, `../../harness/gatekeeper/_gatecycle.py`, and `../../harness/hooks/_fsutil.py`, plus `../../contracts/review-discipline.md`; preserve the shared catalog layout. Keep generated reports and archives outside the skill directory.

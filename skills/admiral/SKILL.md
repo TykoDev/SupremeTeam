@@ -9,11 +9,15 @@ description: >-
   skill, build a team, or run Admiral — even when the request never says
   Admiral. Standalone guardrail, browser, release, and testing tools run
   directly.
-version: 2.3.1
+version: 2.4.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 ---
 
 # Admiral
+
+## Review discipline
+
+Apply [../contracts/review-discipline.md](../contracts/review-discipline.md). Bind specialist reviews to one producing gate; gatekeepers consume their reports. Follow-up verification, tests and audits run only for changed evidence and affected dependents, carrying unchanged hash-valid results. Intake controls scope and non-goals. A third consecutive REVISE always goes to the user through Admiral; stop automatic work while that decision is pending.
 
 ## Purpose
 

@@ -8,12 +8,16 @@ description: >-
   only: exploit chaining goes to `review/mr-robot`, defensive posture to
   `review/security-review`, tech debt to `review/quality-review`, merge-readiness to
   `review/code-review`, and the whole multi-lens flow to `review/code-chief`.
-version: 1.0.2
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
 
 # Bug Review
+
+## Review discipline
+
+Apply [../../contracts/review-discipline.md](../../contracts/review-discipline.md). Bind specialist reviews to one producing gate; gatekeepers consume their reports. Follow-up verification, tests and audits run only for changed evidence and affected dependents, carrying unchanged hash-valid results. Intake controls scope and non-goals. A third consecutive REVISE always goes to the user through Admiral; stop automatic work while that decision is pending.
 
 ## Purpose
 

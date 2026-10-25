@@ -63,7 +63,7 @@ submission `r-3108-d3`, owner `commander`; `--prior design/verdict_design-to-bui
 feature. Save Context: run `r-3210`, phase `design`, submission `r-3210-d1`,
 revision 1, owner `commander`.
 
-**Validators:** both pass mechanically — all nine keys resolve, four hashed.
+**Validators:** both pass mechanically — all nine keys resolve, six artifact-backed (a sanctioned applicability record can exempt an eligible artifact-backed key).
 
 **Output:**
 - Verdict: `ESCALATE`.

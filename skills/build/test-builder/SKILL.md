@@ -7,7 +7,7 @@ description: >-
   `build/build-management`, not directly, even when the request is only "add
   some tests". Defers feature code to `build/bob-the-builder`, failure diagnosis
   to `build/debugger`, and startup and runtime health to `build/health-check`.
-version: 1.0.3
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -111,7 +111,7 @@ Do not skip a mandatory build activity inside the canonical path; route scope ch
 | Scenario | Response |
 | --- | --- |
 | Invoked cold with no `### Save Context` block, no active run lock, and no named delegating owner | Author nothing and run nothing. Return to `build/build-management` for the revision, the coverage expectation, and the evidence destination, then accept the delegation back. A log produced against an unnamed revision binds to nothing the gate can check. |
-| `build/gatekeeper-build` returns a REVISE naming the `tests` key | Read the packet's `by_owner` group for this key only, fix every finding in it in one pass, re-run the affected suites, re-hash the log, and hand it back for a single resubmission. `../../gates.yaml` `revise_policy.cycle_cap` is 3; a third cycle escalates to the build owner instead of resubmitting. |
+| `build/gatekeeper-build` returns a REVISE naming the `tests` key | Read the packet's `by_owner` group for this key only, fix every finding in it in one pass, re-run the affected test selectors and directly impacted consumer tests, re-hash the log, and hand it back for a single resubmission. `../../gates.yaml` `revise_policy.cycle_cap` is 3; a third cycle escalates to the user through the build owner instead of resubmitting. |
 | The runner, CI step, or test environment is unavailable, or no runner can be discovered at all | Do not infer test health from the absence of failures. Record which runner was sought, at which discovery rung the search ended, and the observed error; return the infrastructure gap to `build/build-management` and produce no `tests` evidence until a clean run completes. |
 | The test package covers only the happy path even though the changed surface introduces obvious failure, retry, or permission behavior | Mark coverage as incomplete and add the missing regression paths before claiming build readiness. |
 | A flaky or slow test is left as the primary proof for the change without a stable reproduction path | Keep the instability visible, narrow the readiness claim, and route the reliability issue back through the build owner instead of burying it. |

@@ -129,7 +129,7 @@ rows, mirroring how the gate treats `changed_evidence` with `--prior`
 (`../../../gates.yaml` `revise_policy.delta_review`), and state explicitly which
 previously unproven rows are now closed and which remain open.
 
-`revise_policy.cycle_cap` is 3. A third cycle escalates to the build owner
+`revise_policy.cycle_cap` is 3. A third cycle escalates to the user through the build owner
 rather than producing a fourth report, because a row unproven three times is usually
 a scope problem rather than an evidence problem.
 

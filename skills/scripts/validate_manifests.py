@@ -606,13 +606,37 @@ def pipeline_dependency_errors(name: str, pipeline: dict[str, Any]) -> list[str]
     return errors
 
 
+def review_execution_errors(spec: dict) -> list[str]:
+    """Review specialists produce evidence at declared stages, never every gate."""
+    specialists = {"bug-review", "code-review", "quality-review", "security-review", "mr-robot",
+                   "frontier", "design-qa", "devex-review", "taste-review", "skill-reviewer"}
+    policy = spec.get("review_execution")
+    if not isinstance(policy, dict) or policy.get("mode") != "one-gate-per-review":
+        return ["pipelines.yaml: review_execution must declare one-gate-per-review"]
+    expected = {name: set() for name in specialists}
+    for pipeline in spec.get("pipelines", {}).values():
+        for stage in pipeline.get("stages", []):
+            if stage.get("owner") in specialists:
+                expected[stage["owner"]].add(pipeline.get("boundary"))
+    declared = policy.get("specialists")
+    if (not isinstance(declared, dict) or set(declared) != specialists
+            or any(not isinstance(value, list) or set(value) != expected[name]
+                   for name, value in declared.items())):
+        return ["pipelines.yaml: review_execution specialists must match their producing stages and boundaries"]
+    if not all(isinstance(policy.get(key), str) and policy[key].strip() for key in ("reuse", "followup")):
+        return ["pipelines.yaml: review_execution must declare reuse and followup discipline"]
+    return []
+
+
 def check_pipeline_mirrors(root: Path, team: dict[str, Any], ownership: dict[str, Any],
                            gates: dict[str, Any], errors: list[str], installed: set[str] | None = None) -> int:
-    pipelines = _load(root / "pipelines.yaml", errors).get("pipelines", {})
+    pipeline_spec = _load(root / "pipelines.yaml", errors)
+    pipelines = pipeline_spec.get("pipelines", {})
     save = _load(root / "save-ownership.yaml", errors)
     if not isinstance(pipelines, dict) or not pipelines:
         errors.append("pipelines.yaml: pipelines must be a non-empty mapping")
         return 0
+    errors.extend(review_execution_errors(pipeline_spec))
     members = team_members(team)
     artifact_owner = {str(x.get("id")): str(x.get("owner")) for x in ownership.get("artifacts", [])
                       if isinstance(x, dict)}

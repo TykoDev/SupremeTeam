@@ -1,0 +1,501 @@
+{
+  "plan": {
+    "target": "local disposable checkout fixtures; non-production",
+    "baseline": "/workspace/work/baseline (git HEAD archive before changes)",
+    "candidate": "/workspace/SupremeTeam",
+    "python": "/usr/bin/python3.13",
+    "workloads": [
+      "same schema-2 mechanical gate check",
+      "same valid APPROVED judgment persistence",
+      "same full saved-run audit",
+      "follow-up for one changed artifact: prior full audit versus new explicit scope"
+    ],
+    "warmups": 5,
+    "pilot": 7,
+    "samples": "30 paired per workload; increase to 60 if pilot relative IQR exceeds 15%",
+    "order": "alternating baseline/candidate, serial, warm filesystem cache",
+    "ceiling": {
+      "concurrency": 1,
+      "cli_rate_per_second": 100,
+      "audit_rate_per_second": 10000,
+      "duration_seconds": 180,
+      "generated_bytes": 8388608
+    },
+    "abort": "any command failure, output disagreement for affected artifact, duration/volume ceiling breach, free disk below 128MiB",
+    "restore_register": [],
+    "host_changes": "none; no services, caches, governor, GC, or background tasks changed",
+    "significance": "paired bootstrap 95% CI for median percentage delta; practical performance budget 20%; report added durability cost separately"
+  },
+  "baseline_commit": "db059745ba1df235bf2c0ebaf2017cd24c7f13de",
+  "environment": {
+    "python": "3.13.5 (main, Aug 10 2026, 12:06:59) [GCC 14.2.0]",
+    "platform": "Linux-6.18.55-x86_64-with-glibc2.41",
+    "logical_cpu_count": 5,
+    "cache": "warm; no external background-load control"
+  },
+  "results": [
+    {
+      "name": "mechanical_gate_same_package",
+      "pilot_relative_iqr": 0.03772143000880781,
+      "baseline": {
+        "n": 30,
+        "median_ms": 57.6760485,
+        "p95_ms": 60.6953518,
+        "p99_ms": 61.19775531,
+        "iqr_ms": [
+          56.948431,
+          58.59044325
+        ]
+      },
+      "candidate": {
+        "n": 30,
+        "median_ms": 58.619714,
+        "p95_ms": 61.48857674999999,
+        "p99_ms": 62.17791692,
+        "iqr_ms": [
+          57.563974,
+          59.17981225
+        ]
+      },
+      "median_paired_change_pct": 0.7727930703223529,
+      "change_ci95_pct": [
+        -0.6904614967811973,
+        3.1996740638754084
+      ],
+      "classification": "within 20% practical budget / noise",
+      "samples_ms": [
+        [
+          57.400154,
+          61.377863,
+          58.605253,
+          60.756802,
+          57.753003,
+          57.265112,
+          57.074276,
+          58.547697,
+          56.542948,
+          57.700104,
+          57.669539,
+          58.666445,
+          57.716269,
+          54.961335,
+          56.589448,
+          56.98456,
+          56.936388,
+          56.629798,
+          58.44396,
+          57.370405,
+          58.604692,
+          57.872594,
+          54.867639,
+          57.682558,
+          56.682337,
+          60.620246,
+          57.038186,
+          59.487065,
+          56.758371,
+          58.880761
+        ],
+        [
+          57.894456,
+          58.456519,
+          57.515367,
+          58.721437,
+          60.022028,
+          57.527255,
+          60.78277,
+          57.81766,
+          59.205864,
+          55.752712,
+          58.834497,
+          58.517991,
+          57.799954,
+          57.359614,
+          58.007055,
+          59.536831,
+          59.303521,
+          57.01076,
+          58.843971,
+          56.853339,
+          56.644326,
+          56.01114,
+          57.674131,
+          59.101657,
+          62.223607,
+          58.849915,
+          62.066055,
+          58.816125,
+          58.873555,
+          60.453946
+        ]
+      ]
+    },
+    {
+      "name": "approved_judgment_same_package",
+      "pilot_relative_iqr": 0.07585912990806785,
+      "baseline": {
+        "n": 30,
+        "median_ms": 59.0562505,
+        "p95_ms": 63.97061515,
+        "p99_ms": 66.15709201,
+        "iqr_ms": [
+          57.2538365,
+          60.658965
+        ]
+      },
+      "candidate": {
+        "n": 30,
+        "median_ms": 61.744778499999995,
+        "p95_ms": 71.8729866,
+        "p99_ms": 72.23914493999999,
+        "iqr_ms": [
+          60.70278675,
+          63.87283225
+        ]
+      },
+      "median_paired_change_pct": 6.272047918657309,
+      "change_ci95_pct": [
+        4.007028641680977,
+        8.276736168428133
+      ],
+      "classification": "within 20% practical budget / noise",
+      "samples_ms": [
+        [
+          67.010629,
+          62.116766,
+          63.709581,
+          62.094798,
+          64.067398,
+          59.658092,
+          57.625092,
+          59.38065,
+          59.550986,
+          56.189338,
+          57.386004,
+          59.025974,
+          56.68112,
+          57.244281,
+          55.731621,
+          57.282503,
+          57.046039,
+          60.724994,
+          56.310374,
+          56.33435,
+          59.624126,
+          58.917104,
+          60.460878,
+          58.038791,
+          59.346182,
+          59.086527,
+          63.852325,
+          56.537695,
+          62.004404,
+          57.622642
+        ],
+        [
+          71.997948,
+          67.173654,
+          62.430807,
+          72.337662,
+          66.241811,
+          60.116199,
+          61.843061,
+          59.916901,
+          64.779677,
+          59.226655,
+          59.342945,
+          59.132664,
+          61.646496,
+          58.540836,
+          60.648664,
+          61.216065,
+          59.739239,
+          60.917122,
+          71.720256,
+          61.073496,
+          63.266068,
+          64.013552,
+          63.244449,
+          63.304748,
+          61.177809,
+          62.754559,
+          60.865155,
+          61.56222,
+          65.933125,
+          63.450673
+        ]
+      ]
+    },
+    {
+      "name": "full_audit_same_scope",
+      "pilot_relative_iqr": 0.032290914453393556,
+      "baseline": {
+        "n": 30,
+        "median_ms": 59.160987,
+        "p95_ms": 65.14168369999999,
+        "p99_ms": 67.73759737,
+        "iqr_ms": [
+          57.66182775,
+          60.18998925
+        ]
+      },
+      "candidate": {
+        "n": 30,
+        "median_ms": 59.0568895,
+        "p95_ms": 62.76287069999999,
+        "p99_ms": 87.26887826000004,
+        "iqr_ms": [
+          57.85045325,
+          60.221624999999996
+        ]
+      },
+      "median_paired_change_pct": 0.3027030945819742,
+      "change_ci95_pct": [
+        -1.5436554116307621,
+        1.9060809841620174
+      ],
+      "classification": "within 20% practical budget / noise",
+      "samples_ms": [
+        [
+          55.416202,
+          58.059467,
+          58.035471,
+          58.370333,
+          59.11523,
+          61.160978,
+          60.191014,
+          56.465639,
+          59.616551,
+          56.914064,
+          68.247489,
+          62.143401,
+          63.494668,
+          59.625273,
+          60.053625,
+          60.154607,
+          66.489242,
+          58.902287,
+          60.674387,
+          60.186915,
+          59.051992,
+          59.37032,
+          57.53728,
+          60.28304,
+          57.463269,
+          59.206744,
+          58.5973,
+          54.550708,
+          56.202677,
+          57.283288
+        ],
+        [
+          57.61512,
+          57.172957,
+          56.7146,
+          58.813107,
+          58.139678,
+          59.525565,
+          60.950412,
+          58.746037,
+          57.754045,
+          56.591961,
+          96.7861,
+          63.968094,
+          60.094797,
+          60.833655,
+          59.355247,
+          59.215948,
+          58.875808,
+          61.28982,
+          61.139605,
+          55.961585,
+          60.35014,
+          59.983691,
+          60.037211,
+          58.640635,
+          57.086173,
+          60.263901,
+          58.507556,
+          60.031441,
+          55.297599,
+          58.897831
+        ]
+      ]
+    },
+    {
+      "name": "one_changed_artifact_followup",
+      "pilot_relative_iqr": 0.05153905823341353,
+      "baseline": {
+        "n": 30,
+        "median_ms": 57.432978500000004,
+        "p95_ms": 59.427701,
+        "p99_ms": 60.98277667,
+        "iqr_ms": [
+          55.8116385,
+          58.306103750000005
+        ]
+      },
+      "candidate": {
+        "n": 30,
+        "median_ms": 0.280646,
+        "p95_ms": 0.3681322999999999,
+        "p99_ms": 0.39952387,
+        "iqr_ms": [
+          0.25395650000000003,
+          0.308786
+        ]
+      },
+      "median_paired_change_pct": -99.50690523603944,
+      "change_ci95_pct": [
+        -99.54135736787896,
+        -99.48430992708893
+      ],
+      "classification": "speedup",
+      "samples_ms": [
+        [
+          57.690649,
+          58.343009,
+          57.158451,
+          57.145422,
+          58.708347,
+          61.587246,
+          56.738491,
+          55.152501,
+          53.714094,
+          55.710909,
+          55.17784,
+          56.293273,
+          57.606724,
+          58.475968,
+          55.928415,
+          56.399863,
+          57.787766,
+          55.622877,
+          57.28468,
+          55.715457,
+          55.41801,
+          55.772713,
+          57.912894,
+          59.253324,
+          57.875639,
+          59.335829,
+          58.195388,
+          59.502869,
+          57.581277,
+          58.58318
+        ],
+        [
+          0.292249,
+          0.243145,
+          0.297366,
+          0.24688,
+          0.284577,
+          0.279509,
+          0.278679,
+          0.273019,
+          0.312579,
+          0.240801,
+          0.279379,
+          0.238909,
+          0.40686,
+          0.277556,
+          0.297407,
+          0.281783,
+          0.313521,
+          0.245979,
+          0.322223,
+          0.242323,
+          0.342634,
+          0.256946,
+          0.283646,
+          0.237987,
+          0.336034,
+          0.25296,
+          0.290296,
+          0.381563,
+          0.351717,
+          0.267481
+        ]
+      ]
+    }
+  ],
+  "scope_work": {
+    "baseline_runs": 32,
+    "baseline_phases": 64,
+    "baseline_artifact_hashes": 512,
+    "followup_runs": 1,
+    "followup_phases": 1,
+    "followup_artifact_hashes": 1,
+    "affected_artifact_findings_equal": true
+  },
+  "elapsed_seconds": 17.633994692999977,
+  "restore_register": [],
+  "restoration": "no host changes; disposable fixtures removed at exit",
+  "limits": "Deterministic CLI/audit workloads only. No paid routing, live host registration, or end-to-end model behavior measured.",
+  "before_after_regressions": {
+    "third_consecutive_revise": {
+      "baseline": [
+        {
+          "exit_code": 0,
+          "verdict": "REVISE",
+          "judgment_failures": []
+        },
+        {
+          "exit_code": 0,
+          "verdict": "REVISE",
+          "judgment_failures": []
+        },
+        {
+          "exit_code": 0,
+          "verdict": "REVISE",
+          "judgment_failures": []
+        }
+      ],
+      "candidate": [
+        {
+          "exit_code": 0,
+          "verdict": "REVISE",
+          "judgment_failures": []
+        },
+        {
+          "exit_code": 0,
+          "verdict": "REVISE",
+          "judgment_failures": []
+        },
+        {
+          "exit_code": 1,
+          "verdict": "ESCALATE",
+          "judgment_failures": []
+        }
+      ]
+    },
+    "incomplete_feedback": {
+      "baseline": {
+        "exit_code": 0,
+        "verdict": "REVISE",
+        "judgment_failures": []
+      },
+      "candidate": {
+        "exit_code": 1,
+        "verdict": "REVISE",
+        "judgment_failures": [
+          "judgment finding J-1 Major requires actionable verification feedback"
+        ]
+      }
+    },
+    "prose_only_decision_id": {
+      "baseline": {
+        "exit_code": 0,
+        "verdict": "REVISE",
+        "judgment_failures": []
+      },
+      "candidate": {
+        "exit_code": 1,
+        "verdict": "REVISE",
+        "judgment_failures": [
+          "judgment finding J-1 cites D-999, which is not a decision table row in intake/report_grilling.md"
+        ]
+      }
+    }
+  }
+}

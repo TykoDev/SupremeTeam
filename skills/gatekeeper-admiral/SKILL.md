@@ -2,17 +2,21 @@
 name: gatekeeper-admiral
 description: >-
   Cross-stage gatekeeper for the Admiral pipeline: the second look at a boundary,
-  taken for `admiral` after the phase gate has already ruled, re-judging all ten
-  boundaries across the whole run. Use when `admiral` routes a boundary package for a
+  taken for `admiral` after a phase verdict where one exists. Supports all ten
+  boundary types and judges only the submitted boundary per invocation. Use when `admiral` routes a boundary package for a
   verdict, or the user asks to validate a handoff between stages, re-judge a boundary
   the phase gate already passed, challenge the package boundary itself, or whether
   this can advance to the next stage. A single phase's own gate is its phase
   gatekeeper's. Reached cold, hand off to `admiral` first.
-version: 1.3.1
+version: 2.0.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
 # Gatekeeper Admiral
+
+## Review discipline
+
+Apply [../contracts/review-discipline.md](../contracts/review-discipline.md): read and bind the hashed Intake log, return complete expected/observed/remediation/verification feedback for every blocker, and consume existing specialist reports. Always escalate to the user on the third consecutive REVISE. Persist final judgments with `--judgment` and `--verdict-out`; read `judgment.verdict` and `revision_cycle.held_for_user` before returning. A held boundary permits no fourth automatic cycle; only a new explicit user decision authorizes `--reopen-reference`.
 
 ## Purpose
 
@@ -41,7 +45,7 @@ This skill is the cross-stage gatekeeper of the **Admiral** delivery pipeline; `
 
 ## Use This Skill When
 
-Use this gate **after the phase gates have run**, on the same package — it re-judges all ten boundaries rather than one:
+Use this gate on the submitted boundary package, after its phase gate where one exists. Support all ten boundary types; judge only that boundary per invocation:
 
 - "challenge the package boundary itself" — pressure the boundary, not the phase gate's verdict
 - "re-judge a boundary the phase gate already passed" — the build or delivery boundary seen again across the whole run
@@ -149,7 +153,7 @@ canonical gate spec `../gates.yaml` and checks the submission's evidence
 contract:
 
 ```bash
-python skills/harness/gatekeeper/check.py --boundary <design-to-build|redesign-review|build-to-review|review-to-delivery|security-review|investigation-review|qa-review|taste-review|skill-maker-to-delivery|deploy-readiness> --package skillset-saves/runs/<run>/<phase>/manifest.json [--prior skillset-saves/runs/<run>/<phase>/verdict_<boundary>.json] --verdict-out skillset-saves/runs/<run>/<phase>/verdict_<boundary>.cross-stage.json
+python skills/harness/gatekeeper/check.py --boundary <design-to-build|redesign-review|build-to-review|review-to-delivery|security-review|investigation-review|qa-review|taste-review|skill-maker-to-delivery|deploy-readiness> --package skillset-saves/runs/<run>/<phase>/manifest.json [--prior skillset-saves/runs/<run>/<phase>/verdict_<boundary>.json]
 ```
 
 It verifies, for the named boundary only:
@@ -331,8 +335,7 @@ python skills/harness/gatekeeper/check.py --boundary <boundary> --package skills
 whose judgment is ungrounded. At the six boundaries with no phase gatekeeper,
 `--prior` is this gate's own earlier cross-stage record, if any. It never modifies the
 submission, its evidence, or the run record; the delegating orchestrator captures
-the semantic verdict in its handoff record, copied from the record's `judgment`. When persistence is inactive, return
-the verdict inline and preserve the run and revision.
+the semantic verdict in its handoff record, copied from the record's `judgment`. Even when other Save Context persistence is inactive, final semantic judgments still require the canonical writable cycle history. Return the verdict inline only after persisting it through `--judgment` and `--verdict-out`; if that history cannot be written, ESCALATE to the user instead of issuing a stateless verdict.
 
 ## References
 
@@ -347,4 +350,4 @@ the verdict inline and preserve the run and revision.
 
 ## Packaging Notes
 
-Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../harness/gatekeeper/_gatecheck.py`, which it locates by walking up from its own path to the catalog that holds `harness/gatekeeper/`; the engine reads `gates.yaml` and `pipelines.yaml` from that catalog and imports `scripts/data_formats.py`, so ship those alongside the gatekeeper skills. Keep generated reports and archives outside the skill directory.
+Package `SKILL.md`, `scripts/check.py`, `references/workflow.md`, `references/boundary-evidence.md`, and `references/examples.md` together. `scripts/check.py` depends on the shared engine at `../harness/gatekeeper/_gatecheck.py`, which it locates by walking up from its own path to the catalog that holds `harness/gatekeeper/`; the engine reads `gates.yaml` and `pipelines.yaml` from that catalog and imports `scripts/data_formats.py`, so ship those alongside the gatekeeper skills. Final semantic verdicts also require `../harness/gatekeeper/check.py`, `../harness/gatekeeper/_gatecycle.py`, and `../harness/hooks/_fsutil.py`, plus `../contracts/review-discipline.md`; preserve the shared catalog layout. Keep generated reports and archives outside the skill directory.

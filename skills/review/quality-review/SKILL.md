@@ -8,12 +8,16 @@ description: >-
   work in?". Takes the multi-change health view; gating one diff for merge goes to
   `review/code-review`, concrete defects to `review/bug-review`, and security
   exposure to `review/security-review`.
-version: 1.0.2
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
 
 # Quality Review
+
+## Review discipline
+
+Apply [../../contracts/review-discipline.md](../../contracts/review-discipline.md). Bind specialist reviews to one producing gate; gatekeepers consume their reports. Follow-up verification, tests and audits run only for changed evidence and affected dependents, carrying unchanged hash-valid results. Intake controls scope and non-goals. A third consecutive REVISE always goes to the user through Admiral; stop automatic work while that decision is pending.
 
 ## Purpose
 

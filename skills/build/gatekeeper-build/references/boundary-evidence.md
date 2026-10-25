@@ -16,7 +16,7 @@ the spec wins and this file is the defect.
 
 ## 1. `build-to-review`, key by key
 
-Submitter `build-management`. Six required keys; two artifact-backed.
+Submitter `build-management`. Six required keys; four artifact-backed.
 
 The "Record type" column is the shape `../../../gates.yaml` `evidence_types`
 assigns the key. The boundary validator `../../../harness/gatekeeper/check.py`

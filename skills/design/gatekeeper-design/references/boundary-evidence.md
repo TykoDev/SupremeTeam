@@ -28,7 +28,7 @@ Submitter `commander`. Nine required keys; six artifact-backed.
 | `stack_lock` | claim | `stack_lock` | `{slug, versions, overlay_sha256}` checked against `../../../tech-stacks/registry.yaml`: the slug exists, the overlay digest matches both the registry and the file, and every declared version is one the registry entry offers |
 | `interfaces` | artifact | `interface_set` | `{artifacts, change: changed\|none, items: [{id: IF-<n>, kind, name}]}`; every id stands in a named hashed artifact |
 | `acceptance` | artifact | `acceptance_table` | the hashed plan's `Acceptance criteria` table: ID, Slice, Observable condition, Check that proves it, Acceptor; every cell filled; unique `AC-<n>` ids. Build's `traceability` must later cover every id |
-| `security_seed` | claim | untyped | present and non-falsy. The threat-model seed `security-builder` answers at build |
+| `security_seed` | claim | `security_seed` | typed scoped assessment from `security-builder`: architecture revision, applicability and boundaries with controls; a no-boundary assessment names scope, decider and reason explicitly |
 | `ui_evidence` | claim | untyped | present and non-falsy, or a sanctioned applicability record |
 
 ## 2. `redesign-review`, key by key

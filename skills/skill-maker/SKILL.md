@@ -8,11 +8,15 @@ description: >
   skill behavior without naming one — and when `admiral` delegates skill or team creation.
   Routes drafting, evals, fixes, scoring, and packaging to specialists; not for general code
   review, architecture, or non-skill authoring.
-version: 1.0.2
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent, Task
 ---
 
 # Skill Maker
+
+## Review discipline
+
+Apply [../contracts/review-discipline.md](../contracts/review-discipline.md). Bind specialist reviews to one producing gate; gatekeepers consume their reports. Follow-up verification, tests and audits run only for changed evidence and affected dependents, carrying unchanged hash-valid results. Intake controls scope and non-goals. A third consecutive REVISE always goes to the user through Admiral; stop automatic work while that decision is pending.
 
 ## Purpose
 
@@ -115,7 +119,7 @@ User Request
 └──────┬──────┘
        │
        └──→ Loop back to Stage 2
-              (max 5 cycles)
+              (max 3 consecutive review revisions)
 
        ▼
 ┌─────────────┐
@@ -324,7 +328,7 @@ gatekeeper spends judgment only on a package that already passes the machine.
 
 | Rule | Value |
 |------|-------|
-| Max review-improve cycles | 5 |
+| Max consecutive review-improve revisions | 3, then a user decision is required |
 | Plateau detection | If score unchanged for 2 consecutive iterations, escalate |
 | Plateau escalation | Present findings to user with: "Score plateaued at X/100. The remaining findings may need your input. Options: (a) override and ship, (b) provide guidance on specific findings, (c) abort." |
 | Critical finding policy | Critical blocks gate approval until a verified fix or an explicit not-applicable reason, per `../gates.yaml`. A user-requested partial delivery does not constitute gate approval. |
@@ -408,8 +412,9 @@ When invoked by Admiral (or another parent orchestrator) as a utility orchestrat
   `REVISE`, `BLOCKED` → `ESCALATE`.
 - Admiral's `gatekeeper-admiral` validates the skill-maker output at the cross-pipeline
   boundary.
-- Maximum revision cycles when called by Admiral: **2** (per Admiral's standard handoff
-  rules), distinct from the internal max of 5 review-improve cycles.
+- Maximum revision cycles when called by Admiral: **3**, then always escalate to the user.
+  The internal review-improve loop also stops after three consecutive revision requests;
+  a different reviewer or a new score does not reset the cycle.
 
 ---
 

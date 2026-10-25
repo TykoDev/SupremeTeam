@@ -73,7 +73,7 @@ revision 2.
 **Output:**
 - Verdict: `APPROVED`.
 - Boundary: `build-to-review`, submitted by `build-management`, revision 3.
-- Evidence: `tests` names `build/evidence/pytest-r3.log` and `runtime` names `build/evidence/startup-r3.log`, both hashed in `artifact_hashes` at `result.status: pass`. `approved_design_revision` names design revision 3, which `design/verdict_design-to-build.json` approved. `security_evidence` carries the sanctioned applicability record for "no trust-boundary change - security-builder not engaged", scoped to the two changed modules and decided by `security-builder`, and the diff touches no auth, network, or serialization path — so the reason is honest, not merely well-formed.
+- Evidence: `tests` names `build/evidence/pytest-r3.log` and `runtime` names `build/evidence/startup-r3.log`, both hashed in `artifact_hashes` at `result.status: pass`. `approved_design_revision` names design revision 3, which `design/verdict_design-to-build.cross-stage.json` approved. `security_evidence` carries the sanctioned applicability record for "no trust-boundary change - security-builder not engaged", scoped to the two changed modules and decided by `security-builder`, and the diff touches no auth, network, or serialization path — so the reason is honest, not merely well-formed.
 - Judgment: `traceability` maps all seven changed modules to approved design items, including the migration script that revision 1 omitted. No generated or vendored content appears in the diff.
 - Open risks: one deferred Major owned by `test-builder` with a reopen trigger on any change to the retry path, which the finding policy admits.
 - Next action: review may consume the package at revision 3.

@@ -9,11 +9,15 @@ description: >-
   a messy incident to one credible explanation — even when Admiral is never named.
   An already-reproduced failure with a known mechanism belongs to
   `build/debugger`.
-version: 1.0.4
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent, Task
 ---
 
 # Investigate
+
+## Review discipline
+
+Apply [../contracts/review-discipline.md](../contracts/review-discipline.md). Bind specialist reviews to one producing gate; gatekeepers consume their reports. Follow-up verification, tests and audits run only for changed evidence and affected dependents, carrying unchanged hash-valid results. Intake controls scope and non-goals. A third consecutive REVISE always goes to the user through Admiral; stop automatic work while that decision is pending.
 
 ## Purpose
 
@@ -170,7 +174,7 @@ these rows.
 | --- | --- |
 | The incident cannot be reproduced and key logs or traces have already aged out | Bound the uncertainty explicitly in `residual_uncertainty`, preserve the evidence that still exists, and request the next capture opportunity. `reproduction` accepts no fallback, so an unreproducible failure returns `ESCALATE` rather than a package missing its artifact. |
 | Access limitations hide one critical evidence source, such as production logs or a managed-service metric stream | Escalate the missing evidence boundary, scope the conclusion to what can actually be observed, and name the observation that would close the gap. |
-| The gate returns `REVISE` a third time, exhausting `../gates.yaml` `revise_policy.cycle_cap` of 3 | Stop resubmitting and escalate to the delegating orchestrator with all three revise packets, all corresponding verdict records, and the unclosed keys named. There is no second owner to route to here, so a third failure on the same keys means the evidence does not reach the standard the boundary sets — which is a finding about the investigation, not a formatting defect to retry. |
+| The gate returns `REVISE` a third time, exhausting `../gates.yaml` `revise_policy.cycle_cap` of 3 | Stop resubmitting and escalate to the user through the delegating orchestrator with all three revise packets, all corresponding verdict records, and the unclosed keys named. There is no second owner to route to here, so a third failure on the same keys means the evidence does not reach the standard the boundary sets — which is a finding about the investigation, not a formatting defect to retry. |
 | The request arrives without a symptom boundary, an expected healthy behavior, or the phase that owns the affected code; or a resume package carries an unparsable manifest or an evidence chain spanning two revisions | Execute no reproduction yet. Without the expected behavior there is no failure to define, and without an owning phase the fix path has no destination, so name the missing field and resolve it before the first stage writes. A resume whose manifest does not parse or whose links span revisions is rebuilt from the earliest provable observation rather than reused. |
 | A required capability is unavailable: no command execution to run the reproduction, no access to the failing environment, or no Python for the gate self-check | Report the capability by name and scope the conclusion to what can actually be observed. A reproduction that could not be executed is not a `reproduction`: the key accepts no fallback, so the outcome is `ESCALATE` with the gap in `residual_uncertainty` and the observation that would close it. Without Python the self-check did not run, so the package is submitted as unverified rather than described as passing. |
 

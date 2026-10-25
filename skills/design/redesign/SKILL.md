@@ -9,11 +9,15 @@ description: >-
   compare four redesigns, or ask for alternative design systems — even when Admiral
   is never named. Defers to `admiral` when reached cold; a first-time design belongs
   to `design/commander`.
-version: 1.1.2
+version: 1.2.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 ---
 
 # Redesign
+
+## Review discipline
+
+Apply [../../contracts/review-discipline.md](../../contracts/review-discipline.md). Bind specialist reviews to one producing gate; gatekeepers consume their reports. Follow-up verification, tests and audits run only for changed evidence and affected dependents, carrying unchanged hash-valid results. Intake controls scope and non-goals. A third consecutive REVISE always goes to the user through Admiral; stop automatic work while that decision is pending.
 
 ## Purpose
 
@@ -220,7 +224,7 @@ and decision failures whose handling is procedural rather than routing are in
 | The host has no browser, so `review/design-qa` cannot capture the mocks | `mock_rendering` is `no_fallback` at this boundary, so the key is still required and the sanctioned no-visible-surface string is rejected. Carry the record `design-qa` returns with `result.status: inferred`, its limitation statement, and the label `INFERRED - no browser available` that `../../gates.yaml` `evidence_type_rules.render` requires. Mark rendering unobserved for every mock in the comparison matrix and carry the gap into `residual_risk` with the condition that closes it — a capture run at the same mock hashes on a host with a browser. |
 | The redesign request arrives without a surface in scope, without the flows that define parity, or with an unreadable inventory from a prior run | Delegate nothing. The inventory is the parity contract, so a missing or unparsable scope makes every downstream stage unmeasurable. Name the missing element, resolve it through the grilling interview when the user can answer it and by exploring the codebase when it is discoverable, and rebuild the inventory rather than reusing one whose ids cannot be read. |
 | A specialist offers to build the living prototypes for all four directions, or a returned mock has a router and wired interactions | Refuse the offer, and return the mock to `design/prototyper` to be reduced to a draft. Implementation follows selection; four living prototypes is the failure this pipeline is ordered to prevent, and it is not made acceptable by being cheap to delegate. |
-| `redesign-review` returns `REVISE` a third time, exhausting `../../gates.yaml` `revise_policy.cycle_cap` of 3 | Stop resubmitting and escalate to Admiral with all three revise packets, all corresponding verdict records, and the unclosed keys named with their owners. Three failed cycles on the same keys mean the disagreement is about the requirement — the differentiation bar, the parity contract, the accessibility floor — so there is no fourth submission: it would spend the gatekeeper's judgment on the same dispute. |
+| `redesign-review` returns `REVISE` a third time, exhausting `../../gates.yaml` `revise_policy.cycle_cap` of 3 | Stop resubmitting and escalate to the user through Admiral with all three revise packets, all corresponding verdict records, and the unclosed keys named with their owners. Three failed cycles on the same keys mean the disagreement is about the requirement — the differentiation bar, the parity contract, the accessibility floor — so there is no fourth submission: it would spend the gatekeeper's judgment on the same dispute. |
 | A required capability is unavailable: no parallel fan-out for the four mocks, no command execution for `check_parity.py`, or no Python for the gate self-check | Fan out serially when parallelism is missing; the four mocks are independently derived, so order does not change them. A parity check that cannot execute produces no checker record; exit 2 likewise writes no record. Preserve the execution gap separately and leave parity unproven, so the mock stays out of the comparison rather than entering it unverified. Do not fabricate a `result.status: unavailable` checker output. Without Python the self-check did not run, so the package is submitted as unverified rather than described as passing. |
 
 ## Save Protocol

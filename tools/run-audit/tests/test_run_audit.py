@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -48,6 +49,46 @@ class ScanTests(unittest.TestCase):
 
     def tearDown(self):
         self._tmp.cleanup()
+
+    def test_followup_audit_reads_only_selected_run_phase_and_changed_artifact(self):
+        run = make_run(self.root, "alpha", "complete", [1])
+        other = make_run(self.root, "beta", "complete", [1])
+        (other / "_state.md").write_text("{broken", encoding="utf-8")
+        phase = run / "build"
+        write_json(phase / "manifest.json", {"artifact_hashes": {"changed.md": "bad", "untouched.md": "bad"}})
+        (phase / "changed.md").write_text("changed", encoding="utf-8")
+        # An excluded artifact need not even exist. The scoped report must not
+        # report it as checked or silently read a different run's broken state.
+        with patch.object(run_audit, "content_sha256", wraps=run_audit.content_sha256) as hash_file:
+            model = run_audit.build_model(self.root, ["alpha"], ["build"], artifacts=["changed.md"])
+        hash_file.assert_called_once_with((phase / "changed.md").resolve())
+        self.assertEqual([run["run_id"] for run in model["runs"]], ["alpha"])
+        self.assertEqual([item["path"] for item in model["runs"][0]["evidence_drift"]], ["changed.md"])
+        self.assertEqual(len(model["findings"]), 1)
+        self.assertIn("not_run", model["harness"])
+
+    def test_scoped_audit_cannot_report_a_missing_selection_as_clean(self):
+        make_run(self.root, "alpha", "complete", [1])
+        model = run_audit.build_model(self.root, ["missing"], ["build"])
+        self.assertTrue(any(item["severity"] == "Major" for item in model["findings"]))
+        with self.assertRaises(ValueError):
+            run_audit.build_model(self.root, ["../alpha"])
+        with self.assertRaises(ValueError):
+            run_audit.build_model(self.root, phases=["build"])
+        with self.assertRaises(ValueError):
+            run_audit.build_model(self.root, ["alpha"], artifacts=["changed.md"])
+
+    def test_a_missing_run_root_is_a_blocker_for_an_explicit_followup(self):
+        (self.root / "skillset-saves" / "runs").rmdir()
+        model = run_audit.build_model(self.root, ["alpha"], ["build"])
+        self.assertEqual(model["findings"][0]["severity"], "Major")
+
+    def test_cycle_history_is_not_counted_as_an_additional_gate_verdict(self):
+        run = make_run(self.root, "alpha", "complete", [1])
+        write_json(run / "build" / "verdict_build-to-review.cycles.json", {"held": True})
+        runs, findings = run_audit.scan_runs(self.root)
+        self.assertEqual(runs[0]["gate_verdicts"], [])
+        self.assertEqual(findings, [])
 
     def test_scan_reports_every_run_with_revisions_and_terminal_state(self):
         make_run(self.root, "alpha", "complete", [1, 2, 3])

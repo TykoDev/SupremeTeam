@@ -8,7 +8,7 @@ description: >-
   `build/gatekeeper-build`'s verdict, not this report. Internal build specialist
   reached through `build/build-management`, not directly, even when the request is
   only "did we finish everything?".
-version: 1.0.4
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -108,7 +108,7 @@ Do not skip a mandatory build activity inside the canonical path; route scope ch
 | Scenario | Response |
 | --- | --- |
 | Invoked cold with no `### Save Context` block, no active run lock, and no named delegating owner | Confirm nothing. Return to `build/build-management` for the approved decision set, the package, and its revision, then accept the delegation back. A matrix built without a baseline reports only that the package agrees with itself. |
-| `build/gatekeeper-build` returns a REVISE and the phase resubmits | Re-run the matrix, but re-judge only the rows whose bound artifacts changed; carry the prior status on unchanged rows, mirroring how the gate treats `changed_evidence` with `--prior` (`../../gates.yaml` `revise_policy.delta_review`). Mark each previously unproven row as closed or still open. `revise_policy.cycle_cap` is 3; a third cycle escalates to the build owner. |
+| `build/gatekeeper-build` returns a REVISE and the phase resubmits | Re-run the matrix, but re-judge only the rows whose bound artifacts changed; carry the prior status on unchanged rows, mirroring how the gate treats `changed_evidence` with `--prior` (`../../gates.yaml` `revise_policy.delta_review`). Mark each previously unproven row as closed or still open. `revise_policy.cycle_cap` is 3; a third cycle escalates to the user through the build owner. |
 | A hashing, diff, or manifest-reading tool needed to verify a binding is unavailable | Do not mark the row proven on the strength of the summary. Record which verification could not be performed and why, mark the row unproven with reason `unverifiable`, and return the tooling gap to `build/build-management`. An unchecked binding is not a checked one. |
 | A required build artifact, test result, or security output is missing from the package | Mark the row unproven with reason `missing-artifact`, name the deliverable and its owner, and mark the package incomplete rather than inferring readiness. |
 | An evidence cell holds a typed applicability record instead of an artifact | Treat the row as proven by waiver and record the waiver reference. Blocking a correctly waived package is a defect in this pass, not a strict reading. Verify the key is one `../../gates.yaml` actually sanctions as waivable at this boundary, and that the record's `reason` carries the sanctioned wording. |

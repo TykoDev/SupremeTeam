@@ -79,7 +79,11 @@ def finding(**overrides) -> dict:
     item = {"id": "J-1", "severity": "Major", "key": "plan",
             "statement": "AC-1 names no slice owner for the store migration D-2 commits to",
             "basis": {"kind": "acceptance", "ref": "AC-1", "artifact": "design/plan.md"},
-            "evidence": ["design/plan.md"]}
+            "evidence": ["design/plan.md"],
+            "expected": "AC-1 has an accountable slice owner",
+            "observed": "The migration slice has no owner",
+            "remediation": "Name the API lead in AC-1's Acceptor cell",
+            "verification": "Read AC-1 and confirm its Acceptor is the API lead"}
     item.update(overrides)
     return item
 
@@ -87,6 +91,7 @@ def finding(**overrides) -> dict:
 def judgment(verdict: str = "REVISE", findings: list | None = None, **overrides) -> dict:
     record = {"boundary": "design-to-build", "submission_id": "d1", "revision": "r1",
               "gate": "gatekeeper-design", "verdict": verdict,
+              "intake": {"artifact": "intake/report_grilling.md"},
               "findings": [finding()] if findings is None else findings}
     record.update(overrides)
     return record
@@ -114,6 +119,32 @@ class JudgmentCase(unittest.TestCase):
 
 
 class GroundingTests(JudgmentCase):
+    def test_intake_must_be_the_hashed_decision_log(self):
+        for intake in (None, {}, {"artifact": "design/research.md"}, {"artifact": "intake/missing.md"}):
+            with self.subTest(intake=intake):
+                self.assertRejected(judgment(intake=intake), "intake")
+
+    def test_unavailable_intake_can_only_be_escalated_to_the_user(self):
+        record = judgment("ESCALATE", findings=[], intake={"unavailable": "Intake log was not supplied"},
+                          escalation={"to": "user", "reason": "Restore or establish Intake"})
+        summary, failures = self.judge(record)
+        self.assertEqual(failures, [])
+        self.assertTrue(summary["valid"])
+        self.assertRejected({**record, "verdict": "APPROVED"}, "intake.artifact")
+
+    def test_every_blocking_finding_needs_complete_repair_and_verification_feedback(self):
+        for field in ("expected", "observed", "remediation", "verification"):
+            with self.subTest(field=field):
+                self.assertRejected(judgment(findings=[finding(**{field: ""})]), f"actionable {field}")
+
+    def test_a_minor_finding_does_not_require_a_repair_task(self):
+        item = finding(severity="Minor")
+        for field in ("expected", "observed", "remediation", "verification"):
+            del item[field]
+        summary, failures = self.judge(judgment("APPROVED", [item]))
+        self.assertEqual(failures, [])
+        self.assertTrue(summary["valid"])
+
     def test_a_grounded_revise_is_valid_and_routes_to_the_spec_owner(self):
         summary, failures = self.judge(judgment())
         self.assertEqual(failures, [])
@@ -145,6 +176,18 @@ class GroundingTests(JudgmentCase):
         self.design.data["artifact_hashes"] = self.design.hashes
         self.assertRejected(judgment(findings=[finding(key="decisions", basis={
             "kind": "decision", "ref": "D-1", "artifact": "intake/report_grilling.md"})]), "cites D-1")
+
+    def test_a_decision_id_in_prose_is_not_an_intake_decision(self):
+        self.design.file("intake/report_grilling.md", GRILLING + "\nExample only: D-999 is not a decision.\n")
+        self.assertRejected(judgment(findings=[finding(key="decisions", basis={
+            "kind": "decision", "ref": "D-999", "artifact": "intake/report_grilling.md"})]),
+            "is not a decision table row")
+
+    def test_an_acceptance_id_in_prose_is_not_an_acceptance_row(self):
+        self.design.file("design/plan.md", PLAN + "\nExample only: AC-999 is not accepted.\n")
+        self.assertRejected(judgment(findings=[finding(basis={
+            "kind": "acceptance", "ref": "AC-999", "artifact": "design/plan.md"})]),
+            "is not a acceptance table row")
 
     def test_a_citation_must_come_from_the_packages_own_source_of_truth(self):
         """research.md quotes AC-1, but the acceptance criteria are the plan's, not the research note's."""

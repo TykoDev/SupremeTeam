@@ -1,0 +1,116 @@
+{
+  "gatekeeper-admiral": {
+    "version": "2.0.0",
+    "body_words": 4700,
+    "body_lines": 341,
+    "description_chars": 574,
+    "name_chars": 18,
+    "supporting_words": 4329,
+    "files": 5,
+    "max_depth": 1,
+    "broken_catalog_pointers": 0,
+    "orphaned_bundled_files": 0,
+    "second_person_count": 1,
+    "voice_findings": [
+      {
+        "file": "skills/gatekeeper-admiral/references/boundary-evidence.md",
+        "line": 66,
+        "text": "| Taste records | `preference_diff` `confirmation` `conflict_analysis` `persistence_result` `effective_profile` `consumer_handoff` | the field sets in `evidence_type_rules`; `confirmation.candidate_ids` must be a list of non-blank string ids. `check.py` requires its unique ids to exactly match the changed ids in `preference_diff`, validates timezone-qualified timestamps and scope values, and checks nested persistence/profile values. Whether the recorded actor truly confirmed is still your judgement |"
+      }
+    ],
+    "scores": [
+      10,
+      10,
+      10,
+      9,
+      7,
+      10,
+      10,
+      10,
+      10,
+      10
+    ],
+    "total": 96
+  },
+  "design/gatekeeper-design": {
+    "version": "2.0.0",
+    "body_words": 5090,
+    "body_lines": 369,
+    "description_chars": 487,
+    "name_chars": 17,
+    "supporting_words": 6295,
+    "files": 7,
+    "max_depth": 1,
+    "broken_catalog_pointers": 0,
+    "orphaned_bundled_files": 0,
+    "second_person_count": 0,
+    "voice_findings": [],
+    "scores": [
+      10,
+      10,
+      10,
+      10,
+      7,
+      10,
+      10,
+      10,
+      10,
+      10
+    ],
+    "total": 97
+  },
+  "build/gatekeeper-build": {
+    "version": "2.0.0",
+    "body_words": 4306,
+    "body_lines": 316,
+    "description_chars": 567,
+    "name_chars": 16,
+    "supporting_words": 3729,
+    "files": 5,
+    "max_depth": 1,
+    "broken_catalog_pointers": 0,
+    "orphaned_bundled_files": 0,
+    "second_person_count": 0,
+    "voice_findings": [],
+    "scores": [
+      10,
+      10,
+      10,
+      10,
+      7,
+      10,
+      10,
+      10,
+      10,
+      10
+    ],
+    "total": 97
+  },
+  "review/gatekeeper-code": {
+    "version": "2.0.0",
+    "body_words": 4094,
+    "body_lines": 294,
+    "description_chars": 554,
+    "name_chars": 15,
+    "supporting_words": 3668,
+    "files": 5,
+    "max_depth": 1,
+    "broken_catalog_pointers": 0,
+    "orphaned_bundled_files": 0,
+    "second_person_count": 0,
+    "voice_findings": [],
+    "scores": [
+      10,
+      10,
+      10,
+      10,
+      7,
+      10,
+      10,
+      10,
+      10,
+      10
+    ],
+    "total": 97
+  }
+}

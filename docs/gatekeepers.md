@@ -135,9 +135,11 @@ does not write it as a verdict.
 | REVISE | Back to the owner with every finding at once, grouped by owner; only for a mechanical failure, a Critical, or an unresolved Major |
 | ESCALATE | Comes to you |
 
-Three REVISE rounds per boundary, then the dispute is escalated with all three
-packets and their verdict records; there is no fourth submission. Gatekeepers
-never edit a package.
+Every Gatekeeper always escalates to the user on the third consecutive REVISE
+round. The durable per-gate streaks and shared boundary budget preserve all three
+packets across resume; a held boundary cannot silently approve or start a fourth
+cycle. Only a new explicit user decision permits reopening. Gatekeepers never
+edit a package. See [review discipline](../skills/contracts/review-discipline.md).
 
 A verdict record carries `verdict_id`, `package_fingerprint` and
 `gate_spec_digest`: sha256 of public inputs, not signatures. It is reusable only
@@ -160,11 +162,21 @@ when `check.py --prior` reports `prior_reusable: true`. At delivery, re-run
 | `rerun_scope` | The lead re-runs only the stages the packet names or that depend on changed evidence; a key it authors itself is fixed in place |
 | `cross_stage_scope` | `gatekeeper-admiral` judges the crossing and carries the phase gate's adequacy judgment, read from the phase verdict record's own `judgment`, unless evidence changed or the phase verdict was not APPROVED; at the six boundaries with no phase gatekeeper it judges every key |
 | `grounding` | Every judgment finding cites a decision, an acceptance row, a contract section or a contradiction, plus hashed anchors when it blocks; `check.py --judgment` checks it |
-| `cycle_cap` | Three rounds, then escalate |
+| `cycle_cap` | The third consecutive REVISE becomes ESCALATE to user; history persists independently of ids and filenames |
 
 The phase verdict (`verdict_<boundary>.json`) and the cross-stage verdict
 (`verdict_<boundary>.cross-stage.json`) sit side by side; the second reads the
 first through `--prior` and never overwrites it.
+
+## Focused reviews and verification
+
+Run a specialist review at its producing gate once. Phase and cross-stage
+gatekeepers consume that evidence. Follow-up tests, probes, reviews and audits
+select changed inputs and affected consumers, preserving hash-valid unchanged
+results with their original revision and time. Cheap package-integrity checks
+still validate the whole manifest. Every judgment binds the hashed Intake log;
+Critical/Major findings include expected, observed, remediation and verification
+fields so owners can fix the whole packet in one revision.
 
 ## Posture
 

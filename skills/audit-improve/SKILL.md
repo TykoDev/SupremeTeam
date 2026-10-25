@@ -9,11 +9,15 @@ description: >-
   Reads runtime evidence and never edits saved state; defers a harness code
   defect to its owning build or investigation phase and skill edits to
   `skill-maker`.
-version: 1.0.0
+version: 1.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
 # Audit and improve the harness
+
+## Review discipline
+
+Apply [../contracts/review-discipline.md](../contracts/review-discipline.md). Bind specialist reviews to one producing gate; gatekeepers consume their reports. Follow-up verification, tests and audits run only for changed evidence and affected dependents, carrying unchanged hash-valid results. Intake controls scope and non-goals. A third consecutive REVISE always goes to the user through Admiral; stop automatic work while that decision is pending.
 
 ## Boundary
 
@@ -43,8 +47,14 @@ definitive defect list. An explicit `--run` is read-only.
 
 ## Procedure
 
-1. **Collect.** Run `python skills/harness/hooks/audit_improve.py --run` from the
-   project root. Keep its JSON output in the active run's `phase-reports` or
+1. **Collect.** For an initial audit, run `python skills/harness/hooks/audit_improve.py --run` from the
+   project root. For follow-up verification, use `python tools/run-audit/run_audit.py
+   --project-root . --run-id <run> --phase <phase> --artifact <changed-path>
+   --format json --out <approved-report-dir> --fail-on high`, repeating artifact
+   selectors for affected evidence. Inspect its `scope` and findings and carry the
+   prior initial-audit coverage; do not run the whole collector again. The
+   coverage/hashed-run correlation fields in steps 2 and 3 apply to the initial
+   collector report. Keep the selected report JSON output in the active run's `phase-reports` or
    `phase-evidence` class (`skills/save-ownership.yaml`), written by the phase
    lead or the specialist it delegates; outside a run, retain it in the
    current task context. Never write a new file under a generated root without

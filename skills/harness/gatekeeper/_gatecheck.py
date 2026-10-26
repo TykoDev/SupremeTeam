@@ -109,8 +109,8 @@ _INTERVENTION_MARKERS = re.compile(
     r"trajectory\s+regulation|guard\s+boundary|freeze\s+boundary)\b",
     re.IGNORECASE,
 )
-# A word boundary needs a word character on one side and the section sign is not
-# one, so only the alternatives that begin with a word are anchored on the left.
+# A layer citation names its number; the section-sign form (`§4`) is not a layer
+# and is not read as one.
 _LAYER_CITATION = re.compile(
     r"\bLayer\s*[1-4]\b", re.IGNORECASE
 )
@@ -167,7 +167,8 @@ class ArtifactSpec:
     it: ``evidence_key`` is a gates.yaml key a submitter may waive at this
     boundary, ``stages`` are the pipelines.yaml stages that produce the file. A
     required slot whose key is waivable, or whose every stage carries a ``when``,
-    is held as conditional (see ``Contracts``).
+    is held as conditional (see ``Contracts``). ``key`` is the slot's short name
+    for whoever reads the wrapper; the engine names a slot by its ``label``.
     """
 
     key: str
@@ -185,7 +186,9 @@ class Manifest:
     """A boundary's deterministic acceptance shape, declared by each gate.
 
     ``pipeline`` names the pipelines.yaml pipeline that closes at this boundary;
-    without it a slot's ``evidence_key`` and ``stages`` cannot be looked up."""
+    without it a slot's ``evidence_key`` and ``stages`` cannot be looked up.
+    ``sub_orchestrator`` records the submitter for whoever reads the wrapper; the
+    engine does not read it (gates.yaml carries the checked submitter)."""
 
     boundary: str
     sub_orchestrator: str

@@ -617,6 +617,34 @@ class Package:
             scan_files.append(candidate)
         return scan_files
 
+    def warn_unbound_intake(self) -> None:
+        """Inside a run, say when no verified artifact is the run's Intake log.
+
+        Every judgment binds ``intake.artifact`` to the correctly hashed canonical
+        ``intake/report_grilling.md`` (gates.yaml judgment_policy), at every boundary and
+        not only where ``decisions`` is required evidence. A submitter that leaves it out of
+        ``artifact_hashes`` hears it here, in its own self-check, instead of when the
+        gatekeeper's judgment is rejected. A warning, never a failure: a detached package
+        has no run to bind, and a run with no Intake log can still be escalated honestly.
+        """
+        if self.root_kind != "run" or self.run_dir is None:
+            return
+        canonical = self.run_dir / "intake" / "report_grilling.md"
+        if not canonical.is_file():
+            self.warnings.append(
+                "run has no intake/report_grilling.md: a judgment at this boundary can only ESCALATE to user with "
+                "intake.unavailable (judgment_policy)")
+            return
+        for relative in self.hashed_ok:
+            try:
+                if (self.base / relative).resolve() == canonical.resolve():
+                    return
+            except OSError:
+                continue
+        self.warnings.append(
+            "the run's Intake log intake/report_grilling.md is not among the verified artifact_hashes: a judgment at "
+            "this boundary cannot bind intake.artifact (judgment_policy); hash it as ../intake/report_grilling.md")
+
     # ------------------------------------------------------------- evidence
     def applicability_record(self, key: str, value: object) -> bool:
         """True when value is a typed not-applicable record for a waivable key."""
@@ -1988,6 +2016,7 @@ def main() -> int:
         scan_files = package.check_artifacts()
         missing = package.check_evidence()
         package.scan_text(scan_files)
+        package.warn_unbound_intake()
 
         current_fingerprint = fingerprint(data)
         digests = evidence_digests(data, package.artifact_hashes)

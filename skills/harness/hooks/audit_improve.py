@@ -281,8 +281,21 @@ def _audit_run_trail(scan: AuditScan, run: Path, run_key: str, run_events: Count
             scan.note_unreadable("audit", "invalid_line", run=run_key)
 
 
+def _effective_verdict(value: dict) -> object:
+    """The verdict a gate record stands for: ``judgment.verdict`` (what ``check.py --judgment`` put on record, ESCALATE
+    when the REVISE cycle cap held it) before a top-level ``verdict`` or ``decision`` of an older or hand-shaped record."""
+    judgment = value.get("judgment")
+    if isinstance(judgment, dict) and judgment.get("verdict") is not None:
+        return judgment.get("verdict")
+    return value.get("verdict") or value.get("decision")
+
+
 def _audit_run_verdicts(scan: AuditScan, run: Path, run_key: str, run_verdicts: Counter) -> None:
-    """A run's gate verdict files: only the failing verdict names are counted."""
+    """A run's gate verdict records: only the failing verdict names are counted.
+
+    The gatekeeper's judgment draft (``verdict_<boundary>.judgment.json``) is an input ``check.py`` may still reject,
+    and the cycle history (``verdict_<boundary>.cycles.json``) repeats the verdicts already on record, so neither is
+    counted: the record ``check.py --verdict-out`` wrote is the one verdict per round."""
     phase_files, truncated = _files(run, max_files=MAX_PHASE_FILES, max_dirs=MAX_PHASE_DIRS, deadline=scan.deadline)
     if truncated:
         scan.coverage["phase_files_truncated"] = True
@@ -290,13 +303,14 @@ def _audit_run_verdicts(scan: AuditScan, run: Path, run_key: str, run_verdicts: 
         if scan.expired():
             scan.coverage["time_truncated"] = True
             break
-        if not path.name.startswith("verdict_") or path.suffix != ".json":
+        if (not path.name.startswith("verdict_") or path.suffix != ".json"
+                or path.name.endswith((".judgment.json", ".cycles.json"))):
             continue
         value, error = _json_record(path)
         if error:
             scan.note_unreadable("verdict", error, run=run_key)
         elif isinstance(value, dict):
-            verdict = value.get("verdict") or value.get("decision")
+            verdict = _effective_verdict(value)
             if isinstance(verdict, str) and verdict.upper() in FAIL_VERDICTS:
                 scan.verdicts[verdict.upper()] += 1
                 run_verdicts[verdict.upper()] += 1

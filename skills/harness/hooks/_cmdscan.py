@@ -866,7 +866,7 @@ _RSYNC_ARG = frozenset({"-e", "--rsh", "--exclude", "--include", "--exclude-from
 def _t_rsync(rest, ctx):
     """The destination of ``rsync``. What lands inside depends on the source's trailing slash and on ``--delete``, which
     removes what the source lacks, so the destination is always a tree write (label ``rsync``)."""
-    flags, operands, values = _split(rest, _RSYNC_ARG, frozenset("efBT"))
+    _, operands, _ = _split(rest, _RSYNC_ARG, frozenset("efBT"))
     return operands[-1:]
 
 
@@ -1087,7 +1087,7 @@ def extract_parts(verb: str, argv) -> "tuple | None":
         if any(f in ("-l", "-t", "-v", "-p", "-Z", "-z") for f in flags):
             return None
         return (operands[0].text if operands else None), (values["-d"].text if "-d" in values else ".")
-    if verb in ("7z", "7za", "7zr"):
+    if verb == "7z":
         flags, operands, _ = _split(args)
         if not operands or operands[0].text not in ("x", "e"):
             return None
@@ -1388,8 +1388,8 @@ _TARGETS = {
     "dd": _t_dd, "gzip": _t_compress, "gunzip": _t_compress, "bzip2": _t_compress, "bunzip2": _t_compress,
     "xz": _t_compress, "unxz": _t_compress, "zstd": _t_compress, "lzma": _t_compress,
     "sort": _t_sort, "patch": _t_patch, "sed": _t_sed, "perl": _t_perl, "awk": _t_awk, "gawk": _t_awk,
-    "curl": _t_curl, "wget": _t_wget, "tar": _t_tar, "unzip": _t_unzip, "zip": _t_zip, "7z": _t_7z, "7za": _t_7z,
-    "7zr": _t_7z, "gpg": _t_gpg, "git": _t_git, "find": _t_find,
+    "curl": _t_curl, "wget": _t_wget, "tar": _t_tar, "unzip": _t_unzip, "zip": _t_zip, "7z": _t_7z,
+    "gpg": _t_gpg, "git": _t_git, "find": _t_find,
 }
 
 
@@ -1602,7 +1602,12 @@ def _shell(rest: list, ctx: _Ctx, body: "str | None", verb: str, piped: bool,
         text = rest[i].text
         if text.startswith("-") and not text.startswith("--") and "c" in text[1:]:
             if i + 1 < len(rest):
+                before = len(ctx.out.writes)
                 _process(rest[i + 1].text, ctx, False)
+                if rest[i + 1].unresolved:
+                    # The program arrived with a placeholder (`xargs -I{} sh -c 'rm {}'`): whatever word the
+                    # placeholder's text made of a target, that target is not fixed by the command line.
+                    ctx.out.writes[before:] = [Write(w.path, w.via, w.cwds, w.glob, True) for w in ctx.out.writes[before:]]
             return None
         if text in ("-o", "+o", "--rcfile", "--init-file") and i + 1 < len(rest):
             i += 2
@@ -2262,7 +2267,15 @@ def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None", st
             return
         if verb == "parallel":
             for command, fed in _parallel(rest, upstream):
-                _hide_command(ctx, command, fed)
+                if command and len(command[0].text.split()) > 1:
+                    # A quoted command line (`parallel 'rm src/{}' ::: a`) is one word to the lexer and a shell line to
+                    # parallel, which appends the remaining words: read it as text, as `watch` and `entr -s` are read.
+                    # A placeholder that standard input fills keeps its standing as a write the command does not name.
+                    _hide_text(ctx, " ".join(a.text for a in command), False)
+                    if fed or any(a.unresolved for a in command):
+                        _note_unnamed(ctx, "parallel", "stdin")
+                else:
+                    _hide_command(ctx, command, fed)
             return
         if verb == "entr":
             command, shell = _entr(rest)

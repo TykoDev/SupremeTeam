@@ -377,7 +377,7 @@ class RunStore:
                 raise Refused(f"{refusal(self.rel(path))}: {ACCESS_DENIED_STEP}") from exc
         return records[0], records[1]
 
-    def competing_owner(self, owner: str) -> str | None:
+    def competing_owner(self) -> str | None:
         """Every other run that holds the session pin in this save root, each named with its way out, or None.
 
         The reader's ``held_runs`` decides, whatever the pointer says: a damaged
@@ -541,7 +541,7 @@ class RunStore:
                     raise Refused(self.damaged(path))
             if self.seen(self.state_path) or self.seen(self.lock_path):
                 raise Refused(f"run {self.run_id} already exists; use checkpoint or recover")
-            competing = self.competing_owner(owner)
+            competing = self.competing_owner()
             if competing:
                 raise Refused(f"another run holds the session pin ({competing})")
             hashes = self.evidence_hashes(paths)
@@ -591,7 +591,7 @@ class RunStore:
             elif str(lock.get("status")) == "released":
                 event = "resume"
             if str(lock.get("status")) == "released":
-                competing = self.competing_owner(owner)
+                competing = self.competing_owner()
                 if competing:
                     raise Refused(f"cannot {event} a released run while another run holds the session pin ({competing})")
             elif self.stale(lock):
@@ -808,7 +808,7 @@ class RunStore:
             raise Refused("lock is released; use checkpoint from a new revision or create a new run")
         if state is None:
             raise Refused("state unreadable; escalate with both revisions instead of merging")
-        competing = self.competing_owner(owner)
+        competing = self.competing_owner()
         if competing:
             raise Refused(f"another run holds the session pin ({competing}); recovery would create a conflicting active set")
         stamp = now_iso()

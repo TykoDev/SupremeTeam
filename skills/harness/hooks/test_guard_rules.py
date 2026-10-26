@@ -861,6 +861,7 @@ class ReadOnlyRunTests(GuardCase):
             "parallel rm :::: list", "parallel -I@@ rm @@ ::: a", "ls | parallel mv {} skillset-saves/runs/r1/x/", "ls | parallel gzip",
             "ls | parallel touch skillset-saves/runs/r1/a", "ls | parallel rm {.}", "ls | entr rm /_", "ls | entr -s 'rm x'", "ls | entr sh -c 'rm x'",
             "watch 'rm x'", "watch -n 1 'touch x'", "watch -n1 rm x", "ls | parallel parallel rm",
+            "parallel 'rm {}' ::: a", "parallel 'rm x' ::: a", "ls | parallel 'rm {}'", "ls | parallel -j4 'rm {}'", "parallel 'rm x/{}' ::: a b",
         ), deny=True, fragment="is recorded read-only")
         self.check((
             "ls | parallel echo {}", "ls | parallel -j4 wc -l {}", "ls | parallel grep x", "parallel echo ::: a b c", "ls | parallel sed -n 1p",
@@ -1013,6 +1014,41 @@ class SingleWriterTests(GuardCase):
             "cd skillset-saves && rm _write.lock", "python3 -c \"open('skillset-saves/_write.lock','w')\"", "sh -c 'rm skillset-saves/_write.lock'",
         ), deny=True, fragment="save_run.py")
 
+    def test_a_phase_directory_and_the_cycle_history_cannot_be_removed_or_moved(self):
+        """The third-REVISE escalation lives in verdict_<boundary>.cycles.json beside the manifest: a sweep of the phase
+        directory, or of the history and its mutex by name, would start the count again from zero."""
+        phase = "skillset-saves/runs/r1/design"
+        for rel in (f"{phase}/manifest.json", f"{phase}/verdict_design-to-build.json", f"{phase}/verdict_design-to-build.cycles.json",
+                    f"{phase}/verdict_design-to-build.cycles.lock", f"{phase}/verdict_design-to-build.judgment.json",
+                    f"{phase}/architecture.md", f"{phase}/evidence/coverage/index.html", "skillset-saves/runs/r1/_state.md"):
+            path = self.root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{}", encoding="utf-8")
+        self.check((
+            f"rm -r {phase}", f"rm -rf {phase}/", f"rmdir {phase}", f"mv {phase} /tmp/design", f"mv {phase} skillset-saves/runs/r1/design-old",
+            f"mv -t /tmp {phase}", f"git mv {phase} skillset-saves/runs/r1/old", "cd skillset-saves/runs/r1 && mv design /tmp/d",
+            f"python3 -c \"import shutil; shutil.move('{phase}', '/tmp/d')\"",
+            f"find {phase} -name 'verdict_*' -delete", f"python3 -c \"import shutil; shutil.rmtree('{phase}')\"",
+            f"python3 -c \"import os; os.rename('{phase}', '/tmp/d')\"", f"rsync -a --delete /tmp/x/ {phase}/", f"rsync -av --del /tmp/x/ {phase}/",
+            "rm -rf skillset-saves/runs/r1/intake",
+        ), deny=True, fragment="phase directory")
+        self.check((
+            f"rm {phase}/verdict_design-to-build.cycles.json", f"rm {phase}/verdict_design-to-build.cycles.lock",
+            f"rm {phase}/verdict_*", f"rm -rf {phase}/*", f"echo '{{}}' > {phase}/verdict_design-to-build.cycles.json",
+            f"sed -i 's/true/false/' {phase}/verdict_design-to-build.cycles.json", f"mv {phase}/verdict_design-to-build.cycles.json /tmp/x.json",
+            f"python3 -c \"import os; os.unlink('{phase}/verdict_design-to-build.cycles.json')\"",
+        ), deny=True, fragment="check.py --verdict-out")
+        self.check((
+            f"rm {phase}/architecture.md", f"rm -rf {phase}/evidence/coverage", "mkdir -p skillset-saves/runs/r1/build/reports",
+            f"mv report.md {phase}/", f"mv report.md {phase}", f"mv a.md b.md {phase}/", f"mv -t {phase} report.md", f"mv {phase}/reports {phase}/reports-old",
+            f"ls | xargs -I{{}} cp {{}} {phase}/", f"cp report.md {phase}", f"tar -xf a.tar -C {phase}", f"cp -r /tmp/x/. {phase}",
+            f"rsync -a /tmp/x/ {phase}/", f"rsync -a --delete /tmp/x/ {phase}/evidence/",
+            f"cp report.md {phase}/reports/", f"rsync -a out/ {phase}/evidence/", f"echo x > {phase}/verdict_design-to-build.judgment.json",
+            f"ls {phase}", f"cat {phase}/verdict_design-to-build.cycles.json",
+            f"python skills/harness/gatekeeper/check.py --boundary design-to-build --package {phase}/manifest.json "
+            f"--judgment {phase}/verdict_design-to-build.judgment.json --verdict-out {phase}/verdict_design-to-build.json --reopen-reference user-7",
+        ), deny=False)
+
     def test_the_registered_hook_lets_the_writer_create_its_mutex_and_refuses_a_hand_edit_of_it(self):
         """A script's arguments are data, not write targets: the commands the protocol names pass, they make the lock, and the lock is then guarded."""
         (self.root / "README.md").write_text("# fixture\n", encoding="utf-8")
@@ -1139,6 +1175,7 @@ DENIAL_REASONS = (
     ("C", {}, "Bash", "echo x > .harness-state/guard-state.json", "guard_state.py", "single writer"),
     ("C", {}, "Bash", "echo x > skillset-saves/runs/r1/design/verdict_design-to-build.json", "check.py --verdict-out",
      "check.py --verdict-out"),
+    ("C", {}, "Bash", "rm -rf skillset-saves/runs/r1/design", "phase directory", "removing or moving a phase directory"),
     ("C", {}, "Bash", "git clean -fdx", "is aimed at the project root", "is aimed at the project root and would"),
     ("D", READ_ONLY, "Bash", "touch notes.md", "is recorded read-only", "read_only"),
     ("D", READ_ONLY, "Bash", "cat list | xargs rm", "name each target in the shell command itself", "target is not in the command"),
@@ -1180,7 +1217,7 @@ class DenialReasonProseTests(GuardCase):
         """A denial added to `guard_hook` without an entry here would have no documented place."""
         defined = {name for name in dir(guard_hook) if name.endswith("_REASON") and isinstance(getattr(guard_hook, name), str)}
         covered = {"_DANGEROUS_REASON", "_CORE_SAVE_REASON", "_TASTE_SAVE_REASON", "_GUARD_STATE_REASON", "_HARNESS_REASON", "_UNPLACED_REASON",
-                   "_UNNAMED_REASON", "_ROOT_RECORDS_REASON", "_VERDICT_REASON"}
+                   "_UNNAMED_REASON", "_ROOT_RECORDS_REASON", "_VERDICT_REASON", "_PHASE_DIR_REASON"}
         self.assertEqual(defined, covered)
 
 
@@ -1388,6 +1425,14 @@ class WorkingDirectoryRuleTests(GuardCase):
                     self.assertTrue(kit.denied(out), out)
                     self.assertIn(f"more than {guard_hook._cmdscan.MAX_CWD} characters", kit.reason(out))
 
+    def test_a_chain_the_analysis_stopped_following_inside_a_launcher_is_denied_too(self):
+        chain = "; ".join(f"cd directory{i}" for i in range(200))
+        for command in (f"watch '{chain}; touch f'", f"ls | entr -s '{chain}; touch f'", f"sh -c '{chain}; touch f'"):
+            with self.subTest(command=command[:20]):
+                out = self.call(command)
+                self.assertTrue(kit.denied(out), out)
+                self.assertIn(f"more than {guard_hook._cmdscan.MAX_CWD} characters", kit.reason(out))
+
     def test_a_long_chain_with_no_write_and_a_short_one_with_writes_pass(self):
         self.guard(FROZEN)
         chain = "; ".join(f"cd directory{i}" for i in range(200))
@@ -1542,6 +1587,26 @@ class DirectoryDepositTests(GuardCase):
     def test_a_tree_write_aimed_above_a_boundary_is_refused(self):
         self.guard(FROZEN)
         self.check(FROZEN_TREE_WRITES, deny=True, fragment="frozen boundary")
+
+    def test_a_quoted_parallel_line_and_a_placeholder_fed_shell_program_are_read(self):
+        """`parallel 'rm src/payments/a' ::: x` was one word whose verb read as `a`; `xargs -I{} sh -c 'rm {}'` lost the
+        placeholder's standing when the program text was analysed, so Rule B saw a placed write to a file named `{}`."""
+        self.guard(FROZEN)
+        self.check(("parallel 'rm src/payments/a' ::: x", "parallel 'rm src/payments/{}' ::: a", "parallel -j2 'rm src/payments/{}' ::: a b",
+                    "ls src/payments | parallel 'rm src/payments/{}'"), deny=True, fragment="frozen boundary")
+        self.check(("cat src/payments/list | xargs -I{} sh -c 'rm {}'", "cat src/payments/list | xargs -I@ bash -c 'rm @'"), deny=True)
+        self.check(("parallel 'echo {}' ::: a", "parallel 'wc -l src/payments/{}' ::: a", "cat list | xargs -I{} sh -c 'wc -l {}'"), deny=False)
+
+    def test_a_tar_operand_that_happens_to_hold_a_capital_p_is_not_the_absolute_names_mode(self):
+        """Every all-letter word with a `P` read as `-P`, so `tar -xf a.tar -C Plugins` was an archive of unproven destinations."""
+        import tarfile
+        archive = self.root / "a.tar"
+        (self.root / "x.txt").write_text("x", encoding="utf-8")
+        with tarfile.open(archive, "w") as tar:
+            tar.add(self.root / "x.txt", arcname="x.txt")
+        self.guard(FROZEN)
+        self.check(("tar -xf a.tar -C Plugins", "tar -xf a.tar Public", "tar -xf a.tar -C Pictures/Photos", "tar xf a.tar -C Plugins"), deny=False)
+        self.check(("tar -xPf a.tar -C Plugins", "tar xPf a.tar -C Plugins", "tar -xf a.tar --absolute-names -C Plugins"), deny=True)
 
     def test_a_copy_beside_a_boundary_is_not(self):
         self.guard(FROZEN)

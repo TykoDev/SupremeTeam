@@ -37,6 +37,7 @@ Usage::
     guard_state.py freeze  --glob G --owner O [--scope S] [--run-id R] [--approver A ...]
     guard_state.py block   --glob G --owner O [--scope S] [--run-id R] [--approver A ...]
     guard_state.py release --glob G --requester Q [--reason TEXT]
+    guard_state.py adopt-legacy --glob G --owner O --reason TEXT --authorization-ref REF
     guard_state.py allow-dangerous --owner O --reason TEXT --scope S [--minutes N]
     guard_state.py revoke-dangerous --requester Q
     guard_state.py read-only --run-id R --owner O --allow G [--allow G ...] [--scope S]
@@ -91,7 +92,10 @@ def _load() -> dict:
     except OSError as exc:
         _refuse(f"cannot read {path}: {exc}")
     if not raw.strip():
-        return {}
+        # The hook reads a blank record as damage (GuardStateUnreadable), so the writer refuses it the same way
+        # instead of writing over it: the owner removes the file, and until then no boundary in it is enforced.
+        _refuse(f"{path} is empty. This writer never overwrites a damaged boundary record; an owner removes the "
+                "file directly, after which freeze/block/read-only start a new one.")
     try:
         state = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -108,6 +112,9 @@ def _load() -> dict:
     for key in LIST_KEYS:
         if key in state and not isinstance(state[key], list):
             _refuse(f"{path}: '{key}' must be a list.")
+    for entry in state.get("read_only") or []:
+        if isinstance(entry, dict) and "allow" in entry and not isinstance(entry["allow"], list):
+            _refuse(f"{path}: a read_only record's 'allow' must be a list of globs; the hook reads any other shape as no allowance.")
     return state
 
 

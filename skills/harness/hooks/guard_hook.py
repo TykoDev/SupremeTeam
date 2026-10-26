@@ -847,13 +847,37 @@ _GUARD_STATE_REASON = (
 )
 # A gate verdict record is written only by check.py --verdict-out, which refuses to write one whose judgment is
 # ungrounded and records what it checked. A hand-written verdict_<boundary>.json (or .cross-stage.json) would be an
-# APPROVED nobody checked, and the next boundary's revision_ref binds to exactly that file. The gatekeeper's own
-# judgment draft, verdict_<boundary>[.cross-stage].judgment.json, is the input check.py reads and stays writable.
-_VERDICT_RECORD = re.compile(r"(?:^|/)skillset-saves/runs/[^/]+/[^/]+/verdict_(?!.*\.judgment\.json$)[^/]+\.json$", re.I)
+# APPROVED nobody checked, and the next boundary's revision_ref binds to exactly that file. The same writer keeps the
+# boundary's REVISE cycle history, verdict_<boundary>.cycles.json, and its mutex verdict_<boundary>.cycles.lock beside
+# the manifest: removed or rewritten, the third-REVISE escalation to the user would start again from zero. The
+# gatekeeper's own judgment draft, verdict_<boundary>[.cross-stage].judgment.json, is the input check.py reads and
+# stays writable.
+_VERDICT_RECORD = re.compile(
+    r"(?:^|/)skillset-saves/runs/[^/]+/[^/]+/verdict_(?!.*\.judgment\.json$)[^/]+\.(?:json|cycles\.lock)$", re.I
+)
 _VERDICT_REASON = (
-    "Blocked by harness Action Realization layer: gate verdict records are written only by "
-    "skills/harness/gatekeeper/check.py --verdict-out, which checks the package and the gatekeeper's judgment "
-    "before it writes one. Write the judgment draft as verdict_<boundary>.judgment.json and pass it with --judgment."
+    "Blocked by harness Action Realization layer: gate verdict records and the boundary's REVISE cycle history "
+    "(verdict_<boundary>*.json, .cycles.lock) are written only by skills/harness/gatekeeper/check.py --verdict-out, "
+    "which checks the package and the gatekeeper's judgment before it writes one and counts the REVISE rounds that "
+    "escalate to the user. Write the judgment draft as verdict_<boundary>.judgment.json and pass it with --judgment."
+)
+# A phase directory is the only place those records live. Removing or moving the directory itself (`rm -r`, `mv`,
+# `shutil.rmtree`, `shutil.move`, `find -delete` aimed at it, `rsync --delete` over it) takes every verdict record and
+# the cycle history with it, so a boundary held for the user would reopen with no history at all. The files inside it
+# are judged one by one: an artifact named by its path is the lead's to write or remove, and a deposit into the
+# directory (`cp x <phase>/`, `rsync -a x/ <phase>/`, an extract) is read as the files it lands.
+_PHASE_DIR = re.compile(r"(?:^|/)skillset-saves/runs/[^/]+/(?!_)[^/]+/?$", re.I)
+# The writes that take a directory away whole. A deposit into a phase directory (`cp x <phase>/`, `rsync`, an extract)
+# is the lead's ordinary work and is judged by the files it lands as; the verdict records among them are refused by name.
+_PHASE_REMOVE_VIA = frozenset({"rm", "rmdir", "shred", "unlink", "remove-item", "find", "git clean"})
+# A move or rename records every operand as a write, so the source is told from the destination by position (below).
+_MOVE_VERBS = frozenset({"mv", "rename", "move-item", "rename-item"})
+_PHASE_DIR_REASON = (
+    "Blocked by harness Action Realization layer: a phase directory under skillset-saves/runs/<run>/ holds the gate "
+    "verdict records and the REVISE cycle history that skills/harness/gatekeeper/check.py --verdict-out wrote; "
+    "removing or moving the directory, or syncing over it with --delete, would erase the boundary's revision history "
+    "and the evidence its verdicts bind. Name the artifact files inside it instead; the verdict records stay as "
+    "check.py wrote them."
 )
 # The same files named anywhere inside a command that could not be tokenised.
 _CORE_SAVE_TOKEN = re.compile(
@@ -864,7 +888,7 @@ _PROTECTED_DIRS = re.compile(r"(?:^|/)\.harness-state/?$|(?:^|/)skillset-saves(?
 _PROTECTED_FRAGMENTS = ("skillset-saves", ".harness-state")
 
 
-def _protected_reason(target: "_paths.Target", above: bool = False) -> "str | None":
+def _protected_reason(target: "_paths.Target", above: bool = False, removes: bool = False) -> "str | None":
     forms = [*target.abs, *target.rel, *("/" + form for form in target.rel)]
     for form in forms:
         if _CORE_SAVE_FILE.search(form):
@@ -879,6 +903,84 @@ def _protected_reason(target: "_paths.Target", above: bool = False) -> "str | No
         for form in forms:
             if _PROTECTED_DIRS.search(form):
                 return _GUARD_STATE_REASON if ".harness-state" in form.lower() else _CORE_SAVE_REASON
+            if removes and _PHASE_DIR.search(form):
+                return _PHASE_DIR_REASON
+    return None
+
+
+def _move_sources(verb: str, argv: list) -> list:
+    """The operands a move or rename takes away: every operand but the last, or every operand when ``-t``,
+    ``--target-directory`` or ``-Destination`` names the destination; ``-Path``/``-LiteralPath`` values too. A ``rename``
+    keeps every operand after its first (the expression, or util-linux's ``from`` text), since it renames each in place."""
+    operands: list = []
+    named: list = []
+    target_dir = False
+    i = 0
+    while i < len(argv):
+        word = argv[i]
+        low = word.lower()
+        if low in ("-t", "--target-directory", "-destination", "-s", "--suffix"):
+            target_dir = target_dir or low != "-s" and low != "--suffix"
+            i += 2
+            continue
+        if low.startswith(("--target-directory=", "--suffix=")):
+            target_dir = target_dir or low.startswith("--target-directory=")
+            i += 1
+            continue
+        if low in ("-path", "-literalpath"):
+            if i + 1 < len(argv):
+                named.append(argv[i + 1])
+            i += 2
+            continue
+        if word.startswith("-") and len(word) > 1:
+            i += 1
+            continue
+        operands.append(word)
+        i += 1
+    if verb == "rename":
+        return operands[1:]
+    if not target_dir:
+        operands = operands[:-1]
+    return [*named, *operands]
+
+
+def _is_phase_dir(target: "_paths.Target") -> bool:
+    return any(_PHASE_DIR.search(form) for form in (*target.abs, *target.rel))
+
+
+def _phase_dir_taken(call: "Call", analysis) -> "str | None":
+    """Rule C for a command that takes a phase directory away without a removal verb.
+
+    ``mv skillset-saves/runs/r1/design /tmp/d`` takes the verdict records and the cycle history away as surely as
+    ``rm -r`` does, while ``mv report.md skillset-saves/runs/r1/design/`` only lands a file there; the analyser records
+    both operands as writes of the same kind, so the source is told from the destination here, by position. A rename from
+    inline code (``shutil.move``, ``os.rename``) names no shell verb, so there every ``mv`` write is read as a source.
+    ``rsync --delete`` over the directory removes what its source lacks, which is every record the source does not
+    carry."""
+    shell_moves = False
+    for command in analysis.commands:
+        verb, argv = command.verb, list(command.argv)
+        if verb == "git" and argv[:1] == ["mv"]:
+            argv = argv[1:]
+        elif verb == "rsync":
+            if not any(word.startswith("--del") for word in argv):
+                continue
+            sources = [word for word in argv if not word.startswith("-")][-1:]
+        elif verb not in _MOVE_VERBS:
+            continue
+        shell_moves = shell_moves or verb != "rsync"
+        derived = [cwd if _paths.is_absolute(cwd) else posixpath.join(start, cwd) for cwd in command.cwds for start in call.starts]
+        bases = [*derived, *call.starts] if derived else call.starts
+        words = sources if verb == "rsync" else _move_sources(verb, argv)
+        for word in words:
+            if "$" in word or "`" in word:
+                continue
+            if _is_phase_dir(call.locate(word, bases)):
+                return _PHASE_DIR_REASON
+    if not shell_moves:
+        for write, targets in call.shell_targets(analysis=analysis):
+            if write.via in ("mv", "rename") and any(_is_phase_dir(target) for target in targets):
+                return _PHASE_DIR_REASON
     return None
 
 
@@ -988,10 +1090,13 @@ def _extract_members(call: "Call", command, archive, bases) -> "list | None":
     # Stage these extracts outside the project instead of guessing their output.
     if command.verb not in {"tar", "unzip", "7z"}:
         return None
+    # `-P` (absolute names) is read in an option cluster (`-xPf`) or in the old-style leading cluster (`xPf a.tar`), never in
+    # an operand: `tar -xf a.tar -C Plugins` names a directory, not a mode.
     if command.verb == "tar" and any(
             word.startswith(("--strip", "--trans", "--xform", "--abs", "-s")) or (not word.startswith("--") and
-                             re.fullmatch(r"-?[A-Za-z]+", word) and "P" in word)
-            for word in command.argv):
+                             re.fullmatch(r"-[A-Za-z]+", word) and "P" in word)
+            or (index == 0 and re.fullmatch(r"[A-Za-z]+", word) and "P" in word)
+            for index, word in enumerate(command.argv)):
         return None
     return _archive_members(call.locate(archive, bases).abs[0]) if archive else None
 
@@ -1069,7 +1174,8 @@ _LISTING_LIMIT = 256
 def _listed(directory: Path) -> list:
     """Up to ``_LISTING_LIMIT`` entry names of ``directory`` (none when it cannot be read)."""
     try:
-        return [entry.name for entry in itertools.islice(os.scandir(directory), _LISTING_LIMIT)]
+        with os.scandir(directory) as entries:
+            return [entry.name for entry in itertools.islice(entries, _LISTING_LIMIT)]
     except OSError:
         return []
 
@@ -1396,7 +1502,7 @@ def _root_command_reach(call: "Call", command) -> "tuple | None":
 def _root_records_reason(call: "Call", analysis) -> "str | None":
     """Rule C for a command aimed at the project root (or above it) instead of at the directory that holds a record."""
     for command in analysis.commands:
-        if command.verb not in ("git", "tar", "unzip", "7z", "7za", "7zr", "cp", "ln", "install", "scp", "rsync", "find") and _cmdscan.extract_parts(command.verb, command.argv) is None:
+        if command.verb not in ("git", "tar", "unzip", "7z", "cp", "ln", "install", "scp", "rsync", "find") and _cmdscan.extract_parts(command.verb, command.argv) is None:
             continue
         reach = _root_command_reach(call, command)
         if reach:
@@ -1440,11 +1546,12 @@ def rule_single_writer(call: "Call") -> "str | None":
         for analysis in analyses:
             for write, targets in call.shell_targets(analysis=analysis):
                 for target in targets:
-                    reason = _protected_reason(target, above=write.via in _RECORD_TREE_VIA)
+                    reason = _protected_reason(target, above=write.via in _RECORD_TREE_VIA,
+                                               removes=write.via in _PHASE_REMOVE_VIA)
                     if reason:
                         return reason
             code = analysis.code if any(not item.opaque for item in analysis.unnamed) else []
-            reason = _code_protected(code, call) or _root_records_reason(call, analysis)
+            reason = _code_protected(code, call) or _root_records_reason(call, analysis) or _phase_dir_taken(call, analysis)
             if reason:
                 return reason
         # The same reading as Rule B: a write the analyser cannot place in a command that spells a protected file.
@@ -1557,7 +1664,7 @@ def rule_unplaced_write(call: "Call") -> "str | None":
     """Rule G: recognized mutations must have placed targets at a protected boundary."""
     if not call.shell:
         return None
-    if call.analysis.lost_directory and call.analysis.writes:
+    if any(analysis.lost_directory and analysis.writes for analysis in _analyses(call.analysis)):
         return _UNPLACED_REASON.format(limit=_cmdscan.MAX_CWD)
     # Rule D already applies the stricter read-only allow-list and its own reason.
     if call.guard.get("read_only"):

@@ -249,6 +249,18 @@ class RunTests(Project):
         self.assertEqual(dict(scan.verdicts), {"REVISE": 1, "BLOCKED": 1})
         self.assertEqual(scan.run_history, [{"run": subject._id("a"), "gate_verdicts": {"BLOCKED": 1, "REVISE": 1}}])
 
+    def test_the_effective_judgment_verdict_is_counted_and_drafts_and_cycle_history_are_not(self):
+        """check.py --verdict-out embeds the judgment; the third REVISE is on record as ESCALATE, whatever the draft asked."""
+        files = {"_state.md": {"status": "active", "revision": 1}, "_lock.md": {"revision": 1},
+                 "design/verdict_design-to-build.json": {"pass": True, "judgment": {"verdict": "ESCALATE", "requested_verdict": "REVISE"}},
+                 "design/verdict_design-to-build.judgment.json": {"verdict": "REVISE"},
+                 "design/verdict_design-to-build.cycles.json": {"rounds": ["r1", "r2", "r3"], "events": [{"judgment": {"verdict": "REVISE"}}]},
+                 "design/verdict_design-to-build.cross-stage.json": {"pass": True, "judgment": {"verdict": "APPROVED"}},
+                 "build/verdict_build-to-review.json": {"pass": False, "mechanical_only": True, "judgment": None}}
+        scan = self.scan_runs(a=files)
+        self.assertEqual(dict(scan.verdicts), {"ESCALATE": 1})
+        self.assertEqual([item for item in scan.record_errors if item["record"] == "verdict"], [])
+
     def test_an_unreadable_verdict_is_noted_not_counted(self):
         scan = self.scan_runs(a={"_state.md": {"status": "active", "revision": 1}, "_lock.md": {"revision": 1},
                                  "build/verdict_a.json": "not json", "build/verdict_b.json": '"text"'})

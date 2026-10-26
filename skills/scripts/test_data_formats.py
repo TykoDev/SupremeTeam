@@ -48,6 +48,23 @@ class NumberSpellingTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(parse_scalar(text), value)
 
+    def test_a_leading_zero_stays_text_because_pyyaml_reads_it_as_octal(self):
+        for text in ("010", "007", "-010", "+08"):
+            with self.subTest(text=text):
+                self.assertEqual(parse_scalar(text), text)
+        self.assertEqual((parse_scalar("0"), parse_scalar("-0"), parse_scalar("10")), (0, 0, 10))
+
+    def test_one_document_per_file(self):
+        self.assertEqual(parse_yaml("---\na: 1\n...\n"), {"a": 1})
+        with self.assertRaises(DataFormatError):
+            parse_yaml("a: 1\n---\nb: 2\n")
+
+    @unittest.skipIf(yaml is None, "PyYAML is optional; the cases above pin the expected values")
+    def test_pyyaml_reads_a_leading_zero_as_another_number(self):
+        self.assertEqual(yaml.safe_load("010"), 8)
+        with self.assertRaises(yaml.YAMLError):
+            yaml.safe_load("a: 1\n---\nb: 2\n")
+
     @unittest.skipIf(yaml is None, "PyYAML is optional; the cases above pin the expected values")
     def test_the_difference_from_pyyaml_is_the_documented_one(self):
         """PyYAML reads the first group as floats and the second as text, for exactly the spellings above."""

@@ -35,7 +35,6 @@ EXPORT_SCHEMA = "supremeteam-taste-export"
 EXPORT_VERSION = 1
 READS = ("status", "list", "effective", "diff", "export")
 MUTATIONS = {"propose", "confirm", "set", "deprecate", "revoke", "promote", "specialize", "import", "reset"}
-STATES = {"proposed", "active", "deprecated"}
 ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}")
 # The vocabularies of taste-doctrine.md sections 3 and 4. test_taste_store.py compares them
 # with the doctrine, which stays canonical.

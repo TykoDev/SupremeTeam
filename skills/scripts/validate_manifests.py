@@ -213,6 +213,9 @@ def check_gates(gates: dict[str, Any], owners: set[str], errors: list[str]) -> N
     typed = set(gates.get("evidence_types", {}) or {})
     declared: set[str] = set()
     for name, boundary in boundaries.items():
+        if not isinstance(boundary, dict):
+            errors.append(f"gates.yaml: boundary {name!r} must be a mapping")
+            continue
         submitter = str(boundary.get("submitter", ""))
         if submitter not in owners:
             errors.append(f"gates.yaml: boundary {name!r} submitter {submitter!r} is not an ownership owner")
@@ -266,7 +269,12 @@ def is_repository(root: Path) -> bool:
     The README, docs/ and .github/ that the repository-level checks read are
     never copied by an install, so a directory holding none of them is an
     installed copy. A checkout with one of them deleted still counts as a
-    checkout, and the check that reads the missing file fails loudly.
+    checkout, and the check that reads the missing file fails loudly. The
+    installers' record (``.supremeteam-manifest``) does not decide it the other
+    way: ``test_a_checkout_is_checked_in_full_whatever_record_it_holds`` holds a
+    checkout to the full checks whatever record sits in its ``skills/``, so an
+    install placed beside a project's own README reads as a checkout here and
+    fails its documentation mirrors loudly rather than silently checking less.
     """
     return any((root.parent / name).exists() for name in REPOSITORY_MARKERS)
 
@@ -642,12 +650,18 @@ def check_pipeline_mirrors(root: Path, team: dict[str, Any], ownership: dict[str
                       if isinstance(x, dict)}
     boundary_owners: dict[str, list[str]] = {}
     for name, pipeline in pipelines.items():
+        if not isinstance(pipeline, dict):
+            errors.append(f"pipelines.yaml: pipeline {name!r} must be a mapping")
+            continue
         if pipeline.get("owner") not in members:
             errors.append(f"pipelines.yaml: {name} owner is not a team member")
         boundary = str(pipeline.get("boundary", ""))
         boundary_owners.setdefault(boundary, []).append(name)
         errors.extend(pipeline_dependency_errors(name, pipeline))
         for stage in pipeline.get("stages", []):
+            if not isinstance(stage, dict):
+                errors.append(f"pipelines.yaml: {name} has a stage that is not a mapping")
+                continue
             owner, artifact = stage.get("owner"), stage.get("artifact")
             if owner not in members:
                 errors.append(f"pipelines.yaml: {name}/{stage.get('step')} owner is not a team member")

@@ -124,7 +124,7 @@ that contradict each other. A Critical or Major finding also names the hashed
 artifacts it was read from. A REVISE needs a grounded Critical or Major finding or
 a mechanical failure. Only the phase gatekeeper or `gatekeeper-admiral` may judge;
 a submitter never judges its own package. A requirement in no source of truth is
-an ESCALATE to `admiral`, not a REVISE. `check.py` refuses an ungrounded record and
+an ESCALATE to the user through `admiral`, not a REVISE. `check.py` refuses an ungrounded record and
 does not write it as a verdict.
 
 ## Verdicts
@@ -163,6 +163,7 @@ when `check.py --prior` reports `prior_reusable: true`. At delivery, re-run
 | `cross_stage_scope` | `gatekeeper-admiral` judges the crossing and carries the phase gate's adequacy judgment, read from the phase verdict record's own `judgment`, unless evidence changed or the phase verdict was not APPROVED; at the six boundaries with no phase gatekeeper it judges every key |
 | `grounding` | Every judgment finding cites a decision, an acceptance row, a contract section or a contradiction, plus hashed anchors when it blocks; `check.py --judgment` checks it |
 | `cycle_cap` | The third consecutive REVISE becomes ESCALATE to user; history persists independently of ids and filenames |
+| `cycle_enforcement` | `check.py --judgment --verdict-out` persists per-gate streaks and the shared boundary budget in `verdict_<boundary>.cycles.json`; self-checks never count; only `--reopen-reference` with a new user decision reopens a held boundary |
 
 The phase verdict (`verdict_<boundary>.json`) and the cross-stage verdict
 (`verdict_<boundary>.cross-stage.json`) sit side by side; the second reads the

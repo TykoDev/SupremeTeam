@@ -35,6 +35,7 @@ SupremeTeam/
 │   ├── persistent-saves.md               # Save layout, locks, resume
 │   ├── direct-invocation.md              # Calling skills directly
 │   ├── directory-structure.md            # This file
+│   ├── reviews/                          # Dated rubric scorecards and benchmark records
 │   └── assets/                           # The logo and the diagrams used across the docs
 └── skills/
     ├── gates.yaml                        # Gate spec: 10 boundaries
@@ -54,7 +55,7 @@ SupremeTeam/
     ├── performance-doctrine.md           # Measured optimization
     ├── save-protocol.md                  # Save layout, lifecycle, resume
     ├── mcp-tools.md                      # Blank MCP template; project cache uses the configured TTL
-    ├── contracts/                        # Six canonical cross-phase contracts
+    ├── contracts/                        # Seven canonical cross-phase contracts
     ├── tech-stacks/                      # 14 stack overlays + registry.yaml
     ├── scripts/                          # Shared deterministic tooling; its test_*.py suite sits in the same folder
     │   ├── data_formats.py               # JSON and the catalog's YAML subset, no PyYAML
@@ -108,7 +109,7 @@ SupremeTeam/
     │   │   ├── README.md                 # Rules, limits, fault trace, and a manifest of every file here
     │   │   ├── .gitignore                # Runtime observations and bytecode caches
     │   │   └── test_*.py                 # The hooks suite, listed under The test suites
-    │   └── gatekeeper/                   # check.py (gate spec), _gatecheck.py (shape), _fixtures.py (test support), README.md, test_*.py
+    │   └── gatekeeper/                   # check.py (gate spec), _gatecheck.py (shape), _gatecycle.py (REVISE cycles), _fixtures.py (test support), README.md, test_*.py
     ├── admiral/                          # The front door
     │   ├── references/                   # workflow, routing, contracts, failure-modes, examples
     │   ├── intake-brief.yaml, stub-contract.md
@@ -152,7 +153,7 @@ are in [CONTRIBUTING.md](../CONTRIBUTING.md#run-the-suites).
     `test_audit_improve_parts.py`, `test_gate_watch.py`
 - **Gates**, `skills/harness/gatekeeper/`: `test_gatecheck.py`, `test_gate_engine.py`,
   `test_gate_manifests.py`, `test_gate_run_layout.py`, `test_gate_revise.py`, `test_gate_judgment.py`,
-  `test_gate_source_of_truth.py`,
+  `test_gate_cycles.py`, `test_gate_source_of_truth.py`,
   `test_gate_wrappers.py`, `test_quality_audit.py`
 - **Validation**, `skills/validation/`: `test_catalog_contracts.py`, `test_orchestration.py`,
   `test_pipeline_contracts.py`, `test_pipeline_workflows.py`, `test_save_contracts.py`,

@@ -136,7 +136,7 @@ Directly callable at any time. `qa` and `ship` also own a gated pipeline when
 | `routing-doctrine.md`, `grill-me-doctrine.md` | Entry routing and session pin; intake interview and ceremony scaling |
 | `design-doctrine.md`, `taste-doctrine.md`, `performance-doctrine.md` | Design system; preferences; measured optimization |
 | `harness-doctrine.md`, `save-protocol.md`, `mcp-tools.md` | Lifecycle layers; save lifecycle; MCP registry |
-| `contracts/` | Evidence standards, handoff templates, workflow protocol, responsibility matrix, universal frameworks, delivery template |
+| `contracts/` | Evidence standards, handoff templates, workflow protocol, responsibility matrix, universal frameworks, delivery template, review discipline |
 | `harness/hooks/`, `harness/gatekeeper/` | The three hooks and their writers; the two gate validators |
 | `scripts/`, `validation/` | Shared tooling; contract test suites |
 

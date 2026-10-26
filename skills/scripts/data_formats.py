@@ -6,6 +6,17 @@ runtime must remain usable on a clean host.  This module intentionally supports
 the subset used by the package: mappings, nested mappings, lists, inline lists,
 quoted/unquoted scalars, and block strings.  JSON is accepted first because JSON
 is also valid YAML and is useful for fixtures that need exact types.
+
+Where the subset reads a scalar differently from PyYAML, it reads it as text
+rather than guess a type: ``yes``/``no``/``on``/``off`` stay words (PyYAML 1.1
+booleans), a number with a leading zero stays text (``010`` is 8 to PyYAML),
+``0x1F``, ``1_000``, ``.inf``, ``.nan``, ``12:30`` and dates stay text, and a
+float stays text unless it prints back unchanged (``3.10`` is a version, see
+``parse_scalar``).  Block scalars accept every chomping indicator and always drop
+trailing whitespace, so ``|`` reads as ``|-`` (PyYAML keeps one final newline);
+``validation/test_catalog_contracts.py`` ParserParityTests compares the two
+readers on the shipped catalog under that rule.  One document per file: a second
+``---`` after content is an error, where PyYAML's ``safe_load`` also refuses it.
 """
 
 from __future__ import annotations
@@ -135,7 +146,8 @@ def parse_scalar(value: str) -> Any:
             return ast.literal_eval(value)
         except (SyntaxError, ValueError) as exc:
             raise DataFormatError("invalid quoted scalar") from exc
-    if re.fullmatch(r"[-+]?\d+", value):
+    if re.fullmatch(r"[-+]?\d+", value) and not re.fullmatch(r"[-+]?0\d+", value):
+        # A leading zero is an octal number to PyYAML (010 is 8), so it stays text here rather than read as ten.
         try:
             return int(value)
         except ValueError:
@@ -156,6 +168,7 @@ def parse_scalar(value: str) -> Any:
     return value
 
 
+#: Every chomping indicator is accepted; ``_block_scalar`` reads each as strip (see the module docstring).
 _BLOCK_INDICATORS = {"|", ">", "|-", "|+", ">-", ">+"}
 
 
@@ -185,6 +198,8 @@ def _normalise_lines(text: str) -> list[tuple[int, str, int]]:
             continue
         stripped = raw.strip()
         if stripped in {"---", "..."}:
+            if stripped == "---" and lines:
+                raise DataFormatError(f"a second document starts at line {lineno}; one document per file")
             continue
         leading = raw[: len(raw) - len(raw.lstrip(" \t"))]
         if "\t" in leading:

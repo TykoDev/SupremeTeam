@@ -64,7 +64,6 @@ class SaveRecord:
     run_id: str
     revision: str
     status: str
-    session_pin: bool
     owner: str
     heartbeat: datetime | None
     state_path: Path
@@ -413,7 +412,6 @@ def _record(project_root: Path, run_dir: Path, now: datetime, *, verify_evidence
         run_id=run_id,
         revision=revision,
         status=status,
-        session_pin=pin is True,
         owner=state_owner or lock_owner,
         heartbeat=heartbeat,
         state_path=state_path,

@@ -190,17 +190,6 @@ def _has_reparse_component(path: Path, root: Path) -> bool:
     return False
 
 
-def has_reparse_ancestor(path: Path) -> bool:
-    current = path
-    while True:
-        if is_reparse_point(current):
-            return True
-        parent = current.parent
-        if parent == current:
-            return False
-        current = parent
-
-
 def safe_regular_file(path: Path, root: Path) -> bool:
     if _has_reparse_component(path, root):
         return False

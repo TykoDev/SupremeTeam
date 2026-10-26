@@ -8,7 +8,7 @@ description: >-
   readiness, or challenge the packet — even when they only ask "is the design
   done?". Defers the other gates to `build/gatekeeper-build`,
   `review/gatekeeper-code`, `gatekeeper-admiral`.
-version: 2.0.0
+version: 2.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -335,7 +335,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | `mock_parity` or `parity_evidence` is a probe record whose `inputs` are absent or do not bind by sha256 to the inventory and the mock or prototype files | Return `REVISE` to `design-mapper`. An unbound parity probe proves that something passed, not that the redesign matches the inventory it claims parity with. |
 | `mock_parity` fails a mock on a missing state, interaction, or flow | Return `REVISE` to `design-mapper`, not to the builder. Mock level scores routes and components only; those three lists are informational, and failing a mock on them asks its builder to implement before the selection stage has run. |
 | `mock_rendering` at `redesign-review` carries a purported fallback string or an applicability record, or the shape check's `UNCHECKED` on it is read as a waiver | Return `REVISE` to `design-qa` and require hashed captures across the required breakpoints and themes, bound by `inputs` to the rendered mocks. The boundary lists the key under `no_fallback`, and there is no global fallback for `mock_rendering`, and a conditional `UNCHECKED` from `check_redesign.py` is an unresolved question rather than permission. |
-| `check.py --judgment` rejects the judgment record — a cited `D-` or `AC-` id the intake log or plan does not contain, a key or owner the spec does not name, an unhashed anchor, a REVISE with no grounded Critical or Major finding, or a new finding on unchanged evidence | The record is the gate's defect, not the package's. Ground each finding in the source of truth and the package's hashed artifacts, or drop it; if what the gate wanted is in no source of truth, return `ESCALATE` to `admiral` for an intake decision instead. Never store or return the rejected verdict. |
+| `check.py --judgment` rejects the judgment record — a cited `D-` or `AC-` id the intake log or plan does not contain, a key or owner the spec does not name, an unhashed anchor, no `intake.artifact` naming this run's hashed Intake log (or an ESCALATE to the user carrying `intake.unavailable`), a Critical or Major finding without `expected`, `observed`, `remediation` and `verification`, a `D-`/`AC-` ref that is a prose mention and not a table row, a REVISE with no grounded Critical or Major finding, or a new finding on unchanged evidence | The record is the gate's defect, not the package's. Ground each finding in the source of truth and the package's hashed artifacts, or drop it; if what the gate wanted is in no source of truth, return `ESCALATE` to the user through `admiral` for an intake decision instead. Never store or return the rejected verdict. |
 
 ## Save Protocol
 

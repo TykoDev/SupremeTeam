@@ -67,9 +67,9 @@ first.
 
 **Output:**
 - Cycle state: this is the third `REVISE` on `redesign-review`, which exhausts `../../../gates.yaml` `revise_policy.cycle_cap` of 3.
-- Action: stop resubmitting. Escalate to Admiral with all three revise packets, all corresponding verdict records, and the unclosed keys named with their owners (`design_directions` → `design/architect`, `mock_set` → `design/prototyper`).
-- Why the cap exists: three failed cycles on the same keys mean the disagreement is about the requirement — where the differentiation bar sits, what the mock parity contract covers — rather than about the artifact.
-- What Admiral receives: the dispute, the recommended default for each key, and all three revisions preserved as evidence rather than overwritten into one history.
+- Action: stop resubmitting. The gate has already written this third `REVISE` as `ESCALATE` {to: user, via: admiral} in `verdict_<boundary>.cycles.json`; hand Admiral all three revise packets, all corresponding verdict records, and the unclosed keys named with their owners (`design_directions` → `design/architect`, `mock_set` → `design/prototyper`).
+- Why the cap exists: three consecutive `REVISE` revisions mean the disagreement is about the requirement — where the differentiation bar sits, what the mock parity contract covers — rather than about the artifact.
+- What the user receives, through Admiral's `DISPUTED_AWAITING_USER` checkpoint: the dispute, the recommended default for each key, and all three revisions preserved as evidence rather than overwritten into one history. Nothing resumes until a new user decision is recorded with `--reopen-reference`.
 
 ## Example 6 — A deferral, and the four keys that carry a string instead
 

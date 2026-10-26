@@ -52,6 +52,20 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(result["findings"]["missing_in_after"], [{"id": "F-1", "severity": "Major"}])
         self.assertEqual(result["findings"]["extra_in_after"], [{"id": "F-1", "severity": "Minor"}])
 
+    def test_findings_are_identified_by_what_they_say_when_the_report_carries_it(self):
+        """run-audit's ids are positions: a tampered copy with one different Major in the same slot read as equal."""
+        major = {"id": "F-1", "severity": "Major", "where": "runs/a/build/manifest.json", "statement": "evidence missing: r.md"}
+        other = {**major, "statement": "evidence missing: other.md"}
+        result = rescan_compare.compare(report([], [major]), report([], [other]))
+        self.assertFalse(result["equal"])
+        self.assertEqual(result["findings"]["missing_in_after"], [major])
+        self.assertEqual(result["findings"]["extra_in_after"], [other])
+        renumbered = {**major, "id": "F-7"}
+        self.assertTrue(rescan_compare.compare(report([], [major]), report([], [renumbered]))["equal"])
+        inserted = {"id": "F-1", "severity": "Critical", "where": "x", "statement": "new"}
+        shifted = rescan_compare.compare(report([], [major]), report([], [inserted, {**major, "id": "F-2"}]))
+        self.assertEqual((shifted["findings"]["missing_in_after"], shifted["findings"]["extra_in_after"]), ([], [inserted]))
+
     def test_run_entries_may_be_id_mappings(self):
         a = report([{"id": "run-a"}], [])
         b = report(["run-a"], [])

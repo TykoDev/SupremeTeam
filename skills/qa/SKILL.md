@@ -9,7 +9,7 @@ description: >-
   rather than reading the change: reading code is `review/code-chief`. Report-only
   runs go to `qa-only`, performance measurement to
   `benchmark`.
-version: 1.1.0
+version: 1.2.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 ---
 
@@ -18,7 +18,7 @@ allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 
 ## Review discipline
 
-Apply [../contracts/review-discipline.md](../contracts/review-discipline.md). Bind specialist reviews to one producing gate; gatekeepers consume their reports. Follow-up verification, tests and audits run only for changed evidence and affected dependents, carrying unchanged hash-valid results. Intake controls scope and non-goals. A third consecutive REVISE always goes to the user through Admiral; stop automatic work while that decision is pending.
+Apply [../contracts/review-discipline.md](../contracts/review-discipline.md). Bind specialist reviews to one producing gate; gatekeepers consume their reports. Follow-up verification, tests and audits run only for changed evidence and affected dependents, carrying unchanged hash-valid results. Intake controls scope and non-goals. A third consecutive REVISE always goes to the user through Admiral; stop automatic work while that decision is pending. Hash the run's Intake log into `artifact_hashes` of every package this skill submits, as the manifest-relative `../intake/report_grilling.md`, whether or not the boundary requires a `decisions` key: the gatekeeper's judgment must bind `intake.artifact` to that hashed path (`gates.yaml` `judgment_policy`), `check.py --judgment` rejects a judgment on a package that does not carry it, and the mechanical self-check warns while it is missing.
 
 ## Purpose
 
@@ -172,7 +172,7 @@ Skip only when the requested surface, tool, or environment does not exist and a 
 | The product surface, acceptance criteria, or environment specification is missing, empty, or self-contradictory | Refuse to start the sweep and name the missing or conflicting input with the smallest clarification that unblocks it. A matrix designed against a guessed scope produces evidence for a surface nobody asked about, and the gate cannot tell the difference. |
 | The environment, test data, or account setup is incomplete for a critical workflow | Stop the affected test path, record the missing prerequisite, and continue only with the flows that can still be tested honestly. |
 | The browser surface is under test but `open-browser` cannot supply one, or another required tool or environment is unavailable | Run the flows that do not need it, record every dependent probe as not-run with its reason rather than inferring an outcome, and carry the untested surface into `residual_risk`. An unavailable check is a data gap, never a pass. |
-| `check.py` returns `REVISE` a third time on the same package | Stop resubmitting. `../gates.yaml` `revise_policy` sets `cycle_cap: 3`, so the third `REVISE` escalates: return `ESCALATE` carrying all three packets, the `changed_evidence` and `unchanged_evidence` from the `--prior` comparison, and the specific keys that did not converge, and hand the decision to the user through the delegating owner rather than opening a fourth cycle. |
+| `check.py` returns `REVISE` a third time on the same package | Stop resubmitting. `../gates.yaml` `revise_policy` sets `cycle_cap: 3`, so the gate writes the third `REVISE` as `ESCALATE` to the user (`revision_cycle.held_for_user: true`): hand Admiral all three packets, the `changed_evidence` and `unchanged_evidence` from the `--prior` comparison, and the specific keys that did not converge, and run no further automatic sweep, fix or resubmission until a new user decision reopens the boundary with `--reopen-reference`, rather than opening a fourth cycle. |
 | A defect reproduces intermittently and cannot yet be tied to one trigger | Record the unstable reproduction boundary, preserve the evidence gathered so far, and avoid claiming the fix is verified. |
 | Several failing tests appear to share one root cause | Collapse them into one blocker and rerun the dependent paths after the first credible fix instead of applying scattered changes. |
 | A scoped fix lands on a path an active `freeze` or `blocked_globs` record covers, and the hook denies the write | Do not work around it, and do not hand-edit the guard record — the hook denies that too. The defect stays recorded with its reproduction and its fix direction; only the *landing* is blocked. Two routes are open, and the boundary's owner chooses: have them lift the boundary with `unfreeze` and re-run the fix inside the reopened area, or hand the fix direction to the owner of the frozen surface and record the defect as `open` with the blocking boundary named. Either way `fixes_applied` reports what was actually applied, never what would have been; a defect whose fix the guard refused is not a fixed defect. |

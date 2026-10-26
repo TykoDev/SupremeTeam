@@ -991,6 +991,22 @@ class LauncherTests(unittest.TestCase):
                 self.assertEqual((main.writes, main.unnamed), ([], []), text)
                 self.assertFalse({c.verb for c in main.commands} & {"rm", "touch", "mv", "gzip", "cp"}, text)
 
+    def test_a_quoted_parallel_command_line_is_read_as_the_shell_line_it_is(self):
+        """`parallel 'rm src/payments/{}' ::: a` was one word whose verb read as `{}`; nothing was written anywhere."""
+        self.assertEqual(hidden("parallel 'rm src/payments/{}' ::: a b"), [(["src/payments/a"], []), (["src/payments/b"], [])])
+        self.assertEqual(hidden("parallel 'rm src/payments/a' ::: x"), [(["src/payments/a", "x"], [])])
+        fed = analyse("ls | parallel 'rm {}'")
+        self.assertEqual([(item.verb, item.how) for item in fed.unnamed], [("parallel", "stdin")])
+        self.assertEqual(hidden("parallel 'wc -l {}' ::: a"), [([], [])])
+
+    def test_a_placeholder_fed_shell_program_keeps_the_placeholders_unresolved_standing(self):
+        """`xargs -I{} sh -c 'rm {}'` analysed the program text alone, so `rm {}` became a placed write to a file named `{}`."""
+        for text in ("ls | xargs -I{} sh -c 'rm {}'", "ls | xargs -I@ bash -c 'rm @'"):
+            with self.subTest(command=text):
+                self.assertEqual([(w.via, w.unresolved) for w in analyse(text).writes], [("rm", True)])
+        self.assertEqual([(w.path, w.unresolved) for w in analyse("sh -c 'rm x'").writes], [("x", False)])
+        self.assertEqual(analyse("ls | xargs -I{} sh -c 'wc -l {}'").writes, [])
+
     def test_tar_one_top_level_names_the_directory_it_extracts_into(self):
         self.assertEqual(paths("tar -xf a.tar --one-top-level=dest"), {"dest"})
         self.assertEqual(paths("tar -xf a.tar -C base --one-top-level=dest"), {"base/dest"})

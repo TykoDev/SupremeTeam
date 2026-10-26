@@ -27,6 +27,8 @@ skillset-saves/
       evidence/coverage/           #   coverage data and reports
       verdict_design-to-build.json #   the phase gate's verdict
       verdict_design-to-build.cross-stage.json  # gatekeeper-admiral's, beside it
+      verdict_design-to-build.cycles.json       # the boundary's REVISE streaks; check.py --judgment --verdict-out
+      verdict_design-to-build.cycles.lock       # its mutex
     build/  review/  security/  investigation/  qa/  taste/  redesign/  skill-creation/  release/
     delivery/reports/              # handoff_<boundary>.md and delivery-package.md
 ```
@@ -40,7 +42,7 @@ as `input hash drift`. Hashes fold text line endings to LF;
 `session-memory` writes the run record only through
 `skills/harness/hooks/save_run.py`. Each phase lead writes its phase directory. A
 specialist writes only the artifact its delegation named. Gatekeepers write
-verdicts and never touch a submission. Policy:
+verdicts and the boundary's REVISE cycle history, and never touch a submission. Policy:
 [`save-ownership.yaml`](../skills/save-ownership.yaml) (paths) and
 [`ownership.yaml`](../skills/ownership.yaml) (artifacts); `pre_tool_use.py`
 denies direct writes to the core run files.

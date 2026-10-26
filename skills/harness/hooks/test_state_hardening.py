@@ -162,6 +162,13 @@ class GuardRecordReadTests(StateCase):
         self.write(b'{"frozen_globs": 5}')
         self.assertNotIn("unreadable", _state.load_guard_state())
 
+    def test_a_read_only_allow_that_is_not_a_list_grants_nothing(self):
+        """A string iterated as characters, and a `*` among them allowed every path."""
+        allowed = _state.read_only_allow([{"run_id": "r1", "owner": "qa", "allow": "skillset-saves/runs/r1/**"},
+                                          {"run_id": "r2", "owner": "qa", "allow": {"glob": "*"}}, {"run_id": "r3", "allow": None},
+                                          {"run_id": "r4", "owner": "qa", "allow": ["skillset-saves/runs/r4/**", ""]}])
+        self.assertEqual(allowed, [".harness-state/**", "skillset-saves/runs/r4/**"])
+
     def test_the_fault_is_counted_only_when_the_caller_names_its_event(self):
         self.write(b"{")
         _state.load_guard_state()

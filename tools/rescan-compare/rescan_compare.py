@@ -6,8 +6,13 @@ A re-scan report is JSON carrying a run set and a finding set::
     {"runs": ["run-a", "run-b"],
      "findings": [{"id": "F-1", "severity": "Major"}, ...]}
 
-Two reports are equal when their run id sets match and their finding
-(id, severity) sets match.  A severity drift with unchanged ids is a
+Two reports are equal when their run id sets match and their finding sets
+match.  A finding is identified by what it says: ``(severity, where,
+statement)`` when the report carries those fields (run-audit does), else
+``(id, severity)``.  run-audit's ``F-<n>`` ids are positions in a sorted list,
+so one new finding would renumber every later one; compared by id, two
+different Majors in the same slot read as the same finding and one inserted
+finding reads as a dozen changes.  A severity drift with the same text is a
 difference: the same finding at a different grade is not the same finding.
 
 Exit codes follow the catalog convention: 0 equal, 1 different,
@@ -21,7 +26,7 @@ import json
 import sys
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 SEVERITIES = ("Critical", "Major", "Minor", "Info")
 
@@ -48,11 +53,12 @@ def _run_ids(report: dict, source: str) -> set[str]:
     return ids
 
 
-def _findings(report: dict, source: str) -> set[tuple[str, str]]:
+def _findings(report: dict, source: str) -> dict[tuple, dict]:
+    """Each finding under the key that identifies it, with the fields the difference report shows."""
     findings = report.get("findings")
     if not isinstance(findings, list):
         raise ReportError(f"{source}: 'findings' must be a list")
-    pairs: set[tuple[str, str]] = set()
+    keyed: dict[tuple, dict] = {}
     for index, entry in enumerate(findings):
         if not isinstance(entry, dict):
             raise ReportError(f"{source}: findings[{index}] must be a mapping")
@@ -64,8 +70,15 @@ def _findings(report: dict, source: str) -> set[tuple[str, str]]:
             raise ReportError(
                 f"{source}: findings[{index}] severity must be one of {list(SEVERITIES)}"
             )
-        pairs.add((ident, severity))
-    return pairs
+        where, statement = entry.get("where"), entry.get("statement")
+        shown = {"id": ident, "severity": severity}
+        if isinstance(where, str) and isinstance(statement, str):
+            key = (severity, where, statement)
+            shown.update(where=where, statement=statement)
+        else:
+            key = (ident, severity)
+        keyed.setdefault(key, shown)
+    return keyed
 
 
 def load_report(path: Path) -> dict:
@@ -83,7 +96,7 @@ def load_report(path: Path) -> dict:
 
 
 def compare(before: dict, after: dict) -> dict:
-    """Compare two loaded reports; the finding set is (id, severity) pairs."""
+    """Compare two loaded reports; a finding is (severity, where, statement) when it carries them, else (id, severity)."""
     before_runs = _run_ids(before, "before")
     after_runs = _run_ids(after, "after")
     before_findings = _findings(before, "before")
@@ -91,8 +104,8 @@ def compare(before: dict, after: dict) -> dict:
 
     runs_missing = sorted(before_runs - after_runs)
     runs_extra = sorted(after_runs - before_runs)
-    findings_missing = sorted(before_findings - after_findings)
-    findings_extra = sorted(after_findings - before_findings)
+    findings_missing = sorted(set(before_findings) - set(after_findings))
+    findings_extra = sorted(set(after_findings) - set(before_findings))
 
     equal = not (runs_missing or runs_extra or findings_missing or findings_extra)
     return {
@@ -104,9 +117,9 @@ def compare(before: dict, after: dict) -> dict:
             "extra_in_after": runs_extra,
         },
         "findings": {
-            "compared": len(before_findings | after_findings),
-            "missing_in_after": [{"id": i, "severity": s} for i, s in findings_missing],
-            "extra_in_after": [{"id": i, "severity": s} for i, s in findings_extra],
+            "compared": len(set(before_findings) | set(after_findings)),
+            "missing_in_after": [before_findings[key] for key in findings_missing],
+            "extra_in_after": [after_findings[key] for key in findings_extra],
         },
     }
 

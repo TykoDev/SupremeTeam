@@ -250,7 +250,8 @@ def write_with_backup(path: Path, text: str, *, private: bool = False) -> Path |
     An existing file keeps its permission bits and so does its backup, which is never
     wider than the original. A new file is owner-only when ``private`` (user-level host
     configuration, which can come to hold tokens) and gets the umask default otherwise.
-    On Windows "owner-only" is the access list, not the mode bits, and is set the same way.
+    On Windows "owner-only" is the access list, not the mode bits, and a ``private`` write sets
+    it on the file it writes, an existing file included.
     Returns the backup path when one was made.
     """
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -16,7 +16,7 @@ from project_files import (
     COMPOSE_NAMES,
     classify_path,
     collect_evidence,
-    has_reparse_ancestor,
+    is_reparse_point,
     is_sensitive,
     load_cached_data,
     read_cached_text,
@@ -171,7 +171,7 @@ def inspect_project(
     warnings: list[str] = []
     try:
         requested_root = project_root.expanduser().absolute()
-        if has_reparse_ancestor(requested_root):
+        if is_reparse_point(requested_root):
             add_error(errors, "project root: reparse points are not inspected")
             project_root = requested_root
         else:

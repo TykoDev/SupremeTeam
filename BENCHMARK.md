@@ -1,137 +1,138 @@
-# Benchmark and review scores — 2026-10-25
+# Benchmark and review scores — 2026-10-26
 
-Measured the changed orchestration controls with Python 3.13.5 on Linux. Baseline:
-`db059745ba1df235bf2c0ebaf2017cd24c7f13de` (a clean archive captured before editing).
-The run used local disposable fixtures, with no production target or host configuration changes.
+Measured on this tree with 3.13.17 on Linux, after the audit
+and hardening pass that followed the review-orchestration change. Baseline for the paired
+timings: a `git archive` of the committed tree `a3ef604889749b9da1890f705ebf863d07fa1af7`
+(`skills/` and `tools/`); candidate: the working tree. Local disposable fixtures only, no
+production target and no host configuration change. The previous record is
+[docs/reviews/review-orchestration-2026-10-25.json](docs/reviews/review-orchestration-2026-10-25.json)
+with its [scorecard](docs/reviews/gatekeeper-rubric-2026-10-25.md).
 
-## Affected verification
+## Whole-catalog verification
 
-831 distinct test cases were selected for the changed gate, contract, manifest,
-guard and audit surfaces: 823 executed, 8 skipped, no unresolved failures.
-Unchanged catalog suites were carried rather than rerun.
+Every suite was run in full on this tree, because the changes reach the guard, the gate
+validator, the audit hook, the shared reader and the prose the suites compare with the code.
+Skips are platform or dependency conditions reported by unittest, not failed checks.
 
-| Affected surface | Tests | Skipped | Result |
+| Suite | Tests | Skipped | Result |
 | --- | ---: | ---: | --- |
-| Gate engine, all boundary types and revision cycles | 342 | 6 | Pass |
-| Related orchestration, pipeline, documentation and save contracts | 174 | 1 | Pass after focused correction |
-| Manifest and package validators | 125 | 1 | Pass |
-| Gate-related guard and watcher checks | 178 | 0 | Pass |
-| Saved-run audit, including scoped follow-ups | 12 | 0 | Pass |
+| Hooks (`skills/harness/hooks`) | 1104 | 4 | Pass |
+| Gatekeeper (`skills/harness/gatekeeper`) | 342 | 1 | Pass |
+| Validation (`skills/validation`) | 268 | 1 | Pass |
+| Scripts (`skills/scripts`) | 406 | 2 | Pass |
+| Taste (`skills/taste`) | 222 | 0 | Pass |
+| Installers (`scripts`) | 79 | 0 | Pass |
+| Skill-creator (`skills/skill-maker/skill-creator`) | 171 | 0 | Pass |
+| Checkout tools (`tools/run-audit`, `tools/rescan-compare`) | 27 | 0 | Pass |
 
-The first contract run found one stale documentation-phrase assertion. The
-wording was corrected and its 11-test class passed; a later 90-test pass covered
-the changed contract/documentation surfaces. The final gate regression includes
-the additional drift, persistence and table-citation cases. Follow-up executions
-are not added to the distinct-case count. Skips are platform/dependency conditions
-reported by unittest, not failed checks.
+The seven catalog suites hold 2592 tests. `check_runtime.py` reports ready, `validate_manifests.py`
+reports no error, `package_check.py --root .` selects 469 files with no violation, and
+`ruff check .` is clean at the CI pin (0.16.9). Three tests failed on the committed tree before
+this pass (the `ship` version record and the path resolver's `..` handling); all three pass now.
 
-Runtime readiness, manifest validation and package validation passed. Ruff
-0.16.9 is clean on the changed Python surfaces. Ten of ten declared boundaries
-accept their well-formed fixture packages (`BoundarySatisfiabilityTests`).
+## Behaviour that changed
 
-## Before/after behavior
-
-| Scenario | Baseline | Changed implementation |
+| Scenario | Committed tree | This tree |
 | --- | --- | --- |
-| Third consecutive valid REVISE | Returns another REVISE | Writes ESCALATE to user, holds boundary, exits 1 |
-| Major finding missing focused verification | Accepted | Rejected before persisting judgment or cycle |
-| D-999 appears only in prose, outside Intake tables | Accepted as a decision citation | Rejected; citations must identify table rows |
-
-Additional regressions cover all four Gatekeeper identities, resume without
-`--prior`, changed submission/output filenames, duplicate retries, same-revision
-fingerprint drift, phase/cross-stage shared budgets, user holds, explicit reopen,
-corrupt/lost history and mechanical pre-check protection. These are deterministic
-scenarios, not live-model task evaluations.
+| `rm -r`, `mv`, `shutil.rmtree`, `find -delete` or `rsync --delete` aimed at `skillset-saves/runs/<run>/<phase>` | Allowed; the phase's verdict records and `verdict_<boundary>.cycles.json` go with it and the third-REVISE count starts again | Denied by Rule C; the files inside the phase stay the lead's to write or remove by name |
+| `rm verdict_<boundary>.cycles.lock` | Allowed | Denied with the verdict records |
+| `parallel 'rm src/payments/{}' ::: a` under a frozen boundary | Allowed: the quoted line read as a command named `{}` | Denied as the shell line it is |
+| `cat src/payments/list \| xargs -I{} sh -c 'rm {}'` under a frozen boundary | Allowed: the program's write read as a placed write to a file named `{}` | Denied: the placeholder keeps its unresolved standing |
+| `tar -xf a.tar -C Plugins` beside a guard record | Denied: an operand with a capital P read as the `-P` mode | Allowed; `-xPf` is still read as the mode |
+| A `read_only` record whose `allow` is a string | Every path allowed (the string iterated as characters, `*` among them) | No allowance from it; the writer refuses the record |
+| A run manifest inside a run that does not hash `intake/report_grilling.md` | Silent until the gatekeeper's judgment is rejected | The mechanical self-check warns |
+| Two different Major findings in the same report slot | `rescan_compare` reports the reports equal | Different: a finding is identified by severity, location and statement |
 
 ## Paired local timings
 
-Warm-up: 5 discarded iterations per arm; pilot: 7 paired iterations. Pilot
-relative IQR was below 15%, so every workload used 30 paired samples, alternating
-the baseline/candidate execution order. The filesystem cache was warm. The report
-includes medians, p95/p99, IQRs and a 95% bootstrap interval (2,000 resamples) for
-the median paired percentage change. The declared practical budget was 20%.
+Warm-up: 5 discarded iterations per arm; pilot: 7 paired iterations; then 30 paired samples per
+workload, alternating the baseline/candidate order, serial, warm file-system cache. The
+percentage is the median of the per-pair changes with a 95% bootstrap interval (2,000 resamples);
+the declared practical budget is 20%. Two pilots had a relative IQR above 15% and were kept at 30
+samples, which the earlier protocol would have raised to 60; they are marked.
 
-| Workload | Baseline median ms | Changed median ms | Baseline / changed p95 ms | Baseline / changed p99 ms | Paired change, 95% CI |
-| --- | ---: | ---: | ---: | ---: | --- |
-| mechanical_gate_same_package | 57.676 | 58.620 | 60.695 / 61.489 | 61.198 / 62.178 | +0.77% [-0.69%, +3.20%] |
-| approved_judgment_same_package | 59.056 | 61.745 | 63.971 / 71.873 | 66.157 / 72.239 | +6.27% [+4.01%, +8.28%] |
-| full_audit_same_scope | 59.161 | 59.057 | 65.142 / 62.763 | 67.738 / 87.269 | +0.30% [-1.54%, +1.91%] |
-| one_changed_artifact_followup | 57.433 | 0.281 | 59.428 / 0.368 | 60.983 / 0.400 | -99.51% [-99.54%, -99.48%] |
+| Workload | Baseline median ms | This tree median ms | Baseline / this tree p95 ms | Baseline / this tree p99 ms | Paired change, 95% CI | Pilot rel. IQR |
+| --- | ---: | ---: | ---: | ---: | --- | ---: |
+| mechanical gate check, same schema-2 package | 123.566 | 120.370 | 169.721 / 149.764 | 190.864 / 159.931 | -0.45% [-7.11%, +6.44%] | 0.17 |
+| APPROVED judgment persisted, same package | 127.063 | 125.589 | 168.580 / 149.455 | 185.405 / 168.303 | -2.17% [-5.33%, +3.43%] | 0.07 |
+| full saved-run audit (32 runs, 64 phases, 512 hashes) | 113.266 | 122.453 | 167.553 / 176.016 | 184.482 / 183.355 | +8.67% [+2.94%, +16.53%] | 0.09 |
+| scoped follow-up, one changed artifact, both trees | 1.223 | 1.421 | 1.816 / 2.356 | 2.594 / 2.550 | +14.04% [+11.04%, +26.49%] | 0.28 |
+| guard hook, twelve commands through pre_tool_use.py | 1356.103 | 1357.702 | 1427.308 / 1413.162 | 1502.524 / 1470.431 | +0.04% [-2.99%, +0.88%] | 0.04 |
 
-The changed-artifact follow-up is **204.6× faster in this fixture**. The
-baseline scans 32 runs, 64 phases and 512 artifact hashes; the scoped candidate
-scans 1 run, 1 phase and 1 artifact hash. Both find the same changed-artifact
-defect. This measures the reduction in work from the new scope selection; it
-does not claim a 204× speedup for the same full audit. The equivalent full-audit
-workload is effectively unchanged. Durable approval adds about 2.7 ms at the
-median for Intake validation, locking and atomic history persistence. Its paired
-overhead is measurable but remains inside the declared practical budget.
+The two pilots above 15% are the mechanical gate check (0.17) and the scoped follow-up (0.28,
+on a workload of about a millisecond).
 
-The percentage column summarizes individual pairs; it need not equal the ratio
-of the two independently summarized medians. P99 with 30 samples is descriptive,
-not an SLA estimate. Shared-VM load was not externally controlled. Samples were
-captured serially after the regression jobs completed; a preliminary run that
-overlapped tests was discarded. Final report/prose updates do not change the
-measured algorithm.
+On this tree alone, the scoped follow-up for one changed artifact runs in
+1.315 ms against 109.445 ms for the full audit of the same
+fixture: **83× less work in this fixture** (-98.83%
+[-98.87%, -98.69%]). Both find the same
+changed-artifact defect. This measures the reduction in work from scope selection; it is not a
+speed-up of the same full audit.
 
-Load ceiling: concurrency 1, at most 100 CLI operations/s or 10,000 audit
-operations/s, 180 seconds total, less than 8 MiB generated fixture data. Abort
-on a failed command, inconsistent affected-artifact findings, ceiling breach or
-free disk below 128 MiB. The valid sample run completed in 17.6 seconds,
-with no abort; temporary fixtures were removed and the restore register was
-empty because no host settings or services were changed.
+The full audit costs about nine percent more on this tree: every `artifact_hashes` key is now
+normalised and checked for an absolute or climbing path before it is hashed, and a symlinked
+run or phase entry is reported instead of skipped. The scoped follow-up gains about 0.2 ms for
+the same normalisation of the selector and the keys. Both stay inside the practical budget. The
+gate check, the judgment persistence and the guard hook are unchanged within noise: the new
+phase-directory rule adds no measurable cost to the twelve-command batch.
 
-Raw samples, environment fingerprint, exact workload definitions, plan and
-before/after scenario results:
-[benchmark JSON](docs/reviews/review-orchestration-2026-10-25.json).
+Absolute times are not comparable with the 2026-10-25 record, which ran on another host; the
+paired percentages are. P95 and p99 with 30 samples are descriptive, not an SLA estimate.
+Shared-VM load was not externally controlled. Raw samples, the environment fingerprint, the
+plan and the twelve guard decisions of both trees:
+[docs/reviews/review-orchestration-2026-10-26.json](docs/reviews/review-orchestration-2026-10-26.json).
 
 ## Four-Gatekeeper rubric
 
 | Package | Score |
 | --- | ---: |
-| Gatekeeper Admiral | 96/100 |
+| Gatekeeper Admiral | 97/100 |
 | Gatekeeper Design | 97/100 |
 | Gatekeeper Build | 97/100 |
 | Gatekeeper Code | 97/100 |
 
-Mean: **96.75/100**. The reviewer applied all ten dimensions of the repository
-rubric to the four changed Gatekeeper packages. Remaining deductions are existing
-inline reference bulk and one voice inconsistency. There is no measured baseline
-rubric score, no claimed score delta and no claim of 100/100 SHIP. No unresolved
-change-focused correctness blocker was found. This is a score for these four
-packages, not for all 53 skills or a task-success percentage.
+Mean: **97.0/100** (2026-10-25: 96.75). All ten rubric dimensions were applied to the four
+packages at version 2.0.1. The one Minor finding of the previous scorecard (a second-person slip
+in the admiral gatekeeper's boundary reference) is resolved; the remaining deduction in every
+package is the reference material still carried inline in the skill body, which the drift-tested
+boundary tables make a deliberate refactor rather than a rewording. No unresolved change-focused
+correctness blocker was found. This is a score for these four packages, not for all 53 skills
+or a task-success percentage, and there is no claim of 100/100 SHIP.
 
-[Full scorecards and cited deductions](docs/reviews/gatekeeper-rubric-2026-10-25.md),
-[metrics](docs/reviews/gatekeeper-rubric-2026-10-25.metrics.json), and
-[resolved resource pointers](docs/reviews/gatekeeper-rubric-2026-10-25.links.md).
+[Scorecards and the cited deduction](docs/reviews/gatekeeper-rubric-2026-10-26.md) and
+[metrics](docs/reviews/gatekeeper-rubric-2026-10-26.metrics.json).
 
-## Reproduce affected checks
+## Reproduce
 
-Run from a checkout with Python 3.13 or newer; `python` below names that interpreter.
+Run from a checkout with Python 3.13 or newer; `python` names that interpreter.
 
 ```bash
+python -m unittest discover -s skills/harness/hooks -p "test_*.py"
 python -m unittest discover -s skills/harness/gatekeeper -p "test_*.py"
-PYTHONPATH=skills/validation:skills/scripts python -m unittest test_orchestration test_pipeline_contracts test_pipeline_workflows test_docs_inventory test_contract_mirrors test_save_contracts test_catalog_contracts test_save_prose test_stdlib_only
-PYTHONPATH=skills/scripts python -m unittest test_validate_manifests test_package_check
-PYTHONPATH=skills/harness/hooks:skills/scripts python -m unittest test_guard_harness_files test_guard_rules test_gate_watch
-python -m unittest discover -s tools/run-audit/tests -p "test_run_audit.py"
+python -m unittest discover -s skills/validation -p "test_*.py"
+python -m unittest discover -s skills/scripts -p "test_*.py"
+python -m unittest discover -s skills/taste -p "test_*.py"
+python -m unittest discover -s scripts -p "test_*.py"
+python -m unittest discover -s skills/skill-maker/skill-creator -p "test_*.py"
+python -m unittest discover -s tools/run-audit/tests -p "test_*.py"
+python -m unittest discover -s tools/rescan-compare/tests -p "test_*.py"
 python skills/scripts/check_runtime.py
 python skills/scripts/validate_manifests.py
 python skills/scripts/package_check.py --root .
 ```
 
-To reproduce the timing workload, create the identical schema-2 flat design
-package from `DesignPackage` in `test_gate_judgment.py` in two disposable
-directories. Time each checkout's `check.py` subprocess with and without a valid
-APPROVED `--judgment ... --verdict-out ...`. For audit timing, construct 32 saved
-runs with build/review phases and eight hashed Markdown artifacts per phase;
-change only `run-00/build/changed-0.md`. Time `build_model(root)` in each version,
-then compare baseline full audit with changed `build_model(root, ["run-00"],
-["build"], artifacts=["changed-0.md"])`. Apply the warmup, pilot, pairing, sample
-counts and limits above; retain all raw timings.
+To reproduce the timings, `git archive HEAD skills tools` into a disposable directory as the
+baseline. Gate workloads: the schema-2 design package `DesignPackage` of each tree's own
+`skills/harness/gatekeeper/test_gate_judgment.py`, checked by that tree's `check.py` as a
+subprocess, mechanically and with a valid APPROVED `--judgment ... --verdict-out ...`. Audit
+workload: 32 saved runs with `build` and `review` phases and eight hashed Markdown artifacts
+per phase, `run-00/build/changed-0.md` altered; time `build_model(root)` and
+`build_model(root, ["run-00"], ["build"], artifacts=["changed-0.md"])` in a subprocess. Guard
+workload: the twelve commands listed in the JSON, each sent to `pre_tool_use.py` as the Bash
+tool's payload against a populated run. Apply the warm-up, pilot, pairing and sample counts
+above and keep every raw timing.
 
 ## Not measured
 
-Paid trigger-routing, live host registration, end-to-end model task success,
-actual hook firing on another host, and unchanged whole-catalog suites. These
-results do not claim those evaluations passed.
+Paid trigger routing, live host registration, end-to-end model task success and actual hook
+firing on another host. These results do not claim those evaluations passed.

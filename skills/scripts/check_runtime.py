@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from data_formats import DataFormatError, load_data
-from project_files import has_reparse_ancestor
+from project_files import is_reparse_point
 from project_inspection import inspect_project
 from redaction import add_error
 from redaction import redact_value as _redact_value
@@ -132,7 +132,9 @@ def check(
     detect_start_command: bool = False,
 ) -> dict:
     requested_root = catalog_root.expanduser().absolute()
-    if has_reparse_ancestor(requested_root):
+    # The root itself may not be a link (a link is not inspected); a link among its ancestors is resolved, as it is
+    # for every path under /tmp and $TMPDIR on macOS, where /var and /tmp are links into /private.
+    if is_reparse_point(requested_root):
         errors: list[str] = []
         add_error(errors, "catalog root: reparse points are not inspected")
         return _redact_value(_runtime_error_report(errors))
@@ -194,7 +196,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--project-root",
-        help="project directory to inspect read-only (default: the current directory)",
+        help="project directory --detect-project or --detect-start-command inspects read-only "
+        "(default: the current directory); alone it changes nothing",
     )
     parser.add_argument("--detect-project", action="store_true", help="detect project evidence and registered stacks")
     parser.add_argument("--detect-start-command", action="store_true", help="record package start-command candidates without running them")

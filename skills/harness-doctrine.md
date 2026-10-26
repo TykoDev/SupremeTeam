@@ -99,7 +99,7 @@ earliest layer where it is reliably enforceable.
 | Environment Contract | `execution-contract.md` | deterministic comparator: `skills/validation/test_catalog_contracts.py` compares the six canonical clauses against the fifteen skills that restate them |
 | Procedural Skill | the skill library, `pipelines.yaml`, `session-memory` learnings | doctrine plus authoring |
 | Action Realization | `careful`, `freeze`, `guard`, `unfreeze`, the save write probe, gate pre-checks, `harness/hooks/pre_tool_use.py` | advisory plus deterministic hook |
-| Trajectory Regulation | gatekeepers, checkpoints, rewind rules, the revision cap, `harness/hooks/post_tool_use.py` | per boundary plus per step |
+| Trajectory Regulation | gatekeepers, checkpoints, rewind rules, the revision cap (`harness/gatekeeper/_gatecycle.py`), `harness/hooks/post_tool_use.py` | per boundary plus per step |
 
 `execution-contract.md` is listed on its own row because its enforcement changed:
 it was doctrine plus gate review until a comparator was added, and it is now the

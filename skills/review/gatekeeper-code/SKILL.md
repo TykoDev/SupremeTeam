@@ -8,7 +8,7 @@ description: >-
   validate the review package, review delivery readiness, say whether the review is
   finished enough to deliver, gate the review output, or challenge this review
   packet. Whether work is ready to *enter* review is `build/gatekeeper-build`.
-version: 2.0.0
+version: 2.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -274,7 +274,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | `executed_probes` or `rendered_verification` carries `inputs` whose sha256 no longer matches the source file (`input hash drift`) | Return REVISE to the key's owner — `code-chief` for probes, `design-qa` for renders. The source changed after the evidence was captured, so the evidence proves a state the package no longer ships. |
 | The boundary validator exits 2 — missing or malformed gate spec, unknown boundary, unreadable manifest | Return ESCALATE. An engine failure is never approval, and the gate spec is never bypassed to keep a run moving. |
 | `scripts/check.py` cannot run (Python unavailable, permission error, `<package-dir>` rejected by the containment guard) or exits with internal-error code 2 | Treat the gate as NOT satisfied — do not default to APPROVED. Surface the error, then choose ESCALATE (or REVISE) instead of a silent pass. A gate that fails open is worse than no gate; an unknown pre-check result is not evidence of readiness. |
-| `check.py --judgment` rejects the judgment record — a cited `D-` or `AC-` id the intake log or plan does not contain, a key or owner the spec does not name, an unhashed anchor, a REVISE with no grounded Critical or Major finding, or a new finding on unchanged evidence | The record is the gate's defect, not the package's. Ground each finding in the source of truth and the package's hashed artifacts, or drop it; if what the gate wanted is in no source of truth, return `ESCALATE` to `admiral` for an intake decision instead. Never store or return the rejected verdict. |
+| `check.py --judgment` rejects the judgment record — a cited `D-` or `AC-` id the intake log or plan does not contain, a key or owner the spec does not name, an unhashed anchor, no `intake.artifact` naming this run's hashed Intake log (or an ESCALATE to the user carrying `intake.unavailable`), a Critical or Major finding without `expected`, `observed`, `remediation` and `verification`, a `D-`/`AC-` ref that is a prose mention and not a table row, a REVISE with no grounded Critical or Major finding, or a new finding on unchanged evidence | The record is the gate's defect, not the package's. Ground each finding in the source of truth and the package's hashed artifacts, or drop it; if what the gate wanted is in no source of truth, return `ESCALATE` to the user through `admiral` for an intake decision instead. Never store or return the rejected verdict. |
 
 ## Save Protocol
 

@@ -283,7 +283,11 @@ def read_only_allow(records) -> list:
     allow = [".harness-state/**"]
     for record in records or []:
         if isinstance(record, dict):
-            allow += [str(glob) for glob in (record.get("allow") or []) if glob]
+            globs = record.get("allow")
+            # A string here (only a hand edit makes one) would iterate as characters, and a `*` among them
+            # would allow every path: anything but a list adds no allowance.
+            if isinstance(globs, list):
+                allow += [str(glob) for glob in globs if glob]
     return allow
 
 

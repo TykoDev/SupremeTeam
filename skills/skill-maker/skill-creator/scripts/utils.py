@@ -106,7 +106,7 @@ def find_project_root(explicit: Path | None = None, start: Path | None = None) -
 
 def parse_skill_md(skill_path: Path) -> tuple[str, str, str]:
     """Parse a SKILL.md file, returning (name, description, full_content)."""
-    content = (skill_path / "SKILL.md").read_text(encoding="utf-8")
+    content = (skill_path / "SKILL.md").read_text(encoding="utf-8-sig")  # a byte order mark is not frontmatter text
     lines = content.split("\n")
 
     if lines[0].strip() != "---":

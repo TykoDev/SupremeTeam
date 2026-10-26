@@ -365,10 +365,12 @@ class ResolverWithoutLinksTests(PathCase):
         deep.parent.mkdir(parents=True)
         deep.write_text("x", encoding="utf-8")
         resolver = _paths.Resolver()
-        spellings = (deep, self.root / "a" / "b" / "." / "c" / "d.txt", self.root / "a" / "b" / "b" / ".." / "c" / "d.txt")
+        # Spelled as text: ``Path`` would fold the ``.`` away before the resolver ever saw it.
+        base = deep.parent.parent.as_posix()
+        spellings = (deep.as_posix(), f"{base}/./c/d.txt", f"{base}/b/../c/d.txt", f"{base}//c/./d.txt")
         for spelling in spellings:
-            with self.subTest(spelling=str(spelling)):
-                self.assertEqual(resolver.real(str(spelling)), _paths._real(str(spelling)))
+            with self.subTest(spelling=spelling):
+                self.assertEqual(resolver.real(spelling), _paths._real(spelling))
 
     def test_many_paths_in_one_directory_cost_one_look_per_directory(self):
         base = self.root / "deep" / "chain"

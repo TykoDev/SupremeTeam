@@ -552,6 +552,13 @@ class ContextTextTests(Project):
 class FaultTraceTests(Project):
     """CR-13: a fault that is swallowed to fail open is counted, by type, in the hook's observation record."""
 
+    def test_a_payload_that_does_not_parse_is_counted_as_the_other_hooks_count_it(self):
+        proc = kit.run_hook("post_tool_use.py", b"{not json", self.root)
+        self.assertEqual((proc.returncode, proc.stdout), (0, b""))
+        record = self.observation("PostToolUse")
+        self.assertEqual(record.get("faults"), 1, record)
+        self.assertEqual(record["last_fault"]["type"], "JSONDecodeError")
+
     SECRET = "SECRET-PAYLOAD-MUST-NOT-BE-RECORDED"
 
     def assertCounted(self, event: str, kind: str, count: int = 1) -> None:

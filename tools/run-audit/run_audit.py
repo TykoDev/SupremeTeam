@@ -17,13 +17,14 @@ import argparse
 import hashlib
 import html
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 TOOL_NAME = "run-audit"
-TOOL_VERSION = "1.1.0"
+TOOL_VERSION = "1.2.0"
 
 SEVERITIES = ("Critical", "Major", "Minor", "Info")
 SINK_LIMIT = 200
@@ -102,22 +103,24 @@ def _max_revision(events: list, state: dict) -> int:
         revision = event.get("revision")
         if isinstance(revision, int) and not isinstance(revision, bool):
             best = max(best, revision)
-        elif isinstance(revision, str) and revision.isdigit():
-            best = max(best, int(revision))
+        elif isinstance(revision, str) and revision.isascii() and revision.isdigit():
+            best = max(best, int(revision))  # "²" is a digit to str.isdigit and not to int()
     state_revision = state.get("revision") if isinstance(state, dict) else None
     if isinstance(state_revision, int) and not isinstance(state_revision, bool):
         best = max(best, state_revision)
     return best
 
 
+def _artifact_key(text: str) -> str:
+    """One spelling for a manifest-relative artifact path: forward slashes, no ``./`` or doubled separators."""
+    return PurePosixPath(os.path.normpath(str(text).replace("\\", "/"))).as_posix() if str(text).strip() else str(text)
+
+
 def _scan_manifest(path: Path, project_root: Path, findings: list, artifacts: list[str] | None = None) -> dict:
     data = _load_json(path, findings, project_root, "manifest")
-    result = {"manifest": _rel(path, project_root), "boundary": None, "schema_version": None,
-              "evidence_drift": [], "declared_artifacts": 0}
+    result = {"manifest": _rel(path, project_root), "evidence_drift": [], "declared_artifacts": 0, "checked_artifacts": 0}
     if not isinstance(data, dict):
         return result
-    result["boundary"] = data.get("boundary")
-    result["schema_version"] = data.get("schema_version")
     hashes = data.get("artifact_hashes")
     if not isinstance(hashes, dict):
         findings.append({"severity": "Major", "statement": "manifest declares no artifact_hashes map",
@@ -125,15 +128,25 @@ def _scan_manifest(path: Path, project_root: Path, findings: list, artifacts: li
         return result
     result["declared_artifacts"] = len(hashes)
     if artifacts:
-        for missing in sorted(set(artifacts) - set(hashes)):
+        # The selector and the manifest key may spell one path two ways (`./x.md`, `evidence\\x.json`).
+        selected = {_artifact_key(item) for item in artifacts}
+        declared = {_artifact_key(key) for key in hashes}
+        for missing in sorted(selected - declared):
             findings.append({"severity": "Major", "statement": f"selected artifact is not declared: {missing}",
                              "where": _rel(path, project_root)})
-        hashes = {key: value for key, value in hashes.items() if key in artifacts}
+        hashes = {key: value for key, value in hashes.items() if _artifact_key(key) in selected}
     result["checked_artifacts"] = len(hashes)
     for rel, expected in sorted(hashes.items()):
-        target = (path.parent / str(rel))
         entry = {"manifest": _rel(path, project_root), "path": str(rel), "expected": str(expected),
                  "actual": None, "kind": None}
+        parts = PurePosixPath(str(rel).replace("\\", "/")).parts
+        if not parts or parts[0] in ("/", "..") or PurePosixPath(str(rel)).is_absolute() or ".." in parts:
+            # A key is manifest-relative (handoff-templates.md); an absolute or climbing one is not an artifact of
+            # this package even when it points at a readable file inside the project.
+            entry["kind"] = "unresolvable"
+            result["evidence_drift"].append(entry)
+            continue
+        target = (path.parent / str(rel))
         try:
             resolved = target.resolve()
             resolved.relative_to(project_root.resolve())
@@ -145,7 +158,12 @@ def _scan_manifest(path: Path, project_root: Path, findings: list, artifacts: li
             entry["kind"] = "missing"
             result["evidence_drift"].append(entry)
             continue
-        actual = content_sha256(resolved)
+        try:
+            actual = content_sha256(resolved)
+        except OSError:
+            entry["kind"] = "unreadable"  # a file this account cannot read is a finding, not a traceback
+            result["evidence_drift"].append(entry)
+            continue
         entry["actual"] = actual
         if actual != str(expected).lower():
             entry["kind"] = "hash-drift"
@@ -192,6 +210,10 @@ def scan_runs(project_root: Path, run_ids: list[str] | None = None, phases: list
             if run_ids:
                 findings.append({"severity": "Major", "statement": "selected run is missing or a symlink",
                                  "where": _rel(run_dir, project_root)})
+            elif run_dir.is_symlink():
+                # A link where a run belongs substitutes another tree's evidence; the full audit says so too.
+                findings.append({"severity": "Major", "statement": "run entry is a symlink and was not followed",
+                                 "where": _rel(run_dir, project_root)})
             continue
         state = _load_json(run_dir / "_state.md", findings, project_root, "run state")
         state = state if isinstance(state, dict) else {}
@@ -201,10 +223,14 @@ def scan_runs(project_root: Path, run_ids: list[str] | None = None, phases: list
         drift = []
         verdicts = []
         phase_dirs = [run_dir / name for name in sorted(set(phases))] if phases else sorted(run_dir.iterdir())
+        declared_total = checked_total = 0
         for phase_dir in phase_dirs:
             if phase_dir.is_symlink() or not phase_dir.is_dir():
                 if phases:
                     findings.append({"severity": "Major", "statement": "selected phase is missing or a symlink",
+                                     "where": _rel(phase_dir, project_root)})
+                elif phase_dir.is_symlink():
+                    findings.append({"severity": "Major", "statement": "phase entry is a symlink and was not followed",
                                      "where": _rel(phase_dir, project_root)})
                 continue
             manifest = phase_dir / "manifest.json"
@@ -212,6 +238,8 @@ def scan_runs(project_root: Path, run_ids: list[str] | None = None, phases: list
                 scanned = _scan_manifest(manifest, project_root, findings, artifacts)
                 manifests.append(scanned["manifest"])
                 drift.extend(scanned["evidence_drift"])
+                declared_total += scanned["declared_artifacts"]
+                checked_total += scanned["checked_artifacts"]
             elif artifacts:
                 findings.append({"severity": "Major", "statement": "selected phase has no manifest for artifact audit",
                                  "where": _rel(manifest, project_root)})
@@ -224,6 +252,8 @@ def scan_runs(project_root: Path, run_ids: list[str] | None = None, phases: list
             "event_count": len(events),
             "events": events[:SINK_LIMIT],
             "manifests": manifests,
+            "artifacts_declared": declared_total,
+            "artifacts_checked": checked_total,
             "gate_verdicts": verdicts,
             "evidence_drift": drift,
         })
@@ -252,11 +282,13 @@ def scan_harness(project_root: Path) -> dict:
     trajectories = state_root / "trajectories"
     if trajectories.is_dir():
         for run_dir in sorted(p for p in trajectories.iterdir() if p.is_dir()):
-            files = [p for p in run_dir.iterdir() if p.is_file()]
-            harness["trajectories"][run_dir.name] = {
-                "files": len(files),
-                "bytes": sum(p.stat().st_size for p in files),
-            }
+            try:
+                files = [p for p in run_dir.iterdir() if p.is_file()]
+                size = sum(p.stat().st_size for p in files)
+            except OSError:
+                harness["trajectories"][run_dir.name] = {"error": "unreadable"}
+                continue
+            harness["trajectories"][run_dir.name] = {"files": len(files), "bytes": size}
     return harness
 
 
@@ -264,14 +296,14 @@ def build_model(project_root: Path, run_ids: list[str] | None = None, phases: li
                 include_harness: bool = False, artifacts: list[str] | None = None) -> dict:
     if phases and not run_ids:
         raise ValueError("phase scope requires at least one run id")
-    if artifacts and (not run_ids or not phases or len(phases) != 1):
+    if artifacts and (not run_ids or not phases or len(set(phases)) != 1):
         raise ValueError("artifact scope requires --run-id and exactly one --phase")
     runs, findings = scan_runs(project_root, run_ids, phases, artifacts)
     harness = scan_harness(project_root) if include_harness or not run_ids else {"not_run": "outside selected run scope"}
-    for index, finding in enumerate(findings, start=1):
-        finding["id"] = f"F-{index}"
+    # Severity first, discovery order within it (a stable sort), then the ids: sorting on a provisional "F-10" put
+    # the tenth finding before the second.
     order = {name: pos for pos, name in enumerate(SEVERITIES)}
-    findings.sort(key=lambda f: (order.get(f["severity"], len(SEVERITIES)), f["id"]))
+    findings.sort(key=lambda f: order.get(f["severity"], len(SEVERITIES)))
     for index, finding in enumerate(findings, start=1):
         finding["id"] = f"F-{index}"
     return {

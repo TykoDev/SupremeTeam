@@ -48,6 +48,7 @@ The submission is one JSON file at the run's `qa/` phase destination, resolved w
     "residual_risk": "Apple Pay path untested - sandbox merchant account unavailable."
   },
   "artifact_hashes": {
+    "../intake/report_grilling.md": "<sha256>",
     "evidence/test-matrix.md": "<sha256>",
     "evidence/executed-probes.log": "<sha256>"
   }
@@ -122,9 +123,12 @@ gatekeeper re-judges only what moved and carries its earlier judgment on what di
 revision on every resubmission: a verdict is reusable only for the same boundary, submission,
 revision, package fingerprint, and gate-spec digest.
 
-`revise_policy` sets `cycle_cap: 3`. A third `REVISE` on the same package ends the cycle:
-return `ESCALATE` with all three packets, the `changed_evidence` and `unchanged_evidence` lists, and
-the keys that did not converge. Opening a fourth cycle is not a retry — it is the failure this
+`revise_policy` sets `cycle_cap: 3`. A third `REVISE` on the same package ends the cycle: the gate
+writes it as `ESCALATE` to the user (`revision_cycle.held_for_user: true`) and holds the boundary.
+Hand Admiral all three
+packets, the `changed_evidence` and `unchanged_evidence` lists, and the keys that did not converge,
+and run no further automatic sweep, fix or resubmission until a new user decision reopens the
+boundary with `--reopen-reference`. Opening a fourth cycle is not a retry — it is the failure this
 cap exists to surface.
 
 ## 5. Recording a Probe That Could Not Run

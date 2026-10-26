@@ -36,9 +36,7 @@ Exit codes follow the catalog convention:
 ```
 
 Finding severity must be one of `Critical`, `Major`, `Minor`, `Info`.
-The finding set is the set of (id, severity) pairs: a severity change
-with unchanged ids is a difference, because the same finding at a
-different grade is not the same finding.
+A finding is identified by what it says, `(severity, where, statement)`, when the report carries those fields (run-audit's reports do), and by `(id, severity)` otherwise. run-audit's `F-<n>` ids are positions in a sorted list, so one new finding renumbers every later one: compared by id, a different Major in the same slot would read as unchanged and an inserted finding as many changes. A severity change with the same text is a difference: the same finding at a different grade is not the same finding.
 
 ## Tests
 

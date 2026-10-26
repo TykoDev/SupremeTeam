@@ -435,6 +435,24 @@ class GuardStateHardeningTests(GuardStateCase):
                         self.assertIn(f"'{key}' must be a list", err)
                     self.assertEqual(kit.decide(kit.bash("touch src/payments/a.py"), self.project), "")
 
+    def test_a_blank_record_is_refused_by_the_writer_as_the_hook_reads_it_as_damage(self):
+        """The writer read a blank file as no record and wrote over it, while the hook counted GuardStateUnreadable on every call."""
+        for content in (b"", b"  \n"):
+            (self.project / ".harness-state").mkdir(exist_ok=True)
+            (self.project / ".harness-state" / "guard-state.json").write_bytes(content)
+            for name, args in (("status", ()), ("freeze", ("--glob", "a/**", "--owner", "ops"))):
+                code, err = self.guard_here(name, *args)
+                self.assertEqual(code, 1, (content, name, err))
+                self.assertIn("is empty", err)
+            self.assertEqual((self.project / ".harness-state" / "guard-state.json").read_bytes(), content)
+
+    def test_a_read_only_allow_in_another_shape_is_refused_by_the_writer_and_grants_nothing_to_the_hook(self):
+        self.write_record({"read_only": [{"run_id": "r1", "owner": "qa", "allow": "skillset-saves/runs/r1/**"}]})
+        code, err = self.guard_here("status")
+        self.assertEqual(code, 1, err)
+        self.assertIn("'allow' must be a list", err)
+        self.assertTrue(kit.denied(kit.decide(kit.bash("touch src/a.py"), self.project)))
+
     def test_status_says_why_an_unmatchable_record_already_on_disk_enforces_nothing(self):
         self.write_record({"frozen_globs": [{"glob": f"/{self.MISSING}/payments/**", "owner": "ops"}, {"glob": "!x/**", "owner": "ops"},
                                             {"glob": "src/ok/**", "owner": "ops"}]})

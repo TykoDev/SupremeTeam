@@ -470,7 +470,7 @@ def _sweep_coverage_residue(tool_name: str) -> "str | None":
 def main() -> None:
     global _pending_coverage_hint, _pending_maintenance_hints
 
-    data = _state.read_hook_input()
+    data = _state.read_hook_input("PostToolUse")
     _state.record_observation("PostToolUse", data)
     run_heartbeat.refresh(data, "PostToolUse")
     # Scoped identity: host session id, else environment, else host process.

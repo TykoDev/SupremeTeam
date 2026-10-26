@@ -35,6 +35,7 @@ One JSON file at the run's `release/` phase destination, resolved with
     "human_go_required": {"decision": "go", "approver": "release-owner", "approval_reference": "GO-2026-04-19-01", "revision": "rev-8f21c0a", "decided_at": "2026-04-19T20:05:00Z"}
   },
   "artifact_hashes": {
+    "../intake/report_grilling.md": "<sha256>",
     "../review/verdict_review-to-delivery.cross-stage.json": "<sha256>",
     "artifacts/deploy-config.yaml": "<sha256>",
     "artifacts/verification-plan.md": "<sha256>",
@@ -109,10 +110,11 @@ gatekeeper re-judges only what moved. Raise the revision on every resubmission: 
 reusable only for the same boundary, submission, revision, package fingerprint, and gate-spec
 digest.
 
-`revise_policy` sets `cycle_cap: 3`. A third `REVISE` ends the cycle: return `ESCALATE` with
-all three packets, the changed and unchanged evidence, and the owner of each key that did not
-converge. Hold the release while any of those verdicts stands — a gate that has not approved has not
-approved slowly.
+`revise_policy` sets `cycle_cap: 3`. A third `REVISE` ends the cycle: the gate writes it as `ESCALATE`
+to the user (`revision_cycle.held_for_user: true`). Hand Admiral all three packets, the changed and
+unchanged evidence, and the owner of each key that did not converge, and do no automatic repair or
+resubmission until a new user decision reopens the boundary with `--reopen-reference`. Hold the
+release while any of those verdicts stands — a gate that has not approved has not approved slowly.
 
 ## 4. Repeat Releases: Current-Run Snapshots
 

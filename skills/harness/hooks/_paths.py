@@ -17,7 +17,8 @@ relative glob still matches it at any depth, the one loose rule left, and only e
 in the deny direction. An allow list is never loosened: every form a target can take
 must lie inside it.
 
-Stdlib only, no I/O beyond ``realpath``, no import of another hook module.
+Stdlib only and no import of another hook module. The only questions put to the file system are ``realpath``,
+``lstat`` (is this entry a link), ``isdir`` for the first directory of a root-anchored glob, and ``expanduser``.
 """
 from __future__ import annotations
 
@@ -152,6 +153,9 @@ class Resolver:
         drive = _DRIVE.match(text)
         if not drive and not text.startswith("/"):
             return _real(text)
+        # ``.`` and ``..`` are collapsed before the walk, as ``locate`` does before it asks: a walk that
+        # kept them would look up ``b/..`` as an entry named ``..`` under ``b`` and never fold it away.
+        text = _normalise(text)
         anchor = (drive.group(0) if drive else "") + "/"
         known = self._known
         if anchor not in known:

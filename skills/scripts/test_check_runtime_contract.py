@@ -172,6 +172,16 @@ class RuntimeContractTests(ManifestCatalogMixin, unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertEqual(report["python"]["status"], "error")
 
+    def test_a_catalog_under_a_symlinked_ancestor_is_inspected(self):
+        """Every ancestor was tested, so a catalog under $TMPDIR on macOS (/var -> /private/var) was refused."""
+        real = self.manifest_catalog(manifest_with())
+        holder = tempfile.TemporaryDirectory()
+        self.addCleanup(holder.cleanup)
+        link = Path(holder.name) / "parent-link"
+        fixtures.symlink_or_skip(self, real.parent, link, directory=True)
+        report = check_runtime.check(link / real.name)
+        self.assertNotIn("catalog root: reparse points are not inspected", report["errors"])
+
     def test_a_symlinked_catalog_root_is_refused(self):
         real = self.manifest_catalog(manifest_with())
         holder = tempfile.TemporaryDirectory()

@@ -93,7 +93,7 @@ def validate_skill(skill_path):
         return False, "SKILL.md not found"
 
     # Read and validate frontmatter
-    content = skill_md.read_text(encoding='utf-8')
+    content = skill_md.read_text(encoding='utf-8-sig')  # a byte order mark is not frontmatter text
     if not content.startswith('---'):
         return False, "No YAML frontmatter found"
 

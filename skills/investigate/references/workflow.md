@@ -122,8 +122,8 @@ judgment finding from the pass, grouped by evidence key and owner in
 packet is resolved in a single pass rather than routed. Repair the failing keys,
 re-hash any changed artifact, and resubmit once with `--prior <verdict.json>` so
 `changed_evidence` names what to re-judge and the gatekeeper carries its prior
-judgment on `unchanged_evidence`. `revise_policy.cycle_cap` is 3; a third cycle
-escalates instead of resubmitting.
+judgment on `unchanged_evidence`. `revise_policy.cycle_cap` is 3; the gate writes a third consecutive
+`REVISE` as `ESCALATE` to the user, so stop resubmitting and wait for a new user decision.
 
 ## Decision Rules
 

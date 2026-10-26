@@ -36,10 +36,11 @@ cannot waive a gate, security evidence, or active-run ownership.
 ## Contents
 
 1. check.py: the boundary validator
-2. Boundaries
-3. Batched REVISE
-4. _gatecheck.py: the package-shape validator
-5. Regression tests
+2. Review discipline and durable cycles
+3. Boundaries
+4. Batched REVISE
+5. _gatecheck.py: the package-shape validator
+6. Regression tests
 
 ## check.py: the boundary validator
 
@@ -66,7 +67,8 @@ python skills/harness/gatekeeper/check.py \
   --boundary design-to-build \
   --package skillset-saves/runs/<run>/design/manifest.json \
   [--prior <previous verdict>] \
-  [--verdict-out <phase>/verdict_<boundary>.json] \
+  [--judgment <phase>/verdict_<boundary>.judgment.json --verdict-out <phase>/verdict_<boundary>.json] \
+  [--reopen-reference <new user decision>] \
   [--gates skills/gates.yaml]
 ```
 
@@ -297,7 +299,9 @@ and human-go records, nested values and research/UI/CSO slot attribution. The fl
 in `skills/scripts/contract_floor.py` is independent of gates.yaml and is checked
 by the shipped loader, shape-wrapper catalog loader and manifest validator. Explicit
 `--gates` experiments remain non-shipped inputs, never approval authority. The
-revision cap is declared/validated but counted by the orchestrator, not this engine.
+revision cap is declared in `gates.yaml`, validated by `validate_manifests.py` and counted
+by this engine: `_gatecycle.py` records each distinct REVISE revision at `--judgment` /
+`--verdict-out` time and writes the third as ESCALATE to the user (`test_gate_cycles.py`).
 
 `test_gate_judgment.py` covers the judgment record: every basis kind in a
 grounded form, citations the intake log or plan does not contain, id prefixes,

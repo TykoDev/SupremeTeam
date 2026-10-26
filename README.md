@@ -41,8 +41,9 @@ install step that changes what the assistant can do (see
 Every phase boundary hits a gatekeeper. The package and its hashed evidence go
 through two deterministic validators, then a gatekeeper issues one verdict:
 **APPROVED** advances, **REVISE** returns every finding at once, grouped by owner,
-and only for a mechanical failure, a Critical, or an unresolved Major (twice, then
-escalate), **ESCALATE** comes to you. The cross-stage gate judges the crossing and
+and only for a mechanical failure, a Critical, or an unresolved Major (three rounds at
+most: the gate records the third consecutive REVISE as ESCALATE to you and holds the
+boundary until you decide), **ESCALATE** comes to you. The cross-stage gate judges the crossing and
 carries the phase gate's judgment, so a package is not reviewed twice for the same
 question. Evidence that names its source files by
 sha256 fails with `input hash drift` when one of them changes, instead of the gate
@@ -68,9 +69,9 @@ More in [docs/persistent-saves.md](docs/persistent-saves.md).
 ## How well it works
 
 [BENCHMARK.md](BENCHMARK.md) has the results measured on the current tree: the seven
-test suites, the three validators and lint. Model-judged rubric scores and routing
-accuracy are not in it, because neither was re-run on this tree; routing is a paid
-model run, and CI runs neither.
+test suites, the three validators and lint, and the skill rubric scored on the four
+gatekeeper packages (`docs/reviews/`). Routing accuracy is not in it, because that is
+a paid model run that was not repeated, and CI runs neither.
 
 ## Check an installation
 

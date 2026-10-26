@@ -168,12 +168,21 @@ python skills/harness/gatekeeper/check.py --boundary design-to-build \
 ```
 
 Judgment record shape: `{boundary, submission_id, revision, gate, verdict,
-findings[], statement}`. `submission_id` and `revision` must equal the
-manifest's. A finding stands on a basis: `{kind: decision|acceptance, ref:
-"D-3"/"AC-2", artifact}` (the artifact must be one of *this* package's hashed
-artifacts and must contain the id), `{kind: contract, source, ref}` (source must
-be an existing `.md`/`.yaml` under `skills/`), or `{kind: contradiction}` with
-two hashed artifacts. Info findings never block; Critical and Major do.
+intake: {artifact: ../intake/report_grilling.md}, findings: [{id, severity,
+key|null, statement, expected, observed, remediation, verification, basis,
+evidence[]}], escalation?: {to, reason}}`. `submission_id` and `revision` must
+equal the manifest's. `intake.artifact` must be one of this package's hashed
+artifacts and resolve to the run's Intake log, or the record is an ESCALATE to
+the user carrying `intake: {unavailable: <reason>}`. A finding stands on a basis:
+`{kind: decision|acceptance, ref: "D-3"/"AC-2", artifact}` (the artifact must be
+one of *this* package's hashed artifacts and the id must be a row of its decision
+or acceptance table, not a mention in prose), `{kind: contract, source, ref}`
+(source must be an existing `.md`/`.yaml` under `skills/`), or `{kind:
+contradiction}` with two hashed artifacts. Every Critical or Major finding fills
+`expected`, `observed`, `remediation` and `verification`. Info findings never
+block; Critical and Major do. The third consecutive REVISE a judgment asks for is
+written as `ESCALATE` with `requested_verdict: REVISE` and exit 1; only
+`--reopen-reference <new user decision>` reopens the boundary.
 
 ---
 

@@ -8,7 +8,7 @@ description: >-
   check build readiness, review build phase output, or challenge this build packet.
   Judges inside the build phase; the handoff between stages is `gatekeeper-admiral`,
   and a list of what is missing with no decision is `build/cross-check-build-confirm`.
-version: 2.0.0
+version: 2.0.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -296,7 +296,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | A claimed build fix quietly widens scope beyond the approved design or implementation contract | Escalate the scope expansion instead of letting the build packet smuggle a design change downstream. |
 | The resubmission changes the code surface but leaves the revision delta or blocker summary unchanged | Treat the verdict as stale, require a fresh delta summary, and prevent silent re-gating. |
 | The package omits `schema_version`, so the boundary validator reports `manifest_schema_version: 1` | Return `REVISE` to `build-management` for a schema-2 manifest carrying `boundary` and `owner`. Exit 0 on a schema-1 package is a weaker fact than it looks: no typed record was checked, so `tests` and `runtime` were verified as hashed paths but never as passing probes. Do not read that exit 0 as the evidence contract being satisfied. |
-| `check.py --judgment` rejects the judgment record — a cited `D-` or `AC-` id the intake log or plan does not contain, a key or owner the spec does not name, an unhashed anchor, a REVISE with no grounded Critical or Major finding, or a new finding on unchanged evidence | The record is the gate's defect, not the package's. Ground each finding in the source of truth and the package's hashed artifacts, or drop it; if what the gate wanted is in no source of truth, return `ESCALATE` to `admiral` for an intake decision instead. Never store or return the rejected verdict. |
+| `check.py --judgment` rejects the judgment record — a cited `D-` or `AC-` id the intake log or plan does not contain, a key or owner the spec does not name, an unhashed anchor, no `intake.artifact` naming this run's hashed Intake log (or an ESCALATE to the user carrying `intake.unavailable`), a Critical or Major finding without `expected`, `observed`, `remediation` and `verification`, a `D-`/`AC-` ref that is a prose mention and not a table row, a REVISE with no grounded Critical or Major finding, or a new finding on unchanged evidence | The record is the gate's defect, not the package's. Ground each finding in the source of truth and the package's hashed artifacts, or drop it; if what the gate wanted is in no source of truth, return `ESCALATE` to the user through `admiral` for an intake decision instead. Never store or return the rejected verdict. |
 
 ## Save Protocol
 

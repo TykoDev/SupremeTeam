@@ -219,6 +219,7 @@ Not skills. These are the files the skills are checked against.
 | `skills/contracts/responsibility-matrix.md` | One writer per lifecycle layer |
 | `skills/contracts/universal-frameworks.md` | Cross-cutting invariants and where their practice is defined |
 | `skills/contracts/delivery-template.md` | The final delivery record |
+| `skills/contracts/review-discipline.md` | Intake authority, one gate per specialist review, complete REVISE feedback, follow-up scope, the third-REVISE escalation to the user |
 
 ## Runtime harness
 
@@ -247,6 +248,7 @@ Not skills. These are the files the skills are checked against.
 | **check_readiness.py** | `skills/harness/hooks/check_readiness.py` | Python, hooks, and save state as an independent capability map |
 | **gatekeeper/check.py** | `skills/harness/gatekeeper/check.py` | Boundary validator; loads `gates.yaml` |
 | **gatekeeper/_gatecheck.py** | `skills/harness/gatekeeper/_gatecheck.py` | Package-shape engine behind each `gatekeeper-*/scripts/check.py` |
+| **gatekeeper/_gatecycle.py** | `skills/harness/gatekeeper/_gatecycle.py` | REVISE cycle history behind `check.py --judgment --verdict-out`: per-gate streaks and the shared boundary budget in `verdict_<boundary>.cycles.json`, the third round written as ESCALATE to the user, reopened only by `--reopen-reference` |
 
 Shared tooling is in `skills/scripts/`. Its command-line tools are
 `check_runtime.py`, `output_paths.py`, `scan_record.py`, `check_parity.py`,
@@ -274,7 +276,7 @@ never approve it.
 **53 skills**: Admiral 2, Design 9, Build 8, Review 11, Investigate 1,
 Skill-Maker 3, Session-Memory 1, Taste 2, Harness Audit 1, Browser 4, Release 4,
 Safety 4, Testing 3. Plus
-the runtime harness, eight doctrine and protocol files, six canonical contracts,
+the runtime harness, eight doctrine and protocol files, seven canonical contracts,
 and the machine-readable specs.
 
 `admiral`, `gatekeeper-admiral`, `investigate`, `skill-maker`, `session-memory`,

@@ -17,7 +17,7 @@ enforced.
 | 1 | Environment Contract | before interaction | `design-doctrine.md`, `grill-me-doctrine.md`, `mcp-tools.md`, `tech-stacks/registry.yaml`, `execution-contract.md`, intake briefs |
 | 2 | Procedural Skill | task conditioning | the skill library, `session-memory` learnings, `pipelines.yaml` |
 | 3 | Action Realization | before execution | `careful`, `freeze`, `guard`, `unfreeze`, the save write probe, gate pre-checks, `pre_tool_use.py` |
-| 4 | Trajectory Regulation | after execution | gatekeepers, checkpoints, rewind rules, the revision cap, `post_tool_use.py` |
+| 4 | Trajectory Regulation | after execution | gatekeepers, checkpoints, rewind rules, the revision cap (`harness/gatekeeper/_gatecycle.py`), `post_tool_use.py` |
 
 An intervention that helps a weak model but gets in a strong one's way is a
 defect. When in doubt, it does nothing.

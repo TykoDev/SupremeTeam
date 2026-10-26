@@ -139,6 +139,7 @@ evidence:
   [typed key]: {artifacts: [...], inputs: [{path, sha256}], result: {status: pass}}
   [waivable key]: {applicable: false, reason: ..., scope: ..., decided_by: ...}
 artifact_hashes:
+  ../intake/report_grilling.md: [sha256]  # inside a run, at every boundary: the gatekeeper's judgment binds intake.artifact to it
   [manifest-relative path]: [sha256]
 ```
 
@@ -162,13 +163,17 @@ Validate a submission with:
 ```text
 python skills/harness/gatekeeper/check.py \
   --boundary <boundary> --package <manifest.json> \
-  [--prior <previous verdict>] [--verdict-out <phase>/verdict_<boundary>.json]
+  [--prior <previous verdict>] \
+  [--judgment <phase>/verdict_<boundary>.judgment.json --verdict-out <phase>/verdict_<boundary>.json]
 ```
 
-Exit 0 is a mechanical fact, not approval. The gatekeeper maps the result to
-`APPROVED`, `REVISE`, or `ESCALATE`. Exit 1 is a failed package; exit 2 is an
-engine error — an unknown boundary or an unreadable gate spec — and an engine
-error is never a verdict of any kind.
+Exit 0 is a mechanical fact, not approval. A submitter runs it with neither
+`--judgment` nor `--verdict-out`; the gatekeeper's verdict exists only when its
+judgment record is persisted with both, which also counts the REVISE round in
+`verdict_<boundary>.cycles.json` beside the manifest and writes the third
+consecutive REVISE as `ESCALATE` to the user. Exit 1 is a failed package or an
+ESCALATE; exit 2 is an engine error — an unknown boundary or an unreadable gate
+spec — and an engine error is never a verdict of any kind.
 
 ## Taste package example
 
@@ -211,7 +216,10 @@ artifact_hashes:
 ```
 
 `confirmation` is not waivable at this boundary: an applicability record in its
-place fails with `evidence not waivable: confirmation`.
+place fails with `evidence not waivable: confirmation`. Inside a run the same
+package also hashes `../intake/report_grilling.md`, the artifact the gatekeeper's
+judgment binds as `intake.artifact`; this flat example has no run to point at, so
+the checker's self-check would warn about it there and reject a judgment on it.
 
 ## Delegate obligations
 

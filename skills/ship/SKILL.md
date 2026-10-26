@@ -8,7 +8,7 @@ description: >-
   marketing, comms, or product-announcement launch. Owns the `deploy-readiness`
   gate; defers the merge-and-rollout to `land-and-deploy`, deploy config to
   `setup-deploy`, and notes to `document-release`.
-version: 1.2.0
+version: 1.3.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 ---
 
@@ -17,7 +17,7 @@ allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 
 ## Review discipline
 
-Apply [../contracts/review-discipline.md](../contracts/review-discipline.md). Bind specialist reviews to one producing gate; gatekeepers consume their reports. Follow-up verification, tests and audits run only for changed evidence and affected dependents, carrying unchanged hash-valid results. Intake controls scope and non-goals. A third consecutive REVISE always goes to the user through Admiral; stop automatic work while that decision is pending.
+Apply [../contracts/review-discipline.md](../contracts/review-discipline.md). Bind specialist reviews to one producing gate; gatekeepers consume their reports. Follow-up verification, tests and audits run only for changed evidence and affected dependents, carrying unchanged hash-valid results. Intake controls scope and non-goals. A third consecutive REVISE always goes to the user through Admiral; stop automatic work while that decision is pending. Hash the run's Intake log into `artifact_hashes` of every package this skill submits, as the manifest-relative `../intake/report_grilling.md`, whether or not the boundary requires a `decisions` key: the gatekeeper's judgment must bind `intake.artifact` to that hashed path (`gates.yaml` `judgment_policy`), `check.py --judgment` rejects a judgment on a package that does not carry it, and the mechanical self-check warns while it is missing.
 
 ## Purpose
 
@@ -151,7 +151,7 @@ Skip only when the requested surface, tool, or environment does not exist and a 
 | The returned rollout evidence contradicts the verification plan submitted at the gate | Preserve both, grade the contradiction as a finding against its owner, and decide rollback or controlled hold before any follow-up describes the release as complete. |
 | Verification passes, but the rollback plan's decision deadline expires mid-rollout — the canary window closes, a migration passes the point of reversibility, or a stated "rollback available until" time lapses | Treat it as **rollback-unavailable** from that moment, and say so before the next step rather than after. A green verification proves the release works; it does not restore the option to undo it, and the two are separately load-bearing — `rollback_plan` is a required key precisely because passing checks are not a substitute for a way back. Stop at the current step, record that the deadline lapsed and which steps are now irreversible, and get an explicit owner decision to continue without a rollback path. That decision is the same named-owner go the gate requires, taken again against materially different terms; it is not carried over from the original go. Where the deadline is foreseeable, size it to the whole rollout at `setup-deploy` time, the way `benchmark` sizes a grant expiry to the whole operation. |
 | The rollout partially succeeds but leaves uncertainty about user impact | Record the partial state, define the rollback trigger, and keep follow-up actions explicit rather than implying a full ship. |
-| The deploy-readiness package comes back `REVISE` a third time, or the gate returns `ESCALATE` | Stop resubmitting and hold the release. `../gates.yaml` `revise_policy` sets `cycle_cap: 3`, so a third `REVISE` ends the cycle rather than starting a fourth: return `ESCALATE` with all three packets, the `changed_evidence` and `unchanged_evidence` from the `--prior` comparison, and the owner of each key that did not converge — the configuration and rollback keys belong to `setup-deploy`, the rest to `ship`. An `ESCALATE` from the gate is handled the same way. Neither verdict is a slow approval, so no rollout is delegated while one stands. |
+| The deploy-readiness package comes back `REVISE` a third time, or the gate returns `ESCALATE` | Stop resubmitting and hold the release. `../gates.yaml` `revise_policy` sets `cycle_cap: 3`, so the gate writes a third consecutive `REVISE` as `ESCALATE` to the user (`revision_cycle.held_for_user: true`) rather than starting a fourth: hand Admiral all three packets, the `changed_evidence` and `unchanged_evidence` from the `--prior` comparison, and the owner of each key that did not converge — the configuration and rollback keys belong to `setup-deploy`, the rest to `ship` — so it checkpoints `DISPUTED_AWAITING_USER`, and run no further automatic repair or resubmission until a new user decision reopens the boundary with `--reopen-reference`. An `ESCALATE` the gate returns on its own is handled the same way. Neither verdict is a slow approval, so no rollout is delegated while one stands. |
 | The release candidate, configuration, or verification expectations arrive missing, empty, or contradicting each other | Refuse to sequence the launch and name the specific conflict. A launch order built on an ambiguous candidate sequences the wrong revision, and every later check then verifies the wrong thing convincingly. |
 
 ## Save Protocol

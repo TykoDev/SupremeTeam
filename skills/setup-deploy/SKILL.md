@@ -8,7 +8,7 @@ description: >-
   "get deploys set up". Owns `deploy-config` and `rollback-plan`; defers running
   a rollout to `land-and-deploy` and orchestration to
   `ship`.
-version: 1.0.2
+version: 1.0.3
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
@@ -101,7 +101,7 @@ Skip only when the requested surface, tool, or environment does not exist and a 
 | A file already sits at the canonical path but cannot be parsed — truncated, invalid YAML, merge-conflict markers, or an unexpected format | Stop before the diff. The mandated diff is uncomputable, so no approval is possible and no write happens. Report the path, the parser error, and the failing line, then offer the two bounded choices of Workflow step 5: repair first and rerun the diff, or approve an explicit full replacement shown against the existing file's path, its sha256, and the parser error; the content is never echoed verbatim, only what a redaction pass leaves. Preserve the original beside the new file until that replacement is confirmed. |
 | Required inputs arrive missing or contradictory — no named environments, an artifact shape that does not match the promotion model, or a secrets model nobody can state | Refuse to persist anything and name each missing or conflicting input. Durable configuration is copied forward by every later release, so a guess made once becomes the convention nobody questions afterwards. |
 | The target environment, secrets manager, or deploy platform cannot be reached to verify a setting | Record the setting as unverified with the reason, and keep it out of the persisted configuration as a proven value. An unreachable check is a gap, never a pass, and a configuration presented as verified is the thing a later release will trust without rechecking. |
-| The `deploy-readiness` gate returns a `REVISE` packet naming `deploy_config` or `rollback_plan` | Take the owner group for those keys and repair them here; `ship` may not stand in for either, and neither key has a sanctioned fallback. Return the corrected artifact with its new hash so `ship` resubmits once with `--prior`. A third `REVISE` on the same keys reaches `../gates.yaml` `revise_policy` `cycle_cap: 3` and escalates with all three packets rather than opening a fourth cycle. |
+| The `deploy-readiness` gate returns a `REVISE` packet naming `deploy_config` or `rollback_plan` | Take the owner group for those keys and repair them here; `ship` may not stand in for either, and neither key has a sanctioned fallback. Return the corrected artifact with its new hash so `ship` resubmits once with `--prior`. The gate writes a third consecutive `REVISE` as `ESCALATE` to the user (`../gates.yaml` `revise_policy` `cycle_cap: 3`), so `ship` stops resubmitting and hands Admiral all three packets; no further automatic repair runs here until a new user decision reopens the boundary with `--reopen-reference`. |
 
 ## Save Protocol
 

@@ -9,7 +9,7 @@ description: >-
   compare four redesigns, or ask for alternative design systems — even when Admiral
   is never named. Defers to `admiral` when reached cold; a first-time design belongs
   to `design/commander`.
-version: 1.2.0
+version: 1.3.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 ---
 
@@ -17,7 +17,7 @@ allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 
 ## Review discipline
 
-Apply [../../contracts/review-discipline.md](../../contracts/review-discipline.md). Bind specialist reviews to one producing gate; gatekeepers consume their reports. Follow-up verification, tests and audits run only for changed evidence and affected dependents, carrying unchanged hash-valid results. Intake controls scope and non-goals. A third consecutive REVISE always goes to the user through Admiral; stop automatic work while that decision is pending.
+Apply [../../contracts/review-discipline.md](../../contracts/review-discipline.md). Bind specialist reviews to one producing gate; gatekeepers consume their reports. Follow-up verification, tests and audits run only for changed evidence and affected dependents, carrying unchanged hash-valid results. Intake controls scope and non-goals. A third consecutive REVISE always goes to the user through Admiral; stop automatic work while that decision is pending. Hash the run's Intake log into `artifact_hashes` of every package this skill submits, as the manifest-relative `../intake/report_grilling.md`, whether or not the boundary requires a `decisions` key: the gatekeeper's judgment must bind `intake.artifact` to that hashed path (`gates.yaml` `judgment_policy`), `check.py --judgment` rejects a judgment on a package that does not carry it, and the mechanical self-check warns while it is missing.
 
 ## Purpose
 

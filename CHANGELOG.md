@@ -7,6 +7,39 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ## [Unreleased]
 
+### Second audit report, F-01 to F-07
+
+Each finding was checked against this tree first. F-01, F-02 and F-04 held and are fixed; the
+other four are true statements about the project that a code change does not answer.
+
+- Benchmark (F-01): `BENCHMARK.md` gave one count per suite with no word that it assumed
+  PyYAML, and counted skips as unittest does, where a class skipped in `setUpClass` is one
+  skip and its tests drop out of "Ran": without PyYAML the validation suite reads
+  `Ran 258, skipped=3` while eleven tests do not execute. The suites are re-measured in both
+  variants, and the table counts the tests that did not run in each (validation: 1 with
+  PyYAML, 11 without); Reproduce says how to run the second variant.
+- CI (F-02): `actions/checkout`, `actions/setup-python` and `actions/setup-node` named a
+  major tag. Every step now names a full commit SHA with its release as a comment (v4.4.0,
+  v5.6.0, v4.4.0: the commits those tags pointed at on 2026-10-31, so CI runs the same code),
+  `.github/dependabot.yml` proposes each new release as a pull request, and the workflow test
+  requires a SHA in every job, not only in the suites job.
+- Enforcement visibility (F-04): with no hook registered, `check_readiness.py` printed
+  `Ready: yes` and `guard_state.py freeze` answered `ok` while nothing would refuse a write
+  inside the glob. `verify_registration.enforcement` gives one answer (`live`, `partial`,
+  `off`, `unknown`) from the PreToolUse registration of the selected hosts; readiness prints
+  it as the line above `Ready`, `guard_state.py status` prints it on every read (`enforcement`
+  in both JSON reports), and a `freeze`, `block` or `read-only` write that is not `live` adds a
+  stderr note. Admiral quotes the readiness line to the user at intake and on every resume;
+  careful carries the `status` line into its record.
+- Routing (F-03): still not measured, as the finding says. The commands are now in
+  `BENCHMARK.md`, and a one-batch pilot priced the full paraphrased corpus at about $5; no
+  score is published from one batch.
+- Not changed: F-05 (adoption and review figures are about the project, not the code), F-06
+  (no release tag or dated changelog section yet: cutting the first release is the owner's
+  decision, left for later) and F-07 (the `skills/LICENSE` churn is published history; the
+  file is byte-identical to the root `LICENSE`, and rewriting pushed commits to fold it away
+  would cost more than it saves).
+
 ### External audit findings ST-AUD-004 to ST-AUD-012
 
 Each finding was reproduced before it was fixed. Five held; four did not, and are

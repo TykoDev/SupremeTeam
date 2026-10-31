@@ -9,7 +9,9 @@ does and returns structure the guard rules apply to:
 * ``commands``: every simple command that would run, after unwrapping ``sudo``,
   ``env``, ``nohup``, ``xargs``, ``eval``, ``sh -c``, ``find -exec``, ``$(...)``,
   backticks and heredocs fed to a shell, reduced to a lower-case verb (basename, no
-  extension) and its argument words;
+  extension) and its argument words. A program the command spells only through
+  literals is read too: a ``base64 -d`` of a literal ``echo`` or here-string piped into
+  a shell, and a ``$(...)`` made of those handed to ``sh -c``, ``eval`` or a here-string;
 * ``writes``: every path a redirect or a file-mutating command would write, with the
   working directories a ``cd`` or ``git -C`` earlier in the line may have set;
 * ``code``: the text of interpreter programs (``python -c``, ``node -e``, a heredoc to
@@ -102,10 +104,14 @@ class _Unbalanced(Exception):
 
 
 class _Arg:
-    __slots__ = ("text", "glob", "unresolved")
+    """One argument after expansion. ``printed`` is what a word that is one ``$(...)`` prints when the command inside makes
+    it from literals alone (``"$(echo cm0gLXJmIC8K | base64 -d)"``); the argument stays unresolved, and only a reader that
+    runs its text as a program (``sh -c``, ``eval``, a here-string, ``echo`` into a shell) reads ``printed`` instead."""
 
-    def __init__(self, text: str, glob: bool = False, unresolved: bool = False) -> None:
-        self.text, self.glob, self.unresolved = text, glob, unresolved
+    __slots__ = ("text", "glob", "unresolved", "printed")
+
+    def __init__(self, text: str, glob: bool = False, unresolved: bool = False, printed: "str | None" = None) -> None:
+        self.text, self.glob, self.unresolved, self.printed = text, glob, unresolved, printed
 
 
 class _Word:
@@ -567,7 +573,8 @@ class _Lexer:
                     continue
             if c in "<>" and text[i + 1:i + 2] == "(":
                 end = _match_paren(text, i + 2)
-                self.tokens.append(("w", _Word([("s", text[i + 2:end - 1])], False, False)))
+                # The third element marks a process substitution: the word is a file name (/dev/fd/63), not the output.
+                self.tokens.append(("w", _Word([("s", text[i + 2:end - 1], "process")], False, False)))
                 i = end
                 command_start = False
                 continue
@@ -687,6 +694,7 @@ def _brace(text: str, budget: list) -> list:
 def _expand(word: _Word, ctx: _Ctx) -> list:
     """The arguments one word stands for: variables resolved where known, substitutions analysed, braces expanded."""
     unresolved = False
+    printed = None
     pieces: list = []
     for part in word.parts:
         kind = part[0]
@@ -703,6 +711,8 @@ def _expand(word: _Word, ctx: _Ctx) -> list:
                 pieces.append(value)
         elif kind == "s":
             _process(part[1], ctx, ctx.ps)
+            if len(word.parts) == 1 and len(part) == 2:
+                printed = _substitution_output(part[1], ctx)
             pieces.append("$(...)")
             unresolved = True
         else:
@@ -711,7 +721,40 @@ def _expand(word: _Word, ctx: _Ctx) -> list:
     text = "".join(pieces)
     if word.plain and "{" in text and ("," in text or ".." in text) and text.count("{") <= 16:
         return [_Arg(item, word.glob, unresolved) for item in _brace(text, [_MAX_BRACE])]
-    return [_Arg(text, word.glob, unresolved)]
+    return [_Arg(text, word.glob, unresolved, printed)]
+
+
+def _substitution_output(text: str, ctx: _Ctx) -> "str | None":
+    """What ``$(text)`` prints when the command inside makes it from literals alone: a pipeline of ``echo``, ``printf``
+    and ``base64 -d`` whose words are all literal (``$(echo cm0gLXJmIC8K | base64 -d)``). Any other command, a variable,
+    a nested substitution or a redirect other than a literal here-string gives None, so reading one never recurses. The
+    pipeline is read in a scratch context, since ``_expand`` has already analysed it once in the real one."""
+    if ctx.ps:
+        return None
+    try:
+        tokens = _Lexer(text, False).run()
+    except (_Unbalanced, RecursionError):
+        return None
+    stages: list = [[]]
+    for kind, value in tokens:
+        if kind == "op":
+            if value != "|":
+                return None
+            stages.append([])
+            continue
+        word = value.target if kind == "r" else value
+        if kind == "r" and (value.op != "<<<" or word is None):
+            return None
+        if any(part[0] != "l" for part in word.parts):
+            return None
+        stages[-1].append((kind, value))
+    sub = _scratch(ctx)
+    printed = None
+    for index, stage in enumerate(stages):
+        printed = _run_stage(stage, sub, printed, index > 0)
+        if printed is None:
+            return None
+    return printed.text.rstrip("\n")
 
 
 def _scan_substitutions(text: str, ctx: _Ctx) -> None:
@@ -1603,8 +1646,13 @@ def _shell(rest: list, ctx: _Ctx, body: "str | None", verb: str, piped: bool,
         if text.startswith("-") and not text.startswith("--") and "c" in text[1:]:
             if i + 1 < len(rest):
                 before = len(ctx.out.writes)
-                _process(rest[i + 1].text, ctx, False)
-                if rest[i + 1].unresolved:
+                program = rest[i + 1]
+                if program.printed is not None:
+                    # `sh -c "$(echo cm0gLXJmIC8K | base64 -d)"`: the program is what the substitution prints.
+                    _process(program.printed, ctx, False)
+                    return None
+                _process(program.text, ctx, False)
+                if program.unresolved:
                     # The program arrived with a placeholder (`xargs -I{} sh -c 'rm {}'`): whatever word the
                     # placeholder's text made of a target, that target is not fixed by the command line.
                     ctx.out.writes[before:] = [Write(w.path, w.via, w.cwds, w.glob, True) for w in ctx.out.writes[before:]]
@@ -2029,6 +2077,31 @@ def program_commands(text: str) -> list:
     return list(found)
 
 
+# A delete call of an inline program whose whole first argument the program spells: a string literal, optionally inside
+# ``expanduser(...)``, or one of the usual spellings of the home directory. Only names that delete files are listed, so a
+# route (``app.delete('/')``) or a list (``paths.remove('/')``) is not one; an argument that goes on (``Path.home() / 'x'``,
+# ``'/' + name``) is not the target and is not read.
+_HOME_EXPRESSION = (r"(?:\bos|require\(\s*['\"](?:node:)?os['\"]\s*\))\.homedir\(\)|Path\.home\(\)|Dir\.home\b"
+                    r"|process\.env\.HOME\b|os\.environ\[\s*['\"]HOME['\"]\s*\]|getenv\(\s*['\"]HOME['\"]\s*\)"
+                    r"|ENV\[\s*['\"]HOME['\"]\s*\]|\$ENV\{\s*['\"]?HOME['\"]?\s*\}")
+_REMOVE_CALL = re.compile(
+    r"(?:\b(?:rmtree|remove_tree|rm_rf|rm_r|remove_dir|remove_entry(?:_secure)?|removedirs|rimraf(?:Sync)?|rmSync|rmdirSync"
+    r"|removeSync|emptyDirSync)|\.(?:rm|rmdir)|\bDeno\.remove)\s*\(?\s*"
+    r"(?P<wrap>(?:os\.path\.)?expanduser\(\s*)?"
+    r"(?:(?P<quote>['\"`])(?P<literal>[^'\"`\n]{1,1024})(?P=quote)|(?P<home>" + _HOME_EXPRESSION + r"))"
+    r"(?(wrap)\s*\))\s*(?:[,)};]|$)", re.M)
+
+
+def program_removals(text: str) -> list:
+    """The targets an inline program deletes that the program itself names: the literal paths the Python pass places for
+    a delete call (``from shutil import rmtree as r; r("/")`` included), and for any interpreter the first argument of a
+    delete call that is a literal or the home directory, ``~`` (``node -e 'fs.rmSync(os.homedir(), {recursive: true})'``).
+    Rule A asks whether one is a root, a home or a top-level directory. A search: a path built at run time is not seen."""
+    found = [path for path, via in _program_paths.python_targets(text, lambda func: False) or () if via == "rm" and path]
+    found.extend(match.group("literal") if match.group("home") is None else "~" for match in _REMOVE_CALL.finditer(text))
+    return list(dict.fromkeys(found))
+
+
 def git_stash_parts(argv) -> "tuple | None":
     """``(pathspecs, directories, flags)`` of a ``git stash`` that stashes (``push``, ``save`` or no subcommand), or None.
 
@@ -2093,7 +2166,7 @@ def _record_redirects(redirects: list, ctx: _Ctx) -> "str | None":
             continue
         arguments = _expand(redirect.target, ctx)
         if op == "<<<":
-            body = " ".join(a.text for a in arguments)
+            body = " ".join(_program_text(a) for a in arguments)
             continue
         if op in ("<", "<&"):
             continue
@@ -2188,11 +2261,16 @@ def _printed_text(verb: str, words: list) -> str:
     return unescape("".join(out))
 
 
+def _program_text(arg: _Arg) -> str:
+    """The text an argument hands a reader that runs it: what its substitution prints when that is known, else its text."""
+    return arg.printed if arg.printed is not None else arg.text
+
+
 def _literal_words(verb: str, rest: list) -> "list | None":
     """The words a literal ``echo`` or ``printf`` prints, which an ``xargs`` downstream receives, with the printed text."""
-    if any(a.unresolved for a in rest):
+    if any(a.unresolved and a.printed is None for a in rest):
         return None
-    words = [a.text for a in rest if not (verb == "echo" and re.fullmatch(r"-[neE]+", a.text))]
+    words = [_program_text(a) for a in rest if not (verb == "echo" and re.fullmatch(r"-[neE]+", a.text))]
     printed = _Printed(piece for text in ([re.sub(r"\\[nt0]", " ", words[0]), *words[1:]] if verb == "printf" and words else words)
                        for piece in text.split())
     if verb in ("echo", "printf"):
@@ -2223,7 +2301,37 @@ def _run_stage(tokens: list, ctx: _Ctx, upstream: "list | None", piped: bool = F
         return None
     _exec(args, ctx, body, upstream, piped and ctx.ps, piped)
     verb = _verb(args[0].text)
+    if verb == "base64" and not ctx.ps:
+        return _base64_decoded(args[1:], body, upstream)
     return _literal_words(verb, args[1:]) if verb in ("echo", "printf", "write-output", "write-host") else None
+
+
+# The options of a ``base64`` that decodes standard input to standard output: ``-d``/``--decode`` (``-D`` on macOS) and
+# GNU's ``-i``/``--ignore-garbage``, alone or clustered. Anything else (a file operand, macOS ``-i file``, ``-o file``) is
+# not read.
+_BASE64_OPTION = re.compile(r"-[diD]+|--decode|--ignore-garbage|-")
+
+
+def _base64_decoded(rest: list, body: "str | None", upstream: "list | None") -> "_Printed | None":
+    """What ``base64 -d`` prints when the text it decodes is in the command, a here-string or a literal ``echo`` or
+    ``printf`` before it in the pipeline, so a shell downstream reads that program (``echo cm0gLXJmIC8K | base64 -d | sh``)
+    as it reads ``echo 'rm -rf /' | sh``. None when it does not decode, or decodes something the command does not hold."""
+    if not rest or any(a.unresolved or not _BASE64_OPTION.fullmatch(a.text) for a in rest):
+        return None
+    if not any("d" in a.text or "D" in a.text for a in rest if a.text != "--ignore-garbage"):
+        return None
+    source = body if body is not None else getattr(upstream, "text", None)
+    if source is None:
+        return None
+    compact = "".join(source.split())
+    try:
+        data = base64.b64decode(compact + "=" * (-len(compact) % 4), validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    text = data.decode("utf-8", "replace")
+    printed = _Printed(text.split())
+    printed.text = text
+    return printed
 
 
 def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None", stdin: bool = False, piped: bool = False) -> None:
@@ -2244,7 +2352,7 @@ def _exec(args: list, ctx: _Ctx, body: "str | None", upstream: "list | None", st
             if not rest and piped and verb != "eval":
                 _note_unnamed(ctx, verb, "stdin", opaque=True)
                 _piped_program(ctx, upstream, True)
-            _process(" ".join(a.text for a in rest), ctx, ctx.ps or verb != "eval", scoped=False)
+            _process(" ".join(_program_text(a) for a in rest), ctx, ctx.ps or verb != "eval", scoped=False)
             return
         if verb == "trap":
             # The handler is a command line the shell runs later; it is read as one, so what it writes is seen.

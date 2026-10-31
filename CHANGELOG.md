@@ -1153,7 +1153,7 @@ recorded here, or a record the skill does not carry, fails it.
   lacks), a warning for a leading-slash glob outside the project that names a directory that
   exists, relative globs anchored at the project root, a writer lock, and what an
   unreadable record means.
-- `guard` 1.7.0: Rule C also protects the REVISE cycle history (`verdict_<boundary>.cycles.json`) and its lock, and refuses removing or moving a phase directory; previously gate verdict records have a single writer, `check.py --verdict-out` (Rule C); previously a grant is capped at 8 hours, the hook scripts are protected (Rule F,
+- `guard` 1.8.0: Rule A also denies an inline program's own delete of a root or home (`python3 -c 'shutil.rmtree("/")'`, `node -e 'fs.rmSync(os.homedir(), ...)'`) and a wipe spelled in base64 and decoded by a `base64 -d` of a literal into a shell (`echo cm0gLXJmIC8K | base64 -d | sh`, `sh -c "$(echo ... | base64 -d)"`); previously Rule C also protects the REVISE cycle history (`verdict_<boundary>.cycles.json`) and its lock, and refuses removing or moving a phase directory; previously gate verdict records have a single writer, `check.py --verdict-out` (Rule C); previously a grant is capped at 8 hours, the hook scripts are protected (Rule F,
   advisory, whole registration file), a write after an unfollowable directory chain is
   denied (Rule G, with its own failure-mode row), a read-only run denies writes with no
   named target (pipes, launchers, PowerShell blocks, diffs), an unreadable record is counted

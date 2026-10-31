@@ -229,6 +229,40 @@ class DangerousRuleTests(GuardCase):
                     "python3 -c 'print(\"rm -rf /\")'", "node -e 'console.log(\"rm -rf /\")'",
                     "python3 -c 'import subprocess; subprocess.run([\"rm\", \"-rf\", \"build\"])'"), deny=False)
 
+    def test_an_inline_program_that_deletes_a_root_or_home_itself_is_denied(self):
+        """ST-AUD-004: only the command lines a program hands a shell were read, so its own delete call passed."""
+        self.check(("python3 -c \"import shutil; shutil.rmtree('/')\"", "python3 -c \"from shutil import rmtree as r; r('/usr')\"",
+                    "python3 -c \"import shutil, os; shutil.rmtree(os.path.expanduser('~'))\"",
+                    "python3 -c \"import shutil; from pathlib import Path; shutil.rmtree(Path.home())\"",
+                    "python3 -c \"import shutil, os; shutil.rmtree(os.environ['HOME'], ignore_errors=True)\"",
+                    "python3 <<'EOF'\nimport shutil\nshutil.rmtree('/')\nEOF",
+                    "node -e \"require('fs').rmSync('/', {recursive: true, force: true})\"",
+                    "node -e \"require('fs').rmSync(require('os').homedir(), {recursive: true})\"",
+                    "node -e \"require('fs').promises.rm('/', {recursive: true})\"", "perl -e 'use File::Path; rmtree(\"/\")'",
+                    "perl -MFile::Path=remove_tree -e 'remove_tree($ENV{HOME})'", "ruby -e 'require \"fileutils\"; FileUtils.rm_rf(\"/\")'",
+                    "ruby -rfileutils -e 'FileUtils.rm_rf Dir.home'"),
+                   deny=True, fragment="allow-dangerous")
+
+    def test_an_inline_program_that_deletes_below_a_root_or_home_is_not_denied(self):
+        self.check(("python3 -c \"import shutil; shutil.rmtree('build')\"",
+                    "python3 -c \"import shutil; from pathlib import Path; shutil.rmtree(Path.home() / '.cache' / 'pip')\"",
+                    "python3 -c \"import shutil, os; shutil.rmtree(os.path.expanduser('~/.cache/x'))\"",
+                    "python3 -c \"import shutil; shutil.rmtree('/' + name)\"", "python3 -c \"paths = ['/']; paths.remove('/')\"",
+                    "node -e \"app.delete('/', (q, r) => r.end())\"", "node -e \"require('fs').rmSync('/tmp/x', {recursive: true})\"",
+                    "ruby -e 'FileUtils.rm_rf(\"tmp/cache\")'"), deny=False)
+
+    def test_a_wipe_spelled_in_base64_and_handed_to_a_shell_is_denied(self):
+        """ST-AUD-004: `base64 -d` of a literal was not read, so the program a shell ran from it was never seen."""
+        wipe = "cm0gLXJmIC8K"  # base64 of "rm -rf /\n"
+        self.check((f"echo {wipe} | base64 -d | sh", f"echo {wipe} | base64 --decode | bash", f"printf %s {wipe} | base64 -D | sh",
+                    f"base64 -d <<< {wipe} | sh", f"sh -c \"$(echo {wipe} | base64 -d)\"", f"eval \"$(echo {wipe} | base64 -d)\"",
+                    f"eval $(echo {wipe} | base64 -d)", f"bash <<< \"$(echo {wipe} | base64 -d)\"", f"echo \"$(echo {wipe} | base64 -d)\" | sh",
+                    f"echo `echo {wipe} | base64 -d` | sh", "bash -c \"$(echo 'rm -rf ~')\""),
+                   deny=True, fragment="allow-dangerous")
+        self.check(("echo aGVsbG8K | base64 -d", "echo aGVsbG8K | base64 -d | sh", "echo 'not base64!!' | base64 -d | sh",
+                    "base64 -d payload.b64 | sh", "git commit -m \"$(echo rm -rf /)\"", "diff <(echo 'rm -rf /') <(echo b)",
+                    "echo <(echo 'rm -rf /') | cat"), deny=False)
+
     def test_the_wipe_rules_read_a_quoted_or_spaced_target_the_way_the_shell_does(self):
         self.check(("rm -rf \"/\"", "rm -rf '/'", "rm -rf \"$HOME\"", "rm -rf ~/ ", "rm\t-rf\t/"), deny=True)
         self.check(("rm -rf \"/tmp/a b\"", "rm -rf '/tmp/x y/'", "rm -rf \"$HOME/a b\""), deny=False)

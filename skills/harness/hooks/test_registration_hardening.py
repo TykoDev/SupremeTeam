@@ -197,6 +197,24 @@ class RegistrationAnalysisTests(unittest.TestCase):
                 with self.subTest(command=command):
                     self.assertTrue(verify.analyse(command, "post_tool_use.py")["executable"], command)
 
+    def test_a_relative_script_path_is_configured_but_not_executable_from_any_directory(self):
+        """ST-AUD-008: the path was resolved from the verifier's own directory, so a relative registration verified as
+        runnable from the project root and as absent from a subdirectory; the host runs it from either."""
+        relative = HOOK_DIR.relative_to(HOOK_DIR.parents[2]).as_posix() + "/pre_tool_use.py"
+        for cwd in (HOOK_DIR.parents[2], HOOK_DIR):
+            with self.subTest(cwd=str(cwd)), mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": str(HOOK_DIR.parents[2])}):
+                previous = os.getcwd()
+                os.chdir(cwd)
+                try:
+                    state = verify.analyse(f"python {relative}", "pre_tool_use.py")
+                    anchored = verify.analyse(f'python "$CLAUDE_PROJECT_DIR/{relative}"', "pre_tool_use.py")
+                finally:
+                    os.chdir(previous)
+                self.assertTrue(state["configured"])
+                self.assertFalse(state["executable"])
+                self.assertIn("relative", state["reason"])
+                self.assertTrue(anchored["executable"], anchored["reason"])
+
     def test_option_that_swallows_the_path_is_not_executable(self):
         real = HOOK_DIR / "post_tool_use.py"
         self.assertFalse(verify.analyse(f'python -W "{real}"', "post_tool_use.py")["executable"])

@@ -177,6 +177,13 @@ def _expand(token: str) -> str:
     return os.path.expanduser(expanded)
 
 
+def _place(token: str) -> Path:
+    """Where an expanded command word points: a relative one is read from the project root, as a host started there
+    runs it, never from the directory this check happens to run in, so the verdict does not depend on it."""
+    path = Path(token)
+    return (path if path.is_absolute() else _state.project_root() / path).resolve()
+
+
 def analyse(command: str, script: str) -> dict:
     """Classify one registered command against one expected hook script."""
     result = {"configured": False, "resolvable": False, "executable": False, "interpreter_on_path": None, "script": None, "reason": ""}
@@ -189,13 +196,12 @@ def analyse(command: str, script: str) -> dict:
         return result
     launcher = tokens[0]
     expected = {_norm((root / script).resolve()) for root in _roots()}
-    expanded = [_expand(t) for t in tokens[1:]]
-    referenced = {_norm(Path(t).resolve()) for t in expanded if t}
-    if not (referenced & expected):
+    placed = [_place(t) for t in (_expand(t) for t in tokens[1:]) if t]
+    if not ({_norm(path) for path in placed} & expected):
         result["reason"] = "script path not referenced"
         return result
     result["configured"] = True
-    existing = [Path(t).resolve() for t in expanded if _norm(Path(t).resolve()) in expected and Path(t).resolve().is_file()]
+    existing = [path for path in placed if _norm(path) in expected and path.is_file()]
     result["resolvable"] = bool(existing)
     result["script"] = str(existing[0]) if existing else None
     if not _python_launcher(launcher):
@@ -224,9 +230,15 @@ def analyse(command: str, script: str) -> dict:
     if script_token is None:
         result["reason"] = "no script argument in executable position"
         return result
-    resolved = _norm(Path(_expand(script_token)).resolve())
+    resolved = _norm(_place(_expand(script_token)))
     if resolved not in expected:
         result["reason"] = "script path appears as data, not as the executed script"
+        return result
+    if not Path(_expand(script_token)).is_absolute():
+        # A host runs the command from whatever directory the session is in, and Python exits 2 when it cannot open
+        # the script, which Claude Code reads from a PreToolUse hook as a block: from a subdirectory every tool call fails.
+        result["reason"] = ("script path is relative, so it runs only from the project root; register it by absolute "
+                            "path or through $CLAUDE_PROJECT_DIR (repair_registration.py writes the absolute path)")
         return result
     if not result["resolvable"]:
         result["reason"] = "script file does not exist at the configured path"

@@ -425,8 +425,8 @@ python skills/harness/hooks/verify_registration.py --host codex --json
 
 Verifies for each hook (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`):
 - `configured`: Event is declared in the host configuration.
-- `resolvable`: Target script path exists on disk.
-- `executable`: Invocation uses a direct Python launcher syntax without swallowed arguments.
+- `resolvable`: Target script path exists on disk. A relative path is read from the project root, never from the directory the check runs in, so the verdict is the same wherever you run it.
+- `executable`: Invocation uses a direct Python launcher syntax without swallowed arguments, and names the script by an absolute path or through a variable such as `$CLAUDE_PROJECT_DIR`. A relative script path is configured but not executable: the host starts the hook from whatever directory the session is in, and from a subdirectory Python cannot open the script and exits 2, which Claude Code reads from a PreToolUse hook as a block. `repair_registration.py` adds an entry with the absolute path.
 - Matcher: a registered `matcher` has to select the tools the hook needs (`Bash`, `PowerShell`, `Edit`, `Write`, `NotebookEdit`, plus `apply_patch` on Codex for the two tool hooks). A matcher that selects none of them is not a registration. A narrower one is `partial`: it is reported with the tools it misses, and `repair_registration.py` adds a group for them.
 
 Reported next to REGISTERED without failing it:

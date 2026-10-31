@@ -7,6 +7,52 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ## [Unreleased]
 
+### External audit findings ST-AUD-004 to ST-AUD-012
+
+Each finding was reproduced before it was fixed. Five held; four did not, and are
+left unchanged with the reason.
+
+- Guard (Rule A, ST-AUD-004): an inline program's own delete of a root, home or
+  top-level directory passed, because only the command lines a program hands a shell
+  were read. The literal target of a Python delete the AST pass places, and for any
+  interpreter a delete call (`rmtree`, `rm_rf`, `remove_tree`, `rmSync`, `.rm`, ...)
+  whose whole first argument is a literal or the home directory, is now judged like
+  `rm -rf`. A `base64 -d` of a literal `echo`, `printf` or here-string is decoded, so the
+  program it pipes into a shell is read like `echo 'rm -rf /' | sh`, and a `$(...)` made
+  only of those is read where its output runs as a program (`sh -c`, `eval`, a
+  here-string, an `echo` into a shell). Everywhere else that word stays unresolved, so no
+  path spelled through `$(echo ...)` became placed. A blanket refusal of every `-c`/`-e`
+  program, as the finding proposed, was not adopted: the rule stays inert on competent
+  actions.
+- `verify_registration.py` (ST-AUD-008): a relative script path was resolved from the
+  directory the check ran in, so one registration verified as runnable from the project
+  root and as absent from a subdirectory. It is now read from the project root and
+  reported configured but not executable, since a host started in a subdirectory gets
+  Python's exit status 2, which Claude Code reads from a PreToolUse hook as a block. The
+  installers already wrote absolute paths.
+- `data_formats.py` (ST-AUD-009): an anchor, an alias or a tag was kept as text (`*base`
+  became the string `'*base'`, `!!str 123` the string `'!!str 123'`), and `- key: |` read
+  the block as YAML. These, a block scalar on a list item's line, an indentation indicator
+  and a complex key are now refused by name with the line, and every scalar error carries
+  its line.
+- `run_eval.py` and `validation/trigger_eval.py` (ST-AUD-010): `claude -p` inherited
+  stdin and reads a non-terminal stdin as more prompt; under a parent whose stdin is a
+  pipe that stays open every query waited out its deadline. Both start it with stdin
+  closed. The wall-clock timeouts were already in place.
+- `redaction.py` (ST-AUD-012): the finding said provider keys were stripped by prefix;
+  none were. A private key block, an AWS, GitHub, GitLab, OpenAI, Anthropic, Stripe,
+  Slack, Google or npm key and a JWT are now redacted by shape. The entropy scanner it
+  proposed was not added: the report carries sha256 digests as evidence, and an entropy
+  rule cannot tell one from a token.
+- Not changed, because the code already does what the finding asks: ST-AUD-005 (every
+  record writer holds `_fsutil.AdvisoryLock` and replaces atomically, with concurrency
+  tests), ST-AUD-006 (review runs three unconditional lenses and five conditional ones,
+  concurrently, and Tier 0 covers small reversible changes), ST-AUD-007 (a not-yet-created
+  path under a linked directory resolves through the link, for freezes and read-only
+  allow lists, with tests), ST-AUD-011 (the deepest shipped path is 67 characters, about
+  140 at the default install root with the staging prefix, and every install command
+  already carries `-ExecutionPolicy Bypass`).
+
 ### Review orchestration and follow-up scope
 
 - Every gatekeeper now persists REVISE streaks and a shared boundary budget. The

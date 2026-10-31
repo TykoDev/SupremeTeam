@@ -124,8 +124,11 @@ def run_single_query(
         # programmatic subprocess usage is safe.
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 
+        # stdin is closed: `claude -p` reads a stdin that is not a terminal as more prompt, so an inherited pipe
+        # that never closes (an agent or CI parent) held every query until its deadline and scored it as no outcome.
         process = subprocess.Popen(
             cmd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             cwd=project_root,

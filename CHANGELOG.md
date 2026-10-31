@@ -1180,7 +1180,7 @@ recorded here, or a record the skill does not carry, fails it.
 - `skill-maker/skill-reviewer` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously no cold isolated scoring; previously explicit harness-doctrine rejection duties.
 - `skill-maker` 1.2.0: hashes the run's Intake log into every package it submits so the gatekeeper's judgment can bind `intake.artifact`; previously Review discipline and mandatory third-REVISE user escalation; previously native delegation, package-stage ownership and evidence paths; previously the Stage 5 hand-off names the output directory as an absolute path, the
   parent of the `path` that `output_paths.py` prints, and leaves it out outside a run.
-- `skill-maker/skill-creator` 1.1.1: absolute optimizer input paths; previously the packager takes an absolute output directory and
+- `skill-maker/skill-creator` 1.1.2: `run_eval.py` starts `claude -p` with stdin closed, so a parent whose stdin is an open pipe no longer holds every query until its deadline; previously absolute optimizer input paths; previously the packager takes an absolute output directory and
   refuses symlinks, secrets and run state; failed eval runs are not scored.
 - `review/security-review` 1.2.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the findings template offers only statuses `check.py` accepts (`blocking` was not one); previously finding status and canonical rule references; previously `scan_record.py` names its output relative to the
   manifest and gains `--fail-on-output` and `--manifest-root`.

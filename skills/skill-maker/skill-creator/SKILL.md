@@ -2,7 +2,7 @@
 name: skill-creator
 description: >-
   Drafts and revises skill content for `skill-maker`, which delegates each mode: Create writes the SKILL.md and supporting files, Improve applies a reviewer's scorecard to fix reviewer findings, Eval runs behavioral evals against real queries, Optimize tunes the description's trigger surface, and Package produces the `.skill` bundle. Use when skill-maker delegates drafting, findings to apply, an eval run, a description optimization, or packaging — even when only the mode is named. An internal specialist, never the front door: a cold "write me a skill" belongs to `skill-maker`.
-version: 1.1.1
+version: 1.1.2
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 

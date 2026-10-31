@@ -58,6 +58,29 @@ class OutcomeTests(unittest.TestCase):
     def test_a_timeout_is_not_a_miss(self):
         self.assertIsNone(query_outcome(HANG, timeout=0.2))
 
+    def test_the_cli_is_not_left_reading_a_stdin_that_never_closes(self):
+        """ST-AUD-010: the child inherited stdin. `claude -p` reads a non-terminal stdin as more prompt, so under a
+        parent whose stdin is a pipe that stays open (an agent, CI) every query waited out its deadline. The stand-in
+        reads stdin to its end before answering; launched without a stdin of its own it gets an open pipe instead."""
+        original = subprocess.Popen
+        body = "import sys\nsys.stdin.read()\n" + RESULT_OK
+        held = []
+
+        def launch(*args, **kwargs):
+            if "stdin" not in kwargs:
+                kwargs["stdin"] = subprocess.PIPE
+            process = original([sys.executable, "-c", body], **kwargs)
+            held.append(process)
+            return process
+
+        with tempfile.TemporaryDirectory() as root, patch("scripts.run_eval.subprocess.Popen", side_effect=launch), \
+                contextlib.redirect_stderr(io.StringIO()):
+            outcome = run_single_query("query", "sample", "Description", 5, root)
+        for process in held:
+            if process.stdin:
+                process.stdin.close()
+        self.assertIs(False, outcome)
+
     def test_a_cli_that_exits_without_a_result_is_not_a_miss(self):
         self.assertIsNone(query_outcome(NOTHING))
         self.assertIsNone(query_outcome(CRASH))

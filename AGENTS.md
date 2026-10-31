@@ -291,7 +291,8 @@ this file, `README.md`, `QUICK-START.md`, `Install.md`, `BENCHMARK.md`,
 `.gitattributes`, `.gitignore`, `docs/`, the installers in `scripts/`
 (`install.sh`, `install.ps1`, `install_hooks.py`, `install-items.txt`,
 `test_install.py`), the checkout utilities in `tools/` (`run-audit/` and
-`rescan-compare/`, each with a README and its own tests) and the CI workflow
-`.github/workflows/ci.yml`.
+`rescan-compare/`, each with a README and its own tests), the CI workflow
+`.github/workflows/ci.yml` and `.github/dependabot.yml`, which raises the workflow's
+SHA-pinned actions.
 
 Full tree in [docs/directory-structure.md](docs/directory-structure.md).

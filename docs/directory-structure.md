@@ -17,6 +17,7 @@ SupremeTeam/
 ├── .gitattributes                        # LF text in the repository, binary file types
 ├── .gitignore                            # Run state, local environments, interpreter and coverage residue
 ├── .github/workflows/ci.yml              # Runs the suites and validators on three OSes
+├── .github/dependabot.yml                # Proposes new releases of the SHA-pinned CI actions
 ├── scripts/                              # Checkout-only: not part of an installed copy
 │   ├── install.ps1                       # Windows installer
 │   ├── install.sh                        # macOS and Linux installer

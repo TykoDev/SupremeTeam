@@ -171,6 +171,17 @@ class VerifyRegistrationTests(Scratch):
 class RegistrationAnalysisTests(unittest.TestCase):
     """What the verifier makes of one configured command: whether it names the script, finds it, and would run it."""
 
+    def test_enforcement_is_live_only_when_every_host_refuses_through_the_tool_hook(self):
+        """F-04: one answer, from the PreToolUse states of the selected hosts, for readiness and guard_state.py alike."""
+        full = {"pre": {"registered": True, "coverage": "full"}}
+        narrow = {"pre": {"registered": True, "coverage": "partial"}}
+        absent = {"pre": {"registered": False, "coverage": None}, "prompt": {"registered": True, "coverage": "not_applicable"}}
+        for states, expected in (({"claude": full}, "live"), ({"claude": full, "codex": full}, "live"),
+                                 ({"claude": full, "codex": absent}, "partial"), ({"claude": narrow}, "partial"),
+                                 ({"claude": absent}, "off"), ({"claude": {}}, "off"), ({}, "off")):
+            with self.subTest(states=states):
+                self.assertEqual(expected, verify.enforcement(states)["status"])
+
     def test_inline_program_mentioning_the_hook_is_not_executable(self):
         real = HOOK_DIR / "pre_tool_use.py"
         state = verify.analyse(f'python -c "pass" "{real}"', "pre_tool_use.py")
@@ -275,6 +286,20 @@ class CheckReadinessTests(Scratch):
         self.assertIn("Hooks: registered", result.stdout)
         self.assertIn("Saves: active", result.stdout)
         self.assertIn("Ready: yes", result.stdout)
+
+    def test_the_line_above_ready_says_whether_the_guard_is_on(self):
+        """F-04: missing hooks print `Ready: yes` (hooks are optional), which read as "the guard is on"."""
+        for settings, expected in (({"hooks": {}}, "Enforcement: off - no host registers pre_tool_use.py"),
+                                   (VerifyRegistrationTests.BLOCK, "Enforcement: partial - "),
+                                   (repair.plan({}, "claude", sys.executable)[0], "Enforcement: live - ")):
+            with self.subTest(expected=expected):
+                self.claude_settings(settings)
+                result = self.readiness()
+                lines = result.stdout.splitlines()
+                self.assertEqual("Ready: yes", lines[-1], result.stdout)
+                self.assertTrue(lines[-2].startswith(expected), lines[-2])
+        report = json.loads(self.readiness("--json").stdout)
+        self.assertEqual("live", report["enforcement"]["status"])
 
     def test_require_active_run_fails_when_saves_are_inactive(self):
         self.claude_settings(VerifyRegistrationTests.BLOCK)

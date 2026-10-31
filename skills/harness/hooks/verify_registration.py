@@ -555,6 +555,31 @@ def resolve_hosts(selection: str) -> dict[str, str]:
     return chosen
 
 
+def selected_states(selection: str = "auto") -> dict[str, dict]:
+    """The hook states of each host ``selection`` picks, read from its config files as ``hook_states`` reads them."""
+    return {host: hook_states([value for path in _paths(host) if isinstance(value := _read(path), dict)], host)
+            for host in resolve_hosts(selection)}
+
+
+def enforcement(states: dict[str, dict]) -> dict:
+    """Whether the guard's refusals are live, from each selected host's hook states (``{host: {key: state}}``).
+
+    ``live``: every host registers ``pre_tool_use.py`` with full tool coverage. ``off``: none registers it, so every
+    guard, freeze and read-only record and the destructive-command rule are advice, not refusals. ``partial``: some host,
+    or some tool, is left out. Readiness and ``guard_state.py`` print this one answer, so neither reads as protection that
+    is not there."""
+    pre = {host: (hooks or {}).get("pre") or {} for host, hooks in states.items()}
+    live = [host for host, state in pre.items() if state.get("registered") and state.get("coverage") == "full"]
+    if pre and len(live) == len(pre):
+        return {"status": "live", "detail": f"pre_tool_use.py is registered with full tool coverage for {', '.join(live)}"}
+    if not any(state.get("registered") for state in pre.values()):
+        return {"status": "off", "detail": (f"no host registers pre_tool_use.py ({', '.join(pre) or 'no host found'}), so "
+                                            "guard, freeze, read-only and destructive-command rules are advice, not refusals")}
+    left = ", ".join(host for host in pre if host not in live)
+    return {"status": "partial", "detail": f"pre_tool_use.py is missing or misses a tool for {left}, so a tool call there is "
+                                           "not refused"}
+
+
 def _hook_detail(state: dict) -> str:
     notes = []
     if not state["registered"]:

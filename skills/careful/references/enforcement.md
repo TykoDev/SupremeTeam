@@ -53,12 +53,18 @@ frozen:  ['src/payments/**']
 blocked: ['**/secrets/**']
 read-only runs: ['2026-09-16-charge-bug']
 allow_dangerous: {'owner': 'ops-lead', 'scope': 'scratch-volume rebuild', 'expires_at': '2026-09-16T09:50:11Z', ...}
+enforcement: live - pre_tool_use.py is registered with full tool coverage for claude
 WARNING unowned (not releasable by authority check): ['legacy/path/**']
 WARNING unmatchable (enforce nothing; re-record with a usable glob): ['..']
 ```
 
-Carry four facts into the careful record (and treat an `unmatchable` warning as a
+Carry five facts into the careful record (and treat an `unmatchable` warning as a
 boundary that is not there):
+
+- the `enforcement` line: `live` means a host registers the hook that refuses what
+  the record says; `off` means none does, so every boundary below is advice and the
+  careful verdict is the only control in place; `partial` names the host or tool
+  left out; `unknown` means the registration could not be read, which is not `live`;
 
 - whether `allow_dangerous` is `false` or a live grant, naming its owner, scope,
   and `expires_at`;
@@ -127,5 +133,5 @@ guard cannot see lists the limits in full.
 | --- | --- | --- |
 | `guard_state.py` cannot run — no interpreter on `PATH`, the harness is not installed, or the path does not resolve | the shell reports a missing command or file, and nothing is printed on stdout | Record that the boundary is unknown, not that it is clear. A destructive action gets no-go or escalate until the boundary can be read. |
 | `status` exits 1 on a corrupt record | stderr begins `refused:` and names the record as invalid JSON or the wrong type | Treat every boundary in the file as unreadable and the hook as effectively absent. No-go on destructive work; the repair needs explicit owner handling. The hook denies recognized guard-record mutations, but hook-file protection is active-run dependent: without a coherent active run, malformed state does not guarantee a hook-file write denial. |
-| The hook is never registered with the host | `status` reads cleanly but no tool call is ever denied; the host lists no `PreToolUse` hook | The deterministic layer does not exist for this session. Say so in the record rather than citing the boundary as protection, and treat the careful verdict as the only control in place. |
+| The hook is never registered with the host | `status` prints `enforcement: off` (or `partial` for the host in use); a `freeze`, `block` or `read-only` write adds a `note: recorded, but enforcement is off` on stderr | The deterministic layer does not exist for this session. Say so in the record rather than citing the boundary as protection, and treat the careful verdict as the only control in place. |
 | A live `read_only` record covers the run | `read-only runs` is non-empty in `status` | Every write outside that run's `allow` globs is already denied. A go verdict on such a write is unreachable; escalate to the record's owner for a `release-read-only` instead. |

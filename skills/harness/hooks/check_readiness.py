@@ -18,7 +18,10 @@ before delegation and reports them as *independent capabilities*:
 ``Ready`` covers the core: Python, a hook check that reached a definite answer,
 and, when requested, an active run. Hooks are optional, so "not registered" does
 not make the project not ready; ``--require-hooks`` makes it so, and then also
-rejects a partial matcher and an interpreter that is missing or too old.
+rejects a partial matcher and an interpreter that is missing or too old. So that
+``Ready: yes`` is never read as "the guard is on", the line above it says whether
+it is: ``Enforcement: live``, ``partial``, ``off`` or ``unknown``
+(``verify_registration.enforcement``).
 Anything the hook check can only call ``unknown`` (no readable host
 configuration) is not a definite answer and does block.
 
@@ -39,7 +42,7 @@ from pathlib import Path
 
 from _saves import ACCESS_DENIED_STEP, inspect_saves, next_step, refused_detail
 import _state
-from verify_registration import HOSTS, MATCHERS, REQUIRED, declared_minimum, interpreter_warning, repair_command
+from verify_registration import HOSTS, MATCHERS, REQUIRED, declared_minimum, enforcement, interpreter_warning, repair_command
 
 
 def run_hook_verifier(host: str, project_root: Path) -> tuple[str, int, str, dict]:
@@ -283,6 +286,9 @@ def main() -> int:
         refused = f": {refused_detail(saves)}: {ACCESS_DENIED_STEP}" if access_denied else ""
         blockers.append(f"no active pinned run (saves are {saves_status}{refused}; --require-active-run)")
     ready = not blockers
+    enforced = ({"status": "unknown", "detail": "hook registration could not be determined, so neither is enforcement"}
+                if hook_status == "unknown" else
+                enforcement({host: host_report.get("hooks") or {} for host, host_report in hook_report.items()}))
 
     report = {
         "python": {"status": py_status, "detail": py_detail},
@@ -295,6 +301,7 @@ def main() -> int:
         "warnings": warnings,
         "blockers": blockers,
         "repair_hint": repair_hint,
+        "enforcement": enforced,
         "ready": ready,
     }
 
@@ -322,7 +329,8 @@ def main() -> int:
             print("\nNot ready because:")
             for blocker in blockers:
                 print(f"  - {blocker}")
-        print(f"\nReady: {'yes' if ready else 'no'}")
+        print(f"\nEnforcement: {enforced['status']} - {enforced['detail']}")
+        print(f"Ready: {'yes' if ready else 'no'}")
 
     return 0 if ready else 1
 

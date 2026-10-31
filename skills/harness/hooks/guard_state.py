@@ -82,6 +82,23 @@ def _refuse(message: str) -> None:
     raise SystemExit(1)
 
 
+def _enforcement() -> dict:
+    """Whether a host would refuse what the record says: ``verify_registration.enforcement`` over the hosts it selects.
+
+    The record is written and read the same either way; this only says whether a hook stands behind it, so a fault
+    here is reported as ``unknown`` and never fails the command."""
+    try:
+        import verify_registration
+
+        return verify_registration.enforcement(verify_registration.selected_states("auto"))
+    except Exception as exc:
+        return {"status": "unknown", "detail": f"hook registration could not be read ({type(exc).__name__})"}
+
+
+# The writes that record a boundary a hook has to enforce; a release or a revoke needs no hook to take effect.
+_BOUNDARY_COMMANDS = frozenset({"freeze", "block", "read-only"})
+
+
 def _load() -> dict:
     """Read the record, refusing rather than overwriting damaged bytes."""
     path = _path()
@@ -361,6 +378,7 @@ def cmd_status(args) -> int:
         "unmatchable_reasons": {_entry_glob(e): reason for e, reason in unmatchable},
         "absolute_entries": [_entry_glob(e) for e, _ in absolute],
         "absolute_reasons": {_entry_glob(e): reason for e, reason in absolute},
+        "enforcement": _enforcement(),
     }
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
@@ -370,6 +388,7 @@ def cmd_status(args) -> int:
         print(f"blocked: {report['blocked_globs'] or '-'}")
         print(f"read-only runs: {report['read_only_runs'] or '-'}")
         print(f"allow_dangerous: {report['allow_dangerous']}")
+        print(f"enforcement: {report['enforcement']['status']} - {report['enforcement']['detail']}")
         if report["unowned_entries"]:
             print(f"WARNING unowned (not releasable by authority check): {report['unowned_entries']}")
         if report["unmatchable_entries"]:
@@ -457,9 +476,16 @@ def main(argv=None) -> int:
                                   kind="guard record lock", notes=notes):
             for note in notes:
                 print(f"note: {note}", file=sys.stderr)
-            return args.func(args)
+            code = args.func(args)
     except _fsutil.LockTimeout:
         _refuse(f"another guard_state.py is writing the record and did not finish within {args.lock_timeout:g}s; retry.")
+    if code == 0 and args.command in _BOUNDARY_COMMANDS:
+        # Read after the lock is released: the record is already written, and this only says whether it is enforced.
+        enforced = _enforcement()
+        if enforced["status"] != "live":
+            print(f"note: recorded, but enforcement is {enforced['status']}: {enforced['detail']}. Register the hooks "
+                  "(install --register-hooks, or repair_registration.py) for this boundary to be refused.", file=sys.stderr)
+    return code
 
 
 if __name__ == "__main__":

@@ -7,6 +7,37 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ## [Unreleased]
 
+### Third audit report, findings 1 to 4
+
+Each finding was reproduced against this tree first. Findings 1 and 4 held in part and are
+fixed; 2 and 3 describe what the code already does.
+
+- Hook state under parallel sub-agents (finding 1): the run record already held. A heartbeat
+  and a checkpoint that race are serialised by the writer lock of `save_run.py`: 24 concurrent
+  hook sessions and four racing checkpoints left one winning checkpoint and a coherent run.
+  Trajectories are already kept per session. The observation and fault counters were not
+  safe: a hook that outwaited the 0.25 s lock bound wrote `observations/<Event>.json` unlocked,
+  from a stale copy, so a burst lost counts, fault counts among them (21 of 24 faults kept
+  when every hook of a burst outwaited the lock). Such a hook now leaves its update as
+  `<Event>.pending.<time>-<pid>`, the next update that holds the lock folds it in, and
+  readiness and `load_observations` count pending updates before then. The host is still
+  never held up. The test that held the lock and expected an unlocked write is changed to
+  expect the pending update.
+- Inline interpreters (finding 2): denied since ST-AUD-004 and re-checked here. A root or home
+  wipe from `python -c`, `node -e`, Perl or Ruby is refused, and under a freeze so is every
+  inline write or delete into the boundary, a path built at run time included. No change.
+- Small fixes (finding 3): the Tier 0 fast path already takes a small fix whose cause is known
+  with no intake, run or gate, which is less ceremony than the proposed micro-patch pipeline,
+  and the routing doctrine keeps Tier 0 from becoming a pipeline. An unknown cause and a
+  security change keep their routes by design. No change.
+- Contract copies (finding 4): the six execution-contract clauses are copied into fifteen
+  skills and compared by `ExecutionContractTests` (`test_contract_mirrors.py` compares the
+  responsibility matrix with the manifests, and `check_parity.py` is the redesign parity
+  check). `skills/validation/sync_contracts.py` lists the copies that differ and, with
+  `--write`, rewrites them from the canonical section, leaving unchanged items as each file
+  wraps them. `ExecutionContractTests` reads the clauses and the bound skills through it, so
+  the comparator and the tool agree.
+
 ### Second audit report, F-01 to F-07
 
 Each finding was checked against this tree first. F-01, F-02 and F-04 held and are fixed; the

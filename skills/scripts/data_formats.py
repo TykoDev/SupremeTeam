@@ -17,6 +17,14 @@ trailing whitespace, so ``|`` reads as ``|-`` (PyYAML keeps one final newline);
 ``validation/test_catalog_contracts.py`` ParserParityTests compares the two
 readers on the shipped catalog under that rule.  One document per file: a second
 ``---`` after content is an error, where PyYAML's ``safe_load`` also refuses it.
+
+What the subset does not support it refuses by name, with the line, rather than read
+as something else: an anchor (``&a``), an alias (``*a``, so a merge key ``<<: *a`` too)
+and a tag (``!!str``, ``!Ref``), which it once kept as text (``*a`` became the string
+``'*a'``); a block scalar on a list item's own line (``- |``, ``- key: >-``), which it
+once read as the text ``'|'`` followed by the block parsed as YAML; an indentation
+indicator (``|2``); and a complex key (``? ``).  An unquoted glob that starts with ``*``
+is an alias to YAML as well, so it has to be quoted.
 """
 
 from __future__ import annotations
@@ -96,10 +104,22 @@ def _strip_comment(value: str) -> str:
     return value.rstrip()
 
 
+#: What an unquoted value that starts with a YAML node property is, and what to write instead. PyYAML would resolve the
+#: anchor, alias or tag; the subset used to keep the whole text (``*base`` became the string ``'*base'``), so it refuses.
+_NODE_PROPERTIES = {
+    "&": "YAML anchor {token!r} is not supported by the catalog's YAML subset; write the value out where it is used",
+    "*": ("YAML alias {token!r} is not supported by the catalog's YAML subset (merge keys '<<' included); write the value "
+          "it refers to out in full, or quote the value if it is text, as a glob such as '**/x' must be"),
+    "!": "YAML tag {token!r} is not supported by the catalog's YAML subset; drop the tag, or quote the value if it is text",
+}
+
+
 def parse_scalar(value: str) -> Any:
     value = _strip_comment(value.strip())
     if not value:
         return ""
+    if value[0] in _NODE_PROPERTIES:
+        raise DataFormatError(_NODE_PROPERTIES[value[0]].format(token=value.split()[0]))
     if value in {"null", "Null", "NULL", "~"}:
         return None
     if value.lower() in {"true", "false"}:
@@ -170,6 +190,26 @@ def parse_scalar(value: str) -> Any:
 
 #: Every chomping indicator is accepted; ``_block_scalar`` reads each as strip (see the module docstring).
 _BLOCK_INDICATORS = {"|", ">", "|-", "|+", ">-", ">+"}
+#: Any block scalar header, the unsupported ones with an indentation indicator (``|2``, ``>-1``) included.
+_BLOCK_HEADER = re.compile(r"[|>][-+]?\d?[-+]?")
+
+
+def _opens_block(content: str) -> bool:
+    """True for a line whose value is a block scalar header: a mapping entry (``key: |``), or a list item's own line
+    (``- >-``, ``- key: |``), so the lines under it pass through raw and the parser can name what it does not support."""
+    if content.startswith("-"):
+        content = content[1:].strip()
+        if _BLOCK_HEADER.fullmatch(content):
+            return True
+    return ":" in content and bool(_BLOCK_HEADER.fullmatch(content.split(":", 1)[1].strip()))
+
+
+def _scalar(value: str, lineno: int) -> Any:
+    """``parse_scalar`` with the line the value came from in any error it raises."""
+    try:
+        return parse_scalar(value)
+    except DataFormatError as exc:
+        raise DataFormatError(f"{exc} (line {lineno})") from exc
 
 
 def _normalise_lines(text: str) -> list[tuple[int, str, int]]:
@@ -206,7 +246,7 @@ def _normalise_lines(text: str) -> list[tuple[int, str, int]]:
             raise DataFormatError(f"tabs are not supported for indentation at line {lineno}")
         content = _strip_comment(raw[indent:])
         lines.append((indent, content, lineno))
-        if not content.startswith("-") and ":" in content and content.split(":", 1)[1].strip() in _BLOCK_INDICATORS:
+        if _opens_block(content):
             block_indent = indent
     return lines
 
@@ -247,6 +287,11 @@ def _parse_block(lines: list[tuple[int, str, int]], index: int, indent: int) -> 
                 break
             item = content[1:].strip()
             index += 1
+            if _BLOCK_HEADER.fullmatch(item) or (":" in item and _BLOCK_HEADER.fullmatch(item.split(":", 1)[1].strip())):
+                raise DataFormatError(
+                    f"a block scalar on a list item's own line ({content!r}) at line {lineno} is not supported by the "
+                    "catalog's YAML subset; write the item as one quoted string, or put its key on the next line under "
+                    "the dash")
             if not item:
                 if index < len(lines) and lines[index][0] > indent:
                     value, index = _parse_block(lines, index, lines[index][0])
@@ -258,8 +303,8 @@ def _parse_block(lines: list[tuple[int, str, int]], index: int, indent: int) -> 
                 and not (len(item) >= 2 and item[0] in {"'", '"'} and item[-1] == item[0])
             ):
                 key, raw_value = item.split(":", 1)
-                mapping_key = str(parse_scalar(key.strip()))
-                mapping: dict[str, Any] = {mapping_key: parse_scalar(raw_value)} if raw_value.strip() else {mapping_key: None}
+                mapping_key = str(_scalar(key.strip(), lineno))
+                mapping: dict[str, Any] = {mapping_key: _scalar(raw_value, lineno)} if raw_value.strip() else {mapping_key: None}
                 if index < len(lines) and lines[index][0] > indent:
                     child, index = _parse_block(lines, index, lines[index][0])
                     if isinstance(child, dict):
@@ -271,16 +316,19 @@ def _parse_block(lines: list[tuple[int, str, int]], index: int, indent: int) -> 
                         mapping[mapping_key] = child
                 value = mapping
             else:
-                value = parse_scalar(item)
+                value = _scalar(item, lineno)
                 if index < len(lines) and lines[index][0] > indent:
                     raise DataFormatError(f"list scalar cannot have nested content at line {lines[index][2]}")
             result.append(value)
             continue
 
+        if content == "?" or content.startswith("? "):
+            raise DataFormatError(f"a complex mapping key ('? ') at line {lineno} is not supported by the catalog's YAML "
+                                  "subset; write the key as a plain or quoted scalar before the ':'")
         if content.startswith("-") or ":" not in content:
             raise DataFormatError(f"expected mapping entry at line {lineno}")
         key, raw_value = content.split(":", 1)
-        key = str(parse_scalar(key.strip()))
+        key = str(_scalar(key.strip(), lineno))
         if not key:
             raise DataFormatError(f"empty mapping key at line {lineno}")
         if key in result:
@@ -299,10 +347,16 @@ def _parse_block(lines: list[tuple[int, str, int]], index: int, indent: int) -> 
                     pieces.append("")
                 index += 1
             result[key] = _block_scalar(pieces, folded=raw_value.startswith(">"))
+        elif _BLOCK_HEADER.fullmatch(raw_value):
+            raise DataFormatError(f"block scalar indentation indicator {raw_value!r} at line {lineno} is not supported by "
+                                  f"the catalog's YAML subset; drop the digit ({raw_value[0]} with an optional - or +) "
+                                  "and indent the block's lines evenly")
         elif raw_value:
-            result[key] = parse_scalar(raw_value)
+            result[key] = _scalar(raw_value, lineno)
             if index < len(lines) and lines[index][0] > indent:
-                raise DataFormatError(f"scalar mapping value has nested content at line {lines[index][2]}")
+                raise DataFormatError(f"scalar mapping value has nested content at line {lines[index][2]}: a value that "
+                                      "continues on the next line is not supported; quote it on one line or use a block "
+                                      "scalar (| or >)")
         elif index < len(lines) and lines[index][0] > indent:
             result[key], index = _parse_block(lines, index, lines[index][0])
         else:

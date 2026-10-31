@@ -1,7 +1,8 @@
-# Benchmark and review scores — 2026-10-26
+# Benchmark and review scores — 2026-10-26, suites re-measured 2026-10-31
 
-Measured on this tree with 3.13.17 on Linux, after the audit
-and hardening pass that followed the review-orchestration change. Baseline for the paired
+The timings and the rubric were measured on 2026-10-26 with 3.13.17 on Linux, after the audit
+and hardening pass that followed the review-orchestration change; the suite table was
+re-measured on 2026-10-31 (see its section). Baseline for the paired
 timings: a `git archive` of the committed tree `a3ef604889749b9da1890f705ebf863d07fa1af7`
 (`skills/` and `tools/`); candidate: the working tree. Local disposable fixtures only, no
 production target and no host configuration change. The previous record is
@@ -10,25 +11,37 @@ with its [scorecard](docs/reviews/gatekeeper-rubric-2026-10-25.md).
 
 ## Whole-catalog verification
 
-Every suite was run in full on this tree, because the changes reach the guard, the gate
-validator, the audit hook, the shared reader and the prose the suites compare with the code.
-Skips are platform or dependency conditions reported by unittest, not failed checks.
+Re-measured on 2026-10-31 with 3.13.18 on Linux, on the tree this table ships with (after the
+ST-AUD-004 to ST-AUD-012 and F-01 to F-07 fixes). The timings and the rubric further down are
+the 2026-10-26 measurements and were not re-run.
 
-| Suite | Tests | Skipped | Result |
-| --- | ---: | ---: | --- |
-| Hooks (`skills/harness/hooks`) | 1104 | 4 | Pass |
-| Gatekeeper (`skills/harness/gatekeeper`) | 342 | 1 | Pass |
-| Validation (`skills/validation`) | 268 | 1 | Pass |
-| Scripts (`skills/scripts`) | 406 | 2 | Pass |
-| Taste (`skills/taste`) | 222 | 0 | Pass |
-| Installers (`scripts`) | 79 | 0 | Pass |
-| Skill-creator (`skills/skill-maker/skill-creator`) | 171 | 0 | Pass |
-| Checkout tools (`tools/run-audit`, `tools/rescan-compare`) | 27 | 0 | Pass |
+Each suite was run twice: with PyYAML installed and in a virtual environment without it, the
+two variants CI runs. PyYAML is optional, and two whole classes of the validation suite
+(`ParserParityTests`, 3 tests, and `TriggerEvalTests`, 7 tests) compare the stdlib reader with
+it, so they cannot run without it. unittest counts a class skipped in `setUpClass` as one skip
+and leaves its tests out of "Ran", so its own figures (validation: `Ran 268, skipped=1` with
+PyYAML, `Ran 258, skipped=3` without) hide how many checks did not execute. The table counts
+them: **Tests** is every test the suite collects, **Not run** is how many of those did not
+execute in that variant, whether skipped one by one or with their class. Every skip is a
+platform or dependency condition, not a failed check.
 
-The seven catalog suites hold 2592 tests. `check_runtime.py` reports ready, `validate_manifests.py`
-reports no error, `package_check.py --root .` selects 469 files with no violation, and
-`ruff check .` is clean at the CI pin (0.16.9). Three tests failed on the committed tree before
-this pass (the `ship` version record and the path resolver's `..` handling); all three pass now.
+| Suite | Tests | Not run, with PyYAML | Not run, without PyYAML | Result |
+| --- | ---: | ---: | ---: | --- |
+| Hooks (`skills/harness/hooks`) | 1114 | 4 | 4 | Pass, both |
+| Gatekeeper (`skills/harness/gatekeeper`) | 342 | 1 | 1 | Pass, both |
+| Validation (`skills/validation`) | 268 | 1 | 11 | Pass, both |
+| Scripts (`skills/scripts`) | 412 | 2 | 7 | Pass, both |
+| Taste (`skills/taste`) | 222 | 0 | 0 | Pass, both |
+| Installers (`scripts`) | 79 | 0 | 0 | Pass, both |
+| Skill-creator (`skills/skill-maker/skill-creator`) | 172 | 0 | 1 | Pass, both |
+| Checkout tools (`tools/run-audit`, `tools/rescan-compare`) | 27 | 0 | 0 | Pass, both |
+
+The seven catalog suites hold 2609 tests: 2601 execute with PyYAML and 2585 without it.
+`check_runtime.py` reports ready, `validate_manifests.py` reports no error,
+`package_check.py --root .` selects 470 files with no violation, and `ruff check .` is clean at
+the CI pin (0.16.9), in both variants. On 2026-10-26, three tests failed on the committed tree
+before that day's pass (the `ship` version record and the path resolver's `..` handling); all
+three pass.
 
 ## Behaviour that changed
 
@@ -104,7 +117,18 @@ or a task-success percentage, and there is no claim of 100/100 SHIP.
 
 ## Reproduce
 
-Run from a checkout with Python 3.13 or newer; `python` names that interpreter.
+Run from a checkout with Python 3.13 or newer; `python` names that interpreter. Run the suites
+once with PyYAML installed (`python -m pip install pyyaml`) and once without it, as CI does,
+because the counts differ (see the table above):
+
+```bash
+python -m venv .venv          # a bare environment has no PyYAML
+.venv/bin/python -m unittest discover -s skills/validation -p "test_*.py"   # .venv\Scripts\python on Windows
+```
+
+unittest's `skipped=` counts a class skipped in `setUpClass` once. To count the tests that did
+not run, compare `suite.countTestCases()` of `unittest.TestLoader().discover(...)` with the tests
+that executed (`testsRun` minus the skips of single tests).
 
 ```bash
 python -m unittest discover -s skills/harness/hooks -p "test_*.py"
@@ -136,3 +160,18 @@ above and keep every raw timing.
 
 Paid trigger routing, live host registration, end-to-end model task success and actual hook
 firing on another host. These results do not claim those evaluations passed.
+
+Routing is the one of these the repository can measure on its own, with a model run that costs
+money. `skills/validation/trigger_eval.py` routes the catalog's own trigger corpus (183 queries
+from 53 skills: each skill's advertised phrases and the phrases a sibling says belong to it)
+against the whole roster, optionally restated by a model in a user's own words first, which is
+the only form whose score is worth quoting:
+
+```bash
+python skills/validation/trigger_eval.py --pilot --mode both --paraphrase --out pilot.json   # one batch, to price it
+python skills/validation/trigger_eval.py --mode both --paraphrase --out routing.json         # the full corpus
+```
+
+A pilot on 2026-10-31 (one batch of 15 paraphrased queries, the CLI's default model) cost
+$0.40, so the full corpus of 13 batches is about $5. One batch is not a score, and none is
+published here until the full corpus has run.

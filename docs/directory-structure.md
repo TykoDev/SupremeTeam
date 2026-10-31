@@ -78,10 +78,11 @@ SupremeTeam/
     │   ├── validate_manifests.py         # Manifest and cross-reference contracts
     │   ├── package_check.py              # Packaging enumeration and residue check
     │   └── _runtime_fixtures.py          # Test support for the check_runtime suites
-    ├── validation/                       # Contract test suites and the two paid evals
+    ├── validation/                       # Contract test suites, the two paid evals and the clause sync
     │   ├── __init__.py                   # Package marker
     │   ├── _catalog.py                   # Shared readers for the suite and trigger_eval.py, on the production parser
     │   ├── run_eval.py                   # Run-level eval: which skills a real session registers
+    │   ├── sync_contracts.py             # Copies the canonical execution-contract clauses into every bound skill
     │   ├── trigger_eval.py               # Trigger eval: does the right skill win
     │   └── test_*.py                     # The validation suite, listed under The test suites
     ├── harness/

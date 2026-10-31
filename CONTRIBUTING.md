@@ -4,7 +4,9 @@ Supreme Team checks its own prose: tests compare documents against code and
 against each other (counts, table rows, the six execution-contract clauses
 copied verbatim). A change that alters behaviour a document describes has to
 update that document in the same commit, and the suites will say so when it
-does not.
+does not. The clauses are the one copy a script keeps in step for you: change
+them in `skills/execution-contract.md`, then run
+`python skills/validation/sync_contracts.py --write`.
 
 ## Requirements
 

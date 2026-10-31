@@ -127,8 +127,12 @@ Adding or removing a name in any of those five manifest keys changes the
 affected set automatically, and the comparator fails until the new skill carries
 the clauses. Nothing else needs editing here.
 
-When a shared clause changes, update this file first, then update the local
-statement of the clause in those fifteen skills, then rerun both suites:
+When a shared clause changes, update this file first, then copy the clause into
+those fifteen skills with `python skills/validation/sync_contracts.py --write`
+(without `--write` it only lists the copies that differ). It rewrites only an item
+that differs, leaves the others as each file wraps them, and refuses a skill whose
+`## Execution Contract` section or one of its six items is missing rather than
+guess where the copy belongs. Then rerun both suites:
 `python skills/scripts/validate_manifests.py` for manifest and catalog
 consistency, and `python -m unittest discover -s skills/validation -p "test_*.py"`
 for the contract suites. The clause comparison lives in the second one:

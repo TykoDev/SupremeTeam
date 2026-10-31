@@ -1,4 +1,9 @@
-"""Secret redaction for the runtime report: free text, URLs, command lines and structured values."""
+"""Secret redaction for the runtime report: free text, URLs, command lines and structured values.
+
+A secret is found by its context (a secret-named key, a flag, an auth scheme, credentials in a URL) or by its shape
+alone (a private key block, a provider's key prefix, a JWT). A high-entropy string with neither is not redacted: the
+report carries sha256 digests as evidence, and an entropy rule cannot tell one from a token without destroying them.
+"""
 
 from __future__ import annotations
 
@@ -50,6 +55,22 @@ URL_SECRET_QUERY_KEYS = frozenset(
 )
 URL_RE = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s\"'<>]+")
 URL_QUERY_RE = re.compile(r"(?i)([?&])([^=&#\s]+)=([^&#\s\"']*)")
+# A credential recognisable by its shape alone, with no key name, flag or scheme beside it (`docker login -p <token>`,
+# `export GH=<token>`, a private key pasted into a message): a private key block, a provider's key prefix, a JWT. Each
+# shape is a fixed prefix, so a hex digest, a uuid or a base64 hash, which the report carries as evidence, is never one;
+# an `sk-` key must hold a digit, so a slug such as `sk-telemetry-dashboard-config` is not one either.
+TOKEN_SHAPE_RE = re.compile(
+    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\Z)"
+    r"|\b(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b"
+    r"|\bgh[pousr]_[A-Za-z0-9]{36,}|\bgithub_pat_[A-Za-z0-9_]{22,}"
+    r"|\bglpat-[A-Za-z0-9_-]{20,}"
+    r"|\bsk-(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{20,}"
+    r"|\b[rsp]k_(?:live|test)_[A-Za-z0-9]{10,}"
+    r"|\bxox[abposr]-[A-Za-z0-9-]{10,}"
+    r"|\bAIza[0-9A-Za-z_-]{35}"
+    r"|\bnpm_[A-Za-z0-9]{36}"
+    r"|\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"
+)
 
 
 def _auth_value_end(value: str, start: int) -> int:
@@ -189,6 +210,7 @@ def redact(value: str, *, parse_structured: bool = True) -> str:
                 return json.dumps(redact_value(parsed), ensure_ascii=False, sort_keys=True)
             except (ValueError, RecursionError):
                 pass
+    value = TOKEN_SHAPE_RE.sub("<redacted>", value)
     value = _redact_urls(value)
     value = _redact_auth_schemes(value)
     value = SECRET_FLAG_RE.sub(r"\1=<redacted>", value)

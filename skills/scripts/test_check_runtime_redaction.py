@@ -3,9 +3,10 @@
 Two things keep a secret out of the report. Files that are sensitive by name or
 location are never read or listed, and every string that does flow from a project
 into the report (a start command, a diagnostic or a warning that quotes a path)
-goes through the redactor, which works from context: a secret-named key, a flag, an
-auth scheme, credentials in a URL. The tests cover both, end to end through
-``check()``, and pin the redactor's forms directly.
+goes through the redactor, which works from context (a secret-named key, a flag, an
+auth scheme, credentials in a URL) and from shape (a private key block, a provider's
+key prefix, a JWT). The tests cover both, end to end through ``check()``, and pin the
+redactor's forms directly.
 """
 from __future__ import annotations
 
@@ -75,6 +76,40 @@ class RedactionFormTests(unittest.TestCase):
                 redacted = redact(text)
                 self.assertNotIn(SECRET, redacted)
                 self.assertEqual(redacted, expected)
+
+    def test_a_credential_is_redacted_by_its_shape_with_no_key_name_beside_it(self):
+        """ST-AUD-012: only context was read, so a provider key, a JWT or a private key in free text passed whole.
+        Each shape is built from pieces here so the repository holds nothing shaped like a credential."""
+        body = "a1" * 18
+        shapes = {
+            "aws access key id": "AK" + "IA" + "Q" * 16,
+            "github token": "gh" + "p_" + body,
+            "github fine-grained token": "github" + "_pat_" + body,
+            "gitlab token": "gl" + "pat-" + body,
+            "openai key": "sk" + "-proj-" + body,
+            "anthropic key": "sk" + "-ant-api03-" + body,
+            "stripe key": "sk" + "_live_" + body,
+            "slack token": "xo" + "xb-" + "1234567890-" + body,
+            "google api key": "AI" + "za" + "B" * 35,
+            "npm token": "np" + "m_" + "c" * 36,
+            "jwt": ".".join(("ey" + "J" + "h" * 12, "ey" + "J" + "p" * 12, "s" * 12)),
+        }
+        for name, token in shapes.items():
+            with self.subTest(name):
+                text = redact(f"docker login -p {token} registry.example")
+                self.assertNotIn(token, text)
+                self.assertEqual(text, "docker login -p <redacted> registry.example")
+                self.assertNotIn(token, json.dumps(redact_value({"note": f"used {token}", "argv": ["-p", token]})))
+        block = "-----BEGIN " + "RSA PRIVATE KEY-----\n" + body + "\n-----END " + "RSA PRIVATE KEY-----"
+        self.assertEqual(redact(f"key follows {block} done"), "key follows <redacted> done")
+        self.assertEqual(redact("truncated -----BEGIN " + "PRIVATE KEY-----\n" + body), "truncated <redacted>")
+
+    def test_a_digest_a_uuid_or_a_slug_is_not_taken_for_a_credential(self):
+        for text in ("sha256 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                     "run 123e4567-e89b-12d3-a456-426614174000", "sk-telemetry-dashboard-config-panel",
+                     "task-runner-0123456789-abcdefghij", "ghp_short", "eyJ alone", "-----BEGIN CERTIFICATE-----"):
+            with self.subTest(text=text):
+                self.assertEqual(redact(text), text)
 
     def test_json_documents_are_redacted_structurally(self):
         self.assertEqual(

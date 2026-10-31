@@ -78,15 +78,7 @@ _EVENT_FOR_KEY = {"pre": "PreToolUse", "post": "PostToolUse", "prompt": "UserPro
 def _observation_records(project_root: Path) -> dict:
     """The per-event records the hooks wrote, read without creating anything."""
     directory = _state.existing_state_dir(project_root)
-    records = {}
-    for path in (directory / "observations").glob("*.json") if directory else ():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if isinstance(data, dict):
-            records[path.stem] = data
-    return records
+    return _state.observation_records(directory / "observations" if directory else None)
 
 
 def _fault_count(value) -> int:

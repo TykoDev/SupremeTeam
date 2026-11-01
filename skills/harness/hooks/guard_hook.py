@@ -284,8 +284,10 @@ _PROGRAM_DEPTH = 3
 
 def _analysis_label(analysis, depth: int = 0) -> "str | None":
     """The destructive rule a command line's analysis trips: its commands, those a launcher, a script block or a shell
-    fed by a literal ``echo`` runs (``watch 'rm -rf /'``, ``echo 'rm -rf /' | sh``), and the command lines an inline
-    program hands a shell (``perl -e 'system("rm -rf /")'``, ``python3 -c 'os.system("rm -rf /")'``)."""
+    fed by a literal ``echo`` or a literal ``base64 -d`` runs (``watch 'rm -rf /'``, ``echo 'rm -rf /' | sh``,
+    ``echo cm0gLXJmIC8K | base64 -d | sh``), an inline program's own delete of a root or home
+    (``python3 -c 'shutil.rmtree("/")'``, ``node -e 'fs.rmSync(os.homedir(), {recursive: true})'``), and the command lines
+    an inline program hands a shell (``perl -e 'system("rm -rf /")'``, ``python3 -c 'os.system("rm -rf /")'``)."""
     for current in _analyses(analysis):
         for command in current.commands:
             label = _structural_label(command)
@@ -297,6 +299,8 @@ def _analysis_label(analysis, depth: int = 0) -> "str | None":
         if depth >= _PROGRAM_DEPTH:
             continue
         for code in current.code:
+            if any(_wipe_target(target) for target in _cmdscan.program_removals(code)):
+                return "inline program delete of a root/home/glob target"
             commands = _cmdscan.program_commands(code)
             if not commands:
                 continue

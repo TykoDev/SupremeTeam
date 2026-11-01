@@ -261,8 +261,9 @@ def _claude(prompt: str, model: str | None, timeout: int) -> tuple[str, float]:
         cmd += ["--model", model]
     # CLAUDECODE is a guard against interactive nesting; a subprocess call is safe.
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", cwd=str(REPO), env=env, timeout=timeout)
+    # stdin is closed: claude reads a stdin that is not a terminal as more prompt and waits for it to end.
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          cwd=str(REPO), env=env, timeout=timeout, stdin=subprocess.DEVNULL)
     if proc.returncode != 0:
         raise RuntimeError(f"claude exited {proc.returncode}: {proc.stderr[:400]}")
     payload = json.loads(proc.stdout)

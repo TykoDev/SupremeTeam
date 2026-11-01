@@ -194,12 +194,22 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertLessEqual({"push", "pull_request"}, triggers)
         self.assertNotIn("pull_request_target", triggers, "that trigger hands a fork's code a write token")
 
-    def test_actions_are_pinned_to_a_version_and_come_from_github(self):
-        uses = [step["uses"] for step in self.steps() if "uses" in step]
+    def test_actions_are_pinned_to_a_commit_and_come_from_github(self):
+        """F-02: a major tag can move, so every job names each action by a full commit SHA, with its release noted."""
+        uses = [step["uses"] for job in self.workflow["jobs"].values() for step in job["steps"] if "uses" in step]
         self.assertTrue(uses)
         for action in uses:
             with self.subTest(action=action):
-                self.assertRegex(action, r"^actions/[\w.-]+@(v\d+(\.\d+){0,2}|[0-9a-f]{40})$")
+                self.assertRegex(action, r"^actions/[\w.-]+@[0-9a-f]{40}$")
+        for line in (line.strip() for line in self.text.splitlines() if line.strip().startswith("uses:")):
+            with self.subTest(line=line):
+                self.assertRegex(line, r"@[0-9a-f]{40} # v\d+\.\d+\.\d+$")
+
+    def test_dependabot_raises_the_action_pins(self):
+        config = load_data(REPO / ".github" / "dependabot.yml")
+        ecosystems = {update["package-ecosystem"]: update for update in config["updates"]}
+        self.assertIn("github-actions", ecosystems)
+        self.assertEqual("/", ecosystems["github-actions"]["directory"])
 
     def test_nothing_is_cached_and_the_checkout_keeps_no_credentials(self):
         for step in self.steps():

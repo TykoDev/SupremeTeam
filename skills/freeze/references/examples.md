@@ -72,6 +72,7 @@ frozen:  ['release/manifests/**', '.github/workflows/publish.yml']
 blocked: -
 read-only runs: -
 allow_dangerous: False
+enforcement: live - pre_tool_use.py is registered with full tool coverage for claude
 ```
 
 **Output:**

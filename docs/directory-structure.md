@@ -17,6 +17,7 @@ SupremeTeam/
 ├── .gitattributes                        # LF text in the repository, binary file types
 ├── .gitignore                            # Run state, local environments, interpreter and coverage residue
 ├── .github/workflows/ci.yml              # Runs the suites and validators on three OSes
+├── .github/dependabot.yml                # Proposes new releases of the SHA-pinned CI actions
 ├── scripts/                              # Checkout-only: not part of an installed copy
 │   ├── install.ps1                       # Windows installer
 │   ├── install.sh                        # macOS and Linux installer
@@ -77,10 +78,11 @@ SupremeTeam/
     │   ├── validate_manifests.py         # Manifest and cross-reference contracts
     │   ├── package_check.py              # Packaging enumeration and residue check
     │   └── _runtime_fixtures.py          # Test support for the check_runtime suites
-    ├── validation/                       # Contract test suites and the two paid evals
+    ├── validation/                       # Contract test suites, the two paid evals and the clause sync
     │   ├── __init__.py                   # Package marker
     │   ├── _catalog.py                   # Shared readers for the suite and trigger_eval.py, on the production parser
     │   ├── run_eval.py                   # Run-level eval: which skills a real session registers
+    │   ├── sync_contracts.py             # Copies the canonical execution-contract clauses into every bound skill
     │   ├── trigger_eval.py               # Trigger eval: does the right skill win
     │   └── test_*.py                     # The validation suite, listed under The test suites
     ├── harness/

@@ -492,15 +492,47 @@ class StateWriteTests(StateCase):
         self.assertEqual(record["observed"]["count"], 80)
 
     def test_a_hook_never_waits_longer_than_a_quarter_of_a_second_for_the_observation_lock(self):
+        """A hook that cannot take the lock in time leaves its update pending instead of writing the record unlocked,
+        which let a stale copy erase a concurrent update (a fault count among them) when parallel sub-agents fired at
+        once. Readers count the pending update, and the next update that holds the lock folds it in."""
         self.assertGreater(_state.OBSERVATION_LOCK_WAIT, 0)
         self.assertLessEqual(_state.OBSERVATION_LOCK_WAIT, 0.25)
+        observations = self.root / ".harness-state" / "observations"
         with _fsutil.AdvisoryLock(self.root / ".harness-state" / "observations.lock", 5, create_dir=True) as other_writer:
             self.assertTrue(other_writer.held)
             started = time.monotonic()
             _state.record_fault("PreToolUse", ValueError())
             waited = time.monotonic() - started
-        self.assertEqual(self.observation("PreToolUse")["faults"], 1, "without the lock the fault is still counted")
         self.assertLess(waited, 5, "the count gave up on a lock another writer held, instead of waiting for it")
+        self.assertFalse((observations / "PreToolUse.json").exists(), "the record was written without the lock")
+        self.assertEqual(1, len(list(observations.glob("PreToolUse.pending.*"))))
+        self.assertEqual(_state.load_observations()["PreToolUse"]["faults"], 1, "a pending fault is still counted")
+        _state.record_observation("PreToolUse", {"session_id": "host-1"})
+        self.assertEqual(self.observation("PreToolUse")["faults"], 1, "the next update folds the pending fault in")
+        self.assertEqual(self.observation("PreToolUse")["observed"]["count"], 1)
+        self.assertEqual([], list(observations.glob("PreToolUse.pending.*")))
+
+    def test_a_burst_that_outwaits_the_lock_loses_no_count(self):
+        """Third report, finding 1: parallel sub-agents fire their hooks at once, and every one that outwaited the lock
+        wrote the record unlocked, from the same stale copy, so all but one of their counts were lost. Here the lock is
+        held for the whole burst, so every hook outwaits it at the production bound."""
+        script = (
+            "import sys; sys.path.insert(0, %r); import _state\n"
+            "_state.record_fault('PostToolUse', ValueError())\n"
+            "_state.record_observation('PostToolUse', {'session_id': sys.argv[1]})\n" % str(HOOK_DIR)
+        )
+        env = kit.clean_env(self.root)
+        with _fsutil.AdvisoryLock(self.root / ".harness-state" / "observations.lock", 5, create_dir=True) as other_writer:
+            self.assertTrue(other_writer.held)
+            procs = [subprocess.Popen([sys.executable, "-c", script, f"agent-{n}"], env=env) for n in range(24)]
+            for proc in procs:
+                self.assertEqual(proc.wait(timeout=120), 0)
+        record = _state.load_observations()["PostToolUse"]
+        self.assertEqual(record["faults"], 24)
+        self.assertEqual(record["observed"]["count"], 24)
+        _state.record_observation("PostToolUse", {"session_id": "late"})
+        self.assertEqual(self.observation("PostToolUse")["faults"], 24)
+        self.assertEqual(self.observation("PostToolUse")["observed"]["count"], 25)
 
     def test_a_hook_never_waits_longer_than_a_quarter_of_a_second_for_the_trajectory_lock(self):
         """The wait that test raises stays short in production: a hook never holds up the host, and a lock it cannot get is

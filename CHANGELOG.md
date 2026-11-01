@@ -7,6 +7,116 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ## [Unreleased]
 
+### Third audit report, findings 1 to 4
+
+Each finding was reproduced against this tree first. Findings 1 and 4 held in part and are
+fixed; 2 and 3 describe what the code already does.
+
+- Hook state under parallel sub-agents (finding 1): the run record already held. A heartbeat
+  and a checkpoint that race are serialised by the writer lock of `save_run.py`: 24 concurrent
+  hook sessions and four racing checkpoints left one winning checkpoint and a coherent run.
+  Trajectories are already kept per session. The observation and fault counters were not
+  safe: a hook that outwaited the 0.25 s lock bound wrote `observations/<Event>.json` unlocked,
+  from a stale copy, so a burst lost counts, fault counts among them (21 of 24 faults kept
+  when every hook of a burst outwaited the lock). Such a hook now leaves its update as
+  `<Event>.pending.<time>-<pid>`, the next update that holds the lock folds it in, and
+  readiness and `load_observations` count pending updates before then. The host is still
+  never held up. The test that held the lock and expected an unlocked write is changed to
+  expect the pending update.
+- Inline interpreters (finding 2): denied since ST-AUD-004 and re-checked here. A root or home
+  wipe from `python -c`, `node -e`, Perl or Ruby is refused, and under a freeze so is every
+  inline write or delete into the boundary, a path built at run time included. No change.
+- Small fixes (finding 3): the Tier 0 fast path already takes a small fix whose cause is known
+  with no intake, run or gate, which is less ceremony than the proposed micro-patch pipeline,
+  and the routing doctrine keeps Tier 0 from becoming a pipeline. An unknown cause and a
+  security change keep their routes by design. No change.
+- Contract copies (finding 4): the six execution-contract clauses are copied into fifteen
+  skills and compared by `ExecutionContractTests` (`test_contract_mirrors.py` compares the
+  responsibility matrix with the manifests, and `check_parity.py` is the redesign parity
+  check). `skills/validation/sync_contracts.py` lists the copies that differ and, with
+  `--write`, rewrites them from the canonical section, leaving unchanged items as each file
+  wraps them. `ExecutionContractTests` reads the clauses and the bound skills through it, so
+  the comparator and the tool agree.
+
+### Second audit report, F-01 to F-07
+
+Each finding was checked against this tree first. F-01, F-02 and F-04 held and are fixed; the
+other four are true statements about the project that a code change does not answer.
+
+- Benchmark (F-01): `BENCHMARK.md` gave one count per suite with no word that it assumed
+  PyYAML, and counted skips as unittest does, where a class skipped in `setUpClass` is one
+  skip and its tests drop out of "Ran": without PyYAML the validation suite reads
+  `Ran 258, skipped=3` while eleven tests do not execute. The suites are re-measured in both
+  variants, and the table counts the tests that did not run in each (validation: 1 with
+  PyYAML, 11 without); Reproduce says how to run the second variant.
+- CI (F-02): `actions/checkout`, `actions/setup-python` and `actions/setup-node` named a
+  major tag. Every step now names a full commit SHA with its release as a comment (v4.4.0,
+  v5.6.0, v4.4.0: the commits those tags pointed at on 2026-10-31, so CI runs the same code),
+  `.github/dependabot.yml` proposes each new release as a pull request, and the workflow test
+  requires a SHA in every job, not only in the suites job.
+- Enforcement visibility (F-04): with no hook registered, `check_readiness.py` printed
+  `Ready: yes` and `guard_state.py freeze` answered `ok` while nothing would refuse a write
+  inside the glob. `verify_registration.enforcement` gives one answer (`live`, `partial`,
+  `off`, `unknown`) from the PreToolUse registration of the selected hosts; readiness prints
+  it as the line above `Ready`, `guard_state.py status` prints it on every read (`enforcement`
+  in both JSON reports), and a `freeze`, `block` or `read-only` write that is not `live` adds a
+  stderr note. Admiral quotes the readiness line to the user at intake and on every resume;
+  careful carries the `status` line into its record.
+- Routing (F-03): still not measured, as the finding says. The commands are now in
+  `BENCHMARK.md`, and a one-batch pilot priced the full paraphrased corpus at about $5; no
+  score is published from one batch.
+- Not changed: F-05 (adoption and review figures are about the project, not the code), F-06
+  (no release tag or dated changelog section yet: cutting the first release is the owner's
+  decision, left for later) and F-07 (the `skills/LICENSE` churn is published history; the
+  file is byte-identical to the root `LICENSE`, and rewriting pushed commits to fold it away
+  would cost more than it saves).
+
+### External audit findings ST-AUD-004 to ST-AUD-012
+
+Each finding was reproduced before it was fixed. Five held; four did not, and are
+left unchanged with the reason.
+
+- Guard (Rule A, ST-AUD-004): an inline program's own delete of a root, home or
+  top-level directory passed, because only the command lines a program hands a shell
+  were read. The literal target of a Python delete the AST pass places, and for any
+  interpreter a delete call (`rmtree`, `rm_rf`, `remove_tree`, `rmSync`, `.rm`, ...)
+  whose whole first argument is a literal or the home directory, is now judged like
+  `rm -rf`. A `base64 -d` of a literal `echo`, `printf` or here-string is decoded, so the
+  program it pipes into a shell is read like `echo 'rm -rf /' | sh`, and a `$(...)` made
+  only of those is read where its output runs as a program (`sh -c`, `eval`, a
+  here-string, an `echo` into a shell). Everywhere else that word stays unresolved, so no
+  path spelled through `$(echo ...)` became placed. A blanket refusal of every `-c`/`-e`
+  program, as the finding proposed, was not adopted: the rule stays inert on competent
+  actions.
+- `verify_registration.py` (ST-AUD-008): a relative script path was resolved from the
+  directory the check ran in, so one registration verified as runnable from the project
+  root and as absent from a subdirectory. It is now read from the project root and
+  reported configured but not executable, since a host started in a subdirectory gets
+  Python's exit status 2, which Claude Code reads from a PreToolUse hook as a block. The
+  installers already wrote absolute paths.
+- `data_formats.py` (ST-AUD-009): an anchor, an alias or a tag was kept as text (`*base`
+  became the string `'*base'`, `!!str 123` the string `'!!str 123'`), and `- key: |` read
+  the block as YAML. These, a block scalar on a list item's line, an indentation indicator
+  and a complex key are now refused by name with the line, and every scalar error carries
+  its line.
+- `run_eval.py` and `validation/trigger_eval.py` (ST-AUD-010): `claude -p` inherited
+  stdin and reads a non-terminal stdin as more prompt; under a parent whose stdin is a
+  pipe that stays open every query waited out its deadline. Both start it with stdin
+  closed. The wall-clock timeouts were already in place.
+- `redaction.py` (ST-AUD-012): the finding said provider keys were stripped by prefix;
+  none were. A private key block, an AWS, GitHub, GitLab, OpenAI, Anthropic, Stripe,
+  Slack, Google or npm key and a JWT are now redacted by shape. The entropy scanner it
+  proposed was not added: the report carries sha256 digests as evidence, and an entropy
+  rule cannot tell one from a token.
+- Not changed, because the code already does what the finding asks: ST-AUD-005 (every
+  record writer holds `_fsutil.AdvisoryLock` and replaces atomically, with concurrency
+  tests), ST-AUD-006 (review runs three unconditional lenses and five conditional ones,
+  concurrently, and Tier 0 covers small reversible changes), ST-AUD-007 (a not-yet-created
+  path under a linked directory resolves through the link, for freezes and read-only
+  allow lists, with tests), ST-AUD-011 (the deepest shipped path is 67 characters, about
+  140 at the default install root with the staging prefix, and every install command
+  already carries `-ExecutionPolicy Bypass`).
+
 ### Review orchestration and follow-up scope
 
 - Every gatekeeper now persists REVISE streaks and a shared boundary budget. The
@@ -1138,7 +1248,7 @@ bump for new behaviour, a patch for a fix. Skills not listed are unchanged at 1.
 test compares this list with the `version:` of every `SKILL.md`, so a bump that is not
 recorded here, or a record the skill does not carry, fails it.
 
-- `admiral` 2.4.1: the cross-stage `check.py` command passes `--judgment`, without which `--verdict-out` writes a mechanical record and no verdict; previously Review discipline and mandatory third-REVISE user escalation; previously escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second, and startup names `status --run-id` as the only form that reports `interrupted`, an `access_denied` record and a held run with a fresh lock, whatever the pointer says (`held_runs`), as holding the session pin, and `recover --reason` as reclaiming a stale lock only once it is the only held run; previously the intake log is parsed as four fixed tables, and the verdict is read from the gate's own record; previously ceremony scaled to the change and a bounded cross-stage pass; previously native delegation grants and non-blocking MCP template intake; previously startup classification and shared-cap clarification; previously how its commands read in an installed copy, the eleven save-directory
+- `admiral` 2.5.0: quotes the `Enforcement:` line `check_readiness.py` prints above `Ready` to the user at intake and on every resume, so `Ready: yes` with no hooks registered is never taken for a guard that is on; previously the cross-stage `check.py` command passes `--judgment`, without which `--verdict-out` writes a mechanical record and no verdict; previously Review discipline and mandatory third-REVISE user escalation; previously escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second, and startup names `status --run-id` as the only form that reports `interrupted`, an `access_denied` record and a held run with a fresh lock, whatever the pointer says (`held_runs`), as holding the session pin, and `recover --reason` as reclaiming a stale lock only once it is the only held run; previously the intake log is parsed as four fixed tables, and the verdict is read from the gate's own record; previously ceremony scaled to the change and a bounded cross-stage pass; previously native delegation grants and non-blocking MCP template intake; previously startup classification and shared-cap clarification; previously how its commands read in an installed copy, the eleven save-directory
   classes, and what `create` carries.
 - `design/architect` 1.1.1: the Taste snapshot is not a start condition, because `pipelines.yaml` runs `taste-snapshot` beside research and requires it only at the design `phase-gate`; a snapshot that has not arrived yet is not the absent-snapshot failure; previously `interfaces` is a typed `interface_set` with `IF-<n>` ids that stand in the hashed artifact; previously directions use the reports destination; previously works from the stack the project already fixes, not a lock
   that comes later in the pipeline.
@@ -1147,13 +1257,13 @@ recorded here, or a record the skill does not carry, fails it.
   declared version is one the registry offers), and its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
 - `design/planner` 1.1.0: every acceptance row carries a stable `AC-<n>` id that gate findings cite, and `acceptance` is a typed `acceptance_table` read from the hashed plan.
 - `design/design-mapper` 1.0.2: parity examples use real run paths; previously states what `check_parity.py` now refuses in an inventory.
-- `careful` 1.0.2: malformed-state and active-run protection limits; previously describes the guard as it is (it reads the command, and counts faults).
+- `careful` 1.1.0: carries the `enforcement` line of `guard_state.py status` into the record, and reads `off`, `partial` or `unknown` as no hook standing behind the boundary; previously malformed-state and active-run protection limits; previously describes the guard as it is (it reads the command, and counts faults).
 - `freeze` 1.3.0: one record per boundary whatever the spelling, a refused glob that can
   never match (a leading `!`, a root, an absolute path under a directory the machine
   lacks), a warning for a leading-slash glob outside the project that names a directory that
   exists, relative globs anchored at the project root, a writer lock, and what an
   unreadable record means.
-- `guard` 1.7.0: Rule C also protects the REVISE cycle history (`verdict_<boundary>.cycles.json`) and its lock, and refuses removing or moving a phase directory; previously gate verdict records have a single writer, `check.py --verdict-out` (Rule C); previously a grant is capped at 8 hours, the hook scripts are protected (Rule F,
+- `guard` 1.8.0: Rule A also denies an inline program's own delete of a root or home (`python3 -c 'shutil.rmtree("/")'`, `node -e 'fs.rmSync(os.homedir(), ...)'`) and a wipe spelled in base64 and decoded by a `base64 -d` of a literal into a shell (`echo cm0gLXJmIC8K | base64 -d | sh`, `sh -c "$(echo ... | base64 -d)"`); previously Rule C also protects the REVISE cycle history (`verdict_<boundary>.cycles.json`) and its lock, and refuses removing or moving a phase directory; previously gate verdict records have a single writer, `check.py --verdict-out` (Rule C); previously a grant is capped at 8 hours, the hook scripts are protected (Rule F,
   advisory, whole registration file), a write after an unfollowable directory chain is
   denied (Rule G, with its own failure-mode row), a read-only run denies writes with no
   named target (pipes, launchers, PowerShell blocks, diffs), an unreadable record is counted
@@ -1180,7 +1290,7 @@ recorded here, or a record the skill does not carry, fails it.
 - `skill-maker/skill-reviewer` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously no cold isolated scoring; previously explicit harness-doctrine rejection duties.
 - `skill-maker` 1.2.0: hashes the run's Intake log into every package it submits so the gatekeeper's judgment can bind `intake.artifact`; previously Review discipline and mandatory third-REVISE user escalation; previously native delegation, package-stage ownership and evidence paths; previously the Stage 5 hand-off names the output directory as an absolute path, the
   parent of the `path` that `output_paths.py` prints, and leaves it out outside a run.
-- `skill-maker/skill-creator` 1.1.1: absolute optimizer input paths; previously the packager takes an absolute output directory and
+- `skill-maker/skill-creator` 1.1.2: `run_eval.py` starts `claude -p` with stdin closed, so a parent whose stdin is an open pipe no longer holds every query until its deadline; previously absolute optimizer input paths; previously the packager takes an absolute output directory and
   refuses symlinks, secrets and run state; failed eval runs are not scored.
 - `review/security-review` 1.2.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the findings template offers only statuses `check.py` accepts (`blocking` was not one); previously finding status and canonical rule references; previously `scan_record.py` names its output relative to the
   manifest and gains `--fail-on-output` and `--manifest-root`.

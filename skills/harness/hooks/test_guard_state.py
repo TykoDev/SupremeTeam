@@ -21,6 +21,7 @@ from pathlib import Path
 import _fsutil
 import _testkit as kit
 import guard_state
+import repair_registration
 
 GUARD = Path(guard_state.__file__)
 
@@ -50,6 +51,27 @@ class GuardStateCase(unittest.TestCase):
 
 class GuardStateTests(GuardStateCase):
     # --- recording -------------------------------------------------------
+
+    def test_a_boundary_says_whether_a_hook_will_enforce_it(self):
+        """F-04: freeze answered ok and status listed the glob while no host registered the hook that refuses it."""
+        home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        env = kit.plain_env(home, CLAUDE_PROJECT_DIR=str(self.project))
+
+        def guard(*args):
+            return kit.run_cli(GUARD, *args, env=env, cwd=self.project)
+
+        frozen = guard("freeze", "--glob", "src/**", "--owner", "ops")
+        self.assertEqual(frozen.returncode, 0, frozen.stderr)
+        self.assertIn("recorded, but enforcement is off", frozen.stderr)
+        self.assertIn("enforcement: off", guard("status").stdout)
+        self.assertEqual("off", json.loads(guard("status", "--json").stdout)["enforcement"]["status"])
+        settings = self.project / ".claude" / "settings.json"
+        settings.parent.mkdir()
+        settings.write_text(json.dumps(repair_registration.plan({}, "claude", sys.executable)[0]), encoding="utf-8")
+        blocked = guard("block", "--glob", "secrets/**", "--owner", "ops")
+        self.assertEqual(blocked.returncode, 0, blocked.stderr)
+        self.assertNotIn("enforcement", blocked.stderr)
+        self.assertEqual("live", json.loads(guard("status", "--json").stdout)["enforcement"]["status"])
 
     def test_freeze_records_an_owner_so_release_authority_is_checkable(self):
         proc = self.run_guard("freeze", "--glob", "src/payments/**", "--owner", "ops",

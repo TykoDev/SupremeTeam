@@ -5,10 +5,13 @@
 # step per command listed under `ci.commands`. skills/scripts/validate_manifests.py
 # fails when this file stops covering that declaration, so change the two together.
 #
-# Supply chain: the three actions below are GitHub's own and are pinned to a major
-# version tag, not a commit. That is a deliberate, conservative choice: the job
-# holds a read-only token and no secrets, and a moving major tag still gets
-# security fixes. Nothing is cached, so a poisoned cache cannot reach a later run.
+# Supply chain: the three actions below are GitHub's own and are pinned to a full
+# commit SHA, with the release it is in as a comment, for the reason the ruff and
+# npm pins give: a tag can move, and a gate whose verdict changes without a commit
+# is a flaky one. Dependabot (.github/dependabot.yml) proposes each new release as
+# a pull request, so a pin is raised by a reviewed commit. The job holds a
+# read-only token and no secrets, and nothing is cached, so a poisoned cache cannot
+# reach a later run.
 #
 # Each command is its own step on purpose. Windows PowerShell does not stop a
 # multi-line script when an earlier native command fails, and one step per suite
@@ -53,12 +56,12 @@ jobs:
             launcher: python3
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python }}
 
@@ -116,12 +119,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
 
@@ -143,18 +146,18 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
 
       # 22.6 or later loads the extension's TypeScript directly, so PiExtensionTests run instead of skipping.
       - name: Set up node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
 

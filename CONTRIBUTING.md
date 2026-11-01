@@ -4,7 +4,9 @@ Supreme Team checks its own prose: tests compare documents against code and
 against each other (counts, table rows, the six execution-contract clauses
 copied verbatim). A change that alters behaviour a document describes has to
 update that document in the same commit, and the suites will say so when it
-does not.
+does not. The clauses are the one copy a script keeps in step for you: change
+them in `skills/execution-contract.md`, then run
+`python skills/validation/sync_contracts.py --write`.
 
 ## Requirements
 
@@ -76,6 +78,13 @@ workflow together.
 A new command goes into `commands` in the manifest, and into either
 `ci.commands` (and the workflow) or `ci.not_run` with the reason CI cannot run
 it.
+
+Every action the workflow uses is pinned to a full commit SHA with its release as
+a comment (`actions/checkout@<sha> # v4.4.0`), as ruff and the npm packages are
+pinned to exact versions: a tag can move, and a check whose verdict changes
+without a commit is a flaky one. `.github/dependabot.yml` opens a pull request for
+each new release of an action; review it like any other change. A new step names
+its action the same way, which `test_validate_manifests.py` checks.
 
 ## Fail-open and fail-loud
 

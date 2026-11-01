@@ -29,6 +29,7 @@ frozen:  ['db/migrations/**']
 blocked: -
 read-only runs: -
 allow_dangerous: False
+enforcement: live - pre_tool_use.py is registered with full tool coverage for claude
 ```
 
 **Output:**
@@ -65,6 +66,7 @@ frozen:  -
 blocked: ['**/secrets/**']
 read-only runs: -
 allow_dangerous: {'owner': 'ops-lead', 'reason': 'reformat the scratch volume before the rebuild', 'scope': 'scratch-volume rebuild', 'created_at': '2026-09-16T09:20:11Z', 'expires_at': '2026-09-16T09:50:11Z'}
+enforcement: live - pre_tool_use.py is registered with full tool coverage for claude
 ```
 
 **Output:**
@@ -115,6 +117,7 @@ python skills/harness/hooks/guard_state.py status --json
   "absolute_reasons": {},
   "allow_dangerous": false,
   "blocked_globs": [],
+  "enforcement": {"detail": "pre_tool_use.py is registered with full tool coverage for claude", "status": "live"},
   "exists": true,
   "frozen_globs": ["db/migrations/**"],
   "path": "D:\\proj\\.harness-state\\guard-state.json",

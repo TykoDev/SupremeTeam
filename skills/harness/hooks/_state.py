@@ -74,8 +74,8 @@ _TRAJ_RETENTION_SECONDS = 7 * 24 * 3600
 # without the lock, which can cost the entry that writer made. Only a test that must see every append raises it.
 TRAJECTORY_LOCK_WAIT = 0.25
 # The same bound for the observation and fault counters: each read-modify-write of ``observations/<Event>.json`` holds
-# one OS advisory lock, so concurrent hooks no longer lose each other's counts. A waiter that times out goes on without
-# it rather than hold up the host.
+# one OS advisory lock, so concurrent hooks no longer lose each other's counts. A waiter that times out leaves its update
+# pending beside the record (``_SPILL``) rather than hold up the host or write the record unlocked.
 OBSERVATION_LOCK_WAIT = 0.25
 
 _SESSION_ENV = ("SUPREMETEAM_SESSION_ID", "CLAUDE_SESSION_ID", "CODEX_SESSION_ID", "COPILOT_SESSION_ID", "GITHUB_RUN_ID")
@@ -486,20 +486,65 @@ def _utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z"
 
 
-def _update_observation(event: str, change) -> None:
-    """Read ``observations/<event>.json``, apply ``change`` to it and write it back, all under one advisory lock.
+# An update that cannot take the observation lock within ``OBSERVATION_LOCK_WAIT`` is left beside the record as
+# ``<Event>.pending.<time>-<pid>`` (no ``.json``, so no reader takes it for a record) and folded in by the next update that
+# holds the lock. Writing the record without the lock instead lets a stale copy erase another hook's update, a fault
+# count among them, which is how a burst of parallel sub-agents lost counts.
+_SPILL = ".pending."
+# How many spills one locked update folds; the rest wait for the next one.
+_MAX_SPILLS = 256
+
+
+def _apply_observation(current: dict, delta: dict) -> None:
+    """Apply one update to an ``observations/<event>.json`` record: an ``observed`` or ``simulated`` firing, or a fault."""
+    kind = delta.get("kind")
+    if kind == "fault":
+        prior = current.get("faults")
+        current["faults"] = (prior if isinstance(prior, int) and not isinstance(prior, bool) and prior >= 0 else 0) + 1
+        current["last_fault"] = {"type": delta.get("type"), "at": delta.get("at")}
+    elif kind in ("observed", "simulated"):
+        prior = current.get(kind)
+        count = prior.get("count", 0) if isinstance(prior, dict) else 0
+        current[kind] = {"at": delta.get("at"), "session_hash": delta.get("session_hash"),
+                         "tool_name": delta.get("tool_name"), "count": int(count) + 1}
+
+
+def _spills(directory: Path, event: str) -> list:
+    """The pending updates of ``event`` not yet folded into its record, oldest first; a staging file is not one."""
+    return sorted(path for path in directory.glob(f"{event}{_SPILL}*") if not path.name.endswith(".tmp"))[:_MAX_SPILLS]
+
+
+def _update_observation(event: str, delta: dict) -> None:
+    """Fold ``delta``, and every pending update left beside the record, into ``observations/<event>.json`` under one
+    advisory lock.
 
     The counters are read-modify-write: without the lock two hooks that fire together read the same count and one
-    increment is lost (200 concurrent fault writes once recorded 23). The lock is the shared ``_fsutil`` one, held at
-    most ``OBSERVATION_LOCK_WAIT`` seconds before the update goes on without it (fail open)."""
-    path = state_dir() / "observations" / f"{event}.json"
-    # The lock sits beside the directory, not in it, so the directory holds only the records readiness lists.
-    with _fsutil.AdvisoryLock(path.parent.parent / "observations.lock", OBSERVATION_LOCK_WAIT, create_dir=True, fail_open=True):
-        current = read_json(path, {})
-        if not isinstance(current, dict):
-            current = {}
-        change(current)
-        write_json(path, current)
+    increment is lost (200 concurrent fault writes once recorded 23). The lock is the shared ``_fsutil`` one, waited for
+    at most ``OBSERVATION_LOCK_WAIT`` seconds; a hook that waits that long leaves its update as a pending file and goes
+    on, so the host is never held up and no update is written over another one."""
+    directory = state_dir() / "observations"
+    path = directory / f"{event}.json"
+    try:
+        # The lock sits beside the directory, not in it, so the directory holds only the records readiness lists.
+        with _fsutil.AdvisoryLock(directory.parent / "observations.lock", OBSERVATION_LOCK_WAIT, create_dir=True):
+            current = read_json(path, {})
+            if not isinstance(current, dict):
+                current = {}
+            pending = _spills(directory, event)
+            for spill in pending:
+                update = read_json(spill, None)
+                if isinstance(update, dict):
+                    _apply_observation(current, update)
+            _apply_observation(current, delta)
+            directory.mkdir(parents=True, exist_ok=True)
+            _fsutil.atomic_write(path, json.dumps(current))
+            for spill in pending:
+                try:
+                    spill.unlink()
+                except OSError:
+                    pass
+    except _fsutil.LockTimeout:
+        write_json(directory / f"{event}{_SPILL}{time.time_ns():020d}-{os.getpid()}", delta)
 
 
 def record_observation(event: str, data: dict) -> None:
@@ -511,19 +556,12 @@ def record_observation(event: str, data: dict) -> None:
     """
     try:
         session = str((data or {}).get("session_id") or "").strip()
-        kind = "observed" if session else "simulated"
-
-        def change(current: dict) -> None:
-            prior = current.get(kind)
-            count = prior.get("count", 0) if isinstance(prior, dict) else 0
-            current[kind] = {
-                "at": _utc_now(),
-                "session_hash": hashlib.sha256(session.encode("utf-8", "ignore")).hexdigest()[:12] if session else None,
-                "tool_name": str((data or {}).get("tool_name") or "") or None,
-                "count": int(count) + 1,
-            }
-
-        _update_observation(event, change)
+        _update_observation(event, {
+            "kind": "observed" if session else "simulated",
+            "at": _utc_now(),
+            "session_hash": hashlib.sha256(session.encode("utf-8", "ignore")).hexdigest()[:12] if session else None,
+            "tool_name": str((data or {}).get("tool_name") or "") or None,
+        })
     except Exception:
         pass
 
@@ -539,15 +577,26 @@ def record_fault(event: str, error: "BaseException | type | str") -> None:
     try:
         kind = error if isinstance(error, str) else (error if isinstance(error, type) else type(error)).__name__
         kind = re.sub(r"[^A-Za-z0-9_.]", "_", kind)[:64] or "Exception"
-
-        def change(current: dict) -> None:
-            prior = current.get("faults")
-            current["faults"] = (prior if isinstance(prior, int) and not isinstance(prior, bool) and prior >= 0 else 0) + 1
-            current["last_fault"] = {"type": kind, "at": _utc_now()}
-
-        _update_observation(event, change)
+        _update_observation(event, {"kind": "fault", "type": kind, "at": _utc_now()})
     except Exception:
         pass
+
+
+def observation_records(directory: "Path | None") -> dict:
+    """``{event: record}`` from an ``observations`` directory, each record with its pending updates applied, read
+    without creating, folding or deleting anything, so a count left pending by a burst is never under-reported."""
+    records: dict = {}
+    if directory is None or not directory.is_dir():
+        return records
+    for path in directory.glob("*.json"):
+        data = read_json(path, None)
+        if isinstance(data, dict):
+            records[path.stem] = data
+    for spill in directory.glob(f"*{_SPILL}*"):
+        update = None if spill.name.endswith(".tmp") else read_json(spill, None)
+        if isinstance(update, dict):
+            _apply_observation(records.setdefault(spill.name.split(_SPILL, 1)[0], {}), update)
+    return records
 
 
 def load_observations(root: "str | Path | None" = None) -> dict:
@@ -556,19 +605,15 @@ def load_observations(root: "str | Path | None" = None) -> dict:
     Reads only: nothing is created, and ``root`` names another project."""
     result = {}
     try:
-        directory = state_dir(root, create=False) / "observations"
-        if directory.is_dir():
-            for path in directory.glob("*.json"):
-                data = read_json(path, {})
-                if isinstance(data, dict):
-                    faults = data.get("faults")
-                    last = data.get("last_fault")
-                    result[path.stem] = {
-                        "observed": data.get("observed"),
-                        "simulated": data.get("simulated"),
-                        "faults": faults if isinstance(faults, int) and not isinstance(faults, bool) and faults >= 0 else 0,
-                        "last_fault": last if isinstance(last, dict) else None,
-                    }
+        for event, data in observation_records(state_dir(root, create=False) / "observations").items():
+            faults = data.get("faults")
+            last = data.get("last_fault")
+            result[event] = {
+                "observed": data.get("observed"),
+                "simulated": data.get("simulated"),
+                "faults": faults if isinstance(faults, int) and not isinstance(faults, bool) and faults >= 0 else 0,
+                "last_fault": last if isinstance(last, dict) else None,
+            }
     except Exception:
         pass
     return result

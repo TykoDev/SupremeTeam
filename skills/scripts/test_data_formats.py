@@ -149,6 +149,47 @@ class BlockScalarTests(unittest.TestCase):
                 self.assertEqual(parse_yaml(text), trimmed(yaml.safe_load(text)))
 
 
+class UnsupportedConstructTests(unittest.TestCase):
+    """ST-AUD-009: what the subset does not support it refuses by name and line, rather than read as something else."""
+
+    REFUSED = (
+        ("x: &v hello\ny: *v\n", "anchor '&v'", "line 1"),
+        ("base: &b\n  a: 1\nother:\n  <<: *b\n", "anchor '&b'", "line 1"),
+        ("a: 1\nb: *a\n", "alias '*a'", "line 2"),
+        ("l: [1, *a]\n", "alias '*a'", "line 1"),
+        ("glob: **/secrets/**\n", "alias '**/secrets/**'", "quote"),
+        ("x: !!str 123\n", "tag '!!str'", "line 1"),
+        ("top:\n  x: !Ref name\n", "tag '!Ref'", "line 2"),
+        ("- &item a\n", "anchor '&item'", "line 1"),
+        ("items:\n  - |\n    a\n    b\n", "list item's own line ('- |')", "line 2"),
+        ("- body: |\n    a: b\n", "list item's own line ('- body: |')", "line 1"),
+        ("a: |2\n    x\n", "indentation indicator '|2'", "line 1"),
+        ("? a\n: b\n", "complex mapping key", "line 1"),
+        ("a: one\n  two\n", "continues on the next line", "line 2"),
+    )
+
+    def test_each_unsupported_construct_is_refused_with_its_name_and_line(self):
+        for text, name, where in self.REFUSED:
+            with self.subTest(text=text):
+                with self.assertRaises(DataFormatError) as caught:
+                    parse_yaml(text)
+                self.assertIn(name, str(caught.exception))
+                self.assertIn(where, str(caught.exception))
+
+    def test_a_quoted_value_that_starts_with_an_indicator_is_text(self):
+        self.assertEqual(parse_yaml("glob: '**/secrets/**'\nref: \"*a\"\ntag: '!x'\namp: '&b'\n"),
+                         {"glob": "**/secrets/**", "ref": "*a", "tag": "!x", "amp": "&b"})
+        self.assertEqual(parse_yaml("- name: x\n  body: |\n    a: b\n"), [{"name": "x", "body": "a: b"}])
+        self.assertEqual(parse_yaml("-\n  body: |\n    a: b\n"), [{"body": "a: b"}])
+
+    @unittest.skipIf(yaml is None, "PyYAML is optional; the cases above pin the expected values")
+    def test_pyyaml_reads_these_as_something_other_than_their_text(self):
+        """Why the subset refuses instead of keeping the text: the YAML a reader would expect is not the text."""
+        self.assertEqual(yaml.safe_load("x: &v hello\ny: *v\n"), {"x": "hello", "y": "hello"})
+        self.assertEqual(yaml.safe_load("x: !!str 123\n"), {"x": "123"})
+        self.assertEqual(yaml.safe_load("- body: |\n    a: b\n"), [{"body": "a: b\n"}])
+
+
 class QuotedScalarTests(unittest.TestCase):
     """YAML quotes: single is literal, double escapes. A path survives both spellings."""
 

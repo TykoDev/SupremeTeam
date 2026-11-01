@@ -1,0 +1,15 @@
+# Raises the commit pins of the GitHub Actions in .github/workflows/ci.yml.
+#
+# The workflow names each action by a full commit SHA, with its release as a
+# comment, so a moved tag cannot change what CI runs. This proposes each new
+# release as a pull request that updates the SHA and the comment together, so a
+# pin moves only through a reviewed commit. The ruff and npm pins are written in
+# run steps, which Dependabot does not read; they are raised by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci

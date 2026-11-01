@@ -39,6 +39,11 @@ python skills/harness/hooks/guard_state.py status
 (repeatable) are optional. Each successful run appends exactly one owned record to
 `frozen_globs` and prints a JSON acknowledgement naming the glob as it was
 recorded (the normalised spelling, see below), the owner, and the record path.
+When no host registers `pre_tool_use.py`, the hook that refuses a write inside the
+glob, the record is still written and stderr adds `note: recorded, but enforcement is
+off: ...`; `status` prints the same `enforcement:` line (`live`, `partial`, `off` or
+`unknown`) on every read, so a freeze is never mistaken for protection that is not
+running.
 
 Every writer command except `status` holds one advisory lock
 (`.harness-state/guard-state.json.lock`) from reading the record to replacing it, so

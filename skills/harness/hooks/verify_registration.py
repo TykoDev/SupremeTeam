@@ -177,6 +177,13 @@ def _expand(token: str) -> str:
     return os.path.expanduser(expanded)
 
 
+def _place(token: str) -> Path:
+    """Where an expanded command word points: a relative one is read from the project root, as a host started there
+    runs it, never from the directory this check happens to run in, so the verdict does not depend on it."""
+    path = Path(token)
+    return (path if path.is_absolute() else _state.project_root() / path).resolve()
+
+
 def analyse(command: str, script: str) -> dict:
     """Classify one registered command against one expected hook script."""
     result = {"configured": False, "resolvable": False, "executable": False, "interpreter_on_path": None, "script": None, "reason": ""}
@@ -189,13 +196,12 @@ def analyse(command: str, script: str) -> dict:
         return result
     launcher = tokens[0]
     expected = {_norm((root / script).resolve()) for root in _roots()}
-    expanded = [_expand(t) for t in tokens[1:]]
-    referenced = {_norm(Path(t).resolve()) for t in expanded if t}
-    if not (referenced & expected):
+    placed = [_place(t) for t in (_expand(t) for t in tokens[1:]) if t]
+    if not ({_norm(path) for path in placed} & expected):
         result["reason"] = "script path not referenced"
         return result
     result["configured"] = True
-    existing = [Path(t).resolve() for t in expanded if _norm(Path(t).resolve()) in expected and Path(t).resolve().is_file()]
+    existing = [path for path in placed if _norm(path) in expected and path.is_file()]
     result["resolvable"] = bool(existing)
     result["script"] = str(existing[0]) if existing else None
     if not _python_launcher(launcher):
@@ -224,9 +230,15 @@ def analyse(command: str, script: str) -> dict:
     if script_token is None:
         result["reason"] = "no script argument in executable position"
         return result
-    resolved = _norm(Path(_expand(script_token)).resolve())
+    resolved = _norm(_place(_expand(script_token)))
     if resolved not in expected:
         result["reason"] = "script path appears as data, not as the executed script"
+        return result
+    if not Path(_expand(script_token)).is_absolute():
+        # A host runs the command from whatever directory the session is in, and Python exits 2 when it cannot open
+        # the script, which Claude Code reads from a PreToolUse hook as a block: from a subdirectory every tool call fails.
+        result["reason"] = ("script path is relative, so it runs only from the project root; register it by absolute "
+                            "path or through $CLAUDE_PROJECT_DIR (repair_registration.py writes the absolute path)")
         return result
     if not result["resolvable"]:
         result["reason"] = "script file does not exist at the configured path"
@@ -541,6 +553,31 @@ def resolve_hosts(selection: str) -> dict[str, str]:
         if reasons:
             chosen[host] = " and ".join(reasons)
     return chosen
+
+
+def selected_states(selection: str = "auto") -> dict[str, dict]:
+    """The hook states of each host ``selection`` picks, read from its config files as ``hook_states`` reads them."""
+    return {host: hook_states([value for path in _paths(host) if isinstance(value := _read(path), dict)], host)
+            for host in resolve_hosts(selection)}
+
+
+def enforcement(states: dict[str, dict]) -> dict:
+    """Whether the guard's refusals are live, from each selected host's hook states (``{host: {key: state}}``).
+
+    ``live``: every host registers ``pre_tool_use.py`` with full tool coverage. ``off``: none registers it, so every
+    guard, freeze and read-only record and the destructive-command rule are advice, not refusals. ``partial``: some host,
+    or some tool, is left out. Readiness and ``guard_state.py`` print this one answer, so neither reads as protection that
+    is not there."""
+    pre = {host: (hooks or {}).get("pre") or {} for host, hooks in states.items()}
+    live = [host for host, state in pre.items() if state.get("registered") and state.get("coverage") == "full"]
+    if pre and len(live) == len(pre):
+        return {"status": "live", "detail": f"pre_tool_use.py is registered with full tool coverage for {', '.join(live)}"}
+    if not any(state.get("registered") for state in pre.values()):
+        return {"status": "off", "detail": (f"no host registers pre_tool_use.py ({', '.join(pre) or 'no host found'}), so "
+                                            "guard, freeze, read-only and destructive-command rules are advice, not refusals")}
+    left = ", ".join(host for host in pre if host not in live)
+    return {"status": "partial", "detail": f"pre_tool_use.py is missing or misses a tool for {left}, so a tool call there is "
+                                           "not refused"}
 
 
 def _hook_detail(state: dict) -> str:

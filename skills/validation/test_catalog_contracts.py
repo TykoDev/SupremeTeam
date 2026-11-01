@@ -16,6 +16,8 @@ added, and keep a worked example in agreement with itself.
 """
 
 import ast
+import contextlib
+import io
 import re
 import tempfile
 import unittest
@@ -23,6 +25,7 @@ from pathlib import Path
 from unittest import mock
 
 import _catalog
+import sync_contracts
 from _catalog import SKILLS, corpus, mentions, mentions_key, skill_front
 from data_formats import parse_yaml
 
@@ -37,23 +40,15 @@ SKILL_DIRS = _catalog.skill_dirs()
 CORPUS = {name: corpus(path) for name, path in SKILL_DIRS.items()}
 
 
-# The set the execution contract binds: every pipeline owner, the entry
-# orchestrator, and every gatekeeper. Derived from team-manifest.yaml so the set
-# tracks the roster instead of a hand-maintained list.
+# The set the execution contract binds, and its six clauses, read the way `sync_contracts.py` reads them, so the
+# comparator below and the tool that repairs a copy can never disagree about which skills or which text.
 def _contract_bound() -> set:
-    bound = set(TEAM.get("pipeline_owners") or [])
-    bound.update(TEAM.get("phase_leads") or [])  # phase leads own a pipeline too
-    bound.add(TEAM.get("front_door"))
-    bound.add(TEAM.get("cross_stage_gatekeeper"))
-    bound.update(TEAM.get("phase_gatekeepers") or [])
-    return {name for name in bound if name}
+    return sync_contracts.bound_skills(TEAM)
 
 
 def _clauses() -> list:
     """The six numbered clauses, verbatim, from the canonical section."""
-    section = _catalog.section(CONTRACT, "Canonical clauses")
-    clauses = re.findall(r"^\d\.\s+(.*?)(?=^\d\.\s|\Z)", section, re.S | re.M)
-    return [" ".join(c.split()) for c in clauses]
+    return sync_contracts.canonical_clauses(CONTRACT)
 
 
 class EvidenceOwnershipTests(unittest.TestCase):
@@ -134,6 +129,39 @@ class ExecutionContractTests(unittest.TestCase):
         self.assertEqual(failures, [],
                          "every orchestrator and gatekeeper carries the clauses locally:\n  "
                          + "\n  ".join(failures))
+
+    def test_the_sync_tool_reports_this_tree_in_step(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(0, sync_contracts.main([]), out.getvalue())
+
+    def test_the_sync_tool_rewrites_only_the_clause_that_changed(self):
+        """Third report, finding 4: a change to one canonical clause had to be copied into every bound skill by hand.
+        The tool rewrites the item that differs and leaves every other item as the file wrapped it."""
+        text = (SKILL_DIRS["commander"] / "SKILL.md").read_text(encoding="utf-8")
+        clauses = _clauses()
+        self.assertEqual((text, [], None), sync_contracts.synced(text, clauses), "the file was already in step")
+        edited = [*clauses[:2], clauses[2] + " Cite the finding's id.", *clauses[3:]]
+        new, changed, problem = sync_contracts.synced(text, edited)
+        self.assertIsNone(problem)
+        self.assertEqual([3], changed)
+        self.assertIn("3. " + edited[2] + "\n", new)
+        section = _catalog.section(new, "Execution Contract")
+        for number in (1, 2, 4, 5, 6):
+            with self.subTest(clause=number):
+                old_item = re.search(rf"^{number}\.[ \t].*(?:\n[ \t]+\S.*)*", _catalog.section(text, "Execution Contract"), re.M)
+                self.assertIn(old_item.group(0), section, "an unchanged item kept its wrapping")
+        self.assertEqual((new, [], None), sync_contracts.synced(new, edited), "a second run changes nothing")
+
+    def test_the_sync_tool_never_guesses_where_a_missing_copy_belongs(self):
+        clauses = _clauses()
+        for text, problem in (("# Skill\n\n## Workflow\n\n1. Do it.\n", "no '## Execution Contract' section"),
+                              ("## Execution Contract\n\n" + "".join(f"{n}. {c}\n" for n, c in enumerate(clauses[:5], 1)),
+                               "holds no item 6")):
+            with self.subTest(problem=problem):
+                new, changed, found = sync_contracts.synced(text, clauses)
+                self.assertEqual((text, []), (new, changed))
+                self.assertIn(problem, found)
 
 
 class OwnershipProseTests(unittest.TestCase):

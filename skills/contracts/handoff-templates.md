@@ -28,7 +28,8 @@ before sending it.
 ### Save Context
 - Run ID: {run-id}
 - Phase: {phase}
-- Save path: skillset-saves/runs/{run-id}/{phase}/
+- Project root: {absolute path of the main checkout}
+- Save path: {project-root}/skillset-saves/runs/{run-id}/{phase}/
 - Persistence active: {yes|no}
 - Persistence probe result: {ok|reason}
 - Context tier: {1|2|3}
@@ -45,6 +46,29 @@ before sending it.
 - Risks: {known risks|none declared}
 - Return boundary: {gate boundary for the returned package}
 ```
+
+`Project root` is the absolute path of the main checkout, the directory that holds
+`skillset-saves/`. A linked git worktree has no run (the directory is git-ignored), so
+from a worktree session the value is still the main checkout; `scripts/output_paths.py`
+prints it, resolving against the main checkout from either tree. `Save path` is
+absolute for the same reason: a delegate resolves a relative path against its own
+working directory, and a sub-agent the host isolates in a worktree would write a second
+`skillset-saves/` there, which no gate reads and which is deleted with the worktree.
+The guard refuses that write (Rule H). A delegate writes a file of the run in one of
+two ways:
+
+- `python skills/scripts/run_files.py write --run-id {run-id} --phase {phase} --kind
+  reports|artifacts|evidence --name <file>`, with the content on standard input or
+  `--from FILE`. It works from the main checkout and from a worktree, and for a
+  worktree-isolated sub-agent it is the only way. It refuses a kind with a writer of
+  its own, another run under a read-only record, and a frozen path.
+- An edit tool, or a redirect, given a literal absolute path under `Save path`. Claude
+  Code refuses the edit tool of a worktree-isolated sub-agent on a path in the main
+  checkout.
+
+Never write to a destination built when the command runs (`cat > "$(...)"`, a
+variable): the guard cannot place it and denies it, and `output_paths.py` prints a
+JSON object, not a path.
 
 The two tier fields are different scales, and neither substitutes for the
 other. `Context tier` feeds artifact-mode decisions: it grades how much context

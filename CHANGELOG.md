@@ -211,6 +211,34 @@ of Claude Code 2.1.322, Codex CLI 0.166.0 and Antigravity CLI 1.4.12 on Windows.
     Cursor, OpenCode) as `Plugin host: ... not inspected here`, with how each host reports
     its own state, and lists them under `plugin_hosts` in the JSON report. It claims
     presence only; `Ready` and the enforcement line are unchanged.
+- Sub-agents can write their reports (WP-10, issue 7): under the read-only record every
+  review lens is told to create, four of nine ways a delegate wrote its packet were denied.
+  Two built the destination when the command ran (`cat > "$(output_paths.py ...)"`), which
+  the guard cannot place and which never worked, because the script prints JSON. Two were
+  writes from a worktree-isolated sub-agent, resolved against the worktree, where no run
+  is. Claude Code also refuses that sub-agent's edit tool on a path in the main checkout, so
+  an absolute save path alone would not have been enough.
+  - `scripts/run_files.py write --run-id R --phase P --kind reports|artifacts|evidence
+    --name X [--from FILE]` writes the content it is given (standard input by default) to
+    the destination `output_paths.resolve()` gives, against the main checkout from either
+    tree, in one step, and prints the JSON `output_paths.py` prints with the digest. The
+    guard reads a script's arguments as arguments, so the command holds itself to the
+    record: it refuses a kind with a writer of its own, a path `save-ownership.yaml` gives
+    no delegated specialist, a run with no directory, a destination through a link, and a
+    destination a frozen or blocked glob covers or a read-only record's allow list leaves
+    out.
+  - The Save Context block carries `Project root` and an absolute `Save path` in all ten
+    copies, and says how a delegate writes a run file.
+  - `output_paths.py` resolves every kind but `product` against the main checkout when the
+    project root, given or defaulted, is a linked worktree, and says so in a `worktree` key.
+  - Guard Rule H: a write under the `skillset-saves/` of a linked worktree is denied, with
+    or without a read-only record, and the reason gives the path in the main checkout and
+    the `run_files.py write` command. Removing or moving a file left there is not refused.
+  - A Rule D denial of a run file or of a destination built at run time, and the generic
+    Rule G denial, end with the two sanctioned ways to write a run file. Rule G no longer
+    says "use a path tool", which was the shape it denied.
+  - The post-tool hook records the `agent_id` and `agent_type` Claude Code puts on a tool
+    event inside a sub-agent. They are the host's word and grant nothing.
 
 Upgrade notes for this section:
 
@@ -230,8 +258,12 @@ Upgrade notes for this section:
   copy (`_superseded/`, `_history/`) fails from the start.
 - Worktree sessions: a `.harness-state/` folder that an earlier version created inside a
   linked worktree is no longer read. It can be deleted.
+- Delegations: the Save Context block has a new field, `Project root`, and `Save path` is
+  absolute. A sub-orchestrator that builds the block from an older copy still works in the
+  main checkout; a delegate in a linked worktree is refused a relative save path (Rule H)
+  and told where the file belongs.
 - Hook hashes: the packages that change a file hashed at registration (WP-00, WP-02, WP-03,
-  WP-04 and WP-06 so far; WP-03 also adds `scripts/checkout.py` to the record) make readiness report
+  WP-04, WP-06 and WP-10 so far; WP-03 also adds `scripts/checkout.py` to the record) make readiness report
   the hook files as changed. After upgrading, re-record them for
   each host with `python skills/harness/hooks/repair_registration.py --host <host>
   --record-hashes`, or reinstall with hook registration.
@@ -1496,7 +1528,7 @@ recorded here, or a record the skill does not carry, fails it.
   lacks), a warning for a leading-slash glob outside the project that names a directory that
   exists, relative globs anchored at the project root, a writer lock, and what an
   unreadable record means.
-- `guard` 1.9.0: Rule C also gives a phase's `_superseded/` folder and its `index.json` a single writer, `run_files.py supersede`; previously from a linked git worktree the guard enforces the main checkout's record, a frozen or blocked glob and the registration files hold for the worktree's copy too, and Rule F also covers `skills/scripts/checkout.py`; previously an `apply_patch` call is judged wherever the host puts the patch text (Codex sends it as `command`), and one that names no file the guard can read is denied by Rule G while anything is protected; previously Rule A also denies an inline program's own delete of a root or home (`python3 -c 'shutil.rmtree("/")'`, `node -e 'fs.rmSync(os.homedir(), ...)'`) and a wipe spelled in base64 and decoded by a `base64 -d` of a literal into a shell (`echo cm0gLXJmIC8K | base64 -d | sh`, `sh -c "$(echo ... | base64 -d)"`); previously Rule C also protects the REVISE cycle history (`verdict_<boundary>.cycles.json`) and its lock, and refuses removing or moving a phase directory; previously gate verdict records have a single writer, `check.py --verdict-out` (Rule C); previously a grant is capped at 8 hours, the hook scripts are protected (Rule F,
+- `guard` 1.10.0: Rule H denies a write under the `skillset-saves/` of a linked git worktree and names the path in the main checkout, and a Rule D or Rule G denial of a run file says how one is written (`run_files.py write`); previously Rule C also gives a phase's `_superseded/` folder and its `index.json` a single writer, `run_files.py supersede`; previously from a linked git worktree the guard enforces the main checkout's record, a frozen or blocked glob and the registration files hold for the worktree's copy too, and Rule F also covers `skills/scripts/checkout.py`; previously an `apply_patch` call is judged wherever the host puts the patch text (Codex sends it as `command`), and one that names no file the guard can read is denied by Rule G while anything is protected; previously Rule A also denies an inline program's own delete of a root or home (`python3 -c 'shutil.rmtree("/")'`, `node -e 'fs.rmSync(os.homedir(), ...)'`) and a wipe spelled in base64 and decoded by a `base64 -d` of a literal into a shell (`echo cm0gLXJmIC8K | base64 -d | sh`, `sh -c "$(echo ... | base64 -d)"`); previously Rule C also protects the REVISE cycle history (`verdict_<boundary>.cycles.json`) and its lock, and refuses removing or moving a phase directory; previously gate verdict records have a single writer, `check.py --verdict-out` (Rule C); previously a grant is capped at 8 hours, the hook scripts are protected (Rule F,
   advisory, whole registration file), a write after an unfollowable directory chain is
   denied (Rule G, with its own failure-mode row), a read-only run denies writes with no
   named target (pipes, launchers, PowerShell blocks, diffs), an unreadable record is counted
@@ -1525,7 +1557,7 @@ recorded here, or a record the skill does not carry, fails it.
   parent of the `path` that `output_paths.py` prints, and leaves it out outside a run.
 - `skill-maker/skill-creator` 1.1.2: `run_eval.py` starts `claude -p` with stdin closed, so a parent whose stdin is an open pipe no longer holds every query until its deadline; previously absolute optimizer input paths; previously the packager takes an absolute output directory and
   refuses symlinks, secrets and run state; failed eval runs are not scored.
-- `review/security-review` 1.2.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the findings template offers only statuses `check.py` accepts (`blocking` was not one); previously finding status and canonical rule references; previously `scan_record.py` names its output relative to the
+- `review/security-review` 1.2.1: the packet is written into the run with `run_files.py write`, which works from a worktree-isolated sub-agent, or to the literal absolute `Save path`, never to a destination built when the command runs; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the findings template offers only statuses `check.py` accepts (`blocking` was not one); previously finding status and canonical rule references; previously `scan_record.py` names its output relative to the
   manifest and gains `--fail-on-output` and `--manifest-root`.
 - `review/cso` 1.2.0: hashes the run's Intake log into every package it submits so the gatekeeper's judgment can bind `intake.artifact`, and the third cycle is the gate's own ESCALATE to the user; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the description keeps its `even when` cue within the 600-character budget; previously the verdict is read from the gate's own record; previously single-validator verdict naming and delegation grants; previously the waiver reason must be the sanctioned wording, scan output
   paths follow the manifest, and its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
@@ -1543,13 +1575,13 @@ recorded here, or a record the skill does not carry, fails it.
   target.
 - `design/prototyper` 1.0.1: exact gate file-field scope and executable run-path self-checks.
 - `design/researcher` 1.0.1: Admiral-owned intake, all required architecture inputs and commander-routed corrections.
-- `review/bug-review` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously canonical filename is not a uniqueness guarantee.
-- `review/quality-review` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously matcher limits and canonical findings rule reference.
-- `review/design-qa` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the findings template offers only statuses `check.py` accepts (`blocking` was not one); previously accepted finding statuses in packet and example.
-- `review/mr-robot` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the findings template offers only statuses `check.py` accepts (`blocking` was not one); previously finding statuses and same-pipeline delta review.
+- `review/bug-review` 1.1.1: the packet is written into the run with `run_files.py write`, which works from a worktree-isolated sub-agent, or to the literal absolute `Save path`, never to a destination built when the command runs; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously canonical filename is not a uniqueness guarantee.
+- `review/quality-review` 1.1.1: the packet is written into the run with `run_files.py write`, which works from a worktree-isolated sub-agent, or to the literal absolute `Save path`, never to a destination built when the command runs; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously matcher limits and canonical findings rule reference.
+- `review/design-qa` 1.1.1: the packet is written into the run with `run_files.py write`, which works from a worktree-isolated sub-agent, or to the literal absolute `Save path`, never to a destination built when the command runs; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the findings template offers only statuses `check.py` accepts (`blocking` was not one); previously accepted finding statuses in packet and example.
+- `review/mr-robot` 1.1.1: the packet is written into the run with `run_files.py write`, which works from a worktree-isolated sub-agent, or to the literal absolute `Save path`, never to a destination built when the command runs; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the findings template offers only statuses `check.py` accepts (`blocking` was not one); previously finding statuses and same-pipeline delta review.
 - `setup-browser-cookies` 1.0.1: Linux, macOS and Windows are peer platforms.
 - `taste/taste-review` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously review follows persistence and precedes gate approval.
-- `review/code-review` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2.
+- `review/code-review` 1.1.1: the packet is written into the run with `run_files.py write`, which works from a worktree-isolated sub-agent, or to the literal absolute `Save path`, never to a destination built when the command runs; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2.
 - `review/devex-review` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2.
-- `review/frontier` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2.
+- `review/frontier` 1.1.1: the packet is written into the run with `run_files.py write`, which works from a worktree-isolated sub-agent, or to the literal absolute `Save path`, never to a destination built when the command runs; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2.
 - `audit-improve` 1.1.0: follow-up audits run `tools/run-audit/run_audit.py --run-id/--phase/--artifact` on the changed evidence and carry the initial collector report; previously 1.0.0.

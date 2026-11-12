@@ -1,4 +1,9 @@
-"""``run_files.py supersede``: one place for a superseded file, one record of it, and no way to misuse the move (WP-04).
+"""``run_files.py``: the sanctioned writer for a run's phase files.
+
+``write`` (WP-10) puts a report, an artifact or an evidence file into a run of the main checkout, from either tree,
+and holds itself to the boundaries the guard cannot apply to a script's arguments.
+
+``supersede`` (WP-04): one place for a superseded file, one record of it, and no way to misuse the move.
 
 The contracts tell every owner to preserve superseded artifacts, and the shape engine reads every file of a phase
 directory, so a preserved copy either failed lineage or filled the slot of a missing current file. The command moves
@@ -46,6 +51,249 @@ class Case(unittest.TestCase):
     def cli(self, *args: str, cwd: "Path | None" = None) -> subprocess.CompletedProcess:
         return subprocess.run([sys.executable, str(SCRIPT), "supersede", *args], capture_output=True, text=True,
                               cwd=str(cwd or self.root), stdin=subprocess.DEVNULL, check=False)
+
+    def put(self, *args: str, cwd: "Path | None" = None, content: "bytes | None" = b"# Packet\n") -> subprocess.CompletedProcess:
+        """``run_files.py write`` with ``content`` on standard input (None: no standard input at all)."""
+        return subprocess.run([sys.executable, str(SCRIPT), "write", *args], capture_output=True, cwd=str(cwd or self.root),
+                              input=content, stdin=subprocess.DEVNULL if content is None else None, check=False)
+
+    def worktree(self, name: str = "agent-a1") -> Path:
+        """A linked git worktree of the project, as the files ``git worktree add`` writes."""
+        entry = self.root / ".git" / "worktrees" / name
+        entry.mkdir(parents=True)
+        tree = self.root / ".claude" / "worktrees" / name
+        tree.mkdir(parents=True)
+        (entry / "commondir").write_text("../..\n", encoding="utf-8")
+        (entry / "gitdir").write_text(f"{(tree / '.git').as_posix()}\n", encoding="utf-8")
+        (tree / ".git").write_text(f"gitdir: {entry.as_posix()}\n", encoding="utf-8")
+        return tree
+
+    def guard(self, state: dict) -> None:
+        directory = self.root / ".harness-state"
+        directory.mkdir(exist_ok=True)
+        (directory / "guard-state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    def run_files(self) -> list:
+        """Every file under the run, apart from the fixture's own certificate."""
+        run = self.root / "skillset-saves" / "runs" / RUN
+        return sorted(path.relative_to(run).as_posix() for path in run.rglob("*") if path.is_file() and path != self.file)
+
+
+class WriteTests(Case):
+    """WP-10: the one way a delegate writes a run file that works from the main checkout and from a worktree."""
+
+    def write(self, kind="reports", name="packet.md", data=b"# Packet\n", phase="review", run=RUN) -> dict:
+        return run_files.write(self.root, run, phase, kind, name, data)
+
+    def test_the_file_is_written_where_the_path_tool_resolves_it_and_reported_with_its_digest(self):
+        done = self.write()
+        target = self.root / "skillset-saves" / "runs" / RUN / "review" / "reports" / "packet.md"
+        self.assertEqual(target.read_bytes(), b"# Packet\n")
+        self.assertEqual(done, {"kind": "reports", "path": target, "relative": f"skillset-saves/runs/{RUN}/review/reports/packet.md",
+                                "bytes": 9, "sha256": content_sha256(target), "replaced": False})
+        self.assertEqual(run_files.output_paths.resolve(self.root, "reports", run_id=RUN, phase="review", name="packet.md"), target)
+
+    def test_each_delegate_kind_lands_in_its_directory_and_a_name_may_hold_directories(self):
+        for kind, name, relative in (("reports", "lens/bug-review.md", "review/reports/lens/bug-review.md"),
+                                     ("artifacts", "tokens.css", "review/artifacts/tokens.css"),
+                                     ("evidence", "logs/run.log", "review/evidence/logs/run.log"),
+                                     ("coverage", ".coverage", "review/evidence/coverage/.coverage"),
+                                     ("phase_report", "report_review.md", "review/report_review.md")):
+            with self.subTest(kind=kind):
+                self.assertEqual(self.write(kind, name)["relative"], f"skillset-saves/runs/{RUN}/{relative}")
+        self.assertEqual(len(self.run_files()), 5)
+
+    def test_a_second_write_replaces_the_file_whole_and_leaves_no_temporary_file(self):
+        self.write(data=b"first\n" * 400)
+        done = self.write(data=b"second\n")
+        self.assertTrue(done["replaced"])
+        self.assertEqual(done["path"].read_bytes(), b"second\n")
+        self.assertEqual([path.name for path in done["path"].parent.iterdir()], ["packet.md"])
+
+    def test_bytes_are_written_as_they_are_given(self):
+        data = "# Größe ✓\r\nline\r\n".encode("utf-8") + bytes([0, 255, 254])
+        self.assertEqual(self.write("evidence", "capture.bin", data)["path"].read_bytes(), data)
+
+    def test_a_kind_with_a_writer_of_its_own_is_refused(self):
+        for kind, name in (("core", "_state.md"), ("verdict", "x"), ("guards", "x"), ("trajectory", "x"),
+                           ("project_preferences", "x"), ("global_preferences", "x")):
+            with self.subTest(kind=kind), self.assertRaisesRegex(run_files.Refused, "one writer of its own"):
+                self.write(kind, name)
+        self.assertEqual(self.run_files(), [])
+
+    def test_a_path_the_policy_gives_no_delegate_is_refused(self):
+        for kind, name, phase, owner in (("manifest", "", "review", "phase-lead"), ("packages", "bundle.zip", "review", "phase-lead"),
+                                         ("packages", "report_x.md", "review", "phase-lead"),
+                                         ("phase_report", "report_grilling.md", "intake", "admiral"),
+                                         ("phase_report", "intake-brief.md", "intake", "admiral"),
+                                         ("product", "src/a.py", "review", "no class"), ("test_work", "x", "review", "harness-tests"),
+                                         ("standalone_packages", "x.zip", "review", "skill-maker")):
+            with self.subTest(kind=kind, name=name), self.assertRaisesRegex(run_files.Refused, f"not a path a delegated specialist writes.*{owner}"):
+                self.write(kind, name, phase=phase)
+        self.assertEqual(self.run_files(), [])
+        self.assertFalse((self.root / "src").exists())
+        self.assertFalse((self.root / ".harness-state").exists())
+
+    def test_what_the_path_tool_refuses_is_refused(self):
+        for kind, name, phase, run, fragment in (("reports", "../../_state.md", "review", RUN, "without traversal"),
+                                                 ("reports", "/etc/passwd", "review", RUN, "without traversal|escapes project root"),
+                                                 ("reports", "", "review", RUN, "without traversal"),
+                                                 ("reports", "p.md", "nowhere", RUN, "phase must be one of"),
+                                                 ("reports", "p.md", "review", "../r", "run_id must be"),
+                                                 ("phase_report", "notes.md", "review", RUN, "phase-root files must be named"),
+                                                 ("letters", "p.md", "review", RUN, "unknown output kind")):
+            with self.subTest(name=name, phase=phase, run=run, kind=kind), self.assertRaisesRegex(run_files.Refused, fragment):
+                self.write(kind, name, phase=phase, run=run)
+
+    def test_a_run_that_has_no_directory_an_empty_content_and_a_directory_name(self):
+        with self.assertRaisesRegex(run_files.Refused, "run r-2 has no directory"):
+            self.write(run="r-2")
+        self.assertFalse((self.root / "skillset-saves" / "runs" / "r-2").exists(), "a write never creates a run")
+        with self.assertRaisesRegex(run_files.Refused, "nothing to write"):
+            self.write(data=b"")
+        (self.root / "skillset-saves" / "runs" / RUN / "review" / "reports" / "lens").mkdir(parents=True)
+        with self.assertRaisesRegex(run_files.Refused, "is a directory"):
+            self.write(name="lens")
+
+    def test_a_destination_reached_through_a_link_is_refused(self):
+        outside = self.root / "elsewhere"
+        outside.mkdir()
+        link = self.root / "skillset-saves" / "runs" / RUN / "review"
+        try:
+            os.symlink(outside, link, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            if os.name != "nt":
+                self.skipTest("this account cannot make a symlink")
+            import _winapi
+
+            _winapi.CreateJunction(str(outside), str(link))
+        with self.assertRaisesRegex(run_files.Refused, "reached through a link"):
+            self.write()
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_a_frozen_or_blocked_glob_covers_the_destination(self):
+        for key, kind in (("frozen_globs", "frozen"), ("blocked_globs", "blocked")):
+            self.guard({key: [{"glob": f"skillset-saves/runs/{RUN}/review/evidence/**", "owner": "ops"}]})
+            with self.subTest(kind=kind):
+                with self.assertRaisesRegex(run_files.Refused, f"inside a {kind} boundary"):
+                    self.write("evidence", "log.txt")
+                self.assertEqual(self.write("reports", f"{kind}.md")["replaced"], False, "a neighbour of the boundary is written")
+        self.guard({"frozen_globs": [{"glob": f"skillset-saves/runs/{RUN}/review/evidence/**", "owner": "ops", "released_at": "2026-11-12T00:00:00Z"}]})
+        self.write("evidence", "log.txt")
+
+    def test_a_read_only_record_confines_the_writer_to_what_it_allows(self):
+        (self.root / "skillset-saves" / "runs" / "r-2").mkdir()
+        record = {"run_id": RUN, "owner": "code-chief", "allow": [f"skillset-saves/runs/{RUN}/**"]}
+        self.guard({"read_only": [record]})
+        self.write()
+        with self.assertRaisesRegex(run_files.Refused, f"outside what the read-only record of run {RUN} allows"):
+            self.write(run="r-2")
+        self.assertEqual(list((self.root / "skillset-saves" / "runs" / "r-2").iterdir()), [])
+        self.guard({"read_only": [dict(record, released_at="2026-11-12T00:00:00Z")]})
+        self.write(run="r-2")
+
+    def test_a_record_that_cannot_be_read_enforces_nothing_as_in_the_guard(self):
+        (self.root / ".harness-state").mkdir()
+        (self.root / ".harness-state" / "guard-state.json").write_text("{not json", encoding="utf-8")
+        self.assertEqual(self.write()["bytes"], 9)
+
+    def test_a_linked_worktree_given_as_the_project_is_refused_by_the_function(self):
+        tree = self.worktree()
+        with self.assertRaisesRegex(run_files.Refused, "is a linked git worktree"):
+            run_files.write(tree, RUN, "review", "reports", "packet.md", b"x")
+        self.assertFalse((tree / "skillset-saves").exists())
+
+    def test_a_policy_file_that_cannot_be_read_stops_the_command_without_deciding(self):
+        with mock.patch.object(run_files, "OWNERSHIP", self.root / "absent.yaml"), self.assertRaises(run_files.CannotRun):
+            self.write()
+        self.assertEqual(self.run_files(), [])
+
+    def test_a_policy_pattern_is_matched_one_segment_at_a_time(self):
+        classes = run_files.ownership_classes()
+        owner = lambda relative: (run_files.owning_class(relative, classes) or {}).get("id")  # noqa: E731
+        run = "skillset-saves/runs/r1"
+        self.assertEqual(owner(f"{run}/review/reports/a.md"), "phase-reports")
+        self.assertEqual(owner(f"{run}/review/reports/lens/a.md"), "phase-reports")
+        self.assertEqual(owner(f"{run}/review/report_x.md"), "phase-reports")
+        self.assertEqual(owner(f"{run}/review/packages/report_x.md"), "phase-packages")
+        self.assertEqual(owner(f"{run}/intake/report_grilling.md"), "grilling-log")
+        self.assertEqual(owner(f"{run}/review/evidence/coverage/.coverage"), "phase-evidence")
+        self.assertEqual(owner(f"{run}/review/manifest.json"), "phase-manifest")
+        self.assertEqual(owner(f"{run}/_state.md"), "core-run-record")
+        self.assertIsNone(owner("src/a.py"))
+
+
+class WriteCommandTests(Case):
+    def args(self, *more: str) -> tuple:
+        return ("--run-id", RUN, "--phase", "review", "--kind", "reports", "--name", "packet.md", *more)
+
+    def test_standard_input_is_written_and_the_report_has_the_path_tools_shape(self):
+        done = self.put(*self.args())
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        report = json.loads(done.stdout)
+        target = self.root / "skillset-saves" / "runs" / RUN / "review" / "reports" / "packet.md"
+        self.assertEqual(target.read_bytes(), b"# Packet\n")
+        self.assertEqual((report["ok"], report["command"], report["kind"], report["path"], report["relative"]),
+                         (True, "write", "reports", str(target), f"skillset-saves/runs/{RUN}/review/reports/packet.md"))
+        self.assertEqual((report["bytes"], report["sha256"], report["replaced"]), (9, content_sha256(target), False))
+        resolver = subprocess.run([sys.executable, str(SCRIPT.with_name("output_paths.py")), "--project-root", str(self.root), *self.args()],
+                                  capture_output=True, text=True, check=False)
+        resolved = json.loads(resolver.stdout)
+        self.assertEqual({key: report[key] for key in resolved}, resolved, "the keys output_paths.py prints, with the same values")
+
+    def test_a_file_named_with_from_is_written_and_a_missing_one_is_a_refusal(self):
+        source = self.root / "draft.bin"
+        source.write_bytes(bytes(range(256)))
+        done = self.put(*self.args("--from", str(source)), content=None)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual((self.root / "skillset-saves" / "runs" / RUN / "review" / "reports" / "packet.md").read_bytes(), bytes(range(256)))
+        missing = self.put(*self.args("--from", str(self.root / "absent.md")), content=None)
+        self.assertEqual(missing.returncode, 1)
+        self.assertIn("cannot be read", json.loads(missing.stdout)["error"])
+
+    def test_a_refusal_exits_1_with_the_reason_and_writes_nothing(self):
+        for label, args, content, fragment in (("no content", self.args(), b"", "nothing to write"),
+                                               ("a single-writer kind", ("--run-id", RUN, "--phase", "review", "--kind", "core", "--name", "_state.md"),
+                                                b"x", "one writer of its own"),
+                                               ("an unknown run", ("--run-id", "r-9", "--phase", "review", "--kind", "reports", "--name", "p.md"),
+                                                b"x", "has no directory")):
+            with self.subTest(refused=label):
+                done = self.put(*args, content=content)
+                self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+                self.assertEqual(json.loads(done.stdout)["ok"], False)
+                self.assertIn(fragment, json.loads(done.stdout)["error"])
+        self.assertEqual(self.run_files(), [])
+        self.assertEqual(self.put("--run-id", RUN).returncode, 2, "a usage error")
+
+    def test_from_a_linked_worktree_the_file_lands_in_the_main_checkout(self):
+        tree = self.worktree()
+        for label, more in (("the default project", ()), ("the worktree named as the project", ("--project-root", str(tree))),
+                            ("a relative project root", ("--project-root", "."))):
+            with self.subTest(project=label):
+                done = self.put(*self.args(*more), cwd=tree, content=label.encode())
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                target = self.root / "skillset-saves" / "runs" / RUN / "review" / "reports" / "packet.md"
+                self.assertEqual(target.read_bytes(), label.encode())
+                self.assertEqual(json.loads(done.stdout)["path"], str(target))
+        self.assertFalse((tree / "skillset-saves").exists())
+        self.assertFalse((tree / ".harness-state").exists())
+
+    def test_the_guard_record_read_is_the_main_checkouts_from_a_worktree(self):
+        tree = self.worktree()
+        self.guard({"read_only": [{"run_id": "another", "owner": "ops", "allow": ["skillset-saves/runs/another/**"]}]})
+        done = self.put(*self.args(), cwd=tree)
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn("outside what the read-only record of run another allows", json.loads(done.stdout)["error"])
+
+    def test_a_missing_policy_file_exits_2_and_is_not_a_refusal(self):
+        code = ("import sys; sys.argv = ['run_files.py', *sys.argv[1:]]; import run_files; from pathlib import Path; "
+                "run_files.OWNERSHIP = Path('absent.yaml'); raise SystemExit(run_files.main())")
+        done = subprocess.run([sys.executable, "-c", code, "write", "--project-root", str(self.root), *self.args()], capture_output=True,
+                              input=b"x", cwd=str(SCRIPT.parent), check=False)
+        self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+        self.assertEqual(done.stdout, b"")
+        self.assertIn(b"cannot run", done.stderr)
+        self.assertEqual(self.run_files(), [])
 
 
 class SupersedeTests(Case):

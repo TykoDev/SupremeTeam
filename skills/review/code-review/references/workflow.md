@@ -41,7 +41,7 @@ sequence and the judgment calls inside it.
 `../SKILL.md` states the contracts; this section records only where each one
 lands in the sequence above, so the two documents do not restate each other.
 
-- Read-only over the reviewed surface — binds from step 1 through packaging; the fix directions written at step 3 are the deliverable, and no step of this sequence touches the diff it judges.
+- Read-only over the reviewed surface — binds from step 1 through packaging; the fix directions written at step 3 are the deliverable, and no step of this sequence touches the diff it judges. The packet itself is written into the run with `run_files.py write` or to the literal `Save path` (SKILL.md, Read-only over the reviewed surface), never to a path built when the command runs.
 - Before/After Evidence — the "before" is the submitted diff and the test output read at step 2, recorded so a later claim that the revision improved something can be checked instead of believed.
 - Shared severity — assigned at step 3, when merge impact is known, and preserved unchanged through step 4.
 - Save-Protocol Adherence — the step 4 packet is what the save path receives, under the filename `../SKILL.md` mandates for the gate slot.

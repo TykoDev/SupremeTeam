@@ -38,7 +38,7 @@ the guard cannot see".
 | `user_prompt_submit.py` | `UserPromptSubmit` | routing | Points lifecycle work at `admiral`, reinforces the session pin, silent on slash commands except `/audit-improve`, whose audit report it injects |
 | `save_run.py` | CLI | persistence | The only writer of the run record |
 | `guard_state.py` | CLI | 3 | The only writer of the guard record |
-| `guard_hook.py`, `_cmdscan.py`, `_paths.py`, `_program_paths.py` | modules | 3 | Rules A to G; the shell command analyser; the path canonicaliser; the bounded literal-target pass over inline Python |
+| `guard_hook.py`, `_cmdscan.py`, `_paths.py`, `_program_paths.py` | modules | 3 | Rules A to H; the shell command analyser; the path canonicaliser; the bounded literal-target pass over inline Python |
 | `_state.py`, `_fsutil.py`, `_bootstrap.py` | modules | 3, 4 | Fail-open helpers, the atomic write and advisory lock, `sys.path` setup and the enforcement file list |
 | `run_heartbeat.py` | module | persistence | The throttled heartbeat refresh every hook runs |
 | `verify_registration.py` | diagnostic | | Reads host hook config. Exit 0 registered, 1 missing, 2 unknown; `--host auto` judges only hosts that show evidence |

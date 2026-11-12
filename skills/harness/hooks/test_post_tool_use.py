@@ -136,6 +136,25 @@ class TrajectoryIsolationTests(unittest.TestCase):
             self.assertEqual(len(files), 1)
             self.assertNotIn("s-1", files[0].name, "identity is hashed, not embedded")
 
+    def test_a_sub_agents_identity_is_recorded_with_its_calls_and_changes_no_hint(self):
+        """WP-10: Claude Code names the sub-agent on every tool event inside one. The record keeps the name; the
+        repeat-failure hint still counts the session's calls, whoever made them."""
+        with kit.project() as project:
+            payload = json.loads(self._fail_payload())
+            payload["session_id"] = "s-agents"
+            post(payload, project)
+            inside = dict(payload, agent_id="a1b2c3", agent_type="general-purpose\n`x`" + "y" * 200)
+            post(inside, project)
+            last = post(dict(payload, agent_id="", agent_type=7), project)
+            self.assertIn("failed 3 times", last.stdout)
+            entries = json.loads(next((project / ".harness-state" / "trajectories").rglob("*.json")).read_text(encoding="utf-8"))
+            entries = entries if isinstance(entries, list) else entries["history"]
+            self.assertEqual([sorted(set(entry) & {"agent_id", "agent_type"}) for entry in entries], [[], ["agent_id", "agent_type"], []])
+            self.assertEqual(entries[1]["agent_id"], "a1b2c3")
+            self.assertLessEqual(len(entries[1]["agent_type"]), 81)
+            self.assertNotIn("\n", entries[1]["agent_type"])
+            self.assertNotIn("`", entries[1]["agent_type"])
+
     def test_environment_session_id_scopes_history(self):
         with kit.project() as project:
             payload = self._fail_payload()

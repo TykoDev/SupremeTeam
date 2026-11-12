@@ -47,6 +47,7 @@ Claude Code has native file access, but the run records have one writer:
 
 1. Read the run-state, lock, and audit-trail records with the Read tool, and write them only through Bash running `python skills/harness/hooks/save_run.py <create|checkpoint|heartbeat|complete|block|release|recover> ...`. Never use Write or Edit on `_state.md`, `_lock.md`, `_audit-trail.md`, `_latest.md`, `_journal.json`, or `_history/`: they are the `core-run-record` class of `../../../save-ownership.yaml`, and `pre_tool_use.py` Rule C denies a direct write.
 2. Use Bash for validation scripts and packaging.
+   A sub-agent started with worktree isolation works in a linked git worktree, which has no `skillset-saves/`. Give it the absolute `Project root` and `Save path` of the Save Context block, and have it write its report through Bash with `python skills/scripts/run_files.py write --run-id <run> --phase <phase> --kind reports|artifacts|evidence --name <file>` (content on standard input or `--from FILE`): Claude Code refuses that sub-agent's Edit and Write on a path in the main checkout, a relative path would land in the worktree and be deleted with it (the guard denies it, Rule H), and a redirect to `$(...)` is denied as an unplaced write.
 3. Use the file system as the source of truth, exactly as the other platforms do.
 4. At the start of every active turn, inspect `skillset-saves/_latest.md` before creating new state. Resume an active reclaimable run; if activation or probing fails, attempt read-only resume before degrading to transient mode.
 

@@ -458,6 +458,20 @@ class Call:
         # Rule C's reading of a root-aimed ``find``: the record paths listed once per call, and how many it has tested.
         self.record_paths: dict = {}
         self.find_spent = 0
+        self._checkouts: dict = {}
+
+    def main_checkout(self, directory: str) -> "str | None":
+        """The main checkout of ``directory`` when that is the root of a linked git worktree, else None (Rule H)."""
+        if directory not in self._checkouts:
+            main = None
+            try:
+                found = _state.checkout_root(directory)
+                if os.path.realpath(found) != os.path.realpath(directory):
+                    main = _paths.posix(Path(found))
+            except (OSError, ValueError):
+                main = None
+            self._checkouts[directory] = main
+        return self._checkouts[directory]
 
     @functools.cached_property
     def command(self) -> str:
@@ -726,6 +740,25 @@ def _read_only_reason(records) -> str:
     )
 
 
+# What a denial adds when the refused write was aimed at a run's files, or at a destination built when the command
+# runs: the two ways such a file is written. A review lens under a read-only record was told to resolve its packet's
+# path with output_paths.py and write there; `cat > "$(output_paths.py ...)"` is a destination the guard cannot place
+# (and the script prints JSON, not a path), so the lens was refused with no word on what would have worked.
+_RUN_WRITE_WAYS = (
+    " To write a report, an artifact or an evidence file into a run, pipe the content to "
+    "'python skills/scripts/run_files.py write --run-id <run> --phase <phase> --kind reports|artifacts|evidence "
+    "--name <file>' (or give it --from FILE), or name the literal path under the run's save path to an edit tool or a "
+    "redirect. A destination built when the command runs ('$(...)', a variable, the output of output_paths.py) is "
+    "one the guard cannot place and never allows."
+)
+_RUN_FILE = re.compile(r"(?:^|/)skillset-saves/runs/[^/]+(?:/|$)", re.I)
+
+
+def _in_a_run(target: "_paths.Target") -> bool:
+    """Whether a located path is a run's file, in any checkout: the write that ``_RUN_WRITE_WAYS`` is advice for."""
+    return any(_RUN_FILE.search(form) for form in target.abs)
+
+
 # A write the command names no target for is not inside the run's paths whatever it writes: the contract is that every
 # target lies inside, and one the analyser cannot place cannot satisfy it.
 _UNNAMED_REASON = (
@@ -819,8 +852,9 @@ def rule_read_only(call: "Call") -> "str | None":
     allow = _state.read_only_allow(records)
     fold = _paths.case_insensitive_fs()
     if call.writer:
-        if any(not _paths.inside_allowed(target, allow, call.root, fold=fold) for target in call.edit_targets):
-            return _read_only_reason(records)
+        outside = [target for target in call.edit_targets if not _paths.inside_allowed(target, allow, call.root, fold=fold)]
+        if outside:
+            return _read_only_reason(records) + (_RUN_WRITE_WAYS if any(_in_a_run(target) for target in outside) else "")
         return None
     if not call.shell:
         return None
@@ -837,8 +871,9 @@ def rule_read_only(call: "Call") -> "str | None":
         for write, targets in call.shell_targets(strict=True, analysis=analysis):
             if write.via in dry:
                 continue
-            if write.unresolved or any(not _paths.inside_allowed(target, allow, call.root, fold=fold) for target in targets):
-                return reason
+            outside = [target for target in targets if not _paths.inside_allowed(target, allow, call.root, fold=fold)]
+            if write.unresolved or outside:
+                return reason + (_RUN_WRITE_WAYS if write.unresolved or any(_in_a_run(target) for target in outside) else "")
         if _unscoped_git(analysis) or _installs_packages(analysis):
             return reason
     return reason if any(analysis.unnamed for analysis in analyses) else None
@@ -1753,8 +1788,60 @@ def rule_unplaced_write(call: "Call") -> "str | None":
         return harness_reason
     return ("Blocked by harness Action Realization layer: an unplaced write target could reach an active "
             "boundary or single-writer record. Runtime-built destinations and stdin/diff/program writes "
-            "without proven targets are not allowed here. Use a path tool or name literal destinations; "
-            "use save_run.py, taste_prefs.py or guard_state.py for their owned records.")
+            "without proven targets are not allowed here. Name literal destinations; "
+            "use save_run.py, taste_prefs.py or guard_state.py for their owned records." + _RUN_WRITE_WAYS)
+
+
+# --- Rule H: run state in a linked worktree --------------------------------------------------------------
+#
+# `skillset-saves/` is git-ignored, so a linked git worktree has none: the runs are in the main checkout, and that is
+# where every gate, the path tool and the run writer look. A relative save path, written from a session or a
+# sub-agent whose working directory is a worktree, makes a second `skillset-saves/` there. The write "succeeds", no
+# gate ever reads the file, and the host deletes it with the worktree. So a write under the `skillset-saves/` of a
+# linked worktree is refused, with or without a read-only record, and the reason gives the path the file belongs at.
+# Removing or moving what an earlier version left there is not refused: that is how such a file is rescued.
+_SAVES_SEGMENT = re.compile(r"/skillset-saves(?=/|$)", re.I)
+_WORKTREE_SAVES_REASON = (
+    "Blocked by harness Action Realization layer: {path} is under the skillset-saves/ of a linked git worktree "
+    "({worktree}). A run's files are in the main checkout only: no gate reads a file written here, and it is deleted "
+    "with the worktree. It belongs at {main}. Pipe the content to 'python skills/scripts/run_files.py write --run-id "
+    "<run> --phase <phase> --kind reports|artifacts|evidence --name <file>' (or give it --from FILE), which writes "
+    "there from a worktree, or name that absolute path to an edit tool or a redirect where the host allows one."
+)
+
+
+def _worktree_saves(call: "Call", target: "_paths.Target") -> "tuple | None":
+    """``(path, worktree, path in the main checkout)`` when a form of ``target`` lies under the ``skillset-saves/`` of
+    a linked worktree, else None."""
+    for form in target.abs:
+        for match in _SAVES_SEGMENT.finditer(form):
+            holder = form[:match.start()] or "/"
+            main = call.main_checkout(holder)
+            if main is not None:
+                return form, holder, main.rstrip("/") + form[match.start():]
+    return None
+
+
+def rule_worktree_saves(call: "Call") -> "str | None":
+    """Rule H: a write under a linked worktree's own ``skillset-saves/`` is denied and pointed at the main checkout."""
+    if call.writer:
+        paths = _written_paths(call.input, include_patch=call.tool == "apply_patch")
+        if not any("skillset-saves" in str(path).lower() for path in paths):
+            return None
+        # An edit tool resolves a relative path against the working directory and nowhere else.
+        targets = [call.locate(path, call.starts[:1]) for path in paths]
+    elif call.shell and "skillset-saves" in call.command.lower() and call.analysis.ok:
+        targets = [target for analysis in _analyses(call.analysis)
+                   for write, found in call.shell_targets(strict=True, analysis=analysis)
+                   if not write.unresolved and write.via not in _REMOVE_VIA for target in found]
+    else:
+        return None
+    for target in targets:
+        hit = _worktree_saves(call, target)
+        if hit:
+            path, worktree, main = (_state.safe_text(text, 300) for text in hit)
+            return _WORKTREE_SAVES_REASON.format(path=path, worktree=worktree, main=main)
+    return None
 
 
 # --- Rule E: coverage destination advisory --------------------------------------------------------------
@@ -1819,9 +1906,10 @@ def rule_coverage(call: "Call") -> "str | None":
 
 # Rules run in this order; the first reason wins. A rule that faults is counted and skipped, so one
 # defect never turns off the rest. Rule G is a flag the analyser set, so it goes before the rules that
-# would spend their time locating every write of a command it denies anyway.
-RULES = [("A", rule_dangerous), ("G", rule_unplaced_write), ("B", rule_frozen), ("D", rule_read_only), ("C", rule_single_writer),
-         ("F", rule_harness_files)]
+# would spend their time locating every write of a command it denies anyway. Rule H goes before the read-only
+# rule, which would refuse the same write and say only that the run is read-only, not where the file belongs.
+RULES = [("A", rule_dangerous), ("G", rule_unplaced_write), ("H", rule_worktree_saves), ("B", rule_frozen), ("D", rule_read_only),
+         ("C", rule_single_writer), ("F", rule_harness_files)]
 
 
 def _deny(reason: str) -> None:

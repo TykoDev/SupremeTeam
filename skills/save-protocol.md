@@ -154,7 +154,17 @@ a CRLF checkout and an LF checkout agree and `sha256sum` on a CRLF file is the
 wrong value.
 `scripts/output_paths.py` resolves every kind to its destination, accepts only the
 phase directories [save-ownership.yaml](save-ownership.yaml) declares, and rejects
-escapes.
+escapes. Run from a linked git worktree, it resolves every kind but `product` against the
+main checkout, where the runs are, and says so in a `worktree` key. It prints a JSON
+object and writes nothing: `python skills/scripts/run_files.py write --run-id <run>
+--phase <phase> --kind reports|artifacts|evidence --name <file>` resolves the same
+destination and writes the content it is given on standard input or with `--from
+FILE`. It is the writer for a delegate, from the main checkout and from a worktree; it
+refuses a kind that has a writer of its own, a path [save-ownership.yaml](save-ownership.yaml)
+gives no delegated specialist, a run with no directory, and a destination the guard
+record freezes, blocks or leaves outside a read-only run's allow list. A write under a
+worktree's own `skillset-saves/` is refused by the guard (Rule H), because no gate
+reads it.
 
 `_latest.md` is only a pointer. Scan `runs/` when it is absent, stale, or
 conflicts with a reclaimable active run.
@@ -417,7 +427,8 @@ neither file may drop a field the other carries.
 ### Save Context
 - Run ID: {run-id}
 - Phase: {phase}
-- Save path: skillset-saves/runs/{run-id}/{phase}/
+- Project root: {absolute path of the main checkout}
+- Save path: {project-root}/skillset-saves/runs/{run-id}/{phase}/
 - Persistence active: {yes|no}
 - Persistence probe result: {ok|reason}
 - Context tier: {1|2|3}
@@ -434,6 +445,15 @@ neither file may drop a field the other carries.
 - Risks: {known risks|none declared}
 - Return boundary: {gate boundary for the returned package}
 ```
+
+`Project root` and `Save path` are absolute paths in the main checkout, also when the
+session or the delegate works in a linked git worktree. A delegate writes a report, an
+artifact or an evidence file with `python skills/scripts/run_files.py write --run-id
+<run> --phase <phase> --kind reports|artifacts|evidence --name <file>` (content on
+standard input or `--from FILE`), which works from either tree, or with an edit tool
+given a literal path under `Save path`; never to a destination built when the command
+runs. [contracts/handoff-templates.md](contracts/handoff-templates.md) has the rule in
+full.
 
 A delegate that receives `Persistence active: no` treats every save call as a
 no-op and returns its deliverable inline. A delegate that receives

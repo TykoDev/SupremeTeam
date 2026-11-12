@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import ast
 import io
+import json
 import os
 import random
 import re
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -1491,6 +1493,168 @@ class WorktreeProjectTests(GuardCase):
         self.assertEqual(_state.checkout_root(forged), forged)
 
 
+RUN_FILES = HOOK_DIR.parent.parent / "scripts" / "run_files.py"
+
+
+class RunFilesFromAWorktreeTests(GuardCase):
+    """WP-10: a delegate can write its report into the run, and cannot lose it in a worktree.
+
+    ``skillset-saves/`` is git-ignored, so a linked worktree has none. A relative save path written from a worktree
+    made one there: the write succeeded, no gate read the file, and the host deleted it with the worktree. The other
+    route a review lens was given, ``cat > "$(output_paths.py ...)"``, is a destination built at run time, which the
+    guard cannot place. Both are refused now with the way that works, ``run_files.py write``, which the guard
+    allows from either tree and which lands in the main checkout."""
+
+    FAST = True
+    RUN = "R1"
+
+    def setUp(self):
+        super().setUp()
+        self.main = self.root
+        self.worktree = kit.linked_worktree(self.main, self.main / ".claude" / "worktrees" / "agent-a1")
+        (self.main / "skillset-saves" / "runs" / self.RUN / "review" / "reports").mkdir(parents=True)
+        self.rel = f"skillset-saves/runs/{self.RUN}/review/reports/packet.md"
+        self.in_main = (self.main / self.rel).as_posix()
+        self.in_worktree = (self.worktree / self.rel).as_posix()
+        self.read_only = {"read_only": [{"run_id": self.RUN, "owner": "code-chief", "allow": [f"skillset-saves/runs/{self.RUN}/**"]}]}
+        self.writer = f"python skills/scripts/run_files.py write --run-id {self.RUN} --phase review --kind reports --name packet.md"
+
+    def test_a_write_under_a_worktrees_own_saves_is_denied_and_pointed_at_the_main_checkout(self):
+        rows = [
+            ("edit tool, relative path, working directory = the worktree", _write(self.rel, self.worktree)),
+            ("edit tool, absolute path", _write(self.in_worktree, self.main)),
+            ("redirect to a relative path, working directory = the worktree", _shell(f"cat > {self.rel} <<EOF\nx\nEOF", self.worktree)),
+            ("redirect to the absolute path", _shell(f"echo x > {self.in_worktree}", self.main)),
+            ("tee to the absolute path", _shell(f"printf x | tee {self.in_worktree}", self.main)),
+            ("cd into the worktree, then a relative path", _shell(f"cd {self.worktree.as_posix()} && echo x > {self.rel}", self.main)),
+            ("inline Python that opens the absolute path", _shell(f"python3 -c \"open('{self.in_worktree}','w').write('x')\"", self.main)),
+            ("PowerShell", dict(kit.bash(f"Set-Content -Path '{self.in_worktree}' -Value x", "PowerShell"), cwd=str(self.main))),
+        ]
+        for label, record in (("no record", {}), ("a read-only record", self.read_only)):
+            self.guard(record)
+            for project in (self.main, self.worktree):
+                for write, payload in rows:
+                    with self.subTest(record=label, project=project.name, write=write):
+                        reason = kit.reason(kit.decide(payload, project))
+                        self.assertIn("of a linked git worktree", reason)
+                        self.assertIn(f"It belongs at {self.in_main}", reason)
+                        self.assertIn("run_files.py write --run-id", reason)
+
+    def test_a_run_file_in_the_main_checkout_is_written_from_either_tree(self):
+        rows = [
+            ("edit tool, absolute path, working directory = the main checkout", _write(self.in_main, self.main)),
+            ("edit tool, absolute path, working directory = the worktree", _write(self.in_main, self.worktree)),
+            ("edit tool, relative path, working directory = the main checkout", _write(self.rel, self.main)),
+            ("redirect to the literal path", _shell(f"cat > {self.in_main} <<EOF\nx\nEOF", self.worktree)),
+            ("tee to the literal path", _shell(f"printf x | tee {self.in_main}", self.worktree)),
+            ("inline Python that opens the literal path", _shell(f"python3 -c \"open('{self.in_main}','w').write('x')\"", self.worktree)),
+            ("cd to the main checkout, then a relative path", _shell(f"cd {self.main.as_posix()} && cat > {self.rel} <<EOF\nx\nEOF", self.worktree)),
+        ]
+        for label, record in (("no record", {}), ("a read-only record", self.read_only)):
+            self.guard(record)
+            for project in (self.main, self.worktree):
+                for write, payload in rows:
+                    with self.subTest(record=label, project=project.name, write=write):
+                        self.assertEqual(kit.decide(payload, project), "")
+
+    def test_what_an_earlier_version_left_in_a_worktree_can_be_removed_or_moved_out(self):
+        (self.worktree / self.rel).parent.mkdir(parents=True)
+        (self.worktree / self.rel).write_text("left behind\n", encoding="utf-8")
+        for command in (f"mv {self.in_worktree} {self.in_main}", f"rm {self.in_worktree}"):
+            with self.subTest(command=command.split()[0]):
+                self.assertEqual(kit.decide(_shell(command, self.worktree), self.worktree), "")
+
+    def test_a_saves_directory_that_is_not_a_worktrees_is_left_to_the_other_rules(self):
+        """A fixture tree, a plain copy of the project and a submodule each hold a ``.git`` that is not a linked
+        worktree's, or none: the rule is about worktrees and says nothing here."""
+        plain = self.main / "fixtures" / "project"
+        submodule = self.main / "vendor" / "lib"
+        (self.main / ".git" / "modules" / "lib").mkdir(parents=True)
+        submodule.mkdir(parents=True)
+        (submodule / ".git").write_text("gitdir: ../../.git/modules/lib\n", encoding="utf-8")
+        for holder in (plain, submodule):
+            with self.subTest(holder=holder.name):
+                path = (holder / self.rel).as_posix()
+                self.assertEqual(kit.decide(_write(path, self.main), self.main), "")
+                self.assertEqual(kit.decide(_shell(f"echo x > {path}", self.main), self.main), "")
+
+    def test_a_destination_built_at_run_time_is_denied_and_the_reason_names_what_works(self):
+        resolver = f"python3 skills/scripts/output_paths.py --run-id {self.RUN} --phase review --kind reports --name packet.md"
+        shapes = (f'OUT=$({resolver}) && cat > "$OUT" <<EOF\nx\nEOF', f'cat > "$({resolver})" <<EOF\nx\nEOF')
+        kit.pin_a_run(self.main, "pinned")
+        for label, record in (("an active run and no record", {}), ("a read-only record", self.read_only)):
+            self.guard(record)
+            for project in (self.main, self.worktree):
+                for command in shapes:
+                    with self.subTest(record=label, project=project.name, command=command[:24]):
+                        reason = kit.reason(kit.decide(_shell(command, project), project))
+                        self.assertIn("run_files.py write --run-id <run> --phase <phase> --kind reports|artifacts|evidence", reason)
+                        self.assertIn("never allows", reason)
+
+    def test_a_read_only_denial_names_the_writer_for_a_run_file_and_not_for_a_product_file(self):
+        self.guard(self.read_only)
+        other = (self.main / "skillset-saves" / "runs" / "R2" / "review" / "reports" / "packet.md").as_posix()
+        for label, payload in (("edit tool", _write(other, self.main)), ("redirect", _shell(f"echo x > {other}", self.main))):
+            with self.subTest(another_runs_file=label):
+                reason = kit.reason(kit.decide(payload, self.main))
+                self.assertIn("is recorded read-only", reason)
+                self.assertIn("run_files.py write", reason)
+        for label, payload in (("edit tool", _write("src/a.py", self.main)), ("redirect", _shell("echo x > src/a.py", self.main)),
+                               ("a product file in the worktree", _write((self.worktree / "src" / "a.py").as_posix(), self.worktree))):
+            with self.subTest(product_file=label):
+                reason = kit.reason(kit.decide(payload, self.worktree if "worktree" in label else self.main))
+                self.assertIn("is recorded read-only", reason)
+                self.assertNotIn("run_files.py write", reason)
+
+    def test_the_report_writer_is_allowed_from_either_tree_and_lands_in_the_main_checkout(self):
+        absolute = self.writer.replace("skills/scripts/run_files.py", f'"{RUN_FILES.as_posix()}"')
+        shapes = (f"{self.writer} <<'EOF'\n# Packet\n\nrm -rf src; echo x > src/a.py\nEOF", f"printf '%s\\n' '# Packet' | {self.writer}",
+                  f"{self.writer} --from notes/packet.md", f"{absolute} <<'EOF'\n# Packet\nEOF")
+        kit.pin_a_run(self.main, "pinned")
+        for label, record in (("an active run and no record", {}), ("a read-only record", self.read_only)):
+            self.guard(record)
+            for project in (self.main, self.worktree):
+                for command in shapes:
+                    with self.subTest(record=label, project=project.name, command=command[-28:]):
+                        self.assertEqual(kit.decide(_shell(command, project), project), "")
+                with self.subTest(record=label, project=project.name, shell="PowerShell"):
+                    piped = "@'\n# Packet\n'@ | " + self.writer.replace("python ", "py -3 ")
+                    self.assertEqual(kit.decide(dict(kit.bash(piped, "PowerShell"), cwd=str(project)), project), "")
+        self.guard(self.read_only)
+        done = kit.run_cli(RUN_FILES, "write", "--run-id", self.RUN, "--phase", "review", "--kind", "reports", "--name", "packet.md",
+                           env=kit.clean_env(self.main), cwd=self.worktree, input="# Packet\n")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(json.loads(done.stdout)["relative"], self.rel)
+        self.assertEqual((self.main / self.rel).read_text(encoding="utf-8"), "# Packet\n")
+        self.assertFalse((self.worktree / "skillset-saves").exists())
+        self.assertFalse((self.worktree / ".harness-state").exists())
+
+    def test_the_report_writer_holds_itself_to_the_boundaries_the_guard_cannot_apply_to_it(self):
+        """N7: the guard reads a script's arguments as arguments, so the command is allowed whatever it names. The
+        command reads the record itself."""
+        (self.main / "skillset-saves" / "runs" / "R2").mkdir()
+        frozen = {"frozen_globs": [{"glob": f"skillset-saves/runs/{self.RUN}/review/evidence/**", "owner": "ops"}]}
+
+        def run(*args: str) -> subprocess.CompletedProcess:
+            return kit.run_cli(RUN_FILES, "write", "--phase", "review", *args, env=kit.clean_env(self.main), cwd=self.worktree, input="x\n")
+
+        for label, record, args, fragment in (
+                ("another run under a read-only record", self.read_only, ("--run-id", "R2", "--kind", "reports", "--name", "p.md"),
+                 "outside what the read-only record of run R1 allows"),
+                ("a frozen path", frozen, ("--run-id", self.RUN, "--kind", "evidence", "--name", "log.txt"), "inside a frozen boundary"),
+                ("a single-writer kind", {}, ("--run-id", self.RUN, "--kind", "core", "--name", "_state.md"), "one writer of its own")):
+            with self.subTest(refused=label):
+                self.guard(record)
+                self.assertEqual(kit.decide(_shell(" ".join(["python skills/scripts/run_files.py write --phase review", *args, "<<EOF\nx\nEOF"]),
+                                                   self.worktree), self.worktree), "", "the guard has no target to judge")
+                done = run(*args)
+                self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+                self.assertIn(fragment, json.loads(done.stdout)["error"])
+        written = sorted(path.relative_to(self.main).as_posix() for path in (self.main / "skillset-saves").rglob("*") if path.is_file())
+        self.assertEqual(written, [])
+
+
+
 GUARD_SKILL = HOOK_DIR.parent.parent / "guard" / "SKILL.md"
 _CHAIN ="; ".join(f"cd directory{i}" for i in range(200)) + "; touch f"
 
@@ -1513,6 +1677,10 @@ DENIAL_REASONS = (
     ("D", READ_ONLY, "Bash", "touch notes.md", "is recorded read-only", "read_only"),
     ("D", READ_ONLY, "Bash", "cat list | xargs rm", "name each target in the shell command itself", "target is not in the command"),
     ("F", FROZEN, "Bash", "touch .claude/settings.json", "SUPREMETEAM_HARNESS_DEV", "SUPREMETEAM_HARNESS_DEV"),
+    ("H", {}, "Write in a worktree", "skillset-saves/runs/r1/review/reports/packet.md", "of a linked git worktree",
+     "of a linked git worktree"),
+    ("D", READ_ONLY, "Bash", 'cat > "$(python skills/scripts/output_paths.py --run-id r1 --phase review --kind reports --name p.md)"',
+     "run_files.py write", "run_files.py write"),
     ("G", {}, "Bash", _CHAIN, "characters of path", f"{guard_hook._cmdscan.MAX_CWD} characters of path"),
     ("G", FROZEN, "apply_patch", "a patch with no file header", "names no file the guard can read",
      "names no file the guard can read"),
@@ -1528,6 +1696,9 @@ class DenialReasonProseTests(GuardCase):
             os.environ.pop("SUPREMETEAM_HARNESS_DEV", None)
             if tool == "apply_patch":
                 out = kit.decide({"tool_name": tool, "tool_input": {"command": text}}, self.root)
+            elif tool == "Write in a worktree":
+                worktree = kit.linked_worktree(self.root, self.root / ".claude" / "worktrees" / "agent-a1")
+                out = kit.decide(_write(text, worktree), self.root)
             else:
                 out = self.edit(text) if tool == "Write" else self.call(text)
         self.assertTrue(kit.denied(out), f"{text[:60]!r} was not denied: {out!r}")
@@ -1555,7 +1726,8 @@ class DenialReasonProseTests(GuardCase):
         """A denial added to `guard_hook` without an entry here would have no documented place."""
         defined = {name for name in dir(guard_hook) if name.endswith("_REASON") and isinstance(getattr(guard_hook, name), str)}
         covered = {"_DANGEROUS_REASON", "_CORE_SAVE_REASON", "_TASTE_SAVE_REASON", "_GUARD_STATE_REASON", "_HARNESS_REASON", "_UNPLACED_REASON",
-                   "_UNNAMED_REASON", "_ROOT_RECORDS_REASON", "_VERDICT_REASON", "_PHASE_DIR_REASON", "_UNPLACED_PATCH_REASON", "_SUPERSEDED_REASON"}
+                   "_UNNAMED_REASON", "_ROOT_RECORDS_REASON", "_VERDICT_REASON", "_PHASE_DIR_REASON", "_UNPLACED_PATCH_REASON", "_SUPERSEDED_REASON",
+                   "_WORKTREE_SAVES_REASON"}
         self.assertEqual(defined, covered)
 
 
@@ -1582,7 +1754,7 @@ class RuleIsolationTests(GuardCase):
             self.assertEqual(self.call("ls"), "")
 
     def test_the_rule_order_is_the_documented_one(self):
-        self.assertEqual([label for label, _ in guard_hook.RULES], ["A", "G", "B", "D", "C", "F"])
+        self.assertEqual([label for label, _ in guard_hook.RULES], ["A", "G", "H", "B", "D", "C", "F"])
 
 
 class RuleUnitTests(GuardCase):

@@ -74,7 +74,7 @@ SupremeTeam/
     │   ├── content_hash.py               # The catalog's sha256 (text folded to LF) for evidence files
     │   ├── save_taxonomy.py              # Shared save constants and phase-to-protocol state mapping
     │   ├── checkout.py                   # Maps a linked git worktree to the main checkout that holds its runtime state
-    │   ├── run_files.py                  # Sanctioned writer for phase files: supersede moves an earlier revision's file to _superseded/
+    │   ├── run_files.py                  # Sanctioned writer for phase files: write puts a report, artifact or evidence file into the run (from a worktree too); supersede moves an earlier revision's file to _superseded/
     │   ├── catalog_imports.py            # Reads each entry point's imports; names a catalog module that is missing
     │   ├── contract_floor.py             # Independent safety floor for the shipped gate spec
     │   ├── mcp_registry.py               # Read-only project MCP freshness/identity diagnostic
@@ -91,7 +91,7 @@ SupremeTeam/
     ├── harness/
     │   ├── hooks/                        # Lifecycle hooks, the guard, the record writers, diagnostics
     │   │   ├── pre_tool_use.py           # PreToolUse entry point; forwards to guard_hook.py
-    │   │   ├── guard_hook.py             # The guard engine: Rules A to G, one function per rule
+    │   │   ├── guard_hook.py             # The guard engine: Rules A to H, one function per rule
     │   │   ├── _cmdscan.py               # Shell command analyser: wrappers, redirects, write targets
     │   │   ├── _paths.py                 # Path and glob canonicaliser
     │   │   ├── _program_paths.py         # Bounded literal Python I/O targets; never evaluates code

@@ -495,6 +495,19 @@ def _sweep_coverage_residue(tool_name: str) -> "str | None":
         return None
 
 
+def _agent_fields(data: dict) -> dict:
+    """Which sub-agent made the call, as the host says: Claude Code puts ``agent_id`` and ``agent_type`` on every tool
+    event inside a sub-agent and on none outside one. They are recorded so that a trajectory can be read per agent.
+    They are the host's word, copied from the payload, and nothing is decided on them: a sub-agent is under the same
+    boundaries as the session that started it."""
+    found = {}
+    for key in ("agent_id", "agent_type"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            found[key] = _state.safe_text(value.strip(), 80)
+    return found
+
+
 def main() -> None:
     global _pending_coverage_hint, _pending_maintenance_hints
 
@@ -536,7 +549,7 @@ def main() -> None:
 
     sig = _signature(tool_name, tool_input)
     history = _state.append_trajectory(
-        session_id, {"sig": sig, "failed": failed, "empty": empty}
+        session_id, {"sig": sig, "failed": failed, "empty": empty, **_agent_fields(data)}
     )
 
     # Pattern 1: same command failing repeatedly.

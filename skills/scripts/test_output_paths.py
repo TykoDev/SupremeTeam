@@ -85,6 +85,60 @@ class DestinationTests(unittest.TestCase):
                         resolve(root, "coverage", **kwargs)
 
 
+class WorktreeTests(unittest.TestCase):
+    """WP-10: run from a linked worktree, the path tool printed a path inside the worktree, where no run is."""
+
+    def setUp(self):
+        self.main = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        entry = self.main / ".git" / "worktrees" / "a1"
+        entry.mkdir(parents=True)
+        self.tree = self.main / ".claude" / "worktrees" / "a1"
+        self.tree.mkdir(parents=True)
+        (entry / "commondir").write_text("../..\n", encoding="utf-8")
+        (entry / "gitdir").write_text(f"{(self.tree / '.git').as_posix()}\n", encoding="utf-8")
+        (self.tree / ".git").write_text(f"gitdir: {entry.as_posix()}\n", encoding="utf-8")
+
+    def cli(self, *args: str, cwd: Path) -> dict:
+        done = subprocess.run([sys.executable, str(SCRIPTS / "output_paths.py"), *args], capture_output=True, text=True, cwd=str(cwd),
+                              check=False)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        return json.loads(done.stdout)
+
+    def test_run_and_harness_state_resolve_against_the_main_checkout(self):
+        run = ("--run-id", "r1", "--phase", "review")
+        for label, root in (("the default project", ()), ("the worktree named", ("--project-root", str(self.tree))),
+                            ("a relative root", ("--project-root", "."))):
+            for kind, more, relative in (("reports", (*run, "--name", "packet.md"), "skillset-saves/runs/r1/review/reports/packet.md"),
+                                         ("evidence", (*run, "--name", "log.txt"), "skillset-saves/runs/r1/review/evidence/log.txt"),
+                                         ("core", ("--run-id", "r1", "--name", "_state.md"), "skillset-saves/runs/r1/_state.md"),
+                                         ("guards", (), ".harness-state/guard-state.json"),
+                                         ("test_work", ("--name", "x"), ".harness-state/test-work/x")):
+                with self.subTest(project=label, kind=kind):
+                    report = self.cli(*root, "--kind", kind, *more, cwd=self.tree)
+                    self.assertEqual(Path(report["path"]), self.main / relative)
+                    self.assertEqual(report["relative"], relative)
+                    self.assertEqual(Path(report["worktree"]), self.tree)
+        self.assertEqual(sorted(entry.name for entry in self.tree.iterdir()), [".git"], "--mkdir was not given and nothing is made")
+
+    def test_mkdir_makes_the_directory_in_the_main_checkout(self):
+        self.cli("--kind", "evidence", "--run-id", "r1", "--phase", "review", "--name", "log.txt", "--mkdir", cwd=self.tree)
+        self.assertTrue((self.main / "skillset-saves" / "runs" / "r1" / "review" / "evidence").is_dir())
+        self.assertFalse((self.tree / "skillset-saves").exists())
+
+    def test_a_product_path_stays_in_the_tree_it_was_asked_about(self):
+        report = self.cli("--kind", "product", "--name", "src/a.py", cwd=self.tree)
+        self.assertEqual(Path(report["path"]), self.tree / "src" / "a.py")
+        self.assertNotIn("worktree", report)
+
+    def test_the_main_checkout_and_a_plain_directory_are_read_as_themselves(self):
+        plain = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        for root in (self.main, plain):
+            with self.subTest(root=root.name):
+                report = self.cli("--kind", "reports", "--run-id", "r1", "--phase", "review", "--name", "p.md", cwd=root)
+                self.assertEqual(Path(report["path"]), root / "skillset-saves" / "runs" / "r1" / "review" / "reports" / "p.md")
+                self.assertNotIn("worktree", report)
+
+
 class ResolverContractTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

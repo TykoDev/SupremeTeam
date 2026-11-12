@@ -56,13 +56,14 @@ file by hand and never creates a path outside its declared classes.
 
 ### Save Context Delegation Template
 
-Include this block in every sub-orchestrator delegation with values copied from the current run state. It is the canonical field set from `../../contracts/handoff-templates.md` (mirrored in `../../save-protocol.md`); neither file may drop a field the other carries. When persistence is inactive or read-only resume is in effect, keep the block but set `Persistence active: no` so downstream skills return inline and skip writes.
+Include this block in every sub-orchestrator delegation with values copied from the current run state. It is the canonical field set from `../../contracts/handoff-templates.md` (mirrored in `../../save-protocol.md`); neither file may drop a field the other carries. When persistence is inactive or read-only resume is in effect, keep the block but set `Persistence active: no` so downstream skills return inline and skip writes. `Project root` and `Save path` are absolute paths in the main checkout (`output_paths.py` prints them, also from a linked git worktree): a sub-agent resolves a relative path against its own working directory, and one the host isolates in a worktree has no run there. Tell a delegate to write its report with `python skills/scripts/run_files.py write --run-id {run-id} --phase {phase} --kind reports|artifacts|evidence --name <file>`, content on standard input or `--from FILE`; it works from either tree, and `../../contracts/handoff-templates.md` has the rule in full.
 
 ```markdown
 ### Save Context
 - Run ID: {run-id}
 - Phase: {phase}
-- Save path: skillset-saves/runs/{run-id}/{phase}/
+- Project root: {absolute path of the main checkout}
+- Save path: {project-root}/skillset-saves/runs/{run-id}/{phase}/
 - Persistence active: {yes|no}
 - Persistence probe result: {ok|reason}
 - Context tier: {1|2|3}

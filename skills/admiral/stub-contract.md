@@ -78,7 +78,8 @@ Every `### Save Context` block delivered to a sub-orchestrator or specialist car
 |-------|--------|-------|
 | `Run ID` | `{run-id}` | Stable for the entire run |
 | `Phase` | `{phase}` | The declared phase directory |
-| `Save path` | `skillset-saves/runs/{run-id}/{phase}/` | Forward slashes, workspace-relative |
+| `Project root` | absolute path of the main checkout | The directory that holds `skillset-saves/`. From a linked git worktree it is the main checkout, never the worktree, which has no run |
+| `Save path` | `{project-root}/skillset-saves/runs/{run-id}/{phase}/` | Forward slashes, absolute: a delegate resolves a relative path against its own working directory, which in a worktree-isolated sub-agent is not where the run is |
 | `Persistence active` | `yes` \| `no` | Reflects the actual `save_run.py create` probe result; a `yes` recorded ahead of an `ok` sends every delegate to save into a run that was never published |
 | `Persistence probe result` | `ok` \| reason | Never omit |
 | `Context tier` | `1` \| `2` \| `3` | Feeds artifact-mode decisions |

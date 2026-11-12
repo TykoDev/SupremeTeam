@@ -1194,8 +1194,132 @@ class ToolShapeTests(GuardCase):
                 self.assertEqual(kit.decide(payload, self.root), "")
 
 
+def _patch(*paths: str, verb: str = "Add File") -> str:
+    body = "".join(f"*** {verb}: {path}\n+x\n" for path in paths)
+    return f"*** Begin Patch\n{body}*** End Patch"
+
+
+def _patch_shapes(patch: str) -> dict:
+    """One patch as every host shape seen or documented: the last three are what Codex sends (WP-00, finding N9)."""
+    return {
+        "under patch": {"patch": patch},
+        "under input": {"input": patch},
+        "the input is the patch": patch,
+        "under command, a string": {"command": patch},
+        "under command, a list": {"command": ["apply_patch", patch]},
+        "under command, a shell wrapper": {"command": ["bash", "-lc", f"apply_patch <<'EOF'\n{patch}\nEOF"]},
+        "the input is a list": ["apply_patch", patch],
+        "under a key no host uses yet": {"arguments": {"body": patch}},
+    }
+
+
+class PatchToolTests(GuardCase):
+    """WP-00: a patch tool's write is judged wherever the host puts the patch text.
+
+    Codex reports every file edit as ``apply_patch`` with the patch in ``tool_input.command``. The guard read a patch
+    only from ``patch``, ``input`` and ``content``, found no path, and let the edit into a frozen folder."""
+
+    FAST = True
+
+    def decide(self, tool_input, cwd=None) -> str:
+        payload = {"tool_name": "apply_patch", "tool_input": tool_input}
+        if cwd is not None:
+            payload["cwd"] = str(cwd)
+        return kit.decide(payload, self.root)
+
+    def test_every_payload_shape_is_denied_inside_a_frozen_boundary_and_allowed_outside_it(self):
+        self.guard(FROZEN)
+        for label, tool_input in _patch_shapes(_patch("src/payments/a.py")).items():
+            with self.subTest(denied=label):
+                out = self.decide(tool_input)
+                self.assertTrue(kit.denied(out), f"{label}: {out!r}")
+                self.assertIn("frozen boundary", kit.reason(out))
+        for label, tool_input in _patch_shapes(_patch("src/other/a.py")).items():
+            with self.subTest(allowed=label):
+                self.assertEqual(self.decide(tool_input), "")
+
+    def test_every_payload_shape_is_held_to_a_read_only_run(self):
+        self.guard(READ_ONLY)
+        inside = f"skillset-saves/runs/{READ_ONLY_RUN}/investigation/notes.md"
+        for label, tool_input in _patch_shapes(_patch("src/app.py")).items():
+            with self.subTest(denied=label):
+                out = self.decide(tool_input)
+                self.assertTrue(kit.denied(out), f"{label}: {out!r}")
+                self.assertIn("is recorded read-only", kit.reason(out))
+        for label, tool_input in _patch_shapes(_patch(inside)).items():
+            with self.subTest(allowed=label):
+                self.assertEqual(self.decide(tool_input), "")
+
+    def test_every_file_header_of_a_patch_is_a_target(self):
+        self.guard(FROZEN)
+        for verb in ("Add File", "Update File", "Delete File"):
+            with self.subTest(verb=verb):
+                self.assertTrue(kit.denied(self.decide({"command": _patch("src/payments/a.py", verb=verb)})))
+        moved = "*** Begin Patch\n*** Update File: src/other/a.py\n*** Move to: src/payments/b.py\n*** End Patch"
+        self.assertTrue(kit.denied(self.decide({"command": moved})))
+        mixed = _patch("docs/a.md", "src/payments/a.py")
+        self.assertTrue(kit.denied(self.decide({"command": mixed})), "one frozen file among several denies the patch")
+
+    def test_a_single_writer_record_and_a_hook_file_are_protected_from_a_patch_under_command(self):
+        for path, fragment in ((".harness-state/guard-state.json", "guard_state.py"),
+                               ("skillset-saves/runs/r1/_state.md", "save_run.py")):
+            with self.subTest(path=path):
+                self.assertIn(fragment, kit.reason(self.decide({"command": _patch(path, verb="Update File")})))
+        self.guard(FROZEN)
+        with mock.patch.dict(os.environ):
+            os.environ.pop("SUPREMETEAM_HARNESS_DEV", None)
+            out = self.decide({"command": ["apply_patch", _patch(".claude/settings.json", verb="Update File")]})
+        self.assertIn("SUPREMETEAM_HARNESS_DEV", kit.reason(out))
+
+    def test_a_relative_patch_path_is_read_from_the_hosts_working_directory(self):
+        (self.root / "src" / "payments").mkdir(parents=True)
+        (self.root / "src" / "other").mkdir()
+        self.guard(FROZEN)
+        self.assertTrue(kit.denied(self.decide({"command": _patch("a.py")}, cwd=self.root / "src" / "payments")))
+        self.assertEqual(self.decide({"command": _patch("a.py")}, cwd=self.root / "src" / "other"), "")
+
+    def test_a_patch_the_guard_cannot_read_is_denied_while_anything_is_protected(self):
+        unreadable = ({}, {"command": "sed-style edit of the payments module"}, {"command": ["apply_patch"]}, "no headers",
+                      {"command": None}, {"patch": 7})
+        for state in (FROZEN, READ_ONLY, {"blocked_globs": [{"glob": "secrets/**", "owner": "sec"}]}):
+            self.guard(state)
+            for tool_input in unreadable:
+                with self.subTest(state=sorted(state), tool_input=tool_input):
+                    out = self.decide(tool_input)
+                    self.assertTrue(kit.denied(out), repr(out))
+                    self.assertIn("names no file the guard can read", kit.reason(out))
+
+    def test_a_patch_the_guard_cannot_read_is_denied_while_a_run_is_pinned(self):
+        kit.write_run(self.root, "r1")
+        self.assertIn("names no file the guard can read", kit.reason(self.decide({"command": "no headers"})))
+
+    def test_a_patch_the_guard_cannot_read_is_allowed_with_no_boundary_record_or_run(self):
+        for tool_input in ({}, {"command": "no headers"}, "no headers", ["apply_patch"]):
+            with self.subTest(tool_input=tool_input):
+                self.assertEqual(self.decide(tool_input), "")
+
+    def test_a_readable_patch_outside_every_boundary_is_not_an_unplaced_write(self):
+        self.guard(FROZEN)
+        kit.write_run(self.root, "r1")
+        self.assertEqual(self.decide({"command": _patch("docs/a.md")}), "")
+
+    def test_only_a_patch_tool_is_read_this_way(self):
+        """A shell command that prints a patch header writes nothing, and an edit tool's content is not a patch."""
+        self.guard(FROZEN)
+        self.assertEqual(self.call("echo '*** Add File: src/payments/a.py'"), "")
+        content = {"tool_name": "Write", "tool_input": {"file_path": "docs/a.md", "content": _patch("src/payments/a.py")}}
+        self.assertEqual(kit.decide(content, self.root), "")
+
+    def test_a_deeply_nested_patch_is_not_searched_for_ever(self):
+        nested = _patch("src/payments/a.py")
+        for _ in range(guard_hook._PATCH_DEPTH + 2):
+            nested = {"wrapped": nested}
+        self.guard(FROZEN)
+        self.assertIn("names no file the guard can read", kit.reason(self.decide(nested)))
+
+
 GUARD_SKILL = HOOK_DIR.parent.parent / "guard" / "SKILL.md"
-_CHAIN = "; ".join(f"cd directory{i}" for i in range(200)) + "; touch f"
+_CHAIN ="; ".join(f"cd directory{i}" for i in range(200)) + "; touch f"
 
 # One entry per denial the guard can give, so that none is left without a place in the guard skill (RR3-guard-3: the changelog
 # said the skill described Rule G and it did not). (rule, record, tool, input, a phrase the reason carries, a phrase the skill
@@ -1215,6 +1339,8 @@ DENIAL_REASONS = (
     ("D", READ_ONLY, "Bash", "cat list | xargs rm", "name each target in the shell command itself", "target is not in the command"),
     ("F", FROZEN, "Bash", "touch .claude/settings.json", "SUPREMETEAM_HARNESS_DEV", "SUPREMETEAM_HARNESS_DEV"),
     ("G", {}, "Bash", _CHAIN, "characters of path", f"{guard_hook._cmdscan.MAX_CWD} characters of path"),
+    ("G", FROZEN, "apply_patch", "a patch with no file header", "names no file the guard can read",
+     "names no file the guard can read"),
 )
 
 
@@ -1225,7 +1351,10 @@ class DenialReasonProseTests(GuardCase):
         self.guard(state)
         with mock.patch.dict(os.environ):
             os.environ.pop("SUPREMETEAM_HARNESS_DEV", None)
-            out = self.edit(text) if tool == "Write" else self.call(text)
+            if tool == "apply_patch":
+                out = kit.decide({"tool_name": tool, "tool_input": {"command": text}}, self.root)
+            else:
+                out = self.edit(text) if tool == "Write" else self.call(text)
         self.assertTrue(kit.denied(out), f"{text[:60]!r} was not denied: {out!r}")
         return kit.reason(out)
 
@@ -1251,7 +1380,7 @@ class DenialReasonProseTests(GuardCase):
         """A denial added to `guard_hook` without an entry here would have no documented place."""
         defined = {name for name in dir(guard_hook) if name.endswith("_REASON") and isinstance(getattr(guard_hook, name), str)}
         covered = {"_DANGEROUS_REASON", "_CORE_SAVE_REASON", "_TASTE_SAVE_REASON", "_GUARD_STATE_REASON", "_HARNESS_REASON", "_UNPLACED_REASON",
-                   "_UNNAMED_REASON", "_ROOT_RECORDS_REASON", "_VERDICT_REASON", "_PHASE_DIR_REASON"}
+                   "_UNNAMED_REASON", "_ROOT_RECORDS_REASON", "_VERDICT_REASON", "_PHASE_DIR_REASON", "_UNPLACED_PATCH_REASON"}
         self.assertEqual(defined, covered)
 
 

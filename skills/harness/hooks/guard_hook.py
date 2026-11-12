@@ -396,18 +396,35 @@ _RECORD_TREE_VIA = _REMOVE_VIA | _DEPOSIT_VIA | frozenset({"git clean"})
 _EXTRACT_VIA = frozenset({"tar", "unzip", "7z", "archive-extract"})
 
 
+_PATCH_DEPTH = 4
+
+
+def _strings(value, depth: int = 0):
+    """Every string inside a tool input, down to ``_PATCH_DEPTH`` levels of dict and list."""
+    if isinstance(value, str):
+        yield value
+    elif depth < _PATCH_DEPTH and isinstance(value, dict):
+        for item in value.values():
+            yield from _strings(item, depth + 1)
+    elif depth < _PATCH_DEPTH and isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _strings(item, depth + 1)
+
+
 def _written_paths(tool_input: dict, *, include_patch: bool = False) -> list:
+    """The paths a write tool names. For a patch tool (``include_patch``) the file headers of the patch are read from
+    every string of the input, whatever key holds it: Codex sends the patch as ``command``, a string or a list of
+    arguments, and a reader that knew only ``patch``, ``input`` and ``content`` found no path there and let every
+    Codex file edit through."""
     paths = []
     for key in _PATH_KEYS:
         value = tool_input.get(key)
         if isinstance(value, str) and value:
             paths.append(value)
     if include_patch:
-        for key in ("patch", "input", "content"):
-            patch = tool_input.get(key)
-            if isinstance(patch, str):
-                paths.extend(match.group(1) for match in _PATCH_FILE.finditer(patch))
-    return paths
+        for text in _strings(tool_input):
+            paths.extend(match.group(1) for match in _PATCH_FILE.finditer(text))
+    return list(dict.fromkeys(paths))
 
 
 class Call:
@@ -1664,8 +1681,28 @@ _UNPLACED_REASON = (
 )
 
 
+# A patch tool whose input carries no file header the guard can read. The patch still writes somewhere, so while
+# anything is protected the call is refused instead of being let through with no path to judge.
+_UNPLACED_PATCH_REASON = (
+    "Blocked by harness Action Realization layer: this apply_patch call names no file the guard can read (its input "
+    "has no '*** Add File:', '*** Update File:', '*** Delete File:' or '*** Move to:' line), so the write cannot be "
+    "shown to stay outside an active boundary or single-writer record. Send the patch in the standard patch format, "
+    "or write the file with a tool that names its path."
+)
+
+
+def _unplaced_patch(call: "Call") -> "str | None":
+    """Rule G for a patch tool: denied when no target was found and a boundary, a record directory or a run exists."""
+    if call.edit_targets:
+        return None
+    engaged = (_frozen_boundaries(call) or call.guard.get("read_only") or _homes_present(call.root) or _run_active(call))
+    return _UNPLACED_PATCH_REASON if engaged else None
+
+
 def rule_unplaced_write(call: "Call") -> "str | None":
     """Rule G: recognized mutations must have placed targets at a protected boundary."""
+    if call.tool == "apply_patch":
+        return _unplaced_patch(call)
     if not call.shell:
         return None
     if any(analysis.lost_directory and analysis.writes for analysis in _analyses(call.analysis)):
@@ -1843,7 +1880,8 @@ def main() -> None:
     run_heartbeat.refresh(data, "PreToolUse")
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {}) or {}
-    if str(tool_name).lower() == "apply_patch" and isinstance(tool_input, str):
+    if str(tool_name).strip().lower() == "apply_patch" and isinstance(tool_input, (str, list)):
+        # A patch tool's input may be the patch itself, as text or as a list of arguments.
         tool_input = {"patch": tool_input}
     if not isinstance(tool_input, dict):
         return

@@ -7,6 +7,30 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ## [Unreleased]
 
+### Remediation of the nine audited issues
+
+Each package below was reproduced against this tree first, several of them in real sessions
+of Claude Code 2.1.322, Codex CLI 0.166.0 and Antigravity CLI 1.4.12 on Windows.
+
+- Codex file edits bypassed the guard (WP-00): Codex reports every file edit as
+  `apply_patch` and puts the patch text in `tool_input.command`. The guard read a patch only
+  from `patch`, `input` and `content`, found no path and let the edit through, so in two real
+  Codex sessions a patch wrote into a frozen folder while shell writes into it were blocked.
+  Every path rule was affected: frozen and blocked globs, read-only runs, the single-writer
+  records and the hook files. `guard_hook._written_paths` now reads the file headers of a
+  patch from every string of the tool input, whatever key holds it and whether it is text or
+  a list of arguments. A patch tool call with no header the guard can read is a write with no
+  target: Rule G denies it while a boundary is recorded, a record directory holds a record or
+  a run is pinned, and allows it otherwise. `guard_hook.py` is a hashed hook file: re-record
+  the hook hashes after upgrading (see the upgrade notes below).
+
+Upgrade notes for this section:
+
+- Hook hashes: the packages that change a file hashed at registration (WP-00 so far) make
+  readiness report the hook files as changed. After upgrading, re-record them for each host
+  with `python skills/harness/hooks/repair_registration.py --host <host> --record-hashes`, or
+  reinstall with hook registration.
+
 ### Third audit report, findings 1 to 4
 
 Each finding was reproduced against this tree first. Findings 1 and 4 held in part and are
@@ -1263,7 +1287,7 @@ recorded here, or a record the skill does not carry, fails it.
   lacks), a warning for a leading-slash glob outside the project that names a directory that
   exists, relative globs anchored at the project root, a writer lock, and what an
   unreadable record means.
-- `guard` 1.8.0: Rule A also denies an inline program's own delete of a root or home (`python3 -c 'shutil.rmtree("/")'`, `node -e 'fs.rmSync(os.homedir(), ...)'`) and a wipe spelled in base64 and decoded by a `base64 -d` of a literal into a shell (`echo cm0gLXJmIC8K | base64 -d | sh`, `sh -c "$(echo ... | base64 -d)"`); previously Rule C also protects the REVISE cycle history (`verdict_<boundary>.cycles.json`) and its lock, and refuses removing or moving a phase directory; previously gate verdict records have a single writer, `check.py --verdict-out` (Rule C); previously a grant is capped at 8 hours, the hook scripts are protected (Rule F,
+- `guard` 1.8.1: an `apply_patch` call is judged wherever the host puts the patch text (Codex sends it as `command`), and one that names no file the guard can read is denied by Rule G while anything is protected; previously Rule A also denies an inline program's own delete of a root or home (`python3 -c 'shutil.rmtree("/")'`, `node -e 'fs.rmSync(os.homedir(), ...)'`) and a wipe spelled in base64 and decoded by a `base64 -d` of a literal into a shell (`echo cm0gLXJmIC8K | base64 -d | sh`, `sh -c "$(echo ... | base64 -d)"`); previously Rule C also protects the REVISE cycle history (`verdict_<boundary>.cycles.json`) and its lock, and refuses removing or moving a phase directory; previously gate verdict records have a single writer, `check.py --verdict-out` (Rule C); previously a grant is capped at 8 hours, the hook scripts are protected (Rule F,
   advisory, whole registration file), a write after an unfollowable directory chain is
   denied (Rule G, with its own failure-mode row), a read-only run denies writes with no
   named target (pipes, launchers, PowerShell blocks, diffs), an unreadable record is counted

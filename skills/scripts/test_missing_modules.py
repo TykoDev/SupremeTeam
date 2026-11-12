@@ -27,7 +27,7 @@ SKILLS = Path(ci.__file__).resolve().parents[1]
 # The exit status each kind of entry point documents for "could not run". A registered hook fails open; the run
 # writer has its own engine-error status; everything else uses 2.
 HOOKS = {"harness/hooks/pre_tool_use.py", "harness/hooks/post_tool_use.py", "harness/hooks/user_prompt_submit.py",
-         "harness/hooks/guard_hook.py"}
+         "harness/hooks/guard_hook.py", "harness/hooks/context_events.py"}
 EXIT = {"harness/hooks/save_run.py": 3}
 _HOST = ("CLAUDE", "CODEX_", "COPILOT", "GITHUB_COPILOT", "SUPREMETEAM_")
 

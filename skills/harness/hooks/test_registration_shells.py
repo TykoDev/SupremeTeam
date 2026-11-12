@@ -36,6 +36,9 @@ import verify_registration as verify
 HOOK_DIR = Path(__file__).resolve().parent
 WINDOWS = os.name == "nt"
 SCRIPTS = [script for _, script in verify.REQUIRED]
+# Every hook the registrar writes for Claude Code: the required three, then the recommended ones (WP-11).
+WRITTEN = [script for _, script in repair.hook_events("claude")]
+RECOMMENDED_EVENTS = {event: 1 for _, _, event in verify.recommended("claude")}
 
 JANE = r"C:\Users\Jane\AppData\Local\Programs\Python\Python314\python.exe"
 SPACED = r"C:\Program Files\Python314\python.exe"
@@ -530,10 +533,12 @@ class RepairTests(Scratch):
             config["hooks"][event][0]["hooks"][0]["command"] = unflagged_command(script)
         with mock.patch.object(verify, "handler_defects", side_effect=lacks_utf8_flag):
             desired, changes = repair.plan(config, "claude", sys.executable)
-        self.assertEqual(len(changes), 3)
-        self.assertTrue(all("replaces a command that cannot start" in change for change in changes), changes)
+        replaced = [change for change in changes if "(recommended)" not in change]
+        self.assertEqual(len(replaced), 3)
+        self.assertTrue(all("replaces a command that cannot start" in change for change in replaced), changes)
         self.assertEqual({event: len(groups) for event, groups in desired["hooks"].items()},
-                         {"PreToolUse": 1, "PostToolUse": 1, "UserPromptSubmit": 2}, "no second group is added beside the broken one")
+                         {"PreToolUse": 1, "PostToolUse": 1, "UserPromptSubmit": 2, **RECOMMENDED_EVENTS},
+                         "no second group is added beside the broken one")
         pre = desired["hooks"]["PreToolUse"][0]
         self.assertEqual(pre["matcher"], "Bash|PowerShell|Edit|Write|NotebookEdit")
         self.assertEqual((pre["hooks"][0]["statusMessage"], pre["hooks"][0]["timeout"]), ("kept", 30))
@@ -547,7 +552,7 @@ class RepairTests(Scratch):
             desired, changes = repair.plan(narrow, "claude", sys.executable)
         groups = desired["hooks"]["PreToolUse"]
         self.assertEqual([group["matcher"] for group in groups], ["Bash", "PowerShell|Edit|Write|NotebookEdit"])
-        self.assertEqual(len(changes), 4, changes)
+        self.assertEqual(len([change for change in changes if "(recommended)" not in change]), 4, changes)
 
     @unittest.skipUnless(WINDOWS and verify.git_bash(), "needs Git Bash, the shell Claude Code runs hooks through on Windows")
     def test_repair_replaces_the_old_backslash_registration_and_a_second_run_changes_nothing(self):
@@ -555,7 +560,8 @@ class RepairTests(Scratch):
         applied = self.run_tool("repair_registration.py", "--host", "claude", "--scope", "project", "--apply")
         self.assertEqual(applied.returncode, 0, applied.stdout + applied.stderr)
         hooks = self.repaired()
-        self.assertEqual({event: len(groups) for event, groups in hooks.items()}, {"PreToolUse": 1, "PostToolUse": 1, "UserPromptSubmit": 2})
+        self.assertEqual({event: len(groups) for event, groups in hooks.items()},
+                         {"PreToolUse": 1, "PostToolUse": 1, "UserPromptSubmit": 2, **RECOMMENDED_EVENTS})
         for event in ("PreToolUse", "PostToolUse", "UserPromptSubmit"):
             command = hooks[event][0]["hooks"][0]["command"]
             self.assertNotIn("\\", command)
@@ -573,7 +579,7 @@ class RepairTests(Scratch):
         with mock.patch.object(repair, "HOOK_DIR", hooks), mock.patch.dict(os.environ, {"SUPREMETEAM_HOOK_ROOT": str(hooks)}):
             desired, changes = repair.plan({}, "claude", sys.executable)
             failures, notes = repair.probe_written({}, desired, "claude")
-        self.assertEqual(len(changes), 3)
+        self.assertEqual(len(changes), len(WRITTEN))
         self.assertEqual(len(failures), 3, failures)
         self.assertIn("pre_tool_use.py does not start under", failures[0])
         self.assertEqual(notes, [])
@@ -581,7 +587,7 @@ class RepairTests(Scratch):
     def test_only_what_this_change_writes_is_probed(self):
         existing, _ = repair.plan({}, "claude", sys.executable)
         self.assertEqual(repair.written_handlers(existing, json.loads(json.dumps(existing)), "claude"), [])
-        self.assertEqual([script for script, _ in repair.written_handlers({}, existing, "claude")], SCRIPTS)
+        self.assertEqual([script for script, _ in repair.written_handlers({}, existing, "claude")], WRITTEN)
 
     def test_an_interpreter_for_another_machine_is_written_with_a_note(self):
         applied = self.run_tool("repair_registration.py", "--host", "claude", "--scope", "project", "--apply", "--python", "python3.99")
@@ -616,15 +622,14 @@ class CodexNoticeTests(Scratch):
         folder = self.project / ".codex"
         folder.mkdir()
         tables = []
-        for key, script in verify.REQUIRED:
-            event = verify.EVENTS["codex"][key]
+        for event, script in repair.hook_events("codex"):
             matcher = repair.matcher_for(script, "codex")
             command = repair.hook_handler(script, sys.executable, "codex")["command"].replace('"', '\\"')
             tables.append(f"[[hooks.{event}]]\n" + (f'matcher = "{matcher}"\n' if matcher else "")
                           + f'[[hooks.{event}.hooks]]\ntype = "command"\ncommand = "{command}"\n')
         (folder / "config.toml").write_text("model = \"x\"\n\n" + "\n".join(tables), encoding="utf-8")
         inline = verify.codex_inline_hooks(folder / "hooks.json")
-        self.assertEqual(sorted(inline["hooks"]), sorted(verify.EVENTS["codex"].values()))
+        self.assertEqual(sorted(inline["hooks"]), sorted({event for event, _ in repair.hook_events("codex")}))
         dry = self.codex()
         self.assertEqual(dry.returncode, 0, dry.stdout + dry.stderr)
         self.assertIn("no changes", dry.stdout)
@@ -643,7 +648,8 @@ class CodexNoticeTests(Scratch):
         self.assertEqual(applied.returncode, 0, applied.stdout + applied.stderr)
         self.assertIn("config.toml beside this file has inline [hooks] tables", applied.stderr)
         written = json.loads((folder / "hooks.json").read_text(encoding="utf-8"))["hooks"]
-        self.assertEqual(sorted(written), ["PostToolUse", "PreToolUse"], "the hook registered inline is not written again")
+        self.assertEqual(sorted(written), ["PostToolUse", "PreCompact", "PreToolUse", "SessionStart"],
+                         "the hook registered inline is not written again")
 
     def test_a_config_toml_without_hooks_or_one_that_does_not_parse_is_ignored(self):
         folder = self.project / ".codex"

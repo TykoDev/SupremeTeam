@@ -1475,7 +1475,9 @@ class WindowsInstallerRunTests(unittest.TestCase):
         self.assertTrue(config.is_file(), f"{config} was not written")
         handlers = [hook for groups in json.loads(config.read_text(encoding="utf-8"))["hooks"].values()
                     for group in groups for hook in group["hooks"]]
-        self.assertEqual(len(handlers), 3)
+        # The three required hooks, and the two recommended ones around a context compaction (WP-11).
+        self.assertEqual(len(handlers), 5)
+        self.assertEqual(sum("context_events.py" in handler["command"] for handler in handlers), 2)
         for handler in handlers:
             self.assertNotIn("\\", handler["command"], "a backslash in the command is what Git Bash consumes")
             self.assertFalse(handler["command"].startswith('"'), "a command that begins with a quote is not a call in PowerShell")

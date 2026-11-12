@@ -246,6 +246,13 @@ def main() -> int:
     # enforcement; it does not remove the ability to read saves or run the
     # validators. Reporting them apart keeps "hooks missing" from being read as
     # "cannot do any work".
+    # Hooks a host should also run (context_events.py around a compaction): missing ones are warned about, below.
+    unrecommended = [f"{host_name}: {entry['event']} -> {entry['hook']} is not registered (recommended): a context "
+                     f"compaction during a run then writes no dump and gives no resume note. Add it with "
+                     f"{repair_command(host_name, '--scope', '<scope>', '--apply')}"
+                     for host_name, host_report in hook_report.items()
+                     for entry in (host_report.get("recommended") or {}).values()
+                     if isinstance(entry, dict) and not entry.get("registered") and host_report.get("status") == "registered"]
     hook_states = {}
     for host_name, host_report in hook_report.items():
         for key, state in (host_report.get("hooks") or {}).items():
@@ -302,7 +309,7 @@ def main() -> int:
         "deterministic_validators": True,
     }
 
-    warnings = _hook_warnings(hook_states, hash_record) + _firing_lines(observations["events"])
+    warnings = _hook_warnings(hook_states, hash_record) + unrecommended + _firing_lines(observations["events"])
     repair_host = args.host if args.host in HOSTS else next(iter(hook_report)) if len(hook_report) == 1 else "<host>"
     needs_repair = hook_status != "registered" or coverage == "partial"
     repair_hint = (f"{repair_command(repair_host, '--scope', 'project')} "

@@ -112,4 +112,4 @@ The stage owners this workflow delegates to are listed in `../SKILL.md` § Deleg
 - `build/build-management` owns build package assembly and implementation-stage revisions.
 - `review/code-chief` owns review package assembly and specialist review routing.
 - `gatekeeper-admiral` owns cross-boundary acceptance decisions.
-- `session-memory` is re-engaged after the mandatory intake checkpoint at context tier 3+, before gate submissions, at session end, and on error recovery.
+- `session-memory` is re-engaged after the mandatory intake checkpoint at a pre-compaction event or context pressure at the dump threshold (a context dump: `save_run.py dump --run-id {run-id} --narrative-from -`, which leaves the revision unchanged), before gate submissions, at session end, and on error recovery. After a compaction, follow the `[harness:context-resume]` note: read the dump it names, then `_state.md`, then continue inside the same run.

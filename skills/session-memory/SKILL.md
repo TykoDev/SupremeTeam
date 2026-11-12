@@ -8,7 +8,7 @@ description: >-
   checkpoint this run, resume from saved state, record a learning, or recall what
   was learned earlier — even when they only say "save where we are". Not general
   note-taking or documentation.
-version: 1.1.2
+version: 1.2.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -183,10 +183,29 @@ Session-memory writes checkpoints and learnings to `skillset-saves/` when invoke
 
 Invocation triggers (orchestrators call session-memory at these points):
 - After normalized intake, before the first stage delegation — mandatory intake checkpoint
-- Context tier 3+ escalations — checkpoint before compaction
+- A pre-compaction event, or context pressure at the dump threshold — write a context dump (below)
 - Before every gatekeeper-admiral submission — checkpoint current state
 - At session end — final checkpoint
 - On error recovery — record learning
+
+**Context dump.** A context dump is what a session needs to pick the run up again
+after the host compacts its conversation: `skillset-saves/runs/<run>/_context/dump-<n>.md`,
+written only by `save_run.py dump`. Its first section is filled from the run state
+(revision, phase state, delegate, next action, evidence with digests, the newest
+handoff record, the trigger and the time); `--narrative-from FILE` (`-` for standard
+input) adds the part only the agent knows: the objective, the decisions made and why,
+the files in flight, the open questions, and the exact next action. A dump is not a
+checkpoint. It leaves the revision where it is, so the next checkpoint still uses the
+revision the agent knows, and it sits beside `_history/`, outside every phase directory,
+so no gate reads it as part of a package. Where the hooks are registered,
+`harness/hooks/context_events.py` writes the machine section by itself before a
+compaction; the narrative is the agent's to add when it sees one coming.
+
+**After a compaction.** A note tagged `[harness:context-resume]` names the run, its
+revision, the next action and the dump. Then, in this order: read the dump it names;
+read `skillset-saves/runs/<run>/_state.md`; run `save_run.py status --run-id <run>`;
+continue with the next action inside the same run. Never start a second run, and
+checkpoint with the revision the state file gives, not one remembered from before.
 
 Core run records go through `save_run.py` under the Write Ownership boundary
 above; read `../save-protocol.md` and `../save-ownership.yaml` before any write.

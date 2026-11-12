@@ -20,6 +20,7 @@ skillset-saves/
     _audit-trail.md                # append-only events
     _journal.json                  # exists only mid-publish
     _history/                      # rev-<n>.state.json / rev-<n>.lock.json
+    _context/                      # dump-<n>.md: where the run stood, written before a context compaction
     intake/report_grilling.md      # the hashed decisions artifact
     design/                        # one directory per phase
       manifest.json                #   the gate submission

@@ -70,6 +70,7 @@ STATUS_MESSAGES = {
     "pre_tool_use.py": "SupremeTeam: checking pending tool use",
     "post_tool_use.py": "SupremeTeam: checking trajectory",
     "user_prompt_submit.py": "SupremeTeam: checking entry routing",
+    "context_events.py": "SupremeTeam: saving run context",
 }
 
 
@@ -297,7 +298,7 @@ def hook_handler(script: str, python: str, host: str = "claude", *, windows: "bo
     ``CommandRefused`` when the host has none. ``windows`` and ``hook_dir`` default to this machine and this directory;
     naming them builds the command for another."""
     return _with_host_arguments(_start_fields(script, python, host, windows=windows, hook_dir=hook_dir, py_launcher=py_launcher),
-                                host)
+                                verify.host_arguments(script, host))
 
 
 def _start_fields(script: str, python: str, host: str, *, windows: "bool | None", hook_dir: "str | Path | None",
@@ -330,10 +331,10 @@ def _start_fields(script: str, python: str, host: str, *, windows: "bool | None"
     return {"command": bare_form(launcher, hook) if form == "bare" else standard_form(launcher, hook)}
 
 
-def _with_host_arguments(handler: dict, host: str) -> dict:
-    """``handler`` with the arguments ``host`` needs after the script (``verify.HOST_ARGUMENTS``): ``--host copilot``
-    makes the hooks answer in the shape Copilot reads."""
-    extra = list(verify.HOST_ARGUMENTS.get(host, ()))
+def _with_host_arguments(handler: dict, arguments: tuple) -> dict:
+    """``handler`` with the arguments that go after the script on its host (``verify.host_arguments``): ``--host
+    copilot`` makes the hooks answer in the shape Copilot reads."""
+    extra = list(arguments)
     if not extra:
         return handler
     if "args" in handler:
@@ -351,9 +352,15 @@ def command_for(script: str, python: str, host: str = "claude", **options) -> st
     return handler["command"]
 
 
-def _own_handlers(config: dict, host: str, key: str, script: str) -> list[dict]:
+def hook_events(host: str) -> list[tuple[str, str]]:
+    """``(event, script)`` for every hook the registrar writes on ``host``: the required three, then the recommended ones."""
+    return [(verify.EVENTS[host][key], script) for key, script in verify.REQUIRED] + \
+        [(event, script) for _, script, event in verify.recommended(host)]
+
+
+def _own_handlers(config: dict, host: str, event: str, script: str) -> list[dict]:
     """The handlers under one event that launch ``script`` by the words they hold, whatever a shell makes of them."""
-    return [handler for handler, _ in verify._handlers([config], verify.EVENTS[host][key], host)
+    return [handler for handler, _ in verify._handlers([config], event, host)
             if verify.analyse(handler["command"], script, verify.handler_tokens(handler))["executable"]]
 
 
@@ -366,15 +373,15 @@ def _replace_defective(config: dict, host: str, python: str) -> list[str]:
     replaced = []
     if host in verify.FLAT_HOSTS:
         return replaced  # a flat host's entries are replaced whole by its own planner
-    for key, script in verify.REQUIRED:
-        for handler in _own_handlers(config, host, key, script):
+    for event, script in hook_events(host):
+        for handler in _own_handlers(config, host, event, script):
             defects = verify.handler_defects(handler, host)
             if not defects:
                 continue
             fresh = hook_handler(script, python, host)
             handler.pop("args", None)
             handler.update(fresh)
-            replaced.append(f"{verify.EVENTS[host][key]} -> {script} (replaces a command that cannot start: {defects[0]})")
+            replaced.append(f"{event} -> {script} (replaces a command that cannot start: {defects[0]})")
     return replaced
 
 
@@ -469,15 +476,33 @@ def plan(config: dict, host: str, python: str, also: "list[dict] | None" = None)
             entry = {"matcher": "|".join(tools), **entry}
         groups.append(entry)
         added.append(f"{event} -> {script}" + (f" (adds {'|'.join(tools)} to a narrower matcher)" if state["registered"] else ""))
+    # The hooks a host should also run: written like the others, and never what decides whether it is registered.
+    wanted = verify.recommended_states([desired, *(also or [])], host)
+    # The pre-tool hook as it was registered before this plan (one this plan adds runs from this directory anyway).
+    # Classifying the planned config again would start the interpreter being registered, to read its version.
+    registered = states["pre"]
+    for key, script, event in verify.recommended(host):
+        if wanted[key]["registered"]:
+            continue
+        groups = hooks.setdefault(event, [])
+        if not isinstance(groups, list):
+            raise ValueError(f"existing hooks.{event} is not a list; refusing to rewrite it")
+        # Beside the hooks that are registered: a registration that runs an installed copy gets this hook from that
+        # copy too, when it has it (a copy from before the hook existed does not, and gets this directory's).
+        beside = Path(registered["script"]).parent if registered["registered"] and registered["script"] else None
+        directory = str(beside) if beside is not None and beside != HOOK_DIR and (beside / script).is_file() else None
+        groups.append({"hooks": [{"type": "command", **hook_handler(script, python, host, hook_dir=directory),
+                                  "statusMessage": STATUS_MESSAGES[script]}]})
+        added.append(f"{event} -> {script} (recommended)")
     return desired, added
 
 
 def written_handlers(before: dict, after: dict, host: str) -> list[tuple[str, dict]]:
     """``(script, handler)`` for each Supreme Team handler ``after`` holds and ``before`` did not, in hook order."""
     found = []
-    for key, script in verify.REQUIRED:
-        old = _own_handlers(before, host, key, script) if isinstance(before.get("hooks"), dict) else []
-        found.extend((script, handler) for handler in _own_handlers(after, host, key, script) if handler not in old)
+    for event, script in hook_events(host):
+        old = _own_handlers(before, host, event, script) if isinstance(before.get("hooks"), dict) else []
+        found.extend((script, handler) for handler in _own_handlers(after, host, event, script) if handler not in old)
     return found
 
 

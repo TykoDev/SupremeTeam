@@ -886,12 +886,12 @@ def rule_read_only(call: "Call") -> "str | None":
 # Core save-protocol files with a single sanctioned writer (save_run.py). `_write.lock` is the writer mutex: a hand edit
 # that replaces or removes it while a writer holds it gives the next writer another file to lock.
 _CORE_SAVE_FILE = re.compile(
-    r"(?:^|/)skillset-saves/(?:_latest\.md|_write\.lock|runs/[^/]+/(?:_state\.md|_lock\.md|_audit-trail\.md|_journal\.json|_history/[^/]+))$", re.I
+    r"(?:^|/)skillset-saves/(?:_latest\.md|_write\.lock|runs/[^/]+/(?:_state\.md|_lock\.md|_audit-trail\.md|_journal\.json|_history/[^/]+|_context/[^/]+))$", re.I
 )
 _CORE_SAVE_REASON = (
     "Blocked by harness Action Realization layer: core save files are written only by "
-    "skills/harness/hooks/save_run.py (create/checkpoint/heartbeat/complete/release/recover) "
-    "so revision lineage, history snapshots, and the audit trail stay coherent."
+    "skills/harness/hooks/save_run.py (create/checkpoint/heartbeat/dump/complete/release/recover) "
+    "so revision lineage, history snapshots, context dumps and the audit trail stay coherent."
 )
 # Durable project Taste state has one sanctioned writer.
 _TASTE_SAVE_PATH = re.compile(
@@ -960,10 +960,10 @@ _PHASE_DIR_REASON = (
 )
 # The same files named anywhere inside a command that could not be tokenised.
 _CORE_SAVE_TOKEN = re.compile(
-    r"skillset-saves/(?:_latest\.md|_write\.lock|runs/[^\s\"'/]+/(?:_state\.md|_lock\.md|_audit-trail\.md|_journal\.json|_history/))", re.I
+    r"skillset-saves/(?:_latest\.md|_write\.lock|runs/[^\s\"'/]+/(?:_state\.md|_lock\.md|_audit-trail\.md|_journal\.json|_history/|_context/))", re.I
 )
 # The directories above a protected file: removing or moving one removes the file.
-_PROTECTED_DIRS = re.compile(r"(?:^|/)\.harness-state/?$|(?:^|/)skillset-saves(?:/runs(?:/[^/]+(?:/_history)?)?|/preferences)?/?$", re.I)
+_PROTECTED_DIRS = re.compile(r"(?:^|/)\.harness-state/?$|(?:^|/)skillset-saves(?:/runs(?:/[^/]+(?:/_history|/_context)?)?|/preferences)?/?$", re.I)
 _PROTECTED_FRAGMENTS = ("skillset-saves", ".harness-state")
 
 
@@ -1247,7 +1247,7 @@ def _git_ignores(root: Path, home: str) -> bool:
 
 
 # What a record directory holds, below it: the files each single writer owns and the directories above them.
-_RUN_FILES = ("_state.md", "_lock.md", "_audit-trail.md", "_journal.json", "_history")
+_RUN_FILES = ("_state.md", "_lock.md", "_audit-trail.md", "_journal.json", "_history", "_context")
 _PREFERENCE_FILES = ("taste.json", "taste.md", "taste.journal.jsonl", "taste.lock", "_history")
 _LISTING_LIMIT = 256
 

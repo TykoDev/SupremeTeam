@@ -90,7 +90,7 @@ enforcement:
   enforced_at_write_time: >-
     Only two classes are enforced when a write is attempted. harness/hooks/
     pre_tool_use.py denies direct edit-tool writes to the record files of
-    core-run-record (its rule says which) and to project-taste-preferences, and
+    core-run-record (its rule says which), to run-context-dumps and to project-taste-preferences, and
     denies direct edit-tool or mutating-shell writes to the harness-guards
     record. Every other class is a declaration that a reviewer applies.
   judgement: >-
@@ -143,6 +143,17 @@ classes:
       to the record files. _write.lock is the writer mutex, an empty file the operating system
       locks while an operation runs; it is never edited or deleted by hand, because a deleted
       lock file no longer excludes a second writer.
+  - id: run-context-dumps
+    writer: session-memory
+    tool: skills/harness/hooks/save_run.py
+    patterns:
+      - skillset-saves/runs/*/_context/*
+    rule: >-
+      Context dumps: what a session needs to pick the run up again after the host compacts its
+      conversation. Written only through save_run.py dump, by an agent (with --narrative-from)
+      or by harness/hooks/context_events.py before a compaction; the pre-tool hook denies every
+      other write here. A dump leaves the revision unchanged and sits beside _history/, outside
+      every phase directory, so no gate reads one as part of a package. Never deleted.
   - id: grilling-log
     writer: admiral
     patterns:

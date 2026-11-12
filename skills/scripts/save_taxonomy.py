@@ -19,6 +19,9 @@ POINTER = "_latest.md"
 RUN_RECORD_FILES = ("_state.md", "_lock.md", "_audit-trail.md")
 JOURNAL = "_journal.json"
 HISTORY = "_history"
+# Context dumps (`save_run.py dump`): what a session needs to pick a run up again after the host compacts its
+# conversation. Beside `_history/`, outside every phase directory, so no gate reads one as part of a package.
+CONTEXT = "_context"
 # Mutex every run-record mutation holds; it sits at the save root because the
 # pointer and the one-held-run rule span every run.
 WRITE_LOCK = "_write.lock"

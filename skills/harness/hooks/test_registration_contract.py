@@ -133,7 +133,9 @@ class SpacedLauncherTests(unittest.TestCase):
 class PlanTests(unittest.TestCase):
     def test_plan_adds_every_required_hook_to_an_empty_config(self):
         _, added = repair.plan({}, "claude", sys.executable)
-        self.assertEqual(len(added), len(verify.REQUIRED))
+        self.assertEqual(len(added), len(verify.REQUIRED) + len(verify.recommended("claude")))
+        self.assertEqual([change for change in added if "(recommended)" in change],
+                         ["PreCompact -> context_events.py (recommended)", "SessionStart -> context_events.py (recommended)"])
 
     def test_plan_is_idempotent(self):
         desired, _ = repair.plan({}, "claude", sys.executable)

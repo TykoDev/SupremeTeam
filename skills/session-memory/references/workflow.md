@@ -72,7 +72,7 @@ The contracts this workflow runs under are stated in `../SKILL.md` § Required C
 
 ## Collaboration Notes
 
-- `admiral` is the primary invoker — calls session-memory after normalized intake before the first stage delegation, at context tier 3+ escalations, before every gatekeeper-admiral submission, at session end, and on error recovery.
+- `admiral` is the primary invoker — calls session-memory after normalized intake before the first stage delegation, at a pre-compaction event or context pressure at the dump threshold (a context dump, `save_run.py dump`, which does not move the revision), before every gatekeeper-admiral submission, at session end, and on error recovery. After a compaction the `[harness:context-resume]` note names the dump to read first; the steps are in `../SKILL.md` § Save Protocol.
 - `design/commander`, `build/build-management`, and `review/code-chief` consume continuity records when long-running work spans sessions, and route any change to the core run record through session-memory instead of writing it.
 - `review/cso` and the other phase leads checkpoint through session-memory at every delegation and return; the phase lead owns its own `reports/`, `artifacts/`, `evidence/`, and `packages/` paths, and session-memory owns the run record those checkpoints publish.
 - Any specialist may request a checkpoint or a learning lookup via its orchestrator when context pressure rises or when prior findings would change its approach.

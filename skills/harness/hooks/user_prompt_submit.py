@@ -85,10 +85,27 @@ _ACTIVE_REMINDER = (
 )
 
 
+# Set by main(): the note for a session that was compacted during a run and has not been told (context_events.py).
+# It goes out with whatever this hook says, and alone when the hook would have stayed silent.
+_resume_note: "str | None" = None
+
+
 def _emit(context: str, event: str = "UserPromptSubmit") -> None:
     """Print the context in the shape the host reads (``_state.context_output``: the command line's ``--host``)."""
+    if _resume_note:
+        context = _resume_note + "\n" + context if context else _resume_note
     print(json.dumps(_state.context_output(event, context)))
     sys.exit(0)
+
+
+def _pending_resume(data: dict) -> "str | None":
+    try:
+        import context_events
+
+        return context_events.pending_note(data)
+    except Exception as exc:
+        _state.record_fault("UserPromptSubmit", exc)
+        return None
 
 
 def _session_start(data: dict) -> bool:
@@ -124,6 +141,8 @@ def main() -> None:
     _state.record_observation("UserPromptSubmit", data)
     run_heartbeat.refresh(data, "UserPromptSubmit")
     prompt = str(data.get("prompt", "") or "")
+    global _resume_note
+    _resume_note = _pending_resume(data)
 
     if _session_start(data):
         # No prompt to read and no second chance: say which of the two states the session starts in.
@@ -131,6 +150,8 @@ def main() -> None:
 
     # Empty prompt: nothing to route.
     if not prompt.strip():
+        if _resume_note:
+            _emit("")
         return
 
     if prompt.strip().split(maxsplit=1)[0] == "/audit-improve":
@@ -146,6 +167,8 @@ def main() -> None:
     # Explicit slash command: deterministic host routing. Stay silent and let the
     # target skill's own Entry Routing check (routing-doctrine.md sec 3) apply.
     if prompt.lstrip().startswith("/"):
+        if _resume_note:
+            _emit("")
         return
 
     if _active_run():

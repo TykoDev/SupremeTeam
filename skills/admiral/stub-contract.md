@@ -100,7 +100,7 @@ A specialist that receives a Save Context block with `Persistence active: no` tr
 
 ### Session-Memory Integration
 
-- Admiral engages `session-memory` first at intake (mandatory, after scope confirmation and before the first delegation), then at context tier 3+ escalations, before every gatekeeper-admiral submission, at session end, and on error recovery.
+- Admiral engages `session-memory` first at intake (mandatory, after scope confirmation and before the first delegation), then at a pre-compaction event or context pressure at the dump threshold (a context dump), before every gatekeeper-admiral submission, at session end, and on error recovery.
 - Sub-orchestrators reference session-memory checkpoints during cross-session resume.
 - See `save-protocol.md` for the complete directory structure, file formats, and resume protocol.
 

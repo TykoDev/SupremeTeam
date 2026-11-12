@@ -10,6 +10,7 @@ sanctioned *writer* for the core run files:
     skillset-saves/runs/<run-id>/_lock.md
     skillset-saves/runs/<run-id>/_audit-trail.md
     skillset-saves/runs/<run-id>/_history/rev-<n>.{state,lock}.json
+    skillset-saves/runs/<run-id>/_context/dump-<n>.md
 
 Operations (all emit one JSON result on stdout and use the exit codes below):
 
@@ -35,6 +36,16 @@ Operations (all emit one JSON result on stdout and use the exit codes below):
                 prior lock path, heartbeat, owner, and sha256), then appends the same
                 evidence as the ``recover`` audit event. --rollback settles an
                 interrupted publish instead.
+    dump        write a context dump, ``_context/dump-<n>.md``, and leave the revision as it
+                is: what a session needs to pick the run up again after the host compacts
+                its conversation. The first section is filled from the run state (revision,
+                phase state, delegate, next action, evidence with digests, the newest
+                handoff record, the trigger and the time); --narrative-from FILE (``-`` for
+                standard input) adds a section the agent wrote. A dump is not a
+                checkpoint: one that moved the revision would have the agent's next
+                ``--expect-revision n`` refused, and one inside a phase directory would be
+                read by the gate as part of a package. The harness calls this before a
+                compaction (source ``hook:PreCompact``).
     status      read-only classification (delegates to _saves.inspect_saves).
 
 Exit codes: 0 = ok, 1 = refused (contract violation: competing owner, wrong
@@ -73,6 +84,7 @@ import contextlib
 import errno
 import json
 import os
+import re
 import sys
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -94,7 +106,7 @@ try:
     _bootstrap.ensure_paths()
     from data_formats import content_sha256
     from save_taxonomy import (
-        ACTIVE_STATUSES, HISTORY, JOURNAL, POINTER, RUN_ID, RUN_ID_RULE, SCHEMA_VERSION, TERMINAL_STATUSES, WRITE_LOCK,
+        ACTIVE_STATUSES, CONTEXT, HISTORY, JOURNAL, POINTER, RUN_ID, RUN_ID_RULE, SCHEMA_VERSION, TERMINAL_STATUSES, WRITE_LOCK,
         protocol_state_for,
     )
     from _saves import (
@@ -118,6 +130,10 @@ HOOK_LOCK_WAIT = 0.25
 WRITE_NOTES: list[str] = []
 # A link where the audit trail belongs, said as plainly as a directory there (``NOT_A_FILE``).
 IS_A_LINK = "is a link, not a file"
+# A context dump: the largest narrative it takes, how many evidence paths it lists, and how its files are named.
+NARRATIVE_LIMIT = 200_000
+DUMP_EVIDENCE_LIMIT = 200
+DUMP_NAME = re.compile(r"dump-(\d+)\.md")
 
 
 class Refused(Exception):
@@ -679,6 +695,64 @@ class RunStore:
                                          "revision": int(state["revision"]), "updated_at": stamp}))
         return {"result": "ok", "operation": "heartbeat", "run_id": self.run_id, "heartbeat": stamp, "source": source}
 
+    # ------------------------------------------------------------ context dump
+    def dumps(self) -> list[tuple[int, Path]]:
+        """``(number, path)`` of every context dump of the run, oldest first."""
+        directory = self.run_dir / CONTEXT
+        try:
+            names = sorted(os.listdir(directory))
+        except OSError:
+            return []
+        found = [(int(match.group(1)), directory / name) for name in names for match in [DUMP_NAME.fullmatch(name)] if match]
+        return sorted(found)
+
+    def newest_handoff(self) -> str | None:
+        """The handoff record admiral wrote last (``delivery/reports/handoff_<boundary>.md``), project-relative."""
+        directory = self.run_dir / "delivery" / "reports"
+        try:
+            records = [directory / name for name in os.listdir(directory) if name.startswith("handoff_") and name.endswith(".md")]
+            newest = max(records, key=lambda path: path.stat().st_mtime, default=None)
+        except OSError:
+            return None
+        return self.rel(newest) if newest else None
+
+    def dump(self, requested_by: str, trigger: str = "manual", narrative: str | None = None, *,
+             wait: float | None = None) -> dict[str, Any]:
+        """Write ``_context/dump-<n>.md`` from the run state and leave the revision unchanged.
+
+        The revision, the lock and the pointer are not touched, so a checkpoint the agent makes next with the
+        revision it knows still goes through. The dump number is chosen and the file written under the writer lock,
+        and a file that is there is never replaced. The event is appended to the audit trail."""
+        with self.exclusive(wait):
+            state, lock = self.current()
+            if state is None:
+                raise Refused("run state unreadable: a dump is filled from it. Run status --run-id, then recover")
+            directory = self.run_dir / CONTEXT
+            if os.path.islink(directory) or (path_exists(directory) and not directory.is_dir()):
+                raise Refused(f"{self.rel(directory)} is not a directory of this run; a dump is not written through it")
+            number = max((found for found, _ in self.dumps()), default=0) + 1
+            target = directory / f"dump-{number}.md"
+            stamp = now_iso()
+            text = render_dump(self, state, lock, number, trigger, requested_by, stamp, narrative)
+            try:
+                with owner_only():
+                    directory.mkdir(parents=True, exist_ok=True)
+                    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
+                                 0o600)
+                    with os.fdopen(fd, "wb") as handle:
+                        handle.write(text.encode("utf-8"))
+            except OSError as exc:
+                raise Degraded(f"dump not written: {_why(exc)}") from exc
+            revision = _as_int(state.get("revision"), 0)
+            result = {"result": "ok", "operation": "dump", "run_id": self.run_id, "revision": revision, "number": number,
+                      "dump": self.rel(target), "trigger": trigger, "narrative": bool(narrative and narrative.strip())}
+            try:
+                self.append_audit("context-dump", {"owner": requested_by, "revision": revision, "dump": self.rel(target),
+                                                   "trigger": trigger})
+            except Degraded as exc:
+                raise Degraded(f"{self.rel(target)} was written; {exc}") from exc
+            return result
+
     def finish(self, owner: str, status: str, next_action: str | None, extra: dict[str, Any]) -> dict[str, Any]:
         with self.exclusive():
             state, lock = self.current()
@@ -851,6 +925,82 @@ class RunStore:
         return result
 
 
+def _line(value: Any, limit: int = 600) -> str:
+    """A value of the run state as one line of a dump. The state is written by agents and a dump is read back by one:
+    control characters and line breaks are neutralised, so a field cannot pose as a heading or an instruction block."""
+    return _state.safe_text(value, limit) if value not in (None, "") else "(not recorded)"
+
+
+def render_dump(store: "RunStore", state: dict[str, Any], lock: dict[str, Any] | None, number: int, trigger: str,
+                requested_by: str, stamp: str, narrative: str | None) -> str:
+    """The text of one context dump. The first section is the run state as ``save_run.py`` read it; the narrative,
+    when there is one, is the agent's own and is kept apart from it."""
+    revision = _as_int(state.get("revision"), 0)
+    run = store.run_id
+    hashes = state.get("artifact_hashes") if isinstance(state.get("artifact_hashes"), dict) else {}
+    held = isinstance(lock, dict) and str(lock.get("status")) == "held"
+    lines = [
+        "---", "kind: context-dump", f"run_id: {run}", f"revision: {revision}", f"dump: {number}",
+        f"trigger: {_line(trigger, 80)}", f"written_at: {stamp}", f"written_by: {_line(requested_by, 80)}", "---", "",
+        f"# Context dump {number} of run {run}", "",
+        "Written by `save_run.py dump`. It records where the run stood so that a session whose earlier conversation",
+        "is gone can continue it. It is not a checkpoint: the revision below is the one a checkpoint still expects.", "",
+        "## Run state", "",
+        f"- Run: {run}",
+        f"- Revision: {revision}",
+        f"- Status: {_line(state.get('status'), 80)}",
+        f"- Protocol state: {_line(state.get('protocol_state'), 80)}",
+        f"- Phase state: {_line(state.get('phase_state'), 120)}",
+        f"- Delegated to: {_line(state.get('delegated_to'), 120)}",
+        f"- Active owner: {_line(state.get('active_owner'), 120)}",
+        f"- Lock: {'held by ' + _line(lock.get('owner'), 120) + ', heartbeat ' + _line(lock.get('heartbeat'), 40) if held else 'not held'}",
+        f"- Execution mode: {_line(state.get('execution_mode'), 80)}",
+        f"- Next action: {_line(state.get('next_action'), 2000)}",
+        f"- Newest handoff record: {store.newest_handoff() or '(none)'}",
+        f"- State file: {store.rel(store.state_path)}",
+        "",
+        "## Evidence registered at this revision", "",
+    ]
+    if hashes:
+        lines += ["| Path | sha256 |", "|---|---|"]
+        lines += [f"| {_line(path, 400)} | {_line(digest, 80)} |" for path, digest in sorted(hashes.items())[:DUMP_EVIDENCE_LIMIT]]
+        if len(hashes) > DUMP_EVIDENCE_LIMIT:
+            lines.append(f"\n{len(hashes) - DUMP_EVIDENCE_LIMIT} more paths are in the state file.")
+    else:
+        lines.append("None.")
+    lines += [
+        "", "## To continue", "",
+        f"1. Read this file, then `{store.rel(store.state_path)}` and the newest handoff record named above.",
+        f"2. `python skills/harness/hooks/save_run.py status --run-id {run}` says whether the run still holds the pin.",
+        f"3. Carry on with the next action. The next checkpoint is `--expect-revision {revision}` unless one was made",
+        "   after this dump; a later dump in this directory, or a higher revision in the state file, is newer than this.",
+        "",
+    ]
+    if narrative and narrative.strip():
+        lines += ["## Narrative (written by the agent)", "", narrative.strip(), ""]
+    return "\n".join(lines)
+
+
+def read_narrative(source: str | None) -> str | None:
+    """The agent's narrative for a dump: the file ``--narrative-from`` names, or standard input for ``-``."""
+    if not source:
+        return None
+    try:
+        if source == "-":
+            stream = sys.stdin
+            if stream is None or stream.isatty():
+                raise Refused("--narrative-from - reads standard input, and there is none: pipe the narrative in")
+            raw = stream.buffer.read(NARRATIVE_LIMIT + 1)
+        else:
+            with open(source, "rb") as handle:
+                raw = handle.read(NARRATIVE_LIMIT + 1)
+    except OSError as exc:
+        raise Refused(f"--narrative-from {source!r} cannot be read ({_why(exc)})") from exc
+    if len(raw) > NARRATIVE_LIMIT:
+        raise Refused(f"the narrative is longer than {NARRATIVE_LIMIT} bytes; a dump is a summary, not a transcript")
+    return raw.decode("utf-8", "replace").replace("\r\n", "\n")
+
+
 def merge_engagement(state: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
     """Keep the canonical engagement list append-only, including terminal writes."""
     if "skills_engaged" not in extra:
@@ -895,7 +1045,8 @@ def parse_extra(values: list[str]) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Supreme Team save lifecycle writer.")
-    parser.add_argument("operation", choices=["create", "checkpoint", "heartbeat", "complete", "block", "release", "recover", "status"])
+    parser.add_argument("operation", choices=["create", "checkpoint", "heartbeat", "dump", "complete", "block", "release", "recover",
+                                              "status"])
     parser.add_argument("--project-root", default=None, help="project root (default: nearest marked ancestor of the working directory)")
     parser.add_argument("--run-id", help="required for mutations; omit on status to classify the save root")
     parser.add_argument("--owner", default="admiral")
@@ -909,6 +1060,9 @@ def main() -> int:
     parser.add_argument("--rollback", action="store_true", help="recover: settle an interrupted publish (roll forward or back to the last coherent revision)")
     parser.add_argument("--set", action="append", default=[], help="extra state field key=value (repeatable)")
     parser.add_argument("--reopen", action="store_true", help="checkpoint: deliberately reopen a complete/blocked run as a new revision (REVISE)")
+    parser.add_argument("--trigger", default="manual", help="dump: what prompted it (default: %(default)s)")
+    parser.add_argument("--narrative-from", default=None,
+                        help="dump: add the narrative in this file (- for standard input) below the run state")
     parser.add_argument("--lock-timeout", type=float, default=WRITER_LOCK_TIMEOUT,
                         help="seconds to wait for another writer before refusing (default: %(default)s)")
     args = parser.parse_args()
@@ -935,6 +1089,8 @@ def main() -> int:
                                       reopen=args.reopen, drop_evidence=args.drop_evidence, reason=args.reason)
         elif args.operation == "heartbeat":
             result = store.heartbeat(args.owner)
+        elif args.operation == "dump":
+            result = store.dump(args.owner, args.trigger, read_narrative(args.narrative_from))
         elif args.operation == "complete":
             result = store.finish(args.owner, "complete", args.next_action, extra)
         elif args.operation == "block":

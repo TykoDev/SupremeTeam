@@ -553,6 +553,16 @@ def main() -> None:
     except Exception as exc:
         _state.record_fault("PostToolUse", exc)
 
+    # A compaction this session went through that nothing has told the model about yet (context_events.py).
+    try:
+        import context_events
+
+        resume = context_events.pending_note(data)
+        if resume:
+            _pending_maintenance_hints.insert(0, resume)
+    except Exception as exc:
+        _state.record_fault("PostToolUse", exc)
+
     text = _response_text(data)
     explicit = _explicit_failure(data)
     failed = explicit if explicit is not None else _looks_failed(text)

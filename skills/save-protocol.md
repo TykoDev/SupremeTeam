@@ -52,6 +52,7 @@ skillset-saves/
     _audit-trail.md                  # append-only events (writer: save_run.py)
     _journal.json                    # publish journal; present only mid-publish
     _history/                        # rev-<n>.state.json / rev-<n>.lock.json snapshots
+    _context/                        # dump-<n>.md context dumps (writer: save_run.py dump)
     intake/report_grilling.md        # decisions artifact (writer: admiral)
     {phase}/                         # design, build, review, security, investigation,
       manifest.json                  #   qa, taste, redesign, skill-creation, delivery, release
@@ -340,8 +341,8 @@ at the destination the delegation names. Gatekeepers write verdict records but
 never modify submissions.
 
 The authoritative, machine-readable path policy is
-[save-ownership.yaml](save-ownership.yaml): one writer per path class. Nineteen
-are declared; the run-facing ones are the core run record, grilling log, phase
+[save-ownership.yaml](save-ownership.yaml): one writer per path class. Twenty
+are declared; the run-facing ones are the core run record, context dumps, grilling log, phase
 manifest, reports, artifacts, evidence, superseded copies, packages, gate verdict, harness guards,
 harness trajectories, and harness observations, with the preference store, test
 scratch, the two skill-eval classes, and standalone packages alongside them.
@@ -350,6 +351,19 @@ scratch, the two skill-eval classes, and standalone packages alongside them.
 your class, or writing a core run file by any means other than `save_run.py`,
 is a write-ownership violation; the pre-tool hook denies edit-tool writes to
 core run files and the reader classifies an incoherent result as corrupt.
+
+Context dumps: `save_run.py dump --run-id <run-id> [--trigger <what>] [--narrative-from <file>|-]`
+writes `runs/<run-id>/_context/dump-<n>.md`, what a session needs to pick the run up
+again after the host compacts its conversation: the run state as `save_run.py` reads it
+(revision, phase state, delegate, next action, evidence with digests, the newest handoff
+record), and below it the narrative the agent gives. A dump is not a checkpoint. The
+revision, the lock and the pointer stay as they are, so a checkpoint made next with the
+revision the agent knows is not refused; and `_context/` is beside `_history/`, outside
+every phase directory, so no gate reads a dump as part of a package. Where the hooks
+are registered, `harness/hooks/context_events.py` has the dump written before a
+compaction with no agent involved, and after it a `[harness:context-resume]` note names
+the run, the revision, the next action and the dump: read the dump, then `_state.md`,
+then continue inside the same run. A dump is never deleted.
 
 Checkpoint discipline: checkpoint before every delegation and at every return or
 boundary (`save_run.py checkpoint --run-id <run-id> --owner <owner> --expect-revision <n> --evidence <path>`).

@@ -78,7 +78,7 @@ def _protected(relative: str, guard_globs: tuple[str, ...]) -> bool:
         return True
     parts = relative.split("/")
     if len(parts) >= 4 and parts[:2] == ["skillset-saves", "runs"]:
-        if parts[3] in _RUN_CORE_NAMES or "_history" in parts[3:]:
+        if parts[3] in _RUN_CORE_NAMES or "_history" in parts[3:] or "_context" in parts[3:]:
             return True
     if parts[:2] == ["skillset-saves", "preferences"] and "_history" in parts[2:]:
         return True

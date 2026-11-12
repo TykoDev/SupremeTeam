@@ -900,6 +900,7 @@ class InterpreterTests(Scratch):
         marker = self.tmp / "ran"
         planted = self.fake_interpreter(self.project / "tools", "python", f'echo ran > "{marker}"; echo "3 13 0"')
         self.claude_settings(self.registered_with(str(planted)))
+        self.assertFalse(marker.exists(), "planning a registration started the interpreter it registers")
         verified = self.run_tool("verify_registration.py", "--host", "claude", "--json")
         self.assertFalse(marker.exists(), "the verifier launched a binary that lives in the project")
         report = json.loads(verified.stdout.split("JSON_REPORT: ", 1)[1])
@@ -1043,7 +1044,7 @@ class ConfigLinkTests(Scratch):
         self.assertTrue(settings.is_symlink(), "the link is still a link")
         written = json.loads(target.read_text(encoding="utf-8"))
         self.assertEqual(written["theme"], "dark")
-        self.assertEqual(sorted(written["hooks"]), ["PostToolUse", "PreToolUse", "UserPromptSubmit"])
+        self.assertEqual(sorted(written["hooks"]), ["PostToolUse", "PreCompact", "PreToolUse", "SessionStart", "UserPromptSubmit"])
         self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o640, "the target keeps its own mode")
         self.assertIn("symbolic link", out.stderr)
         self.assertIn("machine-absolute", out.stderr, "a file synced to other machines needs its own registration there")
@@ -1482,8 +1483,9 @@ class MirrorRootTests(Scratch):
     def test_the_repair_preview_adds_nothing_when_an_install_root_is_already_registered(self):
         self.register_at(self.install_root(".agents/skills"))
         out = self.run_tool("repair_registration.py", "--host", "claude", "--scope", "user")
-        self.assertEqual(out.returncode, 0, out.stdout)
-        self.assertEqual(json.loads(out.stdout)["changes"], [])
+        changes = json.loads(out.stdout.strip().splitlines()[-1])["changes"]
+        self.assertEqual([change for change in changes if "(recommended)" not in change], [],
+                         "the three required hooks are recognised where they are registered; only the recommended ones are offered")
 
     def test_a_mirror_registered_instead_is_recognised_from_the_checkout_as_well(self):
         self.register_at(self.install_root(".claude/skills"))

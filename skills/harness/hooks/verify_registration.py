@@ -90,6 +90,18 @@ _COPILOT_EVENTS = {"pre": "PreToolUse", "post": "PostToolUse", "prompt": "Sessio
 EVENTS = {"claude": _EVENT_MAP, "codex": _EVENT_MAP, "copilot": _COPILOT_EVENTS}
 HOSTS = tuple(EVENTS)
 
+# Hooks a host should run besides the three it has to: `context_events.py` on the two events around a context
+# compaction, so that a run in flight is dumped before one and named after it. A missing one is a warning and never a
+# failure, so a host version that does not know the event still installs and verifies. Copilot has none: its
+# pre-compaction hook is a notification, whether a session start follows a compaction there is not documented, and an
+# event name it might not accept is not worth writing into the file of a host that fails closed.
+RECOMMENDED = [("compact", "context_events.py"), ("resume", "context_events.py")]
+_CONTEXT_EVENTS = {"compact": "PreCompact", "resume": "SessionStart"}
+RECOMMENDED_EVENTS = {"claude": _CONTEXT_EVENTS, "codex": _CONTEXT_EVENTS, "copilot": {}}
+# Scripts whose registered command names its host on every host (`--host claude`): the hook prints what that host
+# reads at that event and nothing where it is not known to read anything.
+NAMES_HOST = frozenset({"context_events.py"})
+
 # The tools each hook has to see. The verifier checks registered matchers against
 # these and repair_registration.py writes them, so the two cannot disagree.
 MATCHERS = {
@@ -222,6 +234,18 @@ def flat_command(entry: dict, windows: "bool | None" = None) -> "str | None":
         if isinstance(entry.get(field), str) and entry[field].strip():
             return entry[field]
     return None
+
+
+def host_arguments(script: str, host: str) -> tuple:
+    """The arguments the registrar puts after ``script`` on ``host``: the ones the host needs (``HOST_ARGUMENTS``), else
+    the host's own name for a script that asks for it (``NAMES_HOST``), else none."""
+    return tuple(HOST_ARGUMENTS.get(host) or ((_state.HOST_ARGUMENT, host) if script in NAMES_HOST else ()))
+
+
+def recommended(host: str) -> list[tuple[str, str, str]]:
+    """``(key, script, event)`` for each recommended hook of ``host``."""
+    return [(key, script, RECOMMENDED_EVENTS.get(host, {})[key]) for key, script in RECOMMENDED
+            if key in RECOMMENDED_EVENTS.get(host, {})]
 
 
 def has_host_arguments(tokens: list, host: str) -> bool:
@@ -806,42 +830,50 @@ def hook_states(objects: list[dict], host: str) -> dict[str, dict]:
     The one place that decides what REGISTERED means, shared by this verifier,
     ``repair_registration.plan`` and ``scripts/install_hooks.py``.
     """
-    states = {}
-    for key, script in REQUIRED:
-        needed = required_tools(script, host)
-        best = _blank("no command registered")
-        runnable = []
-        for handler, matcher in _handlers(objects, EVENTS[host][key], host):
-            command = handler["command"]
-            candidate = analyse(command, script, handler_tokens(handler))
-            candidate.update(command=command, args=handler["args"] if isinstance(handler.get("args"), list) else None,
-                             handler=handler, matcher=matcher, shell_defects=[])
-            if candidate["executable"] and not has_host_arguments(handler_tokens(handler), host):
-                # The hook would start and answer in a shape this host does not read: a deny that denies nothing.
-                wanted = " ".join(HOST_ARGUMENTS[host])
-                candidate.update(executable=False, reason=f"the command does not carry '{wanted}', so the hook answers in a "
-                                                          f"shape {host} does not read and a deny is not a deny there")
-            if candidate["executable"]:
-                # The words are right; now the shell that reads them. A command it cannot start is not a registration.
-                defects = handler_defects(handler, host)
-                if defects:
-                    candidate.update(executable=False, shell_defects=defects, reason=defects[0])
-            if candidate["executable"]:
-                runnable.append(candidate)
-            elif candidate["configured"] and not best["configured"]:
-                best = {**_blank(""), **candidate}
-        if runnable:
-            best = {**_blank(""), **runnable[0]}
-            covered = [tool for tool in needed if any(matcher_selects(c["matcher"], tool) for c in runnable)]
-            best["missing_tools"] = [tool for tool in needed if tool not in covered]
-            best["coverage"] = "not_applicable" if not needed else "full" if not best["missing_tools"] else "partial" if covered else "none"
-            best["registered"] = best["coverage"] != "none"
-            if not best["registered"]:
-                best["reason"] = (f"matcher {', '.join(repr(c['matcher']) for c in runnable)} selects none of the tools "
-                                  f"this hook needs ({', '.join(needed)})")
-            best["interpreter"] = interpreter_report(best["command"], handler_tokens(best["handler"]))
-        states[key] = best
-    return states
+    return {key: _classify(objects, host, EVENTS[host][key], script, required_tools(script, host)) for key, script in REQUIRED}
+
+
+def recommended_states(objects: list[dict], host: str) -> dict[str, dict]:
+    """The same classification for the hooks ``host`` should also run (``recommended``). Each state carries its
+    ``event`` and ``hook``; none of them decides whether the host is registered."""
+    return {key: {**_classify(objects, host, event, script, []), "event": event, "hook": script}
+            for key, script, event in recommended(host)}
+
+
+def _classify(objects: list[dict], host: str, event: str, script: str, needed: list) -> dict:
+    """The state of one hook script under one event of one host, over already-loaded config objects."""
+    best = _blank("no command registered")
+    runnable = []
+    for handler, matcher in _handlers(objects, event, host):
+        command = handler["command"]
+        candidate = analyse(command, script, handler_tokens(handler))
+        candidate.update(command=command, args=handler["args"] if isinstance(handler.get("args"), list) else None,
+                         handler=handler, matcher=matcher, shell_defects=[])
+        if candidate["executable"] and not has_host_arguments(handler_tokens(handler), host):
+            # The hook would start and answer in a shape this host does not read: a deny that denies nothing.
+            wanted = " ".join(HOST_ARGUMENTS[host])
+            candidate.update(executable=False, reason=f"the command does not carry '{wanted}', so the hook answers in a "
+                                                      f"shape {host} does not read and a deny is not a deny there")
+        if candidate["executable"]:
+            # The words are right; now the shell that reads them. A command it cannot start is not a registration.
+            defects = handler_defects(handler, host)
+            if defects:
+                candidate.update(executable=False, shell_defects=defects, reason=defects[0])
+        if candidate["executable"]:
+            runnable.append(candidate)
+        elif candidate["configured"] and not best["configured"]:
+            best = {**_blank(""), **candidate}
+    if runnable:
+        best = {**_blank(""), **runnable[0]}
+        covered = [tool for tool in needed if any(matcher_selects(c["matcher"], tool) for c in runnable)]
+        best["missing_tools"] = [tool for tool in needed if tool not in covered]
+        best["coverage"] = "not_applicable" if not needed else "full" if not best["missing_tools"] else "partial" if covered else "none"
+        best["registered"] = best["coverage"] != "none"
+        if not best["registered"]:
+            best["reason"] = (f"matcher {', '.join(repr(c['matcher']) for c in runnable)} selects none of the tools "
+                              f"this hook needs ({', '.join(needed)})")
+        best["interpreter"] = interpreter_report(best["command"], handler_tokens(best["handler"]))
+    return best
 
 
 def hook_hash(path) -> str | None:
@@ -1072,6 +1104,10 @@ def enforcement(states: dict[str, dict]) -> dict:
                                            "not refused"}
 
 
+RECOMMENDED_WHY = ("without it a context compaction during a run writes no dump and gives no resume note; add it with "
+                   "repair_registration.py")
+
+
 def host_notes(host: str) -> list[str]:
     """What an operator has to know about ``host`` that no hook state says."""
     if host != "copilot":
@@ -1127,6 +1163,11 @@ def _print(host, loaded, result, required, absent_is_missing=False):
             warnings.append(warning)
         if state["integrity"] == "changed":
             changed.extend(name for name in state["changed_files"] or [script] if name not in changed)
+    for state in recommended_states([value for _, value in loaded if isinstance(value, dict)], host).values():
+        if state["registered"]:
+            print(f"  [OK ] {state['event']} -> {state['hook']}  (recommended)")
+        else:
+            print(f"  [-- ] {state['event']} -> {state['hook']}  (recommended, not registered: {RECOMMENDED_WHY})")
     for warning in warnings:
         print(f"  warning: {warning}")
     for note in host_notes(host):
@@ -1172,6 +1213,9 @@ def main() -> int:
     if args.json:
         report = {h: {"status": "registered" if s is True else "missing" if s is False else "unknown",
                       "hash_record": str(record_path()), "notes": host_notes(h),
+                      "recommended": {key: {"event": state["event"], "hook": state["hook"], "registered": state["registered"],
+                                            "reason": state["reason"]}
+                                      for key, state in recommended_states([v for _, v in files if isinstance(v, dict)], h).items()},
                       "hooks": {k: v for k, v in r.items()},
                       "config_files": [{"path": str(p), "state": "read" if v is not None else "absent" if not p.exists() else "unreadable"} for p, v in files]}
                   for (h, files, r, _), s in zip(checks, statuses, strict=True)}

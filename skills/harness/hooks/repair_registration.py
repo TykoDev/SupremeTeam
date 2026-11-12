@@ -52,9 +52,15 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
 
-import _fsutil
-import _state
-import verify_registration as verify
+try:
+    import _fsutil
+    import _state
+    import verify_registration as verify
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    print(json.dumps({"ok": False, "error": f"repair_registration.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog."}))
+    raise SystemExit(2) from exc
 
 HOOK_DIR = Path(__file__).resolve().parent
 matcher_for = verify.matcher_for

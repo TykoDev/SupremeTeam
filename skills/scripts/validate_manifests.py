@@ -38,7 +38,8 @@ the top level or inside an item the install does not hold, and the top-level pla
 decides the same way for both.
 
 Output: a JSON report on stdout. Exit 0 when clean, 1 when a contract is
-violated or unreadable.
+violated or unreadable, 2 when the validator could not run because a catalog module
+it imports is missing (the report then names the module and says to reinstall).
 """
 from __future__ import annotations
 
@@ -52,8 +53,14 @@ from typing import Any
 SKILLS = Path(__file__).resolve().parents[1]
 if str(SKILLS / "scripts") not in sys.path:
     sys.path.insert(0, str(SKILLS / "scripts"))
-from data_formats import DataFormatError, load_data  # noqa: E402
-from contract_floor import gate_floor_errors  # noqa: E402
+try:
+    from data_formats import DataFormatError, load_data
+    from contract_floor import gate_floor_errors
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    print(json.dumps({"errors": [f"validate_manifests.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog."], "ok": False}, indent=2, sort_keys=True))
+    raise SystemExit(2) from exc
 
 TEAM_ROLE_KEYS = ("front_door", "session_memory", "cross_stage_gatekeeper")
 TEAM_LIST_KEYS = (

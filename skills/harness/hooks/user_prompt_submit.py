@@ -35,8 +35,33 @@ import json
 import sys
 from pathlib import Path
 
-import _state
-import run_heartbeat
+
+def _missing_module(event: str, exc: BaseException) -> None:
+    """A module this hook imports is not there. A registered hook fails open: exit 0 and no reminder, with the fault
+    counted when ``_state`` still loads and said on stderr when it does not. ``--selftest`` and an import of this file
+    by another program are not host events, so they get the error itself."""
+    if __name__ != "__main__" or sys.argv[1:] == ["--selftest"]:
+        return
+    try:
+        import _state as state
+
+        state.record_fault(event, exc)
+    except BaseException:
+        try:
+            sys.stderr.write("supremeteam %s hook: a module it imports is missing (%s) and the fault could not be "
+                             "recorded; the hook did nothing. Reinstall the catalog and run "
+                             "skills/harness/hooks/check_readiness.py.\n" % (event, exc))
+        except Exception:
+            pass
+    sys.exit(0)
+
+
+try:
+    import _state
+    import run_heartbeat
+except ImportError as _exc:  # a catalog file this hook imports is missing
+    _missing_module("UserPromptSubmit", _exc)
+    raise
 
 _ROUTE_REMINDER = (
     "Supreme Team entry routing: no active run detected. `admiral` is the "

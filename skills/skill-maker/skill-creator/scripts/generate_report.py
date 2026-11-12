@@ -22,7 +22,13 @@ from pathlib import Path
 try:
     from scripts.utils import configure_stdout
 except ModuleNotFoundError:  # run by path, where only this directory is on sys.path
-    from utils import configure_stdout
+    try:
+        from utils import configure_stdout
+    except ImportError as exc:  # utils.py itself is missing: say which, never a traceback
+        if __name__ != "__main__":
+            raise
+        sys.stderr.write(f"ERROR: generate_report.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog.\n")
+        raise SystemExit(2) from exc
 
 
 def generate_html(data: dict, auto_refresh: bool = False, skill_name: str = "") -> str:

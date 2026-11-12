@@ -46,10 +46,18 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import _cmdscan
-import _paths
-import _state
-import run_heartbeat
+try:
+    import _cmdscan
+    import _paths
+    import _state
+    import run_heartbeat
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    # Run as the hook itself: a guard that cannot load fails open, and says so where the host shows it.
+    sys.stderr.write(f"supremeteam guard hook: the guard could not load ({exc}); the guard is NOT enforcing this "
+                     "call. Reinstall the catalog and run skills/harness/hooks/check_readiness.py.\n")
+    raise SystemExit(0) from exc
 
 HOOK_DIR = Path(__file__).resolve().parent
 

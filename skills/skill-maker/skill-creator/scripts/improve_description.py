@@ -14,7 +14,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from scripts.utils import parse_skill_md
+try:
+    from scripts.utils import parse_skill_md
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    sys.stderr.write(f"ERROR: improve_description.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog.\n")
+    raise SystemExit(2) from exc
 
 # The host truncates a description here, so a longer one is not what gets evaluated.
 MAX_DESCRIPTION_CHARS = 1024

@@ -61,8 +61,8 @@ are read for blocked phrases and local links only), and a probe record that bind
 listed in ``warnings`` as attested rather than tied to the source it describes.
 
 Output: a JSON report on stdout. On engine error, including any fault inside the
-engine itself, a JSON object carrying "engine_error" is written to stderr and
-nothing is printed to stdout. The report names every input that was not the
+engine itself and a catalog module this script imports being absent, a JSON object
+carrying "engine_error" is written to stderr and nothing is printed to stdout. The report names every input that was not the
 shipped one (``gate_spec_is_shipped``, ``registry_is_shipped``, ``prior_record``);
 its digests are unkeyed, so a stored verdict is not authority by itself and the
 reader re-runs this script against the shipped spec.
@@ -89,10 +89,16 @@ for _path in (SKILLS_ROOT / "scripts", Path(__file__).resolve().parent):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from _gatecheck import DEFAULT_BLOCKED_PHRASES, compile_blocked_phrases, is_blank_file  # noqa: E402
-from data_formats import DataFormatError, content_sha256, load_data  # noqa: E402
-from contract_floor import gate_floor_errors  # noqa: E402
-from _gatecycle import write_mechanical, write_verdict  # noqa: E402
+try:
+    from _gatecheck import DEFAULT_BLOCKED_PHRASES, compile_blocked_phrases, is_blank_file
+    from data_formats import DataFormatError, content_sha256, load_data
+    from contract_floor import gate_floor_errors
+    from _gatecycle import write_mechanical, write_verdict
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    print(json.dumps({"engine_error": f"check.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog."}, indent=2), file=sys.stderr)
+    raise SystemExit(2) from exc
 
 SUPPORTED_MANIFEST_SCHEMAS = {1, 2}
 #: The schema a manifest inside skillset-saves/runs/<run>/<phase>/ must declare.

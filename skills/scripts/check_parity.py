@@ -64,8 +64,14 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from data_formats import content_sha256, load_data  # noqa: E402
-from file_safety import AtomicWriteError, write_atomically  # noqa: E402
+try:
+    from data_formats import content_sha256, load_data
+    from file_safety import AtomicWriteError, write_atomically
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    print(json.dumps({"engine_error": f"check_parity.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog."}, indent=2), file=sys.stderr)
+    raise SystemExit(2) from exc
 
 ID_RE = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
 PARITY_LISTS = ("routes", "components", "interactions", "flows")

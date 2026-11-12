@@ -21,10 +21,16 @@ import time
 import webbrowser
 from pathlib import Path
 
-from scripts.generate_report import generate_html
-from scripts.improve_description import improve_description
-from scripts.run_eval import run_eval
-from scripts.utils import ProjectRootError, find_project_root, parse_skill_md
+try:
+    from scripts.generate_report import generate_html
+    from scripts.improve_description import improve_description
+    from scripts.run_eval import run_eval
+    from scripts.utils import ProjectRootError, find_project_root, parse_skill_md
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    sys.stderr.write(f"ERROR: run_loop.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog.\n")
+    raise SystemExit(2) from exc
 
 
 def _eval_reports_dir(project_root: Path) -> Path:

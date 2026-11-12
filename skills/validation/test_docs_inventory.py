@@ -323,6 +323,112 @@ class GateProseTests(unittest.TestCase):
             self.assertLessEqual(declared, statuses,
                                  f"{relative} teaches a status the gate rejects: {sorted(declared - statuses)}")
 
+    # --- WP-06: the gatekeeper documents' evidence and owner tables against gates.yaml ----------------------------
+
+    GATEKEEPERS = {"gatekeeper-admiral": None, "design/gatekeeper-design": ("design-to-build", "redesign-review"),
+                   "build/gatekeeper-build": ("build-to-review",), "review/gatekeeper-code": ("review-to-delivery",)}
+
+    @staticmethod
+    def tables(text: str, header: str) -> list:
+        """Every Markdown table whose header row starts with ``header``: ``(the text before it, its rows as cell lists)``."""
+        found, lines = [], text.splitlines()
+        for index, line in enumerate(lines):
+            if not line.startswith(header):
+                continue
+            rows = []
+            for row in lines[index + 2:]:
+                if not row.startswith("|"):
+                    break
+                rows.append([cell.strip() for cell in row.strip().strip("|").split("|")])
+            found.append(("\n".join(lines[max(0, index - 6):index]), rows))
+        return found
+
+    @staticmethod
+    def key_of(cell: str) -> str:
+        match = re.match(r"`([a-z_-]+)`", cell)
+        return match.group(1) if match else cell
+
+    def test_the_owner_tables_of_the_phase_gatekeepers_are_the_specs(self):
+        """`| Evidence key | Owner |` in a gatekeeper skill says where a REVISE lands. It mirrors `evidence_owners`,
+        and nothing compared the two."""
+        owners = self.spec["evidence_owners"]
+        for skill, boundaries in self.GATEKEEPERS.items():
+            if boundaries is None:
+                continue
+            found = self.tables((SKILLS / skill / "SKILL.md").read_text(encoding="utf-8"), "| Evidence key | Owner |")
+            self.assertEqual(len(found), len(boundaries), f"{skill}/SKILL.md: one owner table per boundary it gates")
+            unmatched = set(boundaries)
+            for _, rows in found:
+                table = {self.key_of(row[0]): row[1] for row in rows}
+                boundary = next((name for name in boundaries if set(owners[name]) == set(table)), None)
+                with self.subTest(skill=skill, keys=sorted(table)):
+                    self.assertIsNotNone(boundary, "the keys of this table are not the required evidence of a boundary this gate judges")
+                    unmatched.discard(boundary)
+                    self.assertEqual(table, owners[boundary])
+            self.assertEqual(unmatched, set(), skill)
+
+    def test_the_admirals_table_of_delegated_keys_is_the_specs(self):
+        text = (SKILLS / "gatekeeper-admiral" / "SKILL.md").read_text(encoding="utf-8")
+        found = self.tables(text, "| Boundary | Keys whose owner is not the submitter |")
+        self.assertEqual(len(found), 1)
+        rows = {self.key_of(row[0]): row[1] for row in found[0][1]}
+        self.assertEqual(set(rows), set(self.spec["boundaries"]))
+        for boundary, cell in rows.items():
+            submitter = self.spec["boundaries"][boundary]["submitter"]
+            expected = {key: owner for key, owner in self.spec["evidence_owners"][boundary].items() if owner != submitter}
+            stated = {}
+            if not cell.startswith("(none"):
+                for group in cell.split("·"):
+                    keys = re.findall(r"`([a-z_]+)`", group)
+                    owner = re.sub(r"`[a-z_]+`", "", group).strip()
+                    stated.update(dict.fromkeys(keys, owner))
+            with self.subTest(boundary=boundary):
+                self.assertEqual(stated, expected)
+
+    def test_the_key_by_key_tables_of_the_phase_gatekeepers_are_the_specs(self):
+        """`references/boundary-evidence.md` lists each required key with its backing, its record type and, in two of
+        the three, its owner. A key added to gates.yaml, or one that became artifact-backed or typed, has to show here."""
+        for skill, boundaries in self.GATEKEEPERS.items():
+            if boundaries is None:
+                continue
+            text = (SKILLS / skill / "references" / "boundary-evidence.md").read_text(encoding="utf-8")
+            sections = re.split(r"^## ", text, flags=re.M)
+            for boundary in boundaries:
+                section = next((part for part in sections if re.match(rf"\d+\. `{re.escape(boundary)}`, key by key", part)), None)
+                self.assertIsNotNone(section, f"{skill}: no '`{boundary}`, key by key' section")
+                header = next(line for line in section.splitlines() if line.startswith("| Key |"))
+                columns = [cell.strip() for cell in header.strip().strip("|").split("|")]
+                rows = self.tables(section, "| Key |")[0][1]
+                contract = self.spec["boundaries"][boundary]
+                with self.subTest(skill=skill, boundary=boundary):
+                    self.assertEqual(sorted(self.key_of(row[0]) for row in rows), sorted(contract["required_evidence"]))
+                for row in rows:
+                    key = self.key_of(row[0])
+                    cells = dict(zip(columns, row, strict=False))
+                    with self.subTest(skill=skill, boundary=boundary, key=key):
+                        self.assertEqual(cells["Backing"].startswith("artifact"), key in contract["artifact_evidence"], cells["Backing"])
+                        kind = self.spec["evidence_types"].get(key)
+                        self.assertEqual(cells["Record type"], f"`{kind}`" if kind else "untyped")
+                        if "Owner" in cells:
+                            self.assertEqual(cells["Owner"], self.spec["evidence_owners"][boundary][key])
+
+    def test_the_admirals_artifact_and_typed_rosters_are_the_specs(self):
+        text = (SKILLS / "gatekeeper-admiral" / "references" / "boundary-evidence.md").read_text(encoding="utf-8")
+        backed = self.tables(text, "| Boundary | Artifact-backed keys |")
+        self.assertEqual(len(backed), 1)
+        stated = {self.key_of(row[0]): set(re.findall(r"`([a-z_]+)`", row[1])) for row in backed[0][1]}
+        self.assertEqual(stated, {name: set(contract["artifact_evidence"]) for name, contract in self.spec["boundaries"].items()})
+        section = text.split("## 2. Typed-record roster", 1)[1].split("\n## ", 1)[0]
+        roster = {}
+        for line in section.splitlines():
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if line.startswith("| `") and len(cells) >= 2:
+                roster[self.key_of(cells[0])] = set(re.findall(r"`([a-z_]+)`", cells[1]))
+            elif line.startswith("| Taste records |"):
+                # One row for the six Taste kinds, each of which types the key of its own name.
+                roster.update({key: {key} for key in re.findall(r"`([a-z_]+)`", cells[1])})
+        self.assertEqual(roster, self.keys_of)
+
 
 @CHECKOUT_ONLY
 class ExitCodeTableTests(unittest.TestCase):

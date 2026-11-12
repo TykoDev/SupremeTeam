@@ -23,8 +23,14 @@ Doctrine alignment (../../harness-doctrine.md):
 
 Posture difference vs. ``harness/hooks`` (which FAIL OPEN): a gate must **fail
 loud**. A hook that errors lets the action proceed; a gate that cannot prove a
-package is clean must NOT silently approve it. So an internal error becomes an
-``UNCHECKED`` finding and a non-zero exit, never a hidden PASS.
+package is clean must NOT silently approve it. So an internal error, a refused
+package directory, a ledger whose current record cannot be told and a wrapper that
+cannot find this engine all end with exit 2 and no report of facts (``gate_status:
+ERROR`` where a report was asked for), never a hidden PASS. Exit 1 means the checks
+ran and found a blocking defect. A contract file or the safety-floor module that
+cannot be read is the one fault that does not stop the run: it is reported as
+``CONTRACTS_UNREADABLE`` (UNCHECKED) and every slot is held to its declared
+requirement, which is stricter, never looser.
 
 Stdlib only — no ``pip install``. The supported floor is Python 3.13, declared
 once in ``skills/runtime-manifest.yaml`` (``runtime.python.minimum``) and checked by
@@ -601,7 +607,12 @@ class Contracts:
         if not isinstance(gates, dict) or not isinstance(pipelines, dict):
             raise ContractsUnreadable("gates.yaml and pipelines.yaml must be mappings")
         if catalog is None:
-            from contract_floor import gate_floor_errors
+            # A missing floor module is a contract that cannot be read, not a crash: the gate reports it and
+            # holds every slot to its declared requirement.
+            try:
+                from contract_floor import gate_floor_errors
+            except ImportError as exc:
+                raise ContractsUnreadable(f"{type(exc).__name__}: {exc}") from exc
             floor = gate_floor_errors(gates)
             if floor:
                 raise ContractsUnreadable("; ".join(floor))

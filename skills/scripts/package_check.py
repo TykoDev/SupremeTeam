@@ -48,8 +48,14 @@ from pathlib import Path
 SKILLS = Path(__file__).resolve().parents[1]
 if str(SKILLS / "scripts") not in sys.path:
     sys.path.insert(0, str(SKILLS / "scripts"))
-from data_formats import load_data  # noqa: E402
-from file_safety import is_link  # noqa: E402
+try:
+    from data_formats import load_data
+    from file_safety import is_link
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    print(json.dumps({"ok": False, "engine_error": f"package_check.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog."}))
+    raise SystemExit(2) from exc
 
 # The skill packager refuses the same secret and run-state names, and it must run
 # without this directory, so the list lives with it and is read from there.
@@ -229,6 +235,20 @@ def main() -> int:
                 break
     violations.sort(key=lambda violation: violation["path"])
     missing = [glob for glob in REQUIRED_ASSET_GLOBS if not any(fnmatch.fnmatchcase(rel, glob) for rel in selected)]
+    # Every catalog file one of the catalog's scripts imports has to travel with it: a package that leaves one out
+    # installs a script that cannot start. The files are read from the scripts' own imports, so none is listed here.
+    if (root / "skills").is_dir():
+        try:
+            import catalog_imports
+
+            needed = [f"skills/{relative}" for relative in catalog_imports.required_files(root / "skills")]
+            absent = [f"{entry['module']}.py, needed by skills/{script}"
+                      for script, entries in sorted(catalog_imports.missing_modules(root / "skills").items()) for entry in entries]
+        except (ImportError, OSError, ValueError, RecursionError) as exc:
+            print(json.dumps({"ok": False, "engine_error": f"cannot read the scripts' imports: {type(exc).__name__}: {exc}"}))
+            return 2
+        carried = set(selected)
+        missing += [relative for relative in needed if relative not in carried] + absent
     ok = not violations and not missing
     report = {"ok": ok, "root": str(root), "selected_count": len(selected), "violations": violations, "missing_required": missing}
     if ok and args.out:

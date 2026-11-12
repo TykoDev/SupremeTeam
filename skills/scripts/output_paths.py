@@ -73,7 +73,13 @@ import re
 import sys
 from pathlib import Path
 
-import save_taxonomy as taxonomy
+try:
+    import save_taxonomy as taxonomy
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    sys.stderr.write(f"ERROR: output_paths.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog.\n")
+    raise SystemExit(2) from exc
 
 # Every generated kind resolves under one of these project-relative roots except
 # `product`, which is the application's own source layout, and

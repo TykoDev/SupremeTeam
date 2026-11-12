@@ -40,9 +40,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _saves import ACCESS_DENIED_STEP, inspect_saves, next_step, refused_detail
-import _state
-from verify_registration import HOSTS, MATCHERS, REQUIRED, declared_minimum, enforcement, interpreter_warning, repair_command
+try:
+    from _saves import ACCESS_DENIED_STEP, inspect_saves, next_step, refused_detail
+    import _state
+    from verify_registration import HOSTS, MATCHERS, REQUIRED, declared_minimum, enforcement, interpreter_warning, repair_command
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    print(f"check_readiness: error ({exc}). A catalog file it imports is missing; reinstall the catalog.")
+    raise SystemExit(2) from exc
 
 
 def run_hook_verifier(host: str, project_root: Path, probe: bool = False) -> tuple[str, int, str, dict]:

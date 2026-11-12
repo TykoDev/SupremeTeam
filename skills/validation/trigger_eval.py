@@ -65,7 +65,13 @@ import sys
 from pathlib import Path
 
 # The advertised triggers are read by the extractor test_trigger_routing.py checks the corpus with.
-import _catalog
+try:
+    import _catalog
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    sys.stderr.write(f"ERROR: trigger_eval.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog.\n")
+    raise SystemExit(2) from exc
 
 try:
     import yaml

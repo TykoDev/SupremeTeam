@@ -29,6 +29,7 @@ CLI_FUNCTIONS = {
     "_runtime_error_report",
     "_runtime_manifest_inputs",
     "_probe_optional_dependencies",
+    "_missing_catalog_modules",  # WP-06: part of the contract check; the walk itself is catalog_imports.py
     "check",
     "main",
 }

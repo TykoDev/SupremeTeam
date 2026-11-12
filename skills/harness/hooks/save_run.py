@@ -88,20 +88,26 @@ try:
 except ImportError:  # POSIX
     msvcrt = None
 
-import _bootstrap
+try:
+    import _bootstrap
 
-_bootstrap.ensure_paths()
-from data_formats import content_sha256  # noqa: E402
-from save_taxonomy import (  # noqa: E402
-    ACTIVE_STATUSES, HISTORY, JOURNAL, POINTER, RUN_ID, RUN_ID_RULE, SCHEMA_VERSION, TERMINAL_STATUSES, WRITE_LOCK,
-    protocol_state_for,
-)
-from _saves import (  # noqa: E402
-    ACCESS_DENIED_STEP, NEXT_STEPS, NOT_A_FILE, heartbeat_is_stale, inspect_run, inspect_saves, is_directory, next_step,
-    not_a_file, parse_timestamp, path_exists, path_is_dir, refusal, refused_detail,
-)
-import _fsutil  # noqa: E402
-import _state  # noqa: E402
+    _bootstrap.ensure_paths()
+    from data_formats import content_sha256
+    from save_taxonomy import (
+        ACTIVE_STATUSES, HISTORY, JOURNAL, POINTER, RUN_ID, RUN_ID_RULE, SCHEMA_VERSION, TERMINAL_STATUSES, WRITE_LOCK,
+        protocol_state_for,
+    )
+    from _saves import (
+        ACCESS_DENIED_STEP, NEXT_STEPS, NOT_A_FILE, heartbeat_is_stale, inspect_run, inspect_saves, is_directory, next_step,
+        not_a_file, parse_timestamp, path_exists, path_is_dir, refusal, refused_detail,
+    )
+    import _fsutil
+    import _state
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    print(json.dumps({"result": "engine_error", "reason": f"save_run.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog."}, indent=2))
+    raise SystemExit(3) from exc  # EXIT_ENGINE
 
 EXIT_OK, EXIT_REFUSED, EXIT_DEGRADED, EXIT_ENGINE = 0, 1, 2, 3
 # How long a writer that must succeed waits for another writer, and how long the

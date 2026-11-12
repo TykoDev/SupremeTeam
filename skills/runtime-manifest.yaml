@@ -38,6 +38,7 @@
       "optional_dependencies": [
         {
           "name": "PyYAML",
+          "import": "yaml",
           "used_by": [
             "skill-maker/skill-creator/scripts/quick_validate.py",
             "validation/trigger_eval.py"

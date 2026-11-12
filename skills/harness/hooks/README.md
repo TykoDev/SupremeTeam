@@ -585,6 +585,7 @@ python skills/harness/hooks/audit_improve.py --run --project-root .
 ### `_state.py` (Core Helper — Runtime State)
 
 Underlying fail-open utility for Layer 3 and Layer 4 hooks:
+- A missing module: every registered hook fails open when a file it imports is not there. `pre_tool_use.py` loads the guard inside its guarded call; `post_tool_use.py` and `user_prompt_submit.py` guard their own imports the same way: exit 0 and no output, the fault counted in the observation record when `_state` still loads, and one line on stderr when `_state` (or `_bootstrap` or `_fsutil`, which it needs) is the file that is missing. `--selftest` is not a host event and fails loud. The other scripts of this directory name the missing file in their own error shape and exit 2 (`save_run.py`: 3).
 - `project_root()` / `find_project_root()`: the one project-root resolver (see [Environment Variables Reference](#environment-variables-reference) for the order); every hook, writer and reader in this directory uses it.
 - `state_root()`: where the project's runtime state is. It is `project_root()`, except when that is a linked git worktree: then it is the main checkout, found by `checkout_root()` in `skills/scripts/checkout.py`. `state_dir()`, the guard record, the run records, the heartbeat, the trajectories and the observation counters are all under it.
 - `read_hook_input(event)`: Reads the JSON payload from stdin as bytes decoded as UTF-8 with replacement (a legacy console code page never makes a payload unreadable) and counts a payload that does not parse as a fault of `event`.

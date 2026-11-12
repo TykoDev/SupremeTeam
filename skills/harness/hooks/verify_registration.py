@@ -68,11 +68,17 @@ import subprocess
 import sys
 from pathlib import Path
 
-import _bootstrap
+try:
+    import _bootstrap
 
-_bootstrap.ensure_paths()
-import _state  # noqa: E402
-from data_formats import load_data  # noqa: E402
+    _bootstrap.ensure_paths()
+    import _state
+    from data_formats import load_data
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    print(f"verify_registration: error ({exc}); status UNKNOWN. A catalog file it imports is missing; reinstall the catalog.")
+    raise SystemExit(2) from exc
 
 REQUIRED = [("pre", "pre_tool_use.py"), ("post", "post_tool_use.py"), ("prompt", "user_prompt_submit.py")]
 _EVENT_MAP = {"pre": "PreToolUse", "post": "PostToolUse", "prompt": "UserPromptSubmit"}

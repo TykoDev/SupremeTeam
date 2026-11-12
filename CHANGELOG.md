@@ -145,6 +145,34 @@ of Claude Code 2.1.322, Codex CLI 0.166.0 and Antigravity CLI 1.4.12 on Windows.
   - The wrapper tests' delivery fixture named a package in another run and carried no
     `submission_status`; it now writes a record that is true of its package, which is what
     the new checks require.
+- A missing module never crashes, and documents cannot drift (WP-06, issue 4): with one
+  module removed from a copy of the catalog, `harness/gatekeeper/check.py` and
+  `validate_manifests.py` ended in a traceback with exit 1, which for both means "defects
+  found"; `check_runtime.py` still printed `Ready: yes`; and `post_tool_use.py` crashed for
+  five modules and `user_prompt_submit.py` for four, where a registered hook has to fail open.
+  - Every entry point guards the catalog modules it imports and names the missing file in its
+    own error shape: `engine_error` JSON and exit 2 for the gate validator, the script's own
+    report and exit 2 for the validators, one `ERROR:` line and exit 2 for the command-line
+    tools, exit 3 for `save_run.py`. The two hooks exit 0 with the fault counted, or said on
+    stderr when `_state` cannot load. There is no shared helper: it would be the next file
+    that can go missing. `_gatecheck.Contracts.load()` reports a missing floor module as
+    `CONTRACTS_UNREADABLE`, and `_state.py` raises an import error, not `FileNotFoundError`,
+    when `_bootstrap.py` is gone.
+  - New `skills/scripts/catalog_imports.py` reads each entry point's imports from its syntax
+    tree. `check_runtime.py` prints `Ready: no` and names a module one of the catalog's
+    scripts needs and cannot find (`missing_modules` in `--json`), and `package_check.py`
+    fails a package that leaves one out. `runtime-manifest.yaml` gives the optional PyYAML
+    dependency its import name, so a script that needs it is not read as a broken catalog.
+  - `test_missing_modules.py` discovers every entry point and hides each module it loads, in
+    one copy of the catalog; `test_hooks_robustness.py` does the same for the three hooks; a
+    scan fails any entry point with an unguarded top-level catalog import.
+  - Document drift: `GateProseTests` compares the owner tables of the gatekeeper skills, the
+    admiral's table of delegated keys and the key-by-key tables of the three
+    `references/boundary-evidence.md` with `gates.yaml`, and `test_documented_flags.py` reads
+    the command lines of the gatekeeper documents. No drift was found; the engine docstring
+    now says what exit 2 and `CONTRACTS_UNREADABLE` mean.
+  - `validate_manifests.py` gains exit 2 (could not run). `check_runtime.py` takes about a
+    second longer, the cost of reading the scripts' imports.
 
 Upgrade notes for this section:
 
@@ -158,8 +186,8 @@ Upgrade notes for this section:
   `submission_status`, and its `package_path` has to be a phase directory of its own run.
 - Worktree sessions: a `.harness-state/` folder that an earlier version created inside a
   linked worktree is no longer read. It can be deleted.
-- Hook hashes: the packages that change a file hashed at registration (WP-00, WP-02 and
-  WP-03 so far; WP-03 also adds `scripts/checkout.py` to the record) make readiness report
+- Hook hashes: the packages that change a file hashed at registration (WP-00, WP-02, WP-03,
+  WP-04 and WP-06 so far; WP-03 also adds `scripts/checkout.py` to the record) make readiness report
   the hook files as changed. After upgrading, re-record them for
   each host with `python skills/harness/hooks/repair_registration.py --host <host>
   --record-hashes`, or reinstall with hook registration.

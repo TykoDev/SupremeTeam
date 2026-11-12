@@ -19,13 +19,19 @@ import time
 from collections import Counter
 from pathlib import Path
 
-import _bootstrap
-import _fsutil
-import _state
+try:
+    import _bootstrap
+    import _fsutil
+    import _state
 
-_bootstrap.ensure_paths()
-from data_formats import DataFormatError, parse_yaml  # noqa: E402
-from save_taxonomy import ACTIVE_STATUSES, TERMINAL_STATUSES  # noqa: E402
+    _bootstrap.ensure_paths()
+    from data_formats import DataFormatError, parse_yaml
+    from save_taxonomy import ACTIVE_STATUSES, TERMINAL_STATUSES
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    sys.stderr.write(f"ERROR: audit_improve.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog.\n")
+    raise SystemExit(2) from exc
 
 MAX_FILES = 240
 MAX_DIRS = 80

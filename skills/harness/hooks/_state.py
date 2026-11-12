@@ -45,6 +45,8 @@ try:
 except ModuleNotFoundError:  # loaded by path (a tool that reads ROOT_MARKERS), not run from this directory
     import importlib.util
 
+    if not Path(__file__).resolve().with_name("_bootstrap.py").is_file():
+        raise  # the file is not there at all: an import error the caller can name, not a FileNotFoundError
     _spec = importlib.util.spec_from_file_location("_bootstrap", Path(__file__).resolve().with_name("_bootstrap.py"))
     _bootstrap = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(_bootstrap)

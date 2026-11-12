@@ -45,7 +45,13 @@ except ImportError:  # PyYAML is optional (runtime-manifest.yaml); use the stdli
     )
     if _SKILLS_SCRIPTS is not None and str(_SKILLS_SCRIPTS) not in sys.path:
         sys.path.insert(0, str(_SKILLS_SCRIPTS))
-    from data_formats import DataFormatError, parse_yaml as _parse_yaml
+    try:
+        from data_formats import DataFormatError, parse_yaml as _parse_yaml
+    except ImportError as exc:  # neither PyYAML nor the catalog's own reader: say which file, never a traceback
+        if __name__ != "__main__":
+            raise
+        sys.stderr.write(f"ERROR: quick_validate.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog.\n")
+        raise SystemExit(2) from exc
 
 if yaml is not None:
     _YAML_ERRORS = (yaml.YAMLError,)

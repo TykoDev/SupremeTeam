@@ -22,8 +22,14 @@ import sys
 import time
 from pathlib import Path
 
-import _fsutil
-import _state
+try:
+    import _fsutil
+    import _state
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    sys.stderr.write(f"ERROR: size_audit.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog.\n")
+    raise SystemExit(2) from exc
 
 DEFAULT_THRESHOLD_BYTES = 256 * 1024 * 1024
 DEFAULT_INTERVAL_SECONDS = 6 * 60 * 60

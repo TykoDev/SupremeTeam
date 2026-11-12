@@ -136,8 +136,8 @@ A mistyped option is argparse's own exit 2 with nothing on stdout in every tool.
 | `gatekeeper-*/scripts/check.py` (`_gatecheck.py`) | no blocking finding | blocking finding | the gate could not run | | Markdown or JSON on stdout; a refused package directory writes `ERROR:` to stderr |
 | `hooks/save_run.py` | `ok` | `refused`: a contract violation | `degraded`: a write did not complete; `reason` says what was published | engine error, JSON on stderr | JSON `result` on stdout for 0, 1 and 2 |
 | `scripts/package_check.py` | clean | residue or a missing required file | manifest or engine error | | JSON on stdout |
-| `scripts/validate_manifests.py` | clean | a contract is violated | | | JSON on stdout |
-| `scripts/check_runtime.py` | ready | not ready | | | text on stdout |
+| `scripts/validate_manifests.py` | clean | a contract is violated | a catalog module it imports is missing | | JSON on stdout |
+| `scripts/check_runtime.py` | ready | not ready, which includes a catalog module one of the catalog's scripts imports being absent | a module `check_runtime.py` itself imports is missing | | text on stdout |
 | `scripts/check_parity.py` | coverage meets the threshold | scored ids missing | input or engine failure | | JSON on stdout for 0 and 1; exit 2 writes JSON with `engine_error` to stderr and no record |
 | `scripts/scan_record.py` | record written | | wrapper error | | the record and sidecars; read `result.status` |
 | `scripts/output_paths.py`, `content_hash.py` | JSON | unsafe, unknown or unreadable request | | | JSON on stdout |
@@ -151,6 +151,17 @@ A mistyped option is argparse's own exit 2 with nothing on stdout in every tool.
 Read `result` in `save_run.py`'s JSON before treating a 2 as degraded; a usage
 error prints nothing there. "Engine error" is 2 for the gates and the package
 check and 3 for `save_run.py`.
+
+A catalog with a file missing never answers with a traceback. Every script with a
+`__main__` guard reports a catalog module it cannot import in its own error shape
+and names the file: exit 2 (3 for `save_run.py`), with `engine_error` JSON on
+stderr for the gate validator, the script's own report for the validators, and
+one `ERROR:` line for the command-line tools. A registered hook fails open
+instead: exit 0, with the fault counted in its observation record, or said in one
+line on stderr when the module that counts faults is the one that is missing.
+`scripts/catalog_imports.py` finds the modules by reading each script's imports,
+so none is listed by hand: `check_runtime.py` prints `Ready: no` and names an
+absent one, and `package_check.py` fails a package that leaves one out.
 
 ## Classifying a failure
 

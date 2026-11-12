@@ -934,10 +934,34 @@ class InstallerBehaviourTests(unittest.TestCase):
 
     def test_the_target_help_and_the_unknown_target_message_name_copilot_and_pi(self):
         box = Sandbox(self)
-        self.assertIn("opencode, copilot, pi", box.run("--help").stdout)
+        self.assertIn("opencode, copilot, pi, antigravity.", box.run("--help").stdout)
         refused = box.install("--target", "windsurf")
         self.assertEqual(refused.returncode, 1, listing(refused))
-        self.assertIn("opencode, copilot, or pi", refused.stderr)
+        self.assertIn("opencode, copilot, pi, or antigravity", refused.stderr)
+
+    def test_antigravity_is_a_target_that_registers_hooks_and_installs_no_mirror(self):
+        """WP-14: Antigravity reads the common skills folder through its skills.json, which the hook helper writes."""
+        box = Sandbox(self)
+        record = self.stub_hook_helper(box)
+        result = box.install("--target", "Antigravity", "--register-hooks", "--hooks-yes")
+        self.assertEqual(result.returncode, 0, listing(result))
+        self.assertIn("--target antigravity", record.read_text(encoding="utf-8"))
+        for line in ("Host targets: antigravity", "Host mirrors: none", "Hook registration: completed"):
+            self.assertIn(line, result.stdout)
+        self.assertEqual([entry.name for entry in box.home.iterdir()], [".agents"])
+
+    def test_auto_selects_antigravity_by_its_config_directory_or_its_program(self):
+        box = Sandbox(self)
+        self.assertIn("Host targets: none detected", box.install().stdout)
+        (box.home / ".gemini" / "config").mkdir(parents=True)
+        self.assertIn("Host targets: antigravity", box.install().stdout)
+        other = Sandbox(self)
+        program = other.bin / "agy"
+        program.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        program.chmod(0o755)
+        found = other.install()
+        self.assertIn("Host targets: antigravity", found.stdout)
+        self.assertIn("Host mirrors: none", found.stdout)
 
     def test_pi_is_a_target_that_registers_hooks_and_installs_no_mirror(self):
         """WP-09: install_hooks.py already wrote the pi extension; the installers rejected the name."""
@@ -1322,7 +1346,7 @@ class PowerShellParityTests(unittest.TestCase):
         self.assertIn("copilot", hosts, "the hook helper supports Copilot, so both installers must let it be named")
 
     def test_both_name_every_host_where_they_tell_the_operator_which_to_pass(self):
-        hosts = ("codex", "claude", "cursor", "opencode", "copilot", "pi")
+        hosts = ("codex", "claude", "cursor", "opencode", "copilot", "pi", "antigravity")
         skipped = re.search(r'Hook registration skipped: no host targets were detected\. Pass ([^"\n]*?) to choose explicitly', self.ps).group(1)
         for host in hosts:
             self.assertIn(host, skipped.lower())

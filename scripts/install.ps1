@@ -3,7 +3,7 @@ param(
     [ValidateSet("All", "Design", "Build", "Review", "Browser", "Release", "Safety", "Testing")]
     [string[]]$Team = @("All"),
 
-    [ValidateSet("Auto", "Codex", "Claude", "Cursor", "OpenCode", "Copilot", "Pi")]
+    [ValidateSet("Auto", "Codex", "Claude", "Cursor", "OpenCode", "Copilot", "Pi", "Antigravity")]
     [string[]]$Target = @("Auto"),
 
     [string]$Destination = (Join-Path $env:USERPROFILE ".agents\skills"),
@@ -925,6 +925,10 @@ function Test-HostDetected {
                 (Test-Path -LiteralPath (Join-Path $env:USERPROFILE ".config\opencode")) -or
                 (Test-Path -LiteralPath (Join-Path $env:APPDATA "opencode"))
         }
+        "antigravity" {
+            return (Test-CommandAvailable -Name "agy") -or
+                (Test-Path -LiteralPath (Join-Path $env:USERPROFILE ".gemini\config"))
+        }
         "pi" {
             # The agent directory, or the variable that moves it. A program named pi on PATH proves nothing: the
             # name is generic, and a false match would write an extension into the home directory.
@@ -944,7 +948,7 @@ function Resolve-HostTargets {
     $normalizedTargets = $RequestedTargets | ForEach-Object { $_.ToLowerInvariant() }
 
     if ($normalizedTargets -contains "auto") {
-        foreach ($hostName in @("codex", "claude", "cursor", "opencode", "pi")) {
+        foreach ($hostName in @("codex", "claude", "cursor", "opencode", "pi", "antigravity")) {
             if (Test-HostDetected -HostName $hostName) {
                 $resolved = Add-UniqueValue -Values $resolved -Value $hostName
             }
@@ -985,7 +989,7 @@ function Register-HarnessHooks {
     )
 
     if ($HostTargets.Count -eq 0) {
-        Write-Host "Hook registration skipped: no host targets were detected. Pass -Target Codex,Claude,Cursor,OpenCode,Copilot,Pi to choose explicitly."
+        Write-Host "Hook registration skipped: no host targets were detected. Pass -Target Codex,Claude,Cursor,OpenCode,Copilot,Pi,Antigravity to choose explicitly."
         return
     }
 

@@ -62,7 +62,7 @@ creates carries a `.supremeteam-managed` marker. On an upgrade:
 | Preview only | `-DryRun` | `--dry-run` |
 
 Teams: `Design`, `Build`, `Review`, `Browser`, `Release`, `Safety`, `Testing`,
-`All`. Hosts: `auto`, `codex`, `claude`, `cursor`, `opencode`, `copilot` (no mirror: it reads the common folder; `auto` never picks it), `pi` (hooks only; `auto` picks it when `~/.pi/agent` exists or `PI_CODING_AGENT_DIR` is set, never because a program named `pi` is on `PATH`). Per-host
+`All`. Hosts: `auto`, `codex`, `claude`, `cursor`, `opencode`, `copilot` (no mirror: it reads the common folder; `auto` never picks it), `pi` (hooks only; `auto` picks it when `~/.pi/agent` exists or `PI_CODING_AGENT_DIR` is set, never because a program named `pi` is on `PATH`), `antigravity` (no mirror: it reads the common folder through its skills list; `auto` picks it when `~/.gemini/config` exists or `agy` is on `PATH`). Per-host
 destination flags exist too (`-CodexDestination`, `--claude-destination`, and so
 on); `-InstallClaude` and `--install-claude` are older aliases for the Claude
 target. `--help` (`Get-Help .\scripts\install.ps1`) lists every option.
@@ -138,6 +138,14 @@ GitHub Copilot has no mirror: Copilot CLI reads skills from `~/.agents/skills`, 
 common folder, so no extra copy is installed for it. Naming it (`--target copilot`,
 `-Target Copilot`) only adds its hook registration, and only with `--register-hooks`
 (see [Runtime hooks](#runtime-hooks)).
+
+Google Antigravity has no mirror either. It lists skills from the folders its
+`~/.gemini/config/skills.json` names, one level deep, and ignores an entry that is not
+an absolute path: with `~/.agents/skills` it lists none of the catalog and says so only
+in its log. With `--register-hooks` the installer adds the common folder by its absolute
+path (forward slashes), replaces an entry that names the same folder with `~`, and keeps
+every other entry. The 22 skills at the root are then listed; a nested one is reached by
+path through the skill that delegates to it.
 
 pi has no mirror either: it reads the common folder. With `--register-hooks` the
 installer writes its guard extension to `~/.pi/agent/extensions/supremeteam-guard.ts`
@@ -233,7 +241,7 @@ python3 scripts/install_hooks.py --target codex --hook-root "$HOME/.agents/skill
 python3 scripts/install_hooks.py --target codex --hook-root "$HOME/.agents/skills/harness/hooks"
 ```
 
-`--host` / `--target` take `codex`, `claude`, or `copilot` for native JSON config;
+`--host` / `--target` take `codex`, `claude`, `copilot` or `antigravity` for native JSON config;
 `cursor`, `opencode` and `pi` load a plugin package or extension that is not
 machine-verifiable; pi reports in each new session whether the guard is enforcing.
 Registration edits these files, by default the global (`user`) ones:
@@ -246,6 +254,7 @@ Registration edits these files, by default the global (`user`) ones:
 | Cursor | `~/.cursor/plugins/local/supremeteam-hooks/` | not scoped |
 | OpenCode | `~/.config/opencode/plugins/supremeteam-hooks.js` | not scoped |
 | pi | `~/.pi/agent/extensions/supremeteam-guard.ts` (`$PI_CODING_AGENT_DIR/extensions/` when set) | not scoped |
+| Google Antigravity | the `supremeteam` group in `~/.gemini/config/hooks.json`, and an entry in `~/.gemini/config/skills.json` | the `supremeteam` group in `.agents/hooks.json` |
 
 GitHub Copilot differs from the other two JSON hosts in four ways, and the helper is
 stricter with it for the first. A pre-tool hook that exits with anything but 0 denies
@@ -263,6 +272,16 @@ earlier version wrote (`~/.config/github-copilot/hooks.json`, `.github/hooks.jso
 not read by Copilot: when it holds only Supreme Team entries it is moved beside itself
 as `hooks.json.bak-<time>`, and otherwise it is left and named. None of this has been
 run in a Copilot session yet; it follows Copilot's hooks reference.
+
+Google Antigravity runs hooks with its own payload and its own answers, so one bridge,
+`harness/hooks/antigravity_bridge.py`, is registered for `PreToolUse`, `PostToolUse` and
+`PreInvocation` in a group named `supremeteam`; every other group in the file is kept.
+The bridge runs the three hooks and maps a guard deny to Antigravity's. Antigravity for
+Windows hands a hook command to `cmd /C` with its quotes escaped, so the command holds
+no quote, and a path with a space is refused: install to a path without one. A
+registration of the bridge that was installed by hand earlier
+(`.agents/supremeteam-agy/supremeteam_agy_bridge.py`) is replaced; its folder is left in
+place and can be deleted.
 
 For Claude Code, `--statusline` (`--hooks-statusline`, `-HooksStatusline` on the
 installers) also sets the status line to `harness/hooks/context_statusline.py`, which

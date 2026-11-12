@@ -100,6 +100,7 @@ SupremeTeam/
     │   │   ├── post_tool_use.py          # PostToolUse: trajectory, heartbeat, coverage sweep
     │   │   ├── user_prompt_submit.py     # UserPromptSubmit: routing and session-pin reminder
     │   │   ├── context_events.py         # PreCompact and SessionStart: a context dump before a compaction, a resume note after it
+    │   │   ├── antigravity_bridge.py     # Google Antigravity: its events carried to the three hooks, and their answers back
     │   │   ├── context_watch.py          # Advice at the context-pressure thresholds, from the status line or the transcript
     │   │   ├── context_statusline.py     # Claude Code status-line command that records context usage for context_watch.py
     │   │   ├── save_run.py               # The only writer of the run record
@@ -159,6 +160,7 @@ are in [CONTRIBUTING.md](../CONTRIBUTING.md#run-the-suites).
   - the run record and its reader: `test_run_state.py`, `test_saves_reader.py`
   - registration and readiness: `test_registration_contract.py`,
     `test_registration_hardening.py`, `test_registration_shells.py`, `test_copilot_registration.py`,
+    `test_antigravity_bridge.py`,
     `test_installer_hooks.py`,
     `test_documented_flags.py`
   - maintenance audits: `test_size_audit.py`, `test_audit_improve.py`,

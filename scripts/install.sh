@@ -66,12 +66,14 @@ Options:
                               design, build, review,
                               browser, release, safety, testing
   --target NAME             Install host-native support for one host. Repeatable.
-                              One of: auto, codex, claude, cursor, opencode, copilot, pi.
-                              Default: auto. copilot and pi have no skills folder of
-                              their own (both read the common one), so they only take
-                              part in --register-hooks. auto never picks copilot, and
-                              picks pi when ~/.pi/agent exists or PI_CODING_AGENT_DIR
-                              is set; a pi program on PATH is not enough.
+                              One of: auto, codex, claude, cursor, opencode, copilot, pi, antigravity.
+                              Default: auto. copilot, pi and antigravity
+                              have no skills folder of their own (they read the common
+                              one), so they only take part in --register-hooks. auto
+                              never picks copilot; it picks pi when ~/.pi/agent exists
+                              or PI_CODING_AGENT_DIR is set (a pi program on PATH is
+                              not enough), and antigravity when ~/.gemini/config exists
+                              or agy is on PATH.
   --destination PATH        Override the default agent skill path.
   --codex-destination PATH  Override the Codex skill path.
   --register-hooks          Register runtime harness hooks for selected hosts. This edits
@@ -736,6 +738,9 @@ host_detected() {
         opencode)
             command -v opencode >/dev/null 2>&1 || [[ -d "$HOME/.config/opencode" ]]
             ;;
+        antigravity)
+            command -v agy >/dev/null 2>&1 || [[ -d "$HOME/.gemini/config" ]]
+            ;;
         pi)
             # The agent directory, or the variable that moves it. A program named pi on PATH proves nothing: the
             # name is generic, and a false match would write an extension into the home directory.
@@ -781,13 +786,13 @@ resolve_targets() {
         normalized="$(printf '%s' "$target" | tr '[:upper:]' '[:lower:]')"
         case "$normalized" in
             auto)
-                for detected in codex claude cursor opencode pi; do
+                for detected in codex claude cursor opencode pi antigravity; do
                     if host_detected "$detected"; then
                         add_selected_target "$detected"
                     fi
                 done
                 ;;
-            codex|claude|cursor|opencode|copilot|pi)
+            codex|claude|cursor|opencode|copilot|pi|antigravity)
                 if [[ "$normalized" == codex ]]; then
                     codex_target_explicit=1
                 fi
@@ -797,7 +802,7 @@ resolve_targets() {
                 add_selected_target "$normalized"
                 ;;
             *)
-                die "Unknown target '$target'. Use auto, codex, claude, cursor, opencode, copilot, or pi."
+                die "Unknown target '$target'. Use auto, codex, claude, cursor, opencode, copilot, pi, or antigravity."
                 ;;
         esac
     done
@@ -875,7 +880,7 @@ warn_python_readiness() {
 
 register_harness_hooks() {
     if [[ ${#selected_targets[@]} -eq 0 ]]; then
-        printf 'Hook registration skipped: no host targets were detected. Pass --target codex, --target claude, --target cursor, --target opencode, --target copilot, or --target pi to choose explicitly.\n'
+        printf 'Hook registration skipped: no host targets were detected. Pass --target codex, --target claude, --target cursor, --target opencode, --target copilot, --target pi, or --target antigravity to choose explicitly.\n'
         return
     fi
 

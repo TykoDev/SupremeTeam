@@ -102,7 +102,7 @@ PHASES = set(taxonomy.PHASE_DIRECTORIES)
 SAFE_SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 # Project-relative paths a `product` name may not point at or below.
 PRODUCT_DENIED = (".git", *GENERATED_ROOTS, "skills/harness", ".claude/settings.json", ".claude/settings.local.json",
-                  ".codex/hooks.json", ".github/hooks.json", ".github/hooks")
+                  ".codex/hooks.json", ".github/hooks.json", ".github/hooks", ".agents/hooks.json")
 
 
 def denied_product_path(relative: Path) -> str | None:

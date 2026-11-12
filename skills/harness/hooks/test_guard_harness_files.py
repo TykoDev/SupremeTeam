@@ -20,6 +20,7 @@ HOOK_DIR = Path(__file__).resolve().parent
 HOOK = HOOK_DIR.as_posix()
 SCRIPTS = ("guard_hook.py", "pre_tool_use.py", "_state.py", "post_tool_use.py", "user_prompt_submit.py", "_cmdscan.py")
 REGISTRATION = (".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".github/hooks.json",
+                ".agents/hooks.json",  # WP-14: Antigravity's workspace hook file
                 # WP-08: Copilot runs every *.json of its hook directories, so a second file there is a registration too.
                 ".github/hooks/supremeteam.json", ".github/hooks/another.json")
 UNRELATED_FREEZE = {"frozen_globs": [{"glob": "docs/**", "owner": "ops"}]}
@@ -106,7 +107,7 @@ class EngagedByABoundaryTests(HarnessFileCase):
                 self.assertProtected(self.shell(f"echo '{{}}' > {path}"))
                 self.assertProtected(self.shell(f"python3 -c \"open('{path}','w').write('{{}}')\""))
         for path in (".claude/settings.json", ".codex/hooks.json", ".config/github-copilot/hooks.json",
-                     ".copilot/hooks/supremeteam.json", ".copilot/hooks/another.json"):
+                     ".copilot/hooks/supremeteam.json", ".copilot/hooks/another.json", ".gemini/config/hooks.json"):
             with self.subTest(user_scope=path):
                 self.assertProtected(self.edit(f"{self.home}/{path}"))
                 self.assertProtected(self.shell(f"cp x ~/{path}"))
@@ -174,7 +175,9 @@ class EngagedByAPinnedRunTests(HarnessFileCase):
 class EnforcementFilesTests(unittest.TestCase):
     """SEC-06: the hash record has to cover the files that hold the rules, not only the three entry scripts."""
 
-    ENTRY = ("pre_tool_use", "post_tool_use", "user_prompt_submit")
+    # The scripts a host is registered to run: the three hooks, the compaction hook, and the bridge Antigravity
+    # runs in their place (WP-14), which starts them as child processes and so imports none of them.
+    ENTRY = ("pre_tool_use", "post_tool_use", "user_prompt_submit", "context_events", "antigravity_bridge")
 
     @staticmethod
     def imports(path: Path) -> set:

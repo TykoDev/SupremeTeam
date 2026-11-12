@@ -63,7 +63,7 @@ EXIT_REFUSED = 2
 EXIT_DECLINED = 3
 
 # Hosts whose registration this script can verify after writing it.
-NATIVE_HOSTS = ("codex", "claude", "copilot")
+NATIVE_HOSTS = ("codex", "claude", "copilot", "antigravity")
 # Hosts that need a plugin package the harness verifier cannot inspect.
 PLUGIN_HOSTS = ("cursor", "opencode", "pi")
 HOSTS = NATIVE_HOSTS + PLUGIN_HOSTS
@@ -142,7 +142,8 @@ def _write_text(path: Path, before: str, after: str, dry_run: bool, repair, priv
 
 def _native_target(args: argparse.Namespace, host: str, repair) -> tuple[Path, bool]:
     """Resolve one native host's config file (an explicit override, else --scope) and whether it was overridden."""
-    override = {"codex": args.codex_hooks, "claude": args.claude_settings, "copilot": args.copilot_hooks}[host]
+    override = {"codex": args.codex_hooks, "claude": args.claude_settings, "copilot": args.copilot_hooks,
+                "antigravity": args.antigravity_hooks}[host]
     if override:
         return Path(override).expanduser(), True
     try:
@@ -197,6 +198,12 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
     written = repair.written_handlers(config, desired, host)
     # A file an earlier version wrote where the host does not look: set aside when it is ours alone, named otherwise.
     legacy = [] if overridden else repair.set_legacy_aside(host, args.scope, apply=not args.dry_run)
+    if repair.replaces_legacy_bridge(config, desired):
+        legacy.append(repair.LEGACY_BRIDGE_NOTE)
+    if host == "antigravity" and not overridden and args.scope == "user":
+        # Antigravity lists the catalog's skills only when its skills.json names the common install by an absolute
+        # path, so that file is written with the hooks.
+        legacy.extend(repair.sync_antigravity_skills(apply=not args.dry_run))
     twice = repair.double_run_note(host) if added else None
 
     result = {
@@ -709,7 +716,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Register Supreme Team harness hooks in a host's native configuration.",
         epilog=(
-            "codex, claude and copilot are verified after writing. cursor, opencode and pi need a "
+            "codex, claude, copilot and antigravity are verified after writing. cursor, opencode and pi need a "
             "plugin package or extension the harness verifier cannot inspect."
         ),
     )
@@ -721,7 +728,7 @@ def parse_args() -> argparse.Namespace:
                         help="interpreter to register (a path, or a launcher with arguments such as 'py -3'); "
                              "default: the interpreter running this script")
     parser.add_argument("--scope", choices=["user", "project", "local"], default="user",
-                        help="which config file to write for codex/claude/copilot: user is the global file, "
+                        help="which config file to write for codex/claude/copilot/antigravity: user is the global file, "
                              "project and local belong to the project around the working directory (default: user)")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the unified diff for every file and write nothing")
@@ -742,6 +749,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--codex-hooks", default=None, help="override the codex config path")
     parser.add_argument("--claude-settings", default=None, help="override the claude config path")
     parser.add_argument("--copilot-hooks", default=None, help="override the copilot config path")
+    parser.add_argument("--antigravity-hooks", default=None,
+                        help="override the antigravity hooks.json path (skills.json is then left alone)")
     parser.add_argument("--cursor-plugin",
                         default=str(Path.home() / ".cursor" / "plugins" / "local" / "supremeteam-hooks"))
     parser.add_argument("--opencode-plugin",

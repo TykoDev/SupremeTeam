@@ -345,6 +345,33 @@ of Claude Code 2.1.322, Codex CLI 0.166.0 and Antigravity CLI 1.4.12 on Windows.
     Nuxt, Astro and Deno overlays are rewritten (Nuxt 4's `app/` layout, Astro 7, Deno marked
     as ending), and every digest is recomputed.
   - `gates.yaml` states the rule and is at `spec_revision` 11 (see the upgrade notes).
+- Google Antigravity is a supported host (WP-14, issue 9). The repository had no Antigravity
+  support. A maintainer's machine had a bridge made by hand outside it, which enforced the
+  guard in real sessions but was written by no installer, covered by no hash record,
+  protected by no rule and exercised by no test. The skills were missing there for one
+  character: Antigravity ignores a `skills.json` entry that is not an absolute path.
+  - New `antigravity_bridge.py`, in `_bootstrap.HOOK_FILES`: registered for `PreToolUse`,
+    `PostToolUse` and `PreInvocation` with the event as its argument, it translates
+    Antigravity's payload, runs the three hooks as child processes with a reduced
+    environment, maps a guard deny to `{"decision": "deny", "reason"}`, answers an allowed
+    call `{"decision": "allow"}` explicitly, and queues what the hooks say for the next model
+    call. It reads the tool names the CLI uses and the ones its documentation gives, drops
+    the `/plan` marker before the prompt is routed, and gives the reminder once per prompt.
+  - `antigravity` is a host of `verify_registration.py`, `repair_registration.py`,
+    `check_readiness.py` and `install_hooks.py`. The group `supremeteam` is written into
+    `~/.gemini/config/hooks.json` or `.agents/hooks.json`, every other group is kept, the
+    command is the bare form (a path with a space is refused), and each command is started
+    through `cmd /C` before it is written.
+  - `~/.gemini/config/skills.json` gets the common install by its absolute path; a `~` entry
+    for it is replaced, other entries are kept, and the verifier reports an entry that is not
+    absolute as a defect.
+  - A registration of the hand-installed bridge is replaced; its folder is left in place.
+  - Both installers take `antigravity` (`-Target Antigravity`), detected by `~/.gemini/config`
+    or `agy`. Rule F covers the two hook files.
+  - Checked in Antigravity CLI 1.5.6 with a workspace registration: writes into a frozen
+    folder were blocked through the edit tool and the shell, a write outside it was allowed,
+    and the transcript shows the routing reminder injected. The hand-made bridge was still
+    registered globally on that machine and ran beside it; the global files were not changed.
 
 Upgrade notes for this section:
 
@@ -372,6 +399,10 @@ Upgrade notes for this section:
   absolute. A sub-orchestrator that builds the block from an older copy still works in the
   main checkout; a delegate in a linked worktree is refused a relative save path (Rule H)
   and told where the file belongs.
+- Antigravity: a machine with the hand-installed bridge keeps working until it is
+  registered again. `install_hooks.py --target antigravity` (or `repair_registration.py --host
+  antigravity --scope user --apply`) replaces that registration with the catalog's bridge and
+  writes the skills entry; the folder `~/.agents/supremeteam-agy` can then be deleted.
 - Copilot: a registration written by an earlier version was never read by Copilot. Register
   again (`install_hooks.py --target copilot`, or `repair_registration.py --host copilot
   --scope user --apply`); a legacy file holding only Supreme Team entries is moved to
@@ -381,7 +412,7 @@ Upgrade notes for this section:
   Readiness warns; `repair_registration.py --host <host> --scope <scope> --apply` adds them.
   Until then a compaction during a run leaves no dump and gives no resume note.
 - Hook hashes: the packages that change a file hashed at registration (WP-00, WP-02, WP-03,
-  WP-04, WP-06, WP-08, WP-10, WP-11 and WP-12 so far; WP-11 and WP-12 add `context_events.py` and `context_watch.py` to the record; WP-03 also adds `scripts/checkout.py` to the record) make readiness report
+  WP-04, WP-06, WP-08, WP-10, WP-11, WP-12 and WP-14; WP-11, WP-12 and WP-14 add `context_events.py`, `context_watch.py` and `antigravity_bridge.py` to the record; WP-03 also adds `scripts/checkout.py` to the record) make readiness report
   the hook files as changed. After upgrading, re-record them for
   each host with `python skills/harness/hooks/repair_registration.py --host <host>
   --record-hashes`, or reinstall with hook registration.

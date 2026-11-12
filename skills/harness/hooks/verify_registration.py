@@ -66,7 +66,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 try:
     import _bootstrap
@@ -87,8 +87,21 @@ _EVENT_MAP = {"pre": "PreToolUse", "post": "PostToolUse", "prompt": "UserPromptS
 # hooks already read (`tool_name`, `tool_input`, `cwd`) and reports its tools under the names Claude Code uses; the
 # camelCase events carry `toolName` and `toolArgs`, which the guard does not read.
 _COPILOT_EVENTS = {"pre": "PreToolUse", "post": "PostToolUse", "prompt": "SessionStart"}
-EVENTS = {"claude": _EVENT_MAP, "codex": _EVENT_MAP, "copilot": _COPILOT_EVENTS}
+# Google Antigravity has no prompt event: `PreInvocation` fires before every model call, and the bridge gives the
+# routing reminder on the first one after a new prompt.
+_ANTIGRAVITY_EVENTS = {"pre": "PreToolUse", "post": "PostToolUse", "prompt": "PreInvocation"}
+EVENTS = {"claude": _EVENT_MAP, "codex": _EVENT_MAP, "copilot": _COPILOT_EVENTS, "antigravity": _ANTIGRAVITY_EVENTS}
 HOSTS = tuple(EVENTS)
+
+# A host whose payloads and answers are its own, so one bridge script is registered for every event in place of the
+# three hooks, with the event as its argument (`antigravity_bridge.py PreToolUse`). The bridge runs the hooks.
+BRIDGE = "antigravity_bridge.py"
+HOST_SCRIPT = {"antigravity": BRIDGE}
+# The bridge a maintainer installed by hand before the catalog had one. A registration that runs it is replaced.
+LEGACY_BRIDGE = "supremeteam_agy_bridge.py"
+# Antigravity's hook file is groups by name, each with its events. The registrar owns this one and keeps the others.
+ANTIGRAVITY_GROUP = "supremeteam"
+GROUPED_HOSTS = frozenset({"antigravity"})
 
 # Hooks a host should run besides the three it has to: `context_events.py` on the two events around a context
 # compaction, so that a run in flight is dumped before one and named after it. A missing one is a warning and never a
@@ -97,7 +110,7 @@ HOSTS = tuple(EVENTS)
 # event name it might not accept is not worth writing into the file of a host that fails closed.
 RECOMMENDED = [("compact", "context_events.py"), ("resume", "context_events.py")]
 _CONTEXT_EVENTS = {"compact": "PreCompact", "resume": "SessionStart"}
-RECOMMENDED_EVENTS = {"claude": _CONTEXT_EVENTS, "codex": _CONTEXT_EVENTS, "copilot": {}}
+RECOMMENDED_EVENTS = {"claude": _CONTEXT_EVENTS, "codex": _CONTEXT_EVENTS, "copilot": {}, "antigravity": {}}
 # Scripts whose registered command names its host on every host (`--host claude`): the hook prints what that host
 # reads at that event and nothing where it is not known to read anything.
 NAMES_HOST = frozenset({"context_events.py"})
@@ -123,6 +136,8 @@ HOST_EXTRA_TOOLS = {
 # select there; `PowerShell` and `NotebookEdit` are not names it uses.
 HOST_TOOLS = {
     "copilot": {"pre_tool_use.py": ("Bash", "Edit", "Write"), "post_tool_use.py": ("Bash",)},
+    # Antigravity's own tool names, as its CLI 1.4.12 sent them in real sessions.
+    "antigravity": {"pre_tool_use.py": ("run_command", "write_file", "edit_file"), "post_tool_use.py": ("run_command",)},
 }
 # Names the registrar writes beside the required ones: Copilot's own tool names, in case it reports a tool
 # untranslated. That mapping is documented and has not been seen in a session; a matcher that missed the name the
@@ -130,6 +145,8 @@ HOST_TOOLS = {
 WRITTEN_EXTRA_TOOLS = {
     "copilot": {"pre_tool_use.py": ("bash", "powershell", "create", "edit", "str_replace_editor", "apply_patch"),
                 "post_tool_use.py": ("bash", "powershell")},
+    # The names Antigravity's documentation gives its edit tools, which the CLI did not use. The bridge reads both.
+    "antigravity": {"pre_tool_use.py": ("write_to_file", "replace_file_content", "multi_replace_file_content")},
 }
 
 # A host whose hook file is one flat list of handlers per event, each with its own `matcher` and with the command in a
@@ -150,7 +167,8 @@ _COPILOT_FILE_LIMIT = 32
 # Python options that consume the following token.
 _OPTS_WITH_ARG = {"-W", "-X", "--check-hash-based-pycs", "-Q"}
 _PY_SELECTOR = re.compile(r"-\d(?:\.\d+)?(?:-\d\d)?")
-_HOST_SIGNALS = {"codex": ("CODEX_",), "claude": ("CLAUDE",), "copilot": ("COPILOT", "GITHUB_COPILOT")}
+_HOST_SIGNALS = {"codex": ("CODEX_",), "claude": ("CLAUDE",), "copilot": ("COPILOT", "GITHUB_COPILOT"),
+                 "antigravity": ("ANTIGRAVITY",)}
 
 RUNTIME_MANIFEST = Path(__file__).resolve().parents[2] / "runtime-manifest.yaml"
 
@@ -242,16 +260,45 @@ def host_arguments(script: str, host: str) -> tuple:
     return tuple(HOST_ARGUMENTS.get(host) or ((_state.HOST_ARGUMENT, host) if script in NAMES_HOST else ()))
 
 
+def registered_script(host: str, script: str) -> str:
+    """The script a registration of ``script`` names on ``host``: the host's bridge where it has one, else itself."""
+    return HOST_SCRIPT.get(host, script)
+
+
+def registration_arguments(script: str, host: str, event: "str | None" = None) -> tuple:
+    """The arguments a registered command carries after its script: the event, for a host whose bridge serves every
+    event; otherwise what ``host_arguments`` gives."""
+    if host in HOST_SCRIPT:
+        return (event,) if event else ()
+    return host_arguments(script, host)
+
+
+def antigravity_files() -> dict[str, Path]:
+    """Antigravity's global hook file, its global skills list, and the workspace hook file of this project."""
+    config = Path.home() / ".gemini" / "config"
+    return {"hooks": config / "hooks.json", "skills": config / "skills.json", "workspace": _state.project_root() / ".agents" / "hooks.json"}
+
+
+def common_install() -> Path:
+    """The skills folder every host reads, where the installers put the catalog."""
+    return Path.home() / ".agents" / "skills"
+
+
 def recommended(host: str) -> list[tuple[str, str, str]]:
     """``(key, script, event)`` for each recommended hook of ``host``."""
     return [(key, script, RECOMMENDED_EVENTS.get(host, {})[key]) for key, script in RECOMMENDED
             if key in RECOMMENDED_EVENTS.get(host, {})]
 
 
+def _carries(tokens: list, arguments: tuple) -> bool:
+    """Whether a command's words hold ``arguments`` in a row; true when there are none to hold."""
+    wanted = list(arguments)
+    return not wanted or any(tokens[index:index + len(wanted)] == wanted for index in range(len(tokens)))
+
+
 def has_host_arguments(tokens: list, host: str) -> bool:
     """Whether a command's words carry the arguments ``host`` needs (``HOST_ARGUMENTS``); true for a host that needs none."""
-    wanted = list(HOST_ARGUMENTS.get(host, ()))
-    return not wanted or any(tokens[index:index + len(wanted)] == wanted for index in range(len(tokens)))
+    return _carries(tokens, HOST_ARGUMENTS.get(host, ()))
 
 
 def _norm(value) -> str:
@@ -718,6 +765,20 @@ def _handlers(objects: list[dict], event: str, host: "str | None" = None) -> lis
                 if text is not None:
                     found.append(({**entry, "command": text}, entry.get("matcher")))
             continue
+        if host in GROUPED_HOSTS:
+            # {group: {"enabled": bool, event: [matcher group | handler]}}: a tool event holds matcher groups, and an
+            # event without tools (PreInvocation) holds handlers directly. A group switched off registers nothing.
+            for group in obj.values() if isinstance(obj, dict) else ():
+                if not isinstance(group, dict) or group.get("enabled") is False:
+                    continue
+                for entry in group.get(event) if isinstance(group.get(event), list) else []:
+                    if not isinstance(entry, dict):
+                        continue
+                    nested = entry.get("hooks")
+                    for hook in nested if isinstance(nested, list) else [entry]:
+                        if isinstance(hook, dict) and isinstance(hook.get("command"), str):
+                            found.append((hook, entry.get("matcher") if isinstance(nested, list) else None))
+            continue
         for group in groups if isinstance(groups, list) else []:
             hooks = group.get("hooks") or [] if isinstance(group, dict) else []
             matcher = group.get("matcher") if isinstance(group, dict) else None
@@ -830,18 +891,22 @@ def hook_states(objects: list[dict], host: str) -> dict[str, dict]:
     The one place that decides what REGISTERED means, shared by this verifier,
     ``repair_registration.plan`` and ``scripts/install_hooks.py``.
     """
-    return {key: _classify(objects, host, EVENTS[host][key], script, required_tools(script, host)) for key, script in REQUIRED}
+    return {key: _classify(objects, host, EVENTS[host][key], registered_script(host, script), required_tools(script, host),
+                           registration_arguments(script, host, EVENTS[host][key]))
+            for key, script in REQUIRED}
 
 
 def recommended_states(objects: list[dict], host: str) -> dict[str, dict]:
     """The same classification for the hooks ``host`` should also run (``recommended``). Each state carries its
     ``event`` and ``hook``; none of them decides whether the host is registered."""
-    return {key: {**_classify(objects, host, event, script, []), "event": event, "hook": script}
+    return {key: {**_classify(objects, host, event, script, [], registration_arguments(script, host, event)),
+                  "event": event, "hook": script}
             for key, script, event in recommended(host)}
 
 
-def _classify(objects: list[dict], host: str, event: str, script: str, needed: list) -> dict:
-    """The state of one hook script under one event of one host, over already-loaded config objects."""
+def _classify(objects: list[dict], host: str, event: str, script: str, needed: list, arguments: tuple = ()) -> dict:
+    """The state of one hook script under one event of one host, over already-loaded config objects. ``arguments``
+    are the words the command has to carry after the script for the hook to mean anything on that host."""
     best = _blank("no command registered")
     runnable = []
     for handler, matcher in _handlers(objects, event, host):
@@ -849,11 +914,16 @@ def _classify(objects: list[dict], host: str, event: str, script: str, needed: l
         candidate = analyse(command, script, handler_tokens(handler))
         candidate.update(command=command, args=handler["args"] if isinstance(handler.get("args"), list) else None,
                          handler=handler, matcher=matcher, shell_defects=[])
-        if candidate["executable"] and not has_host_arguments(handler_tokens(handler), host):
-            # The hook would start and answer in a shape this host does not read: a deny that denies nothing.
-            wanted = " ".join(HOST_ARGUMENTS[host])
-            candidate.update(executable=False, reason=f"the command does not carry '{wanted}', so the hook answers in a "
-                                                      f"shape {host} does not read and a deny is not a deny there")
+        if candidate["executable"] and not _carries(handler_tokens(handler), arguments):
+            wanted = " ".join(arguments)
+            if host in HOST_SCRIPT:
+                # The bridge serves every event and is told which by its argument: without it, it answers nothing.
+                candidate.update(executable=False, reason=f"the command does not name its event ('{wanted}') after "
+                                                          f"{script}, so the bridge does not know what it was run for")
+            else:
+                # The hook would start and answer in a shape this host does not read: a deny that denies nothing.
+                candidate.update(executable=False, reason=f"the command does not carry '{wanted}', so the hook answers in a "
+                                                          f"shape {host} does not read and a deny is not a deny there")
         if candidate["executable"]:
             # The words are right; now the shell that reads them. A command it cannot start is not a registration.
             defects = handler_defects(handler, host)
@@ -975,6 +1045,9 @@ def _paths(host: str) -> list[Path]:
         return [home / ".claude/settings.json", project / ".claude/settings.json", project / ".claude/settings.local.json"]
     if host == "codex":
         return [home / ".codex/hooks.json", project / ".codex/hooks.json"]
+    if host == "antigravity":
+        files = antigravity_files()
+        return [files["hooks"], files["workspace"]]
     # Copilot runs the hooks of every `*.json` in its two hook directories, so each of them is read: the file the
     # registrar writes first, then the others (a bounded number), in name order.
     found: list[Path] = []
@@ -1108,6 +1181,46 @@ RECOMMENDED_WHY = ("without it a context compaction during a run writes no dump 
                    "repair_registration.py")
 
 
+def skills_entry_defects(config: object) -> list[str]:
+    """The entries of Antigravity's ``skills.json`` that it does not read: a path that is not absolute. Antigravity
+    rejects ``~/.agents/skills`` in its log and lists no skill from it, without telling the user."""
+    entries = config.get("entries") if isinstance(config, dict) else None
+    paths = [entry.get("path") for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
+    return [str(path) for path in paths
+            if isinstance(path, str) and path.strip() and not (PureWindowsPath(path).is_absolute() or path.startswith("/"))]
+
+
+def lists_common_install(config: object) -> bool:
+    """Whether a ``skills.json`` names the common install by an absolute path."""
+    def folded(value) -> str:
+        # `_norm` folds case where the platform does, and on Windows gives backslashes back: compare one spelling.
+        return _norm(value).replace("\\", "/").rstrip("/")
+
+    entries = config.get("entries") if isinstance(config, dict) else None
+    wanted = folded(common_install())
+    for entry in entries if isinstance(entries, list) else ():
+        path = entry.get("path") if isinstance(entry, dict) else None
+        if isinstance(path, str) and (PureWindowsPath(path).is_absolute() or path.startswith("/")) and folded(path) == wanted:
+            return True
+    return False
+
+
+def antigravity_notes() -> list[str]:
+    """What readiness has to say about Antigravity's skills list, which decides whether it sees the catalog at all."""
+    files = antigravity_files()
+    config = _read(files["skills"])
+    notes = ["prompt routing on antigravity is given through PreInvocation, once per prompt: it has no prompt event, and "
+             "the bridge (antigravity_bridge.py) runs the three hooks"]
+    for path in skills_entry_defects(config):
+        notes.append(f"defect: {files['skills']} names {path!r}, which is not an absolute path. Antigravity ignores such an "
+                     "entry without telling the user, so it lists no skill from that folder; registering again writes the "
+                     "absolute path")
+    if not lists_common_install(config):
+        notes.append(f"{files['skills']} does not name {common_install().as_posix()} by an absolute path, so Antigravity does "
+                     "not list the catalog's skills; registering at user scope adds the entry")
+    return notes
+
+
 def context_pressure_note() -> str:
     """Whether a run in flight can be advised as the context window fills on Claude Code, and by what."""
     sidecar = any(isinstance(value, dict) and isinstance(value.get("statusLine"), dict)
@@ -1127,6 +1240,8 @@ def host_notes(host: str) -> list[str]:
     """What an operator has to know about ``host`` that no hook state says."""
     if host == "claude":
         return [context_pressure_note()]
+    if host == "antigravity":
+        return antigravity_notes()
     if host != "copilot":
         return []
     notes = ["prompt routing on copilot is given at session start only: it drops what a command hook prints for a "

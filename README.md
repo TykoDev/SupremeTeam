@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub>53 skills · 10 pipelines · one front door · Claude Code, Codex, GitHub Copilot, Cursor, OpenCode, pi</sub>
+  <sub>53 skills · 10 pipelines · one front door · Claude Code, Codex, GitHub Copilot, Cursor, OpenCode, pi, Antigravity</sub>
 </p>
 
 ---
@@ -31,7 +31,7 @@ install step that changes what the assistant can do (see
 ## First ten minutes
 
 1. **Install** — hand [Install.md](Install.md) to your agent, or run the installer for your OS from [scripts/](scripts/) (`bash ./scripts/install.sh`, or `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1`). The skill files copy without Python; the checks and hooks need **Python 3.13 or newer**.
-2. **Register the hooks** — `bash ./scripts/install.sh --register-hooks` (`-RegisterHooks` on Windows). This is the enforcement layer: the pre-tool hook refuses guarded, frozen and single-writer writes, the prompt hook sends lifecycle work through `admiral`, and the post-tool hook keeps the run heartbeat alive. It edits host config files and asks first on a terminal; Claude Code, Codex and GitHub Copilot take config entries, Cursor and OpenCode a plugin, pi an extension (`--target pi`, `-Target Pi`). Skip it and everything above is advice the model may ignore; the installer ends every such run with a banner saying so.
+2. **Register the hooks** — `bash ./scripts/install.sh --register-hooks` (`-RegisterHooks` on Windows). This is the enforcement layer: the pre-tool hook refuses guarded, frozen and single-writer writes, the prompt hook sends lifecycle work through `admiral`, and the post-tool hook keeps the run heartbeat alive. It edits host config files and asks first on a terminal; Claude Code, Codex and GitHub Copilot take config entries, Cursor and OpenCode a plugin, pi an extension (`--target pi`, `-Target Pi`), and Google Antigravity a hook group that runs a bridge, with its skills list (`--target antigravity`, `-Target Antigravity`). Skip it and everything above is advice the model may ignore; the installer ends every such run with a banner saying so.
 3. **Restart your assistant** so it loads the skills and the hooks, then [check the installed copy](#check-an-installation).
 4. **Start a run** — call `admiral`. It interviews you, writes the scope down, creates a run on disk, and hands off phase one. A governed run reads a lot of text; [QUICK-START.md](QUICK-START.md#what-a-run-costs) says how much and how to avoid it.
 5. **Let it flow** — small reversible edits skip the whole route and just get done (the Tier 0 fast path); security, deploy, and production work are never Tier 0 and take the full route. Routing is instruction, not enforcement: registered hooks remind the model on every prompt and refuse guarded writes, but nothing forces a request through `admiral`.

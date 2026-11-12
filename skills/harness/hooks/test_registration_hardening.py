@@ -947,7 +947,7 @@ class ProjectRootTests(Scratch):
         sub.mkdir()
         code = ("import sys; sys.path.insert(0, %r); import repair_registration as r, verify_registration as v; "
                 "print(all(r.target_path(h, s) in v._paths(h) for h in v.HOSTS for s in ('project', 'local') "
-                "if (h, s) != ('codex', 'local') and (h, s) != ('copilot', 'local')))" % str(HOOK_DIR))
+                "if (h, s) not in (('codex', 'local'), ('copilot', 'local'), ('antigravity', 'local'))))" % str(HOOK_DIR))
         out = subprocess.run([sys.executable, "-c", code], cwd=str(sub), env=kit.plain_env(self.home), text=True, capture_output=True, check=False)
         self.assertEqual(out.stdout.strip(), "True", out.stderr)
 

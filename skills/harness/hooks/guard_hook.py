@@ -1656,13 +1656,14 @@ def rule_single_writer(call: "Call") -> "str | None":
 # them inside a run starts the host with SUPREMETEAM_HARNESS_DEV=1, which only the human who launches the
 # host can set. The sanctioned registration writers (repair_registration.py, install_hooks.py) are
 # scripts, so their arguments are never write targets and they keep working.
+# Google Antigravity reads its hooks from `~/.gemini/config/hooks.json` and a workspace's `.agents/hooks.json`.
 # GitHub Copilot reads every `*.json` under `.github/hooks/` and `~/.copilot/hooks/` (`$COPILOT_HOME/hooks/` when
 # that is set), so the whole directory is a registration: a second file there adds a hook as surely as an edit to
 # ours. `.github/hooks.json` and `~/.config/github-copilot/hooks.json` are where earlier versions wrote.
 _REGISTRATION = (".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".github/hooks.json",
-                 ".github/hooks/**")
+                 ".github/hooks/**", ".agents/hooks.json")
 _USER_REGISTRATION = ("~/.claude/settings.json", "~/.claude/settings.local.json", "~/.codex/hooks.json",
-                      "~/.config/github-copilot/hooks.json", "~/.copilot/hooks/**",
+                      "~/.config/github-copilot/hooks.json", "~/.copilot/hooks/**", "~/.gemini/config/hooks.json",
                       "~/.cursor/plugins/local/supremeteam-hooks/**",
                       "~/.config/opencode/plugins/supremeteam-hooks.js", "~/.pi/agent/extensions/supremeteam-guard.ts")
 # pi reads its agent directory from this variable when it is set (install_hooks.pi_extension_path), and Copilot its

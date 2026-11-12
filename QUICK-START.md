@@ -18,7 +18,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -RegisterHooks
 
 The skills go to `~/.agents/skills`, and Claude Code and OpenCode get a copy when
 present; name Codex or Cursor with `--target` ([details](Install.md#where-it-goes)). pi reads
-the common folder and takes its guard as an extension (`--target pi --register-hooks`).
+the common folder and takes its guard as an extension (`--target pi --register-hooks`); Google
+Antigravity reads it through its skills list and takes a hook group (`--target antigravity
+--register-hooks`).
 The hooks enforce the rules; registering them edits your assistant's config, and on a
 terminal the installer shows each change and asks first. It only replaces what it installed; anything else
 with a clashing name is moved to `<target>.supremeteam-backup/`, never deleted. Add

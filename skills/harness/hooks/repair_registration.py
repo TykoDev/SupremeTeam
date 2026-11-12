@@ -86,6 +86,9 @@ def target_path(host: str, scope: str) -> Path:
         # Copilot reads every *.json in these two directories; the file written is ours alone.
         ("copilot", "user"): verify.copilot_home() / "hooks" / verify.COPILOT_FILE,
         ("copilot", "project"): project / ".github" / "hooks" / verify.COPILOT_FILE,
+        # Antigravity: its global hook file, or the workspace's. The group `supremeteam` in it is ours.
+        ("antigravity", "user"): verify.antigravity_files()["hooks"],
+        ("antigravity", "project"): verify.antigravity_files()["workspace"],
     }
     if (host, scope) not in table:
         raise ValueError(f"scope {scope!r} is not defined for host {host!r}")
@@ -289,16 +292,17 @@ def py_launcher_for(interpreter: str) -> "str | None":
 
 
 def hook_handler(script: str, python: str, host: str = "claude", *, windows: "bool | None" = None,
-                 hook_dir: "str | Path | None" = None, py_launcher=None) -> dict:
+                 hook_dir: "str | Path | None" = None, py_launcher=None, event: "str | None" = None) -> dict:
     """The fields that start one hook on ``host``: ``{"command": text}``, with ``args`` beside it for the no-shell form.
 
     On POSIX the command is what it always was. On Windows the form is the host's row of ``WINDOWS_FORMS``, and the
     first word has to hold no space: the interpreter's own path, else ``py -<major>.<minor>`` when the launcher starts
     the same interpreter (``py_launcher``, ``py_launcher_for`` by default), else the host's fallback. Raises
     ``CommandRefused`` when the host has none. ``windows`` and ``hook_dir`` default to this machine and this directory;
-    naming them builds the command for another."""
+    naming them builds the command for another. ``event`` is the event the command is registered under, which a host
+    whose bridge serves every event is given as the script's argument."""
     return _with_host_arguments(_start_fields(script, python, host, windows=windows, hook_dir=hook_dir, py_launcher=py_launcher),
-                                verify.host_arguments(script, host))
+                                verify.registration_arguments(script, host, event))
 
 
 def _start_fields(script: str, python: str, host: str, *, windows: "bool | None", hook_dir: "str | Path | None",
@@ -354,7 +358,7 @@ def command_for(script: str, python: str, host: str = "claude", **options) -> st
 
 def hook_events(host: str) -> list[tuple[str, str]]:
     """``(event, script)`` for every hook the registrar writes on ``host``: the required three, then the recommended ones."""
-    return [(verify.EVENTS[host][key], script) for key, script in verify.REQUIRED] + \
+    return [(verify.EVENTS[host][key], verify.registered_script(host, script)) for key, script in verify.REQUIRED] + \
         [(event, script) for _, script, event in verify.recommended(host)]
 
 
@@ -371,8 +375,8 @@ def _replace_defective(config: dict, host: str, python: str) -> list[str]:
     working group beside it instead would leave the broken command registered, failing on every tool call. An entry
     that does not launch one of our scripts is never touched."""
     replaced = []
-    if host in verify.FLAT_HOSTS:
-        return replaced  # a flat host's entries are replaced whole by its own planner
+    if host in verify.FLAT_HOSTS or host in verify.GROUPED_HOSTS:
+        return replaced  # such a host's entries are replaced whole by its own planner
     for event, script in hook_events(host):
         for handler in _own_handlers(config, host, event, script):
             defects = verify.handler_defects(handler, host)
@@ -443,6 +447,135 @@ def _plan_flat(config: dict, host: str, python: str, also: "list[dict] | None") 
     return (desired, added) if added else (config, [])
 
 
+ANTIGRAVITY_TIMEOUT = 30
+LEGACY_BRIDGE_NOTE = ("the registration of the hand-installed bridge (.agents/supremeteam-agy/supremeteam_agy_bridge.py) is "
+                      "replaced by the catalog's own. Its folder is left in place and can be deleted")
+
+
+def _runs_a_bridge(handler) -> "str | None":
+    """``"ours"`` or ``"legacy"`` when a handler's command runs the catalog's bridge or the hand-installed one."""
+    command = handler.get("command") if isinstance(handler, dict) else None
+    if not isinstance(command, str):
+        return None
+    text = command.replace("\\", "/")
+    return "legacy" if verify.LEGACY_BRIDGE in text else "ours" if verify.BRIDGE in text else None
+
+
+def _without_bridges(entries: list) -> tuple[list, set]:
+    """``entries`` of one event with every bridge handler taken out, and which kinds were there. A matcher group that
+    held nothing else goes with them; one that also holds somebody else's handler keeps that handler."""
+    kept, kinds = [], set()
+    for entry in entries:
+        nested = entry.get("hooks") if isinstance(entry, dict) else None
+        if isinstance(nested, list):
+            others = [hook for hook in nested if not _runs_a_bridge(hook)]
+            kinds.update(kind for kind in map(_runs_a_bridge, nested) if kind)
+            if len(others) == len(nested):
+                kept.append(entry)
+            elif others:
+                kept.append({**entry, "hooks": others})
+        elif _runs_a_bridge(entry):
+            kinds.add(_runs_a_bridge(entry))
+        else:
+            kept.append(entry)
+    return kept, kinds
+
+
+def _plan_grouped(config: dict, host: str, python: str) -> tuple[dict, list[str]]:
+    """``plan`` for Antigravity. Its file is groups by name; the group ``supremeteam`` is ours and every other group
+    is kept as it is. Under each of the three events the group ends with one registration of the bridge, named with
+    its event: a matcher group for a tool event, a bare handler for ``PreInvocation``. A registration of the
+    hand-installed bridge in the group is replaced."""
+    desired = dict(config)
+    group = desired.get(verify.ANTIGRAVITY_GROUP, {})
+    if not isinstance(group, dict):
+        raise ValueError(f"existing '{verify.ANTIGRAVITY_GROUP}' group is not an object; refusing to rewrite it")
+    group = dict(group)
+    added = []
+    for key, script in verify.REQUIRED:
+        event = verify.EVENTS[host][key]
+        entries = group.get(event, [])
+        if not isinstance(entries, list):
+            raise ValueError(f"existing {verify.ANTIGRAVITY_GROUP}.{event} is not a list; refusing to rewrite it")
+        handler = {"type": "command", **hook_handler(verify.BRIDGE, python, host, event=event), "timeout": ANTIGRAVITY_TIMEOUT}
+        matcher = matcher_for(script, host)
+        fresh = {"matcher": matcher, "hooks": [handler]} if matcher else handler
+        kept, kinds = _without_bridges(entries)
+        if entries == [*kept, fresh]:
+            continue
+        group[event] = [*kept, fresh]
+        added.append(f"{event} -> {verify.BRIDGE}" + (" (replaces the hand-installed bridge)" if "legacy" in kinds
+                                                     else " (replaces the entry registered before)" if kinds else ""))
+    if not added and group.get("enabled") is not False:
+        return config, []
+    if group.get("enabled") is False:
+        added.append(f"{verify.ANTIGRAVITY_GROUP}.enabled -> true (the group was switched off, so nothing in it ran)")
+    desired[verify.ANTIGRAVITY_GROUP] = {"enabled": True, **{name: value for name, value in group.items() if name != "enabled"}}
+    return desired, added
+
+
+def replaces_legacy_bridge(before: dict, after: dict) -> bool:
+    """Whether a planned change takes the hand-installed bridge out of the group."""
+    def legacy(config: dict) -> bool:
+        group = config.get(verify.ANTIGRAVITY_GROUP) if isinstance(config, dict) else None
+        return isinstance(group, dict) and verify.LEGACY_BRIDGE in json.dumps(group).replace("\\\\", "/")
+    return legacy(before) and not legacy(after)
+
+
+def plan_skills(config: dict, install: "Path | None" = None) -> tuple[dict, list[str]]:
+    """Antigravity's ``skills.json`` with the common install named by an absolute path, and what changed.
+
+    Antigravity lists skills from the folders this file names, one level deep, and ignores an entry that is not an
+    absolute path: with ``~/.agents/skills`` it listed none of the catalog and said so only in its log. An entry
+    that names the common install with ``~`` is replaced by the absolute path, with forward slashes; one that is
+    already absolute is left alone; every other entry is kept. No copy of the skills is made."""
+    install = verify.common_install() if install is None else Path(install)
+    wanted = install.as_posix()
+    entries = config.get("entries", [])
+    if not isinstance(entries, list):
+        raise ValueError("existing 'entries' key is not a list; refusing to rewrite it")
+    if verify.lists_common_install({"entries": entries}) and not any(
+            isinstance(entry, dict) and isinstance(entry.get("path"), str) and entry["path"].startswith("~")
+            and Path(os.path.expanduser(entry["path"])) == install for entry in entries):
+        return config, []
+    kept, replaced = [], False
+    for entry in entries:
+        path = entry.get("path") if isinstance(entry, dict) else None
+        if isinstance(path, str) and path.startswith("~") and Path(os.path.expanduser(path)) == install:
+            replaced = True
+            continue
+        kept.append(entry)
+    already = verify.lists_common_install({"entries": kept})
+    desired = {**config, "entries": kept if already else [*kept, {"path": wanted}]}
+    return desired, [f"skills.json: {'the ~ entry for the common install is replaced by' if replaced else 'adds'} {wanted}"]
+
+
+def sync_antigravity_skills(apply: bool) -> list[str]:
+    """Write the common install into Antigravity's global ``skills.json`` (``plan_skills``) and say what was done.
+    With ``apply`` false nothing is written and the note says what would be."""
+    path = verify.antigravity_files()["skills"]
+    install = verify.common_install()
+    if not install.is_dir():
+        return [f"{path} was left alone: {install} does not exist, so there is no common install to list. Install the "
+                "catalog first"]
+    config = verify._read(path) if verify._exists(path) else {}
+    if not isinstance(config, dict):
+        return [f"{path} is not a JSON object and was left alone; add an entry with the path {install.as_posix()} by hand"]
+    try:
+        desired, changes = plan_skills(config, install)
+    except ValueError as exc:
+        return [f"{path} was left alone: {exc}"]
+    if not changes:
+        return []
+    if not apply:
+        return [f"{path}: would write: {'; '.join(changes)}"]
+    try:
+        backup = write_with_backup(path, json.dumps(desired, indent=2) + "\n", private=True)
+    except OSError as exc:
+        return [f"{path} could not be written ({type(exc).__name__}); add an entry with the path {install.as_posix()} by hand"]
+    return [f"{path}: {'; '.join(changes)}" + (f" (the file as it was: {backup})" if backup else "")]
+
+
 def plan(config: dict, host: str, python: str, also: "list[dict] | None" = None) -> tuple[dict, list[str]]:
     """The config with every required hook registered, and what changed.
 
@@ -451,6 +584,8 @@ def plan(config: dict, host: str, python: str, also: "list[dict] | None" = None)
     and is not written a second time."""
     if host in verify.FLAT_HOSTS:
         return _plan_flat(config, host, python, also)
+    if host in verify.GROUPED_HOSTS:
+        return _plan_grouped(config, host, python)
     desired = dict(config)
     hooks = desired.setdefault("hooks", {})
     if not isinstance(hooks, dict):
@@ -756,7 +891,7 @@ def _record_current(host: str) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Preview or apply a scoped Supreme Team hook registration repair.")
-    parser.add_argument("--host", choices=["claude", "codex", "copilot"], required=True)
+    parser.add_argument("--host", choices=list(verify.HOSTS), required=True)
     parser.add_argument("--scope", choices=["user", "project", "local"], default="project")
     parser.add_argument("--python", default=sys.executable or "python",
                         help="interpreter to register: a path, or a launcher with arguments such as 'py -3.13' "
@@ -823,6 +958,8 @@ def main() -> int:
     after_text = json.dumps(desired, indent=2) + "\n"
     if not added:
         legacy = set_legacy_aside(args.host, args.scope, args.apply) + status_notes
+        if args.host == "antigravity" and args.scope == "user":
+            legacy = legacy + sync_antigravity_skills(args.apply)
         for note in legacy:
             print(f"warning: {note}", file=sys.stderr)
         print(json.dumps({"ok": True, "path": str(path), "changes": [], "applied": False, "warnings": legacy,
@@ -839,6 +976,10 @@ def main() -> int:
     if twice:
         warnings.append(twice)
     warnings.extend(status_notes)
+    if replaces_legacy_bridge(config, desired):
+        warnings.append(LEGACY_BRIDGE_NOTE)
+    if args.host == "antigravity" and args.scope == "user" and not args.apply:
+        warnings.extend(sync_antigravity_skills(False))
     if not args.apply:
         warnings.extend(set_legacy_aside(args.host, args.scope, False))
     if any("args" in handler for _, handler in written_handlers(config, desired, args.host)):
@@ -862,6 +1003,9 @@ def main() -> int:
         print(json.dumps({"ok": False, "path": str(path), "error": f"write failed: {exc}"}))
         return 2
     moved = set_legacy_aside(args.host, args.scope, True)
+    if args.host == "antigravity" and args.scope == "user":
+        # The skills list decides whether Antigravity sees the catalog at all; it is written with the hooks.
+        moved = moved + sync_antigravity_skills(True)
     for note in moved:
         print(f"warning: {note}", file=sys.stderr)
     warnings = warnings + moved

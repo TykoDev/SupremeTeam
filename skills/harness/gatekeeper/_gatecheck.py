@@ -34,6 +34,7 @@ once in ``skills/runtime-manifest.yaml`` (``runtime.python.minimum``) and checke
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import fnmatch
 import json
 import re
@@ -197,12 +198,22 @@ class Manifest:
     ``pipeline`` names the pipelines.yaml pipeline that closes at this boundary;
     without it a slot's ``evidence_key`` and ``stages`` cannot be looked up.
     ``sub_orchestrator`` records the submitter for whoever reads the wrapper; the
-    engine does not read it (gates.yaml carries the checked submitter)."""
+    engine does not read it (gates.yaml carries the checked submitter).
+
+    A *ledger* is a package that holds one record per boundary instead of one
+    submission: admiral's ``delivery/`` with ``reports/handoff_<boundary>.md``.
+    ``ledger_pattern`` is the package-relative path of a record with
+    ``{boundary}`` where the boundary name stands, and ``ledger_slot`` the key of
+    the slot the record being judged fills. Each record has its own submission
+    id and revision, so the one-revision rule of a phase package does not apply
+    to them: see ``check_handoff_records``."""
 
     boundary: str
     sub_orchestrator: str
     artifacts: Sequence[ArtifactSpec] = field(default_factory=tuple)
     pipeline: Optional[str] = None
+    ledger_pattern: Optional[str] = None
+    ledger_slot: Optional[str] = None
 
 
 @dataclass
@@ -839,10 +850,12 @@ def check_superseded(root: Path, report: Report) -> None:
 
 
 def check_required_artifacts(root: Path, manifest: Manifest,
-                             report: Report) -> None:
+                             report: Report, skip: Sequence[Path] = ()) -> None:
+    """``skip`` holds files that are in the package and fill no slot: the records
+    of a ledger other than the one being judged."""
     report.checks_run.append("required_artifacts")
     specs = list(manifest.artifacts)
-    files = iter_current_files(root)
+    files = [f for f in iter_current_files(root) if f not in skip]
     real = {f: f.resolve() for f in files}
     contracts = _contracts_for(manifest, report)
     why = [_optional_because(spec, manifest, contracts) for spec in specs]
@@ -946,17 +959,24 @@ def _submission_token(value: object) -> Optional[str]:
     return None
 
 
-def check_lineage(root: Path, report: Report) -> None:
+def check_lineage(root: Path, report: Report, records: Sequence[Path] = ()) -> None:
     """Detect packages that mix deliverables from different revisions, and
     surface the submission id / revision the gate keys idempotency on.
 
     Two distinct ``revision:`` values across the package's frontmatter is the
     mechanical signature of a contaminated, mixed-revision submission.
+
+    ``records`` are a ledger's handoff records. Each is one boundary's own
+    submission with its own id and revision, so they are left out here and
+    checked one by one (``check_handoff_records``); a ledger whose other files
+    declare no revision says nothing, because its records carry the lineage.
     """
     report.checks_run.append("lineage")
     revisions: Dict[str, List[str]] = {}
     submission_ids: Dict[str, List[str]] = {}
     for path in iter_package_files(root):
+        if path in records:
+            continue
         fm = parse_frontmatter(_read(path))
         rel = _rel(path, root)
         rev = _revision_token(fm.get("revision"))
@@ -986,7 +1006,7 @@ def check_lineage(root: Path, report: Report) -> None:
             message=f"All revision-bearing artifacts agree on revision {rev}.",
             location="package",
         ))
-    else:
+    elif not records:
         report.add(Finding(
             code="REVISION_ABSENT", severity="info", status=UNCHECKED,
             message=("No artifact declares a `revision:` in frontmatter. Confirm "
@@ -1113,12 +1133,17 @@ def _declared_identity(root: Path) -> Tuple[Set[str], Set[str]]:
 
 
 def check_idempotency(root: Path, report: Report,
-                      prior_path: Optional[Path]) -> None:
+                      prior_path: Optional[Path],
+                      identity: Optional[Tuple[Set[str], Set[str]]] = None) -> None:
     """Compare the current submission against a prior verdict record so the same
     package is not re-gated under conflicting rationale, and so a reused
     submission id with changed contents is flagged as silent drift. Two packages
     are called different only when both declare an identity; a side that declares
     none leaves the comparison undetermined, never a pass.
+
+    ``identity`` is the ``(submission ids, revisions)`` to compare instead of
+    everything the package declares: a ledger passes the record being judged, so
+    a prior verdict of an earlier boundary is not read as reusable for this one.
     """
     report.checks_run.append("idempotency")
     if prior_path is None:
@@ -1144,7 +1169,7 @@ def check_idempotency(root: Path, report: Report,
     if prior_verdict is None and isinstance(prior.get("pass"), bool):
         prior_verdict = "mechanical pass" if prior["pass"] else "mechanical fail"
 
-    cur_sids, cur_revs = _declared_identity(root)
+    cur_sids, cur_revs = identity if identity is not None else _declared_identity(root)
     known_sid = prior_sid is not None and bool(cur_sids)
     known_rev = prior_rev is not None and bool(cur_revs)
     same_sid = known_sid and prior_sid in cur_sids
@@ -1185,6 +1210,287 @@ def check_idempotency(root: Path, report: Report,
                      f"manually."),
             location=str(prior_path),
         ))
+
+
+# =============================================================================
+# A ledger: one handoff record per boundary
+# =============================================================================
+
+HANDOFF_FIELDS = ("submission_id", "revision", "package_path", "submission_status", "verdict")
+_RECORDED, _PENDING = "VERDICT_RECORDED", "PENDING"
+
+
+class GateCannotRun(Exception):
+    """The gate has no answer and says why: exit 2, never a verdict."""
+
+
+def _ledger_regex(pattern: str) -> re.Pattern:
+    return re.compile(re.escape(pattern).replace(re.escape("{boundary}"), r"(?P<boundary>[^/]+)"))
+
+
+def ledger_records(root: Path, manifest: Manifest) -> Dict[str, Path]:
+    """The current handoff records of a ledger, by boundary name. Empty for a
+    package that is not one."""
+    if not manifest.ledger_pattern:
+        return {}
+    shape = _ledger_regex(manifest.ledger_pattern)
+    found: Dict[str, Path] = {}
+    for path in iter_current_files(root):
+        match = shape.fullmatch(_rel(path, root))
+        if match:
+            found[match.group("boundary")] = path
+    return found
+
+
+def current_record(records: Dict[str, Path], boundary: Optional[str], root: Path) -> Optional[str]:
+    """The boundary whose record is being judged, or None when the ledger holds
+    no record at all.
+
+    Named with ``--boundary``, it is that one, present or not. Otherwise a single
+    record is the current one, and among several the one record still
+    ``submission_status: PENDING``. Anything else has no answer: the gate never
+    picks a record, it asks which one."""
+    if boundary:
+        return boundary
+    if len(records) <= 1:
+        return next(iter(records), None)
+    pending = [name for name, path in sorted(records.items())
+               if str(parse_frontmatter(_read(path)).get("submission_status", "")).strip().upper() == _PENDING]
+    if len(pending) == 1:
+        return pending[0]
+    names = ", ".join(_rel(path, root) for _, path in sorted(records.items()))
+    raise GateCannotRun(
+        f"{len(records)} handoff records and {len(pending) or 'none'} of them PENDING "
+        f"({', '.join(_rel(records[name], root) for name in pending) or 'no pending record'}): the record "
+        f"being judged cannot be told from the earlier ones. Pass --boundary <name>. Records found: {names}.")
+
+
+def _revision_number(value: object) -> Optional[int]:
+    """``3`` and ``r3`` as 3, for comparing two revisions; None for anything else."""
+    token = _revision_token(value)
+    if token is None:
+        return None
+    digits = token[1:] if token[:1] in "rR" else token
+    return int(digits) if digits.isdigit() else None
+
+
+def _same_revision(first: object, second: object) -> bool:
+    a, b = _revision_number(first), _revision_number(second)
+    if a is not None and b is not None:
+        return a == b
+    return _revision_token(first) is not None and _revision_token(first) == _revision_token(second)
+
+
+def _run_directory(root: Path) -> Optional[Path]:
+    """The run directory when ``root`` is a phase directory in the save layout
+    (``skillset-saves/runs/<run>/<phase>``), else None."""
+    real = root.resolve()
+    run = real.parent
+    if run.parent.name == "runs" and run.parent.parent.name == "skillset-saves":
+        return run
+    return None
+
+
+def _handoff_package(run_dir: Path, value: object) -> Optional[Path]:
+    """The phase directory of this run that a record's ``package_path`` names,
+    or None: a path into another run, outside the run, or to nothing."""
+    text = str(value).strip().replace("\\", "/").rstrip("/")
+    if not text:
+        return None
+    candidate = Path(text)
+    path = candidate if candidate.is_absolute() else run_dir.parents[2] / candidate
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+    if resolved.parent != run_dir or resolved.name.startswith("_") or not resolved.is_dir():
+        return None
+    return resolved
+
+
+def _upstream_boundaries(contracts: Optional[Contracts]) -> Dict[str, str]:
+    """``boundary -> the boundary upstream of it`` as pipelines.yaml declares
+    (``upstream_boundary`` on the pipeline that closes the boundary)."""
+    if contracts is None:
+        return {}
+    links: Dict[str, str] = {}
+    for pipeline in _mapping(contracts.pipelines.get("pipelines")).values():
+        pipeline = _mapping(pipeline)
+        if pipeline.get("boundary") and pipeline.get("upstream_boundary"):
+            links[str(pipeline["boundary"])] = str(pipeline["upstream_boundary"])
+    return links
+
+
+def check_handoff_records(root: Path, manifest: Manifest, report: Report,
+                          records: Dict[str, Path], current: Optional[str]) -> None:
+    """Hold every record of a ledger to what it has to be at the moment one
+    boundary is judged.
+
+    The record being judged may be pending; every other one is history and has
+    to be a recorded approval that still agrees with the gate's own verdict
+    record. Without this the ledger failed outright on its second record (two
+    revisions, two submission ids), and nothing tied an earlier record to the
+    verdict it claims or noticed one left stale by a rewind."""
+    report.checks_run.append("handoff_records")
+    if not records:
+        return
+    before = len(report.failures)
+    run_dir = _run_directory(root)
+    contracts: Optional[Contracts] = None
+    if len(records) > 1:
+        # The order of the boundaries is pipelines.yaml's. Without it a stale record cannot be told, and the report says so.
+        try:
+            contracts = Contracts.load()
+        except ContractsUnreadable as exc:
+            report.add(Finding(
+                code="CONTRACTS_UNREADABLE", severity="minor", status=UNCHECKED,
+                message=(f"Could not read gates.yaml / pipelines.yaml ({exc}), so the order of the boundaries is unknown "
+                         f"and a handoff record left stale by a rewind cannot be detected. Check the order by hand."),
+                location="package",
+            ))
+    parsed: Dict[str, dict] = {}
+    for boundary, path in sorted(records.items()):
+        rel = _rel(path, root)
+        fields = parse_frontmatter(_read(path))
+        missing = [name for name in HANDOFF_FIELDS if fields.get(name) in (None, "")]
+        if missing:
+            report.add(Finding(
+                code="HANDOFF_RECORD_INCOMPLETE", severity="major", status=FAIL,
+                message=(f"{rel} has no {', '.join(missing)} in its frontmatter. A handoff record carries "
+                         f"{', '.join(HANDOFF_FIELDS)}."),
+                location=rel))
+            continue
+        parsed[boundary] = fields
+
+    by_submission: Dict[str, List[str]] = {}
+    for boundary, fields in parsed.items():
+        by_submission.setdefault(str(fields["submission_id"]).strip(), []).append(_rel(records[boundary], root))
+    for submission, files in sorted(by_submission.items()):
+        if len(files) > 1:
+            report.add(Finding(
+                code="HANDOFF_DUPLICATE_SUBMISSION", severity="major", status=FAIL,
+                message=f"Submission id {submission!r} is carried by {len(files)} handoff records: {', '.join(files)}. "
+                        f"Each boundary's submission has its own id.",
+                location=files[0]))
+
+    for boundary, fields in sorted(parsed.items()):
+        rel = _rel(records[boundary], root)
+        judged = boundary == current
+        status = str(fields["submission_status"]).strip().upper()
+        verdict = str(fields["verdict"]).strip().upper()
+        if status not in ((_PENDING, _RECORDED) if judged else (_RECORDED,)):
+            wanted = f"{_PENDING} or {_RECORDED}" if judged else f"{_RECORDED}: it is an earlier boundary's record, and its verdict was given"
+            report.add(Finding(
+                code="HANDOFF_STATUS", severity="major", status=FAIL,
+                message=f"{rel}: submission_status is {fields['submission_status']!r}; it has to be {wanted}.",
+                location=rel))
+        if not judged and verdict != "APPROVED":
+            report.add(Finding(
+                code="HANDOFF_NOT_APPROVED", severity="major", status=FAIL,
+                message=(f"{rel}: verdict is {fields['verdict']!r}. A run passes a boundary only on APPROVED, so an "
+                         f"earlier record that is anything else means the run did not get here by its gates."),
+                location=rel))
+        if run_dir is None:
+            continue
+        package = _handoff_package(run_dir, fields["package_path"])
+        if package is None:
+            report.add(Finding(
+                code="HANDOFF_PACKAGE_PATH", severity="major", status=FAIL,
+                message=(f"{rel}: package_path {fields['package_path']!r} is not an existing phase directory of this "
+                         f"run ({run_dir.name})."),
+                location=rel))
+            continue
+        if status == _RECORDED:
+            name = f"verdict_{boundary}.cross-stage.json"
+            verdict_file = package / name
+            where = f"{package.name}/{name}"
+            record = _read_record(verdict_file) if verdict_file.is_file() else None
+            if record is None:
+                report.add(Finding(
+                    code="HANDOFF_VERDICT_MISMATCH", severity="major", status=FAIL,
+                    message=f"{rel} says its verdict is recorded, but {where} does not exist.",
+                    location=rel))
+            else:
+                judgment = record.get("judgment") if isinstance(record.get("judgment"), dict) else {}
+                differing = []
+                if str(judgment.get("verdict", "")).strip().upper() != verdict:
+                    differing.append(f"verdict ({fields['verdict']!r} in the record, {judgment.get('verdict')!r} in judgment.verdict)")
+                if str(fields.get("verdict_id") or "").strip() != str(record.get("verdict_id") or "").strip() or not record.get("verdict_id"):
+                    differing.append(f"verdict_id ({fields.get('verdict_id')!r} in the record, {record.get('verdict_id')!r} in the verdict record)")
+                if not _same_revision(fields["revision"], record.get("revision")):
+                    differing.append(f"revision ({fields['revision']!r} in the record, {record.get('revision')!r} in the verdict record)")
+                for field_text in differing:
+                    report.add(Finding(
+                        code="HANDOFF_VERDICT_MISMATCH", severity="major", status=FAIL,
+                        message=f"{rel} disagrees with {where} on {field_text}. The gate's own record is the verdict.",
+                        location=rel))
+        if judged:
+            manifest_file = package / "manifest.json"
+            data = _read_record(manifest_file) if manifest_file.is_file() else None
+            if data is None:
+                report.add(Finding(
+                    code="HANDOFF_MANIFEST_MISMATCH", severity="major", status=FAIL,
+                    message=f"{rel}: {package.name}/manifest.json does not exist, so the record names no submission.",
+                    location=rel))
+            else:
+                if not _same_revision(fields["revision"], data.get("revision")):
+                    report.add(Finding(
+                        code="HANDOFF_MANIFEST_MISMATCH", severity="major", status=FAIL,
+                        message=(f"{rel} is at revision {fields['revision']!r}; {package.name}/manifest.json is at "
+                                 f"{data.get('revision')!r}. The record hands over the package as submitted."),
+                        location=rel))
+                named = fields.get("manifest_submission_id")
+                if named in (None, ""):
+                    report.add(Finding(
+                        code="HANDOFF_FIELD_MISSING", severity="minor", status=UNCHECKED,
+                        message=(f"{rel} has no manifest_submission_id, the submission_id of {package.name}/manifest.json "
+                                 f"({data.get('submission_id')!r}). Confirm the record hands over that submission; the "
+                                 f"field becomes mandatory in the next release."),
+                        location=rel))
+                elif str(named).strip() != str(data.get("submission_id") or "").strip():
+                    report.add(Finding(
+                        code="HANDOFF_MANIFEST_MISMATCH", severity="major", status=FAIL,
+                        message=(f"{rel}: manifest_submission_id is {named!r}; {package.name}/manifest.json carries "
+                                 f"{data.get('submission_id')!r}."),
+                        location=rel))
+
+    for boundary, upstream in sorted(_upstream_boundaries(contracts).items()):
+        if boundary not in parsed or upstream not in parsed:
+            continue
+        own, above = _revision_number(parsed[boundary]["revision"]), _revision_number(parsed[upstream]["revision"])
+        if own is not None and above is not None and above > own:
+            rel = _rel(records[boundary], root)
+            report.add(Finding(
+                code="HANDOFF_STALE_AFTER_REWIND", severity="major", status=FAIL,
+                message=(f"{rel} is at revision {own}, and the record of the boundary upstream of it, "
+                         f"{_rel(records[upstream], root)}, is at revision {above}: {upstream} was judged again after "
+                         f"this record was written, so it describes a package that no longer follows from its input. "
+                         f"Set it aside with `python skills/scripts/run_files.py supersede` when the run rewinds."),
+                location=rel))
+
+    if run_dir is None:
+        report.add(Finding(
+            code="HANDOFF_PATHS_UNCHECKED", severity="minor", status=UNCHECKED,
+            message=("The ledger is not in the save layout (skillset-saves/runs/<run>/delivery), so no record's "
+                     "package_path, verdict record or manifest could be checked. Confirm them by hand."),
+            location="package"))
+    if len(report.failures) == before:
+        listing = ", ".join(f"{name} r{_revision_number(fields['revision']) if _revision_number(fields['revision']) is not None else fields['revision']} "
+                            f"{str(fields['verdict']).upper()}" for name, fields in sorted(parsed.items()))
+        report.add(Finding(
+            code="HANDOFF_LEDGER_OK", severity="info", status=PASS,
+            message=(f"{len(parsed)} handoff record{'' if len(parsed) == 1 else 's'} ({listing}); the record being judged "
+                     f"is {current or 'none'}."),
+            location="package"))
+
+
+def _record_identity(path: Optional[Path]) -> Optional[Tuple[Set[str], Set[str]]]:
+    """The submission id and revision one record declares, as ``check_idempotency`` takes them."""
+    if path is None or not path.is_file():
+        return None
+    fields = parse_frontmatter(_read(path))
+    sid, rev = _submission_token(fields.get("submission_id")), _revision_token(fields.get("revision"))
+    return ({sid} if sid is not None else set(), {rev} if rev is not None else set())
 
 
 def check_harness_doctrine(root: Path, report: Report) -> None:
@@ -1262,7 +1568,11 @@ def load_blocked_phrases(extra_path: Optional[Path]) -> List[str]:
 
 def run_gate(root: Path, manifest: Manifest,
              prior_path: Optional[Path] = None,
-             blocked_phrases_path: Optional[Path] = None) -> Report:
+             blocked_phrases_path: Optional[Path] = None,
+             boundary: Optional[str] = None) -> Report:
+    """``boundary`` names the record being judged in a ledger (``--boundary``).
+    Raises ``GateCannotRun`` when a ledger holds several records and none can be
+    told to be the current one."""
     report = Report(boundary=manifest.boundary, package_path=str(root))
     if not root.exists() or not root.is_dir():
         report.add(Finding(
@@ -1280,12 +1590,26 @@ def run_gate(root: Path, manifest: Manifest,
         ))
         return report
 
+    records = ledger_records(root, manifest)
+    current = current_record(records, boundary, root) if manifest.ledger_pattern else None
+    identity = None
+    if manifest.ledger_pattern and current is not None:
+        # The record being judged fills the ledger slot from its own path, and the other records fill none.
+        own = manifest.ledger_pattern.replace("{boundary}", current)
+        manifest = dataclasses.replace(manifest, artifacts=tuple(
+            dataclasses.replace(spec, exact_paths=(own,)) if spec.key == manifest.ledger_slot else spec
+            for spec in manifest.artifacts))
+        identity = _record_identity(records.get(current))
+    others = [path for name, path in records.items() if name != current]
+
     check_superseded(root, report)
-    check_required_artifacts(root, manifest, report)
-    check_lineage(root, report)
+    check_required_artifacts(root, manifest, report, skip=others)
+    check_lineage(root, report, records=list(records.values()))
+    if manifest.ledger_pattern:
+        check_handoff_records(root, manifest, report, records, current)
     check_skip_records(root, report)
     scan_blocked_phrases(root, report, load_blocked_phrases(blocked_phrases_path))
-    check_idempotency(root, report, prior_path)
+    check_idempotency(root, report, prior_path, identity)
     check_harness_doctrine(root, report)
     return report
 
@@ -1374,11 +1698,26 @@ def main_with_manifest(manifest: Manifest, argv: Optional[List[str]] = None,
     always means the gate could not run: a refused package directory, bad
     arguments, or an internal error; it is never a verdict."""
     parser = build_arg_parser(f"Deterministic gate check for {manifest.boundary}.")
+    if manifest.ledger_pattern:
+        parser.add_argument("--boundary", default=None,
+                            help="The gates.yaml boundary whose record is being judged ("
+                                 + manifest.ledger_pattern.replace("{boundary}", "<boundary>") + "). Needed once the "
+                                 "package holds more than one record and not exactly one of them is PENDING.")
     args = parser.parse_args(argv)
     floor_error = runtime_floor_error()
     if floor_error is not None:
         sys.stderr.write(f"ERROR: {floor_error}\n")
         return 2
+    boundary = getattr(args, "boundary", None)
+    if boundary is not None:
+        try:
+            known = sorted(_mapping(Contracts.load().gates.get("boundaries")))
+        except ContractsUnreadable as exc:
+            sys.stderr.write(f"ERROR: --boundary cannot be checked against gates.yaml ({exc}). Gate cannot run.\n")
+            return 2
+        if boundary not in known:
+            sys.stderr.write(f"ERROR: --boundary {boundary!r} is not a boundary in gates.yaml. One of: {', '.join(known)}.\n")
+            return 2
     try:
         package = resolve_package_dir(args.package)
     except PackageRefused as exc:
@@ -1390,12 +1729,16 @@ def main_with_manifest(manifest: Manifest, argv: Optional[List[str]] = None,
             manifest,
             prior_path=Path(args.prior) if args.prior else None,
             blocked_phrases_path=Path(args.blocked_phrases) if args.blocked_phrases else None,
+            boundary=boundary,
         )
         # An empty or missing package has already failed critically and a
         # layout check would only repeat it.
         if not any(f.code in ("PACKAGE_NOT_FOUND", "PACKAGE_EMPTY") for f in report.findings):
             for check in extra_checks:
                 check(package, report)
+    except GateCannotRun as exc:
+        sys.stderr.write(f"ERROR: {exc}\n")
+        return 2
     except Exception as exc:  # fail loud — never a silent pass
         err = {
             "boundary": manifest.boundary,

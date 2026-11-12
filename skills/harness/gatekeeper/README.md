@@ -257,6 +257,26 @@ once as `SUPERSEDED_COPIES`. A slot may name the one place its artifact is read 
 name matches is reported as `ARTIFACT_NOT_CANONICAL`. The build gate reads the
 completeness certificate from `reports/report_completeness.md` this way and fails a
 certificate whose revision is not the package's (`COMPLETENESS_REVISION_MISMATCH`).
+
+One package is a ledger and not a submission: admiral's `delivery/`, whose
+`reports/handoff_<boundary>.md` records each carry their own submission id and
+revision (`Manifest.ledger_pattern`). The one-revision rule would fail it at its
+second record, so the records are left out of the lineage check and held to
+`check_handoff_records` instead. `gatekeeper-admiral/scripts/check.py --boundary
+<name>` names the record being judged; without it a single record is that record,
+and among several the one still `PENDING`, and anything else exits 2 and names the
+records, because the gate never picks one. The record being judged has to match the
+package it hands over (`HANDOFF_MANIFEST_MISMATCH`). Every other record has to be
+`VERDICT_RECORDED` and `APPROVED` (`HANDOFF_STATUS`, `HANDOFF_NOT_APPROVED`), every
+recorded one has to agree with `<package_path>/verdict_<boundary>.cross-stage.json`
+on `verdict`, `verdict_id` and `revision` (`HANDOFF_VERDICT_MISMATCH`), every
+`package_path` has to be a phase directory of the run (`HANDOFF_PACKAGE_PATH`), and
+a record older than the record of the boundary upstream of it is stale after a
+rewind (`HANDOFF_STALE_AFTER_REWIND`). The order is `upstream_boundary` in
+`pipelines.yaml`, which `validate_manifests.py` holds to the upstream links
+`gates.yaml` gives the two `revision_ref` keys. `--prior` is compared with the
+record being judged only, so the verdict of an earlier boundary is never read as
+reusable for this one.
 Below the Python floor `runtime-manifest.yaml` declares, a wrapper exits 2 and
 names the floor before reading the package.
 

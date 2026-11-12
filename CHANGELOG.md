@@ -119,6 +119,32 @@ of Claude Code 2.1.322, Codex CLI 0.166.0 and Antigravity CLI 1.4.12 on Windows.
   - The build gate reads the completeness certificate from `reports/report_completeness.md`
     only, no longer accepts `*confirm*.md` or `*cross-check*.md`, and fails a certificate
     whose frontmatter revision is not the package's (`COMPLETENESS_REVISION_MISMATCH`).
+- Delivery ledger (WP-05, issue 1): admiral's `delivery/reports/` holds one
+  `handoff_<boundary>.md` per boundary, each with its own submission id and revision. The
+  engine's rule of one revision and one submission id per package failed any directory with
+  two records (`MIXED_REVISIONS`, `MIXED_SUBMISSION_IDS`, exit 1), so no run with more than
+  one boundary passed the cross-stage shape check, and the wrapper took no boundary, so it
+  could not tell the record being judged from the earlier ones.
+  - `gatekeeper-admiral/scripts/check.py` takes `--boundary <name>`, checked against
+    `gates.yaml`. Without it a single record is the current one, and among several the one
+    still `PENDING`; anything else exits 2 and names the records. It never picks one.
+  - The records are left out of the lineage check and held to `check_handoff_records`: the
+    current record has to match the manifest of the package it hands over; every other
+    record has to be `VERDICT_RECORDED` and `APPROVED`, which an `ESCALATE` is not; every
+    recorded one has to agree with the gate's own `verdict_<boundary>.cross-stage.json` on
+    verdict, verdict id and revision; `package_path` has to be a phase directory of the run;
+    and a record older than the record upstream of it is stale after a rewind.
+  - The order has a source: `pipelines.yaml` gains `upstream_boundary` on `build`, `review`
+    and `release`, and `validate_manifests.py` holds it to a declared boundary other than
+    the pipeline's own, to no cycle, and to the upstream link `gates.yaml` gives the two
+    `revision_ref` keys.
+  - Admiral supersedes a boundary's record with `run_files.py supersede` before it writes a
+    new attempt's, and on a rewind supersedes the records of every boundary downstream. The
+    handoff record gains `manifest_submission_id`. `--prior` is compared with the current
+    record only, so an earlier boundary's verdict is no longer read as reusable.
+  - The wrapper tests' delivery fixture named a package in another run and carried no
+    `submission_status`; it now writes a record that is true of its package, which is what
+    the new checks require.
 
 Upgrade notes for this section:
 
@@ -126,6 +152,10 @@ Upgrade notes for this section:
   `MIXED_REVISIONS`. Run `python skills/scripts/run_files.py supersede` on each copy once;
   the message names the command. A completeness certificate has to sit at
   `build/reports/report_completeness.md` and declare the package's revision.
+- Delivery ledgers: run the admiral shape check with `--boundary <boundary>`. A handoff
+  record without `manifest_submission_id` is reported as unchecked
+  (`HANDOFF_FIELD_MISSING`) for one release, then as a failure. A record has to carry
+  `submission_status`, and its `package_path` has to be a phase directory of its own run.
 - Worktree sessions: a `.harness-state/` folder that an earlier version created inside a
   linked worktree is no longer read. It can be deleted.
 - Hook hashes: the packages that change a file hashed at registration (WP-00, WP-02 and
@@ -1379,7 +1409,7 @@ bump for new behaviour, a patch for a fix. Skills not listed are unchanged at 1.
 test compares this list with the `version:` of every `SKILL.md`, so a bump that is not
 recorded here, or a record the skill does not carry, fails it.
 
-- `admiral` 2.5.0: quotes the `Enforcement:` line `check_readiness.py` prints above `Ready` to the user at intake and on every resume, so `Ready: yes` with no hooks registered is never taken for a guard that is on; previously the cross-stage `check.py` command passes `--judgment`, without which `--verdict-out` writes a mechanical record and no verdict; previously Review discipline and mandatory third-REVISE user escalation; previously escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second, and startup names `status --run-id` as the only form that reports `interrupted`, an `access_denied` record and a held run with a fresh lock, whatever the pointer says (`held_runs`), as holding the session pin, and `recover --reason` as reclaiming a stale lock only once it is the only held run; previously the intake log is parsed as four fixed tables, and the verdict is read from the gate's own record; previously ceremony scaled to the change and a bounded cross-stage pass; previously native delegation grants and non-blocking MCP template intake; previously startup classification and shared-cap clarification; previously how its commands read in an installed copy, the eleven save-directory
+- `admiral` 2.6.0: the handoff record carries `manifest_submission_id`, the cross-stage shape check is run with `--boundary`, and a record is superseded with `run_files.py supersede` before a second attempt and, for every downstream boundary, on a rewind; previously quotes the `Enforcement:` line `check_readiness.py` prints above `Ready` to the user at intake and on every resume, so `Ready: yes` with no hooks registered is never taken for a guard that is on; previously the cross-stage `check.py` command passes `--judgment`, without which `--verdict-out` writes a mechanical record and no verdict; previously Review discipline and mandatory third-REVISE user escalation; previously escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second, and startup names `status --run-id` as the only form that reports `interrupted`, an `access_denied` record and a held run with a fresh lock, whatever the pointer says (`held_runs`), as holding the session pin, and `recover --reason` as reclaiming a stale lock only once it is the only held run; previously the intake log is parsed as four fixed tables, and the verdict is read from the gate's own record; previously ceremony scaled to the change and a bounded cross-stage pass; previously native delegation grants and non-blocking MCP template intake; previously startup classification and shared-cap clarification; previously how its commands read in an installed copy, the eleven save-directory
   classes, and what `create` carries.
 - `design/architect` 1.1.1: the Taste snapshot is not a start condition, because `pipelines.yaml` runs `taste-snapshot` beside research and requires it only at the design `phase-gate`; a snapshot that has not arrived yet is not the absent-snapshot failure; previously `interfaces` is a typed `interface_set` with `IF-<n>` ids that stand in the hashed artifact; previously directions use the reports destination; previously works from the stack the project already fixes, not a lock
   that comes later in the pipeline.
@@ -1402,7 +1432,7 @@ recorded here, or a record the skill does not carry, fails it.
   modules the hooks import, and Rule C reads a command aimed at the project root by what
   it would put into or remove from the record directories.
 - `unfreeze` 1.1.1: explicit legacy adoption keeps protection active; previously releases by the normalised glob and records the cap on a grant.
-- `gatekeeper-admiral` 2.0.1: the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously a schema-1 result is read as checking applicability records while still letting a bare sanctioned wording stand in for one, and no fallback map names `mock_rendering`; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; carries the phase judgment from the phase gate's own record; previously bounded cross-stage scope, severity threshold and resubmission batch rule; previously independent spec floor and typed security/human-go records; previously audit fixes for input containment, BOM manifests and confirmation-id consistency; previously a REVISE row for a schema-1 result, the typed-record
+- `gatekeeper-admiral` 2.1.0: `scripts/check.py` reads `delivery/` as a ledger of handoff records, takes `--boundary`, and holds every earlier record to a recorded `APPROVED` that agrees with its cross-stage verdict record; previously the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously a schema-1 result is read as checking applicability records while still letting a bare sanctioned wording stand in for one, and no fallback map names `mock_rendering`; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; carries the phase judgment from the phase gate's own record; previously bounded cross-stage scope, severity threshold and resubmission batch rule; previously independent spec floor and typed security/human-go records; previously audit fixes for input containment, BOM manifests and confirmation-id consistency; previously a REVISE row for a schema-1 result, the typed-record
   roster and what a typed record leaves unchecked.
 - `design/gatekeeper-design` 2.0.1: the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously no fallback map, global or boundary, sanctions a wording for `mock_rendering`, and a schema-1 result is read as checking applicability records while still letting a bare sanctioned wording stand in for one; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously no invented mock-rendering fallback; previously spec floor, exact layer citation and corrected research/UI slots; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, and the stack-lock and
   selection rules the engine now enforces.

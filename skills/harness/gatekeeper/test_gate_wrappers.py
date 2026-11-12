@@ -32,6 +32,7 @@ SKILLS = ENGINE_DIR.parents[1]
 REPO = SKILLS.parent
 sys.path.insert(0, str(ENGINE_DIR))
 
+import _fixtures as fixtures  # noqa: E402
 import _gatecheck as gc  # noqa: E402
 
 # A lens packet in the shape review/*/SKILL.md fixes, fenced the way the review
@@ -58,9 +59,14 @@ def _review(pkg: Path, full: bool) -> None:
 
 
 def _delivery(pkg: Path, full: bool) -> None:
+    """A delivery ledger with one pending record, and the manifest of the review package it hands over: the record
+    names a phase directory of its own run and that package's revision and submission id."""
+    run = pkg.parent
+    _write(run / "review" / "manifest.json",
+           json.dumps({"schema_version": 2, "boundary": "review-to-delivery", "revision": 1, "submission_id": "review-1"}))
     _write(pkg / "reports" / "handoff_review-to-delivery.md",
-           "---\nsubmission_id: S1\nrevision: 1\npackage_path: skillset-saves/runs/r-1/review\n"
-           "verdict: PENDING\n---\n# Handoff\n")
+           f"---\nsubmission_id: S1\nrevision: 1\npackage_path: skillset-saves/runs/{run.name}/review\n"
+           "manifest_submission_id: review-1\nsubmission_status: PENDING\nverdict: PENDING\n---\n# Handoff\n")
     if full:
         _write(pkg / "reports" / "delivery-package.md", "# Delivery package\n")
 
@@ -786,6 +792,245 @@ class CompletenessRevisionTests(BuildGateCase):
         self.assertEqual(code, 0)
         self.assertIn("REVISION_ABSENT", codes)
         self.assertEqual([c for c in codes if c.startswith("COMPLETENESS_REVISION")], [])
+
+
+
+class DeliveryLedgerTests(unittest.TestCase):
+    """WP-05 (issue 1): admiral's ``delivery/reports/`` holds one handoff record per boundary, and the gate reads it
+    as a ledger.
+
+    Each record has its own submission id and revision, so the engine's rule of one revision and one submission id
+    per package failed any directory with two records (MIXED_REVISIONS and MIXED_SUBMISSION_IDS, exit 1): no run with
+    more than one boundary could pass the cross-stage shape check. The wrapper took no boundary either, so it could
+    not tell the record being judged from the earlier ones."""
+
+    SCRIPT = SKILLS / "gatekeeper-admiral" / "scripts" / "check.py"
+    RUN = "r-1"
+    DONE = [{"boundary": "design-to-build", "revision": 1}, {"boundary": "build-to-review", "revision": 2},
+            {"boundary": "review-to-delivery", "revision": 3}]
+    PENDING = {"boundary": "deploy-readiness", "revision": 4, "status": "PENDING"}
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.project = Path(self._tmp.name).resolve()
+        (self.project / ".git").mkdir()
+        sys.path.insert(0, str(SKILLS / "scripts"))
+        import run_files
+        self.run_files = run_files
+
+    def ledger(self, entries, package: bool = True) -> Path:
+        delivery = fixtures.ledger(self.project, self.RUN, [dict(entry) for entry in entries])
+        if package:
+            _write(delivery / "reports" / "delivery-package.md", "# Delivery package\nWhat was approved and what is next.\n")
+        return delivery
+
+    def run_check(self, delivery: Path, *args: str) -> subprocess.CompletedProcess:
+        return _run(self.SCRIPT, str(delivery), "--json", *args, cwd=self.project)
+
+    def check(self, delivery: Path, *args: str) -> tuple:
+        done = self.run_check(delivery, *args)
+        self.assertIn(done.returncode, (0, 1), done.stderr + done.stdout)
+        report = json.loads(done.stdout)
+        return done.returncode, report, [f["code"] for f in report["findings"]]
+
+    def finding(self, report: dict, code: str) -> dict:
+        return next(f for f in report["findings"] if f["code"] == code)
+
+    def test_a_run_with_four_boundaries_passes_at_the_one_being_judged(self):
+        delivery = self.ledger([*self.DONE, self.PENDING])
+        code, report, codes = self.check(delivery, "--boundary", "deploy-readiness")
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["gate_status"], "STRUCTURE_OK", [f for f in report["findings"] if f["status"] != "PASS"])
+        self.assertEqual([c for c in codes if c in ("MIXED_REVISIONS", "MIXED_SUBMISSION_IDS")], [])
+        self.assertIn("the record being judged is deploy-readiness", self.finding(report, "HANDOFF_LEDGER_OK")["message"])
+        present = [f["location"] for f in report["findings"] if f["code"] == "ARTIFACT_PRESENT"]
+        self.assertEqual(sorted(present), ["reports/delivery-package.md", "reports/handoff_deploy-readiness.md"])
+
+    def test_every_boundary_of_a_run_passes_in_turn(self):
+        """Design, build, review and delivery: the ledger grows by one record at a time and passes each time."""
+        entries = []
+        for entry in [*self.DONE, {"boundary": "deploy-readiness", "revision": 4}]:
+            delivery = self.ledger([*entries, {**entry, "status": "PENDING"}])
+            with self.subTest(judged=entry["boundary"], records=len(entries) + 1):
+                code, report, codes = self.check(delivery, "--boundary", entry["boundary"])
+                self.assertEqual((code, report["gate_status"]), (0, "STRUCTURE_OK"), report)
+            entries.append(entry)
+
+    def test_the_one_pending_record_is_judged_without_being_named(self):
+        delivery = self.ledger([*self.DONE, self.PENDING])
+        code, report, codes = self.check(delivery)
+        self.assertEqual((code, report["gate_status"]), (0, "STRUCTURE_OK"), report)
+        self.assertIn("the record being judged is deploy-readiness", self.finding(report, "HANDOFF_LEDGER_OK")["message"])
+
+    def test_two_pending_records_and_no_boundary_have_no_answer(self):
+        delivery = self.ledger([self.DONE[0], {"boundary": "build-to-review", "revision": 2, "status": "PENDING"},
+                                {"boundary": "review-to-delivery", "revision": 3, "status": "PENDING"}])
+        done = self.run_check(delivery)
+        self.assertEqual(done.returncode, 2, done.stdout)
+        self.assertEqual(done.stdout, "")
+        for name in ("reports/handoff_build-to-review.md", "reports/handoff_review-to-delivery.md", "--boundary"):
+            self.assertIn(name, done.stderr)
+        named = self.check(delivery, "--boundary", "review-to-delivery")
+        self.assertIn("HANDOFF_STATUS", named[2], "named, the other pending record is an earlier one that was never recorded")
+
+    def test_no_pending_record_among_several_has_no_answer_either(self):
+        done = self.run_check(self.ledger(self.DONE))
+        self.assertEqual(done.returncode, 2, done.stdout)
+        self.assertIn("Pass --boundary", done.stderr)
+
+    def test_a_boundary_that_is_not_in_the_gate_spec_is_refused(self):
+        done = self.run_check(self.ledger([self.PENDING]), "--boundary", "deploy-readyness")
+        self.assertEqual(done.returncode, 2, done.stdout)
+        self.assertIn("is not a boundary in gates.yaml", done.stderr)
+        self.assertIn("deploy-readiness", done.stderr)
+
+    def test_a_boundary_with_no_record_is_a_missing_artifact(self):
+        delivery = self.ledger(self.DONE)
+        code, report, codes = self.check(delivery, "--boundary", "deploy-readiness")
+        self.assertEqual(code, 1)
+        self.assertIn("expected at: reports/handoff_deploy-readiness.md", self.finding(report, "ARTIFACT_MISSING")["message"])
+
+    def test_an_earlier_record_that_disagrees_with_its_verdict_record_names_the_file_and_the_field(self):
+        cases = (({"recorded": {"judgment": {"gate": "gatekeeper-admiral", "verdict": "REVISE", "valid": True}}}, "verdict ("),
+                 ({"record": {"verdict_id": "vid-forged"}}, "verdict_id ("),
+                 ({"recorded": {"revision": 9}}, "revision ("),
+                 ({"record": {"verdict_id": None}}, "verdict_id ("))
+        for override, field in cases:
+            entries = [self.DONE[0], {**self.DONE[1], **override}, self.DONE[2], self.PENDING]
+            with self.subTest(field=field, override=override):
+                code, report, codes = self.check(self.ledger(entries), "--boundary", "deploy-readiness")
+                self.assertEqual(code, 1)
+                finding = self.finding(report, "HANDOFF_VERDICT_MISMATCH")
+                self.assertEqual(finding["location"], "reports/handoff_build-to-review.md")
+                self.assertIn("build/verdict_build-to-review.cross-stage.json", finding["message"])
+                self.assertIn(field, finding["message"])
+
+    def test_a_recorded_verdict_with_no_verdict_record_is_a_mismatch(self):
+        delivery = self.ledger([*self.DONE, self.PENDING])
+        (self.project / "skillset-saves" / "runs" / self.RUN / "build" / "verdict_build-to-review.cross-stage.json").unlink()
+        code, report, codes = self.check(delivery, "--boundary", "deploy-readiness")
+        self.assertIn("does not exist", self.finding(report, "HANDOFF_VERDICT_MISMATCH")["message"])
+
+    def test_an_earlier_record_that_was_not_approved_stops_the_run(self):
+        for verdict in ("REVISE", "ESCALATE"):
+            entries = [self.DONE[0], {**self.DONE[1], "verdict": verdict}, self.DONE[2], self.PENDING]
+            with self.subTest(verdict=verdict):
+                code, report, codes = self.check(self.ledger(entries), "--boundary", "deploy-readiness")
+                self.assertEqual(code, 1)
+                self.assertEqual(self.finding(report, "HANDOFF_NOT_APPROVED")["location"], "reports/handoff_build-to-review.md")
+                self.assertNotIn("HANDOFF_VERDICT_MISMATCH", codes, "the record agrees with the gate; the verdict is the defect")
+
+    def test_a_package_path_in_another_run_or_outside_the_run_is_refused(self):
+        other = self.project / "skillset-saves" / "runs" / "r-2" / "build"
+        other.mkdir(parents=True)
+        for path in ("skillset-saves/runs/r-2/build", "skillset-saves/runs/r-1/nowhere", "skillset-saves/runs/r-1", "src",
+                     "skillset-saves/runs/r-1/build/reports", str(other)):
+            entries = [self.DONE[0], {**self.DONE[1], "record": {"package_path": path}}, self.DONE[2], self.PENDING]
+            with self.subTest(package_path=path):
+                code, report, codes = self.check(self.ledger(entries), "--boundary", "deploy-readiness")
+                self.assertEqual(code, 1)
+                self.assertEqual(self.finding(report, "HANDOFF_PACKAGE_PATH")["location"], "reports/handoff_build-to-review.md")
+
+    def test_a_record_left_behind_by_a_rewind_is_stale_until_it_is_superseded(self):
+        """The run rewound to design and build was judged again at revision 5 and 6; review's record is still revision 3."""
+        entries = [{"boundary": "design-to-build", "revision": 5}, {"boundary": "build-to-review", "revision": 6, "status": "PENDING"},
+                   self.DONE[2]]
+        delivery = self.ledger(entries)
+        code, report, codes = self.check(delivery, "--boundary", "build-to-review")
+        self.assertEqual(code, 1)
+        stale = self.finding(report, "HANDOFF_STALE_AFTER_REWIND")
+        self.assertEqual(stale["location"], "reports/handoff_review-to-delivery.md")
+        self.assertIn("run_files.py supersede", stale["message"])
+        self.run_files.supersede(self.project, self.RUN, "delivery", "reports/handoff_review-to-delivery.md", 6)
+        code, report, codes = self.check(delivery, "--boundary", "build-to-review")
+        self.assertEqual((code, report["gate_status"]), (0, "STRUCTURE_OK"), report)
+        self.assertIn("SUPERSEDED_COPIES", codes)
+
+    def test_a_second_attempt_supersedes_the_first_record_of_its_boundary(self):
+        delivery = self.ledger([self.DONE[0], {"boundary": "build-to-review", "revision": 2, "verdict": "REVISE"}])
+        self.run_files.supersede(self.project, self.RUN, "delivery", "reports/handoff_build-to-review.md", 3)
+        self.ledger([self.DONE[0], {"boundary": "build-to-review", "revision": 3, "status": "PENDING"}])
+        code, report, codes = self.check(delivery, "--boundary", "build-to-review")
+        self.assertEqual((code, report["gate_status"]), (0, "STRUCTURE_OK"), report)
+
+    def test_a_boundary_whose_verdict_is_already_recorded_can_be_checked_again(self):
+        delivery = self.ledger([*self.DONE, {"boundary": "deploy-readiness", "revision": 4}])
+        code, report, codes = self.check(delivery, "--boundary", "deploy-readiness")
+        self.assertEqual((code, report["gate_status"]), (0, "STRUCTURE_OK"), report)
+
+    def test_a_prior_verdict_of_an_earlier_boundary_is_not_reusable_for_this_one(self):
+        delivery = self.ledger([*self.DONE, self.PENDING])
+        earlier = self.project / "skillset-saves" / "runs" / self.RUN / "build" / "verdict_build-to-review.cross-stage.json"
+        prior = self.project / "prior.md"
+        _write(prior, f"---\nsubmission_id: {self.RUN}_handoff-2_attempt-1\nrevision: 2\nverdict: APPROVED\n---\n")
+        for record in (prior, earlier):
+            with self.subTest(prior=record.name):
+                code, report, codes = self.check(delivery, "--boundary", "deploy-readiness", "--prior", str(record))
+                self.assertNotIn("VERDICT_REUSABLE", codes)
+        own = self.project / "own.md"
+        _write(own, f"---\nsubmission_id: {self.RUN}_handoff-4_attempt-1\nrevision: 4\nverdict: APPROVED\n---\n")
+        self.assertIn("VERDICT_REUSABLE", self.check(delivery, "--boundary", "deploy-readiness", "--prior", str(own))[2])
+
+    def test_the_record_being_judged_has_to_match_the_package_it_hands_over(self):
+        cases = (({"manifest": {"revision": 9}}, "revision"),
+                 ({"record": {"manifest_submission_id": "release-0"}}, "manifest_submission_id"))
+        for override, field in cases:
+            with self.subTest(field=field):
+                code, report, codes = self.check(self.ledger([*self.DONE, {**self.PENDING, **override}]), "--boundary", "deploy-readiness")
+                self.assertEqual(code, 1)
+                self.assertIn(field, self.finding(report, "HANDOFF_MANIFEST_MISMATCH")["message"])
+        delivery = self.ledger([*self.DONE, self.PENDING])
+        (self.project / "skillset-saves" / "runs" / self.RUN / "release" / "manifest.json").unlink()
+        code, report, codes = self.check(delivery, "--boundary", "deploy-readiness")
+        self.assertIn("manifest.json does not exist", self.finding(report, "HANDOFF_MANIFEST_MISMATCH")["message"])
+
+    def test_a_record_without_the_manifest_submission_id_is_unchecked_for_one_release(self):
+        delivery = self.ledger([*self.DONE, {**self.PENDING, "record": {"manifest_submission_id": None}}])
+        code, report, codes = self.check(delivery, "--boundary", "deploy-readiness")
+        self.assertEqual((code, report["gate_status"]), (0, "NEEDS_JUDGMENT"), report)
+        missing = self.finding(report, "HANDOFF_FIELD_MISSING")
+        self.assertEqual((missing["status"], missing["location"]), ("UNCHECKED", "reports/handoff_deploy-readiness.md"))
+
+    def test_a_record_that_lacks_a_field_or_shares_a_submission_id_fails(self):
+        for field in ("submission_id", "revision", "package_path", "submission_status", "verdict"):
+            entries = [self.DONE[0], {**self.DONE[1], "record": {field: None}}, self.PENDING]
+            with self.subTest(missing=field):
+                code, report, codes = self.check(self.ledger(entries), "--boundary", "deploy-readiness")
+                self.assertEqual(code, 1)
+                self.assertIn(field, self.finding(report, "HANDOFF_RECORD_INCOMPLETE")["message"])
+        entries = [self.DONE[0], {**self.DONE[1], "record": {"submission_id": f"{self.RUN}_handoff-1_attempt-1"}}, self.PENDING]
+        code, report, codes = self.check(self.ledger(entries), "--boundary", "deploy-readiness")
+        self.assertEqual(code, 1)
+        self.assertIn("handoff_build-to-review.md", self.finding(report, "HANDOFF_DUPLICATE_SUBMISSION")["message"])
+
+    def test_a_status_the_record_cannot_have(self):
+        entries = [self.DONE[0], {**self.DONE[1], "status": "PENDING"}, self.PENDING]
+        code, report, codes = self.check(self.ledger(entries), "--boundary", "deploy-readiness")
+        self.assertEqual(self.finding(report, "HANDOFF_STATUS")["location"], "reports/handoff_build-to-review.md")
+        entries = [*self.DONE, {**self.PENDING, "record": {"submission_status": "DRAFT"}}]
+        code, report, codes = self.check(self.ledger(entries), "--boundary", "deploy-readiness")
+        self.assertEqual(self.finding(report, "HANDOFF_STATUS")["location"], "reports/handoff_deploy-readiness.md")
+
+    def test_a_run_may_start_from_an_approved_package_with_no_upstream_record(self):
+        delivery = self.ledger([self.DONE[2], self.PENDING])
+        code, report, codes = self.check(delivery, "--boundary", "deploy-readiness")
+        self.assertEqual((code, report["gate_status"]), (0, "STRUCTURE_OK"), report)
+
+    def test_outside_the_save_layout_the_path_checks_are_unchecked(self):
+        delivery = self.ledger([*self.DONE, self.PENDING])
+        loose = self.project / "loose" / "delivery"
+        shutil.copytree(delivery, loose)
+        code, report, codes = self.check(loose, "--boundary", "deploy-readiness")
+        self.assertEqual(code, 0, report)
+        self.assertEqual(self.finding(report, "HANDOFF_PATHS_UNCHECKED")["status"], "UNCHECKED")
+        self.assertNotIn("HANDOFF_PACKAGE_PATH", codes)
+
+    def test_the_other_wrappers_take_no_boundary(self):
+        done = _run(SKILLS / "build" / "gatekeeper-build" / "scripts" / "check.py", str(self.project), "--boundary", "build-to-review",
+                    cwd=self.project)
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("unrecognized arguments", done.stderr)
 
 
 if __name__ == "__main__":

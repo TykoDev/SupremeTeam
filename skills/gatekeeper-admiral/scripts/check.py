@@ -5,16 +5,25 @@ Deterministic gate check for ``gatekeeper-admiral`` — the cross-stage boundary
 Validates a cross-stage handoff package at any of the ten boundaries in
 ``gates.yaml`` — ``contracts/workflow-protocol.md`` makes gatekeeper-admiral the
 cross-stage validator at every one of them, not only the phase-to-phase handoffs
-— for the structural facts a gatekeeper must not re-derive by hand: the handoff record's shape, single-revision lineage,
+— for the structural facts a gatekeeper must not re-derive by hand: the handoff record's shape, the delivery ledger,
 skip-record completeness, blocked-phrase cleanliness (this gate OWNS that scan),
 idempotency against a prior verdict, and harness-doctrine §5 structure.
+
+The package is a ledger: ``delivery/reports/`` holds one ``handoff_<boundary>.md`` per boundary
+the run has reached, each with its own submission id and revision. ``--boundary`` names the
+record being judged. Without it a single record is that record, and among several the one still
+``submission_status: PENDING``; anything else exits 2 and asks for ``--boundary``. The record
+being judged has to match the package it hands over (``package_path``, the manifest's revision
+and submission id). Every other record is history: recorded, APPROVED, in agreement with the
+gate's own ``verdict_<boundary>.cross-stage.json``, and not older than the record of the boundary
+upstream of it (``pipelines.yaml`` ``upstream_boundary``).
 
 The script reports PASS / FAIL / UNCHECKED facts only. It does NOT issue a
 verdict — the skill combines this report with judgment to choose APPROVED /
 REVISE / ESCALATE. See ../SKILL.md and ../references/workflow.md.
 
 Usage:
-    python check.py <package-dir> [--prior <verdict-file>] [--json]
+    python check.py <package-dir> [--boundary <name>] [--prior <verdict-file>] [--json]
 """
 
 import sys
@@ -49,6 +58,8 @@ gc = _engine()
 MANIFEST = gc.Manifest(
     boundary="cross-stage handoff (admiral)",
     sub_orchestrator="admiral",
+    ledger_pattern="reports/handoff_{boundary}.md",
+    ledger_slot="handoff_record",
     artifacts=(
         gc.ArtifactSpec(
             key="handoff_record",

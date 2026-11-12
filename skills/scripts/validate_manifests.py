@@ -636,6 +636,50 @@ def review_execution_errors(spec: dict) -> list[str]:
     return []
 
 
+def upstream_boundary_errors(pipelines: dict[str, Any], gates: dict[str, Any]) -> list[str]:
+    """What is wrong with the ``upstream_boundary`` links of pipelines.yaml: the one declared boundary order.
+
+    A link has to name a gates.yaml boundary other than the pipeline's own, the links may not form a cycle, and where
+    the pipeline's boundary requires a ``revision_ref`` key, gates.yaml already names the boundary that key binds to
+    (``evidence_type_params.<key>.upstream_boundary``): the two have to agree, or the ledger would order the run one
+    way while the gate binds the approval another."""
+    errors: list[str] = []
+    boundaries = gates.get("boundaries", {}) or {}
+    types = gates.get("evidence_types", {}) or {}
+    params = gates.get("evidence_type_params", {}) or {}
+    links: dict[str, str] = {}
+    for name, pipeline in pipelines.items():
+        if not isinstance(pipeline, dict):
+            continue
+        boundary = str(pipeline.get("boundary", ""))
+        declared = pipeline.get("upstream_boundary")
+        bound = sorted({str(params[key]["upstream_boundary"]) for key in (boundaries.get(boundary, {}) or {}).get("required_evidence", [])
+                        if types.get(key) == "revision_ref" and isinstance(params.get(key), dict) and params[key].get("upstream_boundary")})
+        if declared is None:
+            if bound:
+                errors.append(f"pipelines.yaml: {name} declares no upstream_boundary, but gates.yaml binds a revision_ref "
+                              f"key of {boundary} to {bound[0]}")
+            continue
+        if not isinstance(declared, str) or declared not in boundaries:
+            errors.append(f"pipelines.yaml: {name} upstream_boundary {declared!r} is not a gates.yaml boundary")
+            continue
+        if declared == boundary:
+            errors.append(f"pipelines.yaml: {name} upstream_boundary is its own boundary {boundary!r}")
+            continue
+        if bound and bound != [declared]:
+            errors.append(f"pipelines.yaml: {name} upstream_boundary {declared!r} differs from the boundary gates.yaml "
+                          f"binds a revision_ref key of {boundary} to ({', '.join(bound)})")
+        links[boundary] = declared
+    for start in sorted(links):
+        seen, current = [start], links.get(start)
+        while current is not None and current not in seen:
+            seen.append(current)
+            current = links.get(current)
+        if current == start:
+            errors.append("pipelines.yaml: upstream_boundary links form a cycle: " + " -> ".join([*seen, start]))
+    return errors
+
+
 def check_pipeline_mirrors(root: Path, team: dict[str, Any], ownership: dict[str, Any],
                            gates: dict[str, Any], errors: list[str], installed: set[str] | None = None) -> int:
     pipeline_spec = _load(root / "pipelines.yaml", errors)
@@ -670,6 +714,7 @@ def check_pipeline_mirrors(root: Path, team: dict[str, Any], ownership: dict[str
         for script in pipeline.get("scripts", []):
             if not str(script).startswith("skills/") or not _skills_path(root, str(script)).is_file():
                 errors.append(f"pipelines.yaml: {name} required script {script!r} does not exist")
+    errors.extend(upstream_boundary_errors(pipelines, gates))
     gate_names = set(gates.get("boundaries", {}) or {})
     if set(boundary_owners) != gate_names:
         errors.append("pipelines.yaml and gates.yaml boundary lists differ")

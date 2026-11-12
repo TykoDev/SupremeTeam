@@ -108,7 +108,7 @@ approving it.
 | Validator | Input | Settles |
 |---|---|---|
 | `skills/harness/gatekeeper/check.py` | a gate manifest | Required keys present and artifact-backed, typed records shaped, hashes and inputs bound, one revision, the right submitter, blocked phrases and broken links, drift against `--prior` |
-| `gatekeeper-*/scripts/check.py` (`_gatecheck.py`) | a phase package directory | Deliverables present with their marker fields, single-revision lineage, skip records, blocked phrases, links that stay inside the package |
+| `gatekeeper-*/scripts/check.py` (`_gatecheck.py`) | a phase package directory | Deliverables present with their marker fields, single-revision lineage, superseded copies held to their index, skip records, blocked phrases, links that stay inside the package. For `gatekeeper-admiral` the package is the delivery ledger: `--boundary <name>` names the handoff record being judged, and every earlier record has to be a recorded `APPROVED` that agrees with its cross-stage verdict record and is not older than the record upstream of it |
 
 Both report facts and fail loud: package defect exit 1, engine error exit 2,
 never a pass. The gatekeeper adds judgment: whether an artifact is adequate,

@@ -124,3 +124,45 @@ def approved_upstream(package_dir: Path, upstream_dir: Path, boundary: str, revi
     path.write_text(json.dumps(verdict), encoding="utf-8")
     rel = os.path.relpath(path, package_dir).replace(os.sep, "/")
     return rel, content_sha256(path)
+
+
+# The phase directory each boundary's package lives in, for a delivery ledger.
+LEDGER_PHASES = {"design-to-build": "design", "build-to-review": "build", "review-to-delivery": "review",
+                 "deploy-readiness": "release", "security-review": "security", "qa-review": "qa"}
+
+
+def ledger(project: Path, run_id: str, entries: list[dict]) -> Path:
+    """Write admiral's delivery ledger for a run, and the phase packages its records hand over.
+
+    Each entry is one boundary's handoff record: ``boundary`` and ``revision``, and optionally ``status``
+    (``VERDICT_RECORDED`` by default) and ``verdict`` (``APPROVED``; ``PENDING`` for a pending record). ``record``
+    overrides frontmatter fields (a value of None drops the field), ``recorded`` overrides fields of the cross-stage
+    verdict record, and ``manifest`` those of the phase manifest. What is written agrees with itself unless an
+    override says otherwise, so a test states only the defect it is about. Returns the ``delivery`` directory."""
+    run = project / "skillset-saves" / "runs" / run_id
+    delivery = run / "delivery"
+    (delivery / "reports").mkdir(parents=True, exist_ok=True)
+    for number, entry in enumerate(entries, start=1):
+        boundary, revision = entry["boundary"], entry["revision"]
+        phase = entry.get("phase", LEDGER_PHASES[boundary])
+        status = entry.get("status", "VERDICT_RECORDED")
+        verdict = entry.get("verdict", "APPROVED" if status == "VERDICT_RECORDED" else "PENDING")
+        package = run / phase
+        package.mkdir(parents=True, exist_ok=True)
+        manifest = {"schema_version": 2, "boundary": boundary, "revision": revision, "run_id": run_id,
+                    "submission_id": f"{phase}-{revision}", **entry.get("manifest", {})}
+        (package / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        fields = {"submission_id": f"{run_id}_handoff-{number}_attempt-1", "revision": revision,
+                  "package_path": f"skillset-saves/runs/{run_id}/{phase}", "manifest_submission_id": manifest["submission_id"],
+                  "submission_status": status, "verdict": verdict}
+        if status == "VERDICT_RECORDED":
+            recorded = {"boundary": boundary, "revision": revision, "run_id": run_id, "submission_id": manifest["submission_id"],
+                        "verdict_id": f"vid-{boundary}-{revision}", "mechanical_only": False,
+                        "judgment": {"gate": "gatekeeper-admiral", "verdict": verdict, "findings": [], "valid": True},
+                        **entry.get("recorded", {})}
+            (package / f"verdict_{boundary}.cross-stage.json").write_text(json.dumps(recorded), encoding="utf-8")
+            fields["verdict_id"] = f"vid-{boundary}-{revision}"
+        fields.update(entry.get("record", {}))
+        front = "".join(f"{name}: {value}\n" for name, value in fields.items() if value is not None)
+        (delivery / "reports" / f"handoff_{boundary}.md").write_text(f"---\n{front}---\n# Handoff: {boundary}\n", encoding="utf-8")
+    return delivery

@@ -99,13 +99,22 @@ def _emit(context: str, event: str = "UserPromptSubmit") -> None:
 
 
 def _pending_resume(data: dict) -> "str | None":
+    """What the context hooks have to say with this prompt: the resume note after a compaction (context_events.py)
+    and the advice for a threshold of context usage just crossed (context_watch.py), one line each."""
+    notes = []
     try:
         import context_events
 
-        return context_events.pending_note(data)
+        notes.append(context_events.pending_note(data))
     except Exception as exc:
         _state.record_fault("UserPromptSubmit", exc)
-        return None
+    try:
+        import context_watch
+
+        notes.append(context_watch.advice(data, "UserPromptSubmit"))
+    except Exception as exc:
+        _state.record_fault("UserPromptSubmit", exc)
+    return "\n".join(note for note in notes if note) or None
 
 
 def _session_start(data: dict) -> bool:

@@ -16,6 +16,7 @@ install_claude=0
 register_hooks=0
 hooks_scope=user
 hooks_yes=0
+hooks_statusline=0
 hooks_declined=0
 hooks_failed=0
 dry_run=0
@@ -80,6 +81,8 @@ Options:
                             project or local. The last two belong to the project around
                             the directory you run this from.
   --hooks-yes               Do not ask before --register-hooks writes.
+  --hooks-statusline        With --register-hooks for Claude Code: also set the status
+                            line to the context-usage sidecar, when none is configured.
   --install-claude          Mirror the install into ~/.claude/skills.
   --claude-destination PATH Override the Claude Code skill path.
   --cursor-destination PATH Override the Cursor skill path.
@@ -897,6 +900,9 @@ register_harness_hooks() {
     if [[ $hooks_yes -eq 1 ]]; then
         hook_args+=(--yes)
     fi
+    if [[ $hooks_statusline -eq 1 ]]; then
+        hook_args+=(--statusline)
+    fi
 
     # Exit 3 is the operator answering no at the preview: nothing was written.
     local status=0
@@ -955,6 +961,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --hooks-yes)
             hooks_yes=1
+            shift
+            ;;
+        --hooks-statusline)
+            hooks_statusline=1
             shift
             ;;
         --install-claude)

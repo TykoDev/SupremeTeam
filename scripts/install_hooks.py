@@ -175,6 +175,11 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
     except ValueError as exc:
         raise Refused(f"{path}: {exc}") from exc
 
+    status_notes: list[str] = []
+    if args.statusline and host == repair.STATUSLINE_HOST:
+        # The status-line sidecar that tells the hooks how full the context window is: set when none is configured.
+        desired, status_added, status_notes = repair.plan_statusline(desired, host, args.python_command)
+        added = added + status_added
     after = json.dumps(desired, indent=2) + "\n"
     backup = None
     probe_notes: list[str] = []
@@ -208,6 +213,7 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
         + ([repair.PARTS_NOTE] if any("args" in handler for _, handler in written) else [])
         + ([twice] if twice else [])
         + legacy
+        + status_notes
         + probe_notes,
     }
     if args.dry_run:
@@ -726,6 +732,10 @@ def parse_args() -> argparse.Namespace:
                         help="write a codex or claude registration without first starting each new command the way the "
                              "host will (the default refuses to write a command that does not start). Not accepted for "
                              "copilot, where a hook that cannot start denies every tool call")
+    parser.add_argument("--statusline", action="store_true",
+                        help="claude: also register context_statusline.py as the status line, when none is configured, so "
+                             "that a run in flight is advised as the context window fills (a configured one is left alone "
+                             "and the command that keeps it is printed)")
     parser.add_argument("--allow-absolute", action="store_true",
                         help="write a copilot project-scope file although it holds this machine's absolute paths "
                              "(refused by default: where those paths do not exist, every tool call is denied)")

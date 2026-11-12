@@ -17,6 +17,8 @@ param(
 
     [switch]$HooksYes,
 
+    [switch]$HooksStatusline,
+
     [switch]$InstallClaude,
 
     [string]$ClaudeDestination = (Join-Path $env:USERPROFILE ".claude\skills"),
@@ -1007,6 +1009,9 @@ function Register-HarnessHooks {
     $hookArgs += @("--scope", $HooksScope.ToLowerInvariant())
     if ($HooksYes) {
         $hookArgs += "--yes"
+    }
+    if ($HooksStatusline) {
+        $hookArgs += "--statusline"
     }
     if (-not [string]::IsNullOrEmpty($PiExtension)) {
         $hookArgs += @("--pi-extension", $PiExtension)

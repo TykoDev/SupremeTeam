@@ -295,6 +295,31 @@ of Claude Code 2.1.322, Codex CLI 0.166.0 and Antigravity CLI 1.4.12 on Windows.
   - Checked in Claude Code 2.1.322: a prompt, `/compact`, a question. The dump was written by
     the hook at the unchanged revision, and the answer named the run, the revision, the next
     action and the dump. Codex was not checked.
+- A run in flight is advised as the context window fills (WP-12, issue 8). The request was
+  a context dump at 90 %. Claude Code's tool and prompt payloads carry no usage figure, and
+  no other host documents one, so the figure comes from elsewhere.
+  - `runtime-manifest.yaml` gains `context_pressure` (`warn` 0.80, `dump` 0.90, `handoff`
+    0.95, `check_every_s` 30, `window_tokens` empty), as numbers: the file is JSON.
+  - New `context_watch.py`, called by the post-tool and prompt hooks. It reads the
+    status-line sidecar when that is fresh, else the last assistant line of the transcript
+    against a window that somebody stated (`SUPREMETEAM_CONTEXT_WINDOW`, the sidecar, or
+    `window_tokens` for the exact model id). With no figure it says nothing and guesses
+    nothing. Crossing a threshold gives one note per session; nothing is ever denied. Only
+    while a run holds the pin, never inside a sub-agent, at most every `check_every_s`.
+  - New `context_statusline.py`, a Claude Code status-line command that records
+    `context_window.used_percentage` and `context_window.context_window_size` for the
+    hooks, and runs a status line of your own behind `--`. `--statusline` on
+    `repair_registration.py` and `install_hooks.py` (`--hooks-statusline`,
+    `-HooksStatusline` on the installers) sets it only when no status line is configured.
+  - The dump command in the note is the interpreter the hook runs under and the
+    `save_run.py` beside it, by path: in a real session the model could not run a
+    checkout-relative command from a project that only uses an installed copy.
+  - `verify_registration.py` says, for Claude Code, which source the advice would use.
+  - Checked in Claude Code 2.1.322 with the transcript source and a declared window: one
+    note, and the dump written with the command it gave. **The status-line fields are the
+    documented ones and were not captured from a live session** (plan item E-10: a status
+    line runs only in an interactive session). Out of the box, with no sidecar and no
+    stated window, there is no advice.
 
 Upgrade notes for this section:
 
@@ -327,7 +352,7 @@ Upgrade notes for this section:
   Readiness warns; `repair_registration.py --host <host> --scope <scope> --apply` adds them.
   Until then a compaction during a run leaves no dump and gives no resume note.
 - Hook hashes: the packages that change a file hashed at registration (WP-00, WP-02, WP-03,
-  WP-04, WP-06, WP-08, WP-10 and WP-11 so far; WP-11 also adds `context_events.py` to the record; WP-03 also adds `scripts/checkout.py` to the record) make readiness report
+  WP-04, WP-06, WP-08, WP-10, WP-11 and WP-12 so far; WP-11 and WP-12 add `context_events.py` and `context_watch.py` to the record; WP-03 also adds `scripts/checkout.py` to the record) make readiness report
   the hook files as changed. After upgrading, re-record them for
   each host with `python skills/harness/hooks/repair_registration.py --host <host>
   --record-hashes`, or reinstall with hook registration.
@@ -1608,7 +1633,7 @@ recorded here, or a record the skill does not carry, fails it.
   optional slots.
 - `review/gatekeeper-code` 2.0.1: the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously a schema-1 result is read as checking applicability records while still letting a bare sanctioned wording stand in for one; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously selection-dependent redesign render applicability; previously safety floor and corrected CSO/security attribution; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, with its package guard and
   optional slots.
-- `session-memory` 1.2.0: defines the context dump (`save_run.py dump`, which leaves the revision unchanged), names its trigger as a pre-compaction event or context pressure at the dump threshold in place of "context tier 3+", and gives the steps after a compaction; previously records are owner-only on POSIX only (on Windows they keep the directory's access list), a `degraded` result can follow a published revision, only `status --run-id` reports `interrupted`, an `access_denied` record also holds the session pin, so does a held run whatever the pointer says (`held_runs`, which `create` refuses beside and the hooks keep alive), a directory where a record belongs is damage and never `access_denied`, `recover --reason` publishes before it appends its audit event, and no audit line is written when the audit append itself fails; previously the writer lock, `checkpoint --drop-evidence`, the
+- `session-memory` 1.2.1: says when to write the context dump (the `[harness:context-pressure]` note at the dump and handoff thresholds, and what to do where no usage figure exists); previously defines the context dump (`save_run.py dump`, which leaves the revision unchanged), names its trigger as a pre-compaction event or context pressure at the dump threshold in place of "context tier 3+", and gives the steps after a compaction; previously records are owner-only on POSIX only (on Windows they keep the directory's access list), a `degraded` result can follow a published revision, only `status --run-id` reports `interrupted`, an `access_denied` record also holds the session pin, so does a held run whatever the pointer says (`held_runs`, which `create` refuses beside and the hooks keep alive), a directory where a record belongs is damage and never `access_denied`, `recover --reason` publishes before it appends its audit event, and no audit line is written when the audit append itself fails; previously the writer lock, `checkpoint --drop-evidence`, the
   `uninitialized` class, the refusal reasons and the `access_denied` mark; its checkpoint
   example names the lock holder as `--owner` and a project-relative evidence path.
 - `taste` 1.3.0: hashes the run's Intake log into every package it submits so the gatekeeper's judgment can bind `intake.artifact`; previously Review discipline and mandatory third-REVISE user escalation; previously structured set examples and native delegation grants; previously unconditional design snapshot producer; previously `propose` validation, redaction by shape, lock reclaim and the error codes.

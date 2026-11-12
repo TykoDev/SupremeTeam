@@ -99,6 +99,8 @@ SupremeTeam/
     │   │   ├── post_tool_use.py          # PostToolUse: trajectory, heartbeat, coverage sweep
     │   │   ├── user_prompt_submit.py     # UserPromptSubmit: routing and session-pin reminder
     │   │   ├── context_events.py         # PreCompact and SessionStart: a context dump before a compaction, a resume note after it
+    │   │   ├── context_watch.py          # Advice at the context-pressure thresholds, from the status line or the transcript
+    │   │   ├── context_statusline.py     # Claude Code status-line command that records context usage for context_watch.py
     │   │   ├── save_run.py               # The only writer of the run record
     │   │   ├── _saves.py                 # Reader that classifies saved state
     │   │   ├── _state.py                 # Project root, hook input, guard state, fault counting
@@ -151,7 +153,8 @@ are in [CONTRIBUTING.md](../CONTRIBUTING.md#run-the-suites).
     `test_guard_harness_files.py`, `test_guard_state.py`, `test_pre_tool_entry.py`,
     `test_hooks_robustness.py`, `test_program_paths.py`
   - the hooks and their state: `test_post_tool_use.py`, `test_user_prompt_submit.py`,
-    `test_run_heartbeat.py`, `test_context_events.py`, `test_state_hardening.py`, `test_fsutil.py`
+    `test_run_heartbeat.py`, `test_context_events.py`, `test_context_watch.py`, `test_state_hardening.py`,
+    `test_fsutil.py`
   - the run record and its reader: `test_run_state.py`, `test_saves_reader.py`
   - registration and readiness: `test_registration_contract.py`,
     `test_registration_hardening.py`, `test_registration_shells.py`, `test_copilot_registration.py`,

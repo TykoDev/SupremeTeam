@@ -951,6 +951,19 @@ class InstallerBehaviourTests(unittest.TestCase):
             self.assertIn(line, result.stdout)
         self.assertEqual([entry.name for entry in box.home.iterdir()], [".agents"], "pi reads the common skills folder")
 
+    def test_the_status_line_option_is_passed_to_the_hook_helper_and_only_when_asked_for(self):
+        """WP-12: --hooks-statusline has the helper set the context-usage status line for Claude Code."""
+        box = Sandbox(self)
+        record = self.stub_hook_helper(box)
+        asked = box.install("--target", "claude", "--register-hooks", "--hooks-yes", "--hooks-statusline")
+        self.assertEqual(asked.returncode, 0, listing(asked))
+        self.assertIn("--statusline", record.read_text(encoding="utf-8").split())
+        record.unlink()
+        plain = box.install("--target", "claude", "--register-hooks", "--hooks-yes")
+        self.assertEqual(plain.returncode, 0, listing(plain))
+        self.assertNotIn("--statusline", record.read_text(encoding="utf-8"))
+        self.assertIn("--hooks-statusline", box.run("--help").stdout)
+
     def test_the_pi_extension_override_is_passed_to_the_hook_helper(self):
         box = Sandbox(self)
         record = self.stub_hook_helper(box)

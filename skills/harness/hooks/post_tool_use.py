@@ -562,6 +562,15 @@ def main() -> None:
             _pending_maintenance_hints.insert(0, resume)
     except Exception as exc:
         _state.record_fault("PostToolUse", exc)
+    # How full the context is, for a run in flight: one note per threshold crossed (context_watch.py).
+    try:
+        import context_watch
+
+        pressure = context_watch.advice(data, "PostToolUse")
+        if pressure:
+            _pending_maintenance_hints.append(pressure)
+    except Exception as exc:
+        _state.record_fault("PostToolUse", exc)
 
     text = _response_text(data)
     explicit = _explicit_failure(data)

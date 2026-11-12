@@ -57,6 +57,14 @@
       ]
     }
   },
+  "context_pressure": {
+    "purpose": "When harness/hooks/context_watch.py advises a run in flight about how full the conversation's context window is. warn, dump and handoff are fractions of the window, in rising order; crossing one gives one note per session, and nothing is ever denied. check_every_s is the least time between two measurements in one session. window_tokens maps an exact model id to the size of its context window in tokens, for the transcript source; it is empty, so with no status-line sidecar and no SUPREMETEAM_CONTEXT_WINDOW the window is not known and nothing is said.",
+    "warn": 0.80,
+    "dump": 0.90,
+    "handoff": 0.95,
+    "check_every_s": 30,
+    "window_tokens": {}
+  },
   "launchers": {
     "windows": "py -3",
     "macos_linux": "python3",

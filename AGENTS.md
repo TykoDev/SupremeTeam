@@ -237,6 +237,8 @@ Not skills. These are the files the skills are checked against.
 | **audit_improve.py** | `skills/harness/hooks/audit_improve.py` | Bounded read-only audit of saved failures and a skill-maker handoff |
 | **user_prompt_submit.py** | `skills/harness/hooks/user_prompt_submit.py` | `UserPromptSubmit`: advisory entry-routing and session-pin reminder (registered on `SessionStart` for GitHub Copilot, which drops a prompt hook's output) |
 | **context_events.py** | `skills/harness/hooks/context_events.py` | `PreCompact` and `SessionStart` (recommended): before a context compaction during a run it has a context dump written and leaves a marker; after it the model is given the next action and the dump to read, once. Always exits 0 |
+| **context_watch.py** | `skills/harness/hooks/context_watch.py` | Advice for a run in flight as the context window fills: one note per threshold of `runtime-manifest.yaml` `context_pressure`, from the status-line sidecar or the session transcript; never a denial, silent when the window is not known |
+| **context_statusline.py** | `skills/harness/hooks/context_statusline.py` | Claude Code status-line command that records the context usage for `context_watch.py`; registered only with `--statusline` and only when no status line is configured |
 | **save_run.py** | `skills/harness/hooks/save_run.py` | The only writer of the run record and of its context dumps |
 | **_saves.py** | `skills/harness/hooks/_saves.py` | Shared reader that classifies saved state |
 | **_state.py** | `skills/harness/hooks/_state.py` | Fail-open state helper: project root, hook input decoding, guard state, fault counting, trajectories |

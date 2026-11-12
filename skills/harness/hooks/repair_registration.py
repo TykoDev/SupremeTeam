@@ -618,6 +618,36 @@ def double_run_note(host: str) -> "str | None":
             "the same both times and the post-tool hook records the call once")
 
 
+# --- the status-line sidecar (context_statusline.py) --------------------------------------------------------
+
+STATUSLINE_SCRIPT = "context_statusline.py"
+STATUSLINE_HOST = "claude"
+
+
+def plan_statusline(config: dict, host: str, python: str) -> tuple[dict, list[str], list[str]]:
+    """``(config, changes, notes)`` for ``--statusline``: register the sidecar as the host's status line.
+
+    Only Claude Code has one, and a settings file holds one status line. So it is set when none is configured, left
+    alone when it is this script already, and never replaced: for a status line that is somebody's own, the note
+    gives the command that keeps it and records usage as well."""
+    if host != STATUSLINE_HOST:
+        return config, [], [f"--statusline does nothing for {host}: only Claude Code hands a status line the context usage"]
+    try:
+        command = command_for(STATUSLINE_SCRIPT, python, host)
+    except CommandRefused as exc:
+        return config, [], [f"the status line was not set: {exc}"]
+    current = config.get("statusLine")
+    text = current.get("command") if isinstance(current, dict) else None
+    if current in (None, {}, ""):
+        return {**config, "statusLine": {"type": "command", "command": command, "padding": 0}}, [f"statusLine -> {STATUSLINE_SCRIPT}"], []
+    if isinstance(text, str) and STATUSLINE_SCRIPT in text:
+        return config, [], []
+    keep = f"{command} -- {text}" if isinstance(text, str) and text.strip() else command
+    return config, [], ["a status line is already configured and is left as it is. To keep it and record context usage as "
+                        f"well, set statusLine.command to: {keep}  (a command that needs a shell goes after -- as "
+                        "sh -c '<command>')"]
+
+
 CODEX_TRUST_NOTE = ("Codex skips a new or changed hook until it is trusted: start Codex and run /hooks once. Until then the "
                     "guard does not run there, and readiness cannot see whether a hook is trusted")
 PARTS_NOTE = ("the interpreter path holds a space and no py launcher starts that interpreter, so the hook is registered as a "
@@ -738,6 +768,10 @@ def main() -> int:
                         help="with --apply, write without first starting each new command the way the host will "
                              "(the default refuses to write a command that does not start; not accepted for copilot, "
                              "where a hook that cannot start denies every tool call)")
+    parser.add_argument("--statusline", action="store_true",
+                        help="claude: also register context_statusline.py as the status line, when none is configured, so "
+                             "that a run in flight is advised as the context window fills (a configured one is left alone "
+                             "and the command that keeps it is printed)")
     parser.add_argument(ALLOW_ABSOLUTE, action="store_true",
                         help="write a copilot project-scope file although it holds this machine's absolute paths "
                              "(refused by default: where those paths do not exist, every tool call is denied)")
@@ -782,9 +816,13 @@ def main() -> int:
     except ValueError as exc:
         print(json.dumps({"ok": False, "path": str(path), "error": str(exc)}))
         return 2
+    status_notes: list[str] = []
+    if args.statusline:
+        desired, status_added, status_notes = plan_statusline(desired, args.host, args.python)
+        added = added + status_added
     after_text = json.dumps(desired, indent=2) + "\n"
     if not added:
-        legacy = set_legacy_aside(args.host, args.scope, args.apply)
+        legacy = set_legacy_aside(args.host, args.scope, args.apply) + status_notes
         for note in legacy:
             print(f"warning: {note}", file=sys.stderr)
         print(json.dumps({"ok": True, "path": str(path), "changes": [], "applied": False, "warnings": legacy,
@@ -800,6 +838,7 @@ def main() -> int:
     twice = double_run_note(args.host)
     if twice:
         warnings.append(twice)
+    warnings.extend(status_notes)
     if not args.apply:
         warnings.extend(set_legacy_aside(args.host, args.scope, False))
     if any("args" in handler for _, handler in written_handlers(config, desired, args.host)):

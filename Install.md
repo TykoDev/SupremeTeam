@@ -57,6 +57,7 @@ creates carries a `.supremeteam-managed` marker. On an upgrade:
 | Register hooks | `-RegisterHooks` | `--register-hooks` |
 | Which hook config | `-HooksScope Project` | `--hooks-scope project` |
 | Skip the hook question | `-HooksYes` | `--hooks-yes` |
+| Set the context-usage status line (Claude Code) | `-HooksStatusline` | `--hooks-statusline` |
 | Custom path | `-Destination "path"` | `--destination "path"` |
 | Preview only | `-DryRun` | `--dry-run` |
 
@@ -262,6 +263,15 @@ earlier version wrote (`~/.config/github-copilot/hooks.json`, `.github/hooks.jso
 not read by Copilot: when it holds only Supreme Team entries it is moved beside itself
 as `hooks.json.bak-<time>`, and otherwise it is left and named. None of this has been
 run in a Copilot session yet; it follows Copilot's hooks reference.
+
+For Claude Code, `--statusline` (`--hooks-statusline`, `-HooksStatusline` on the
+installers) also sets the status line to `harness/hooks/context_statusline.py`, which
+records how full the context window is so that a run in flight is advised to write a
+context dump at 90 % (the thresholds are `context_pressure` in
+`skills/runtime-manifest.yaml`). It is set only when no status line is configured; one
+of your own is left as it is and the command that keeps it is printed. Without the
+sidecar the advice needs the window stated (`SUPREMETEAM_CONTEXT_WINDOW`), and
+otherwise stays silent.
 
 `--scope project|local` (`--hooks-scope`, `-HooksScope` on the installers) means the
 project around the directory you run it from. A `project` file is usually committed

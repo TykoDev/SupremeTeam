@@ -8,7 +8,7 @@ description: >-
   checkpoint this run, resume from saved state, record a learning, or recall what
   was learned earlier — even when they only say "save where we are". Not general
   note-taking or documentation.
-version: 1.2.0
+version: 1.2.1
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -199,7 +199,12 @@ checkpoint. It leaves the revision where it is, so the next checkpoint still use
 revision the agent knows, and it sits beside `_history/`, outside every phase directory,
 so no gate reads it as part of a package. Where the hooks are registered,
 `harness/hooks/context_events.py` writes the machine section by itself before a
-compaction; the narrative is the agent's to add when it sees one coming.
+compaction; the narrative is the agent's to add when it sees one coming. A
+`[harness:context-pressure]` note says when: at the dump threshold (90 % of the
+context window by default) it gives the command, and at the handoff threshold (95 %)
+it says to dump, start nothing new and let the host compact. The note appears only
+where the harness has a usage figure (the status-line sidecar, or a stated window);
+without one, write the dump when a long stage has filled the conversation.
 
 **After a compaction.** A note tagged `[harness:context-resume]` names the run, its
 revision, the next action and the dump. Then, in this order: read the dump it names;

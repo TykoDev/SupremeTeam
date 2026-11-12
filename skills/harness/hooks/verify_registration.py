@@ -1108,8 +1108,25 @@ RECOMMENDED_WHY = ("without it a context compaction during a run writes no dump 
                    "repair_registration.py")
 
 
+def context_pressure_note() -> str:
+    """Whether a run in flight can be advised as the context window fills on Claude Code, and by what."""
+    sidecar = any(isinstance(value, dict) and isinstance(value.get("statusLine"), dict)
+                  and "context_statusline.py" in str(value["statusLine"].get("command") or "") for _, value in _loaded("claude"))
+    if sidecar:
+        return ("context pressure: the status-line sidecar (context_statusline.py) is configured, so a run in flight is "
+                "advised at the thresholds of runtime-manifest.yaml context_pressure")
+    if os.environ.get("SUPREMETEAM_CONTEXT_WINDOW"):
+        return ("context pressure: read from the session transcript against SUPREMETEAM_CONTEXT_WINDOW; the status-line "
+                "sidecar is not configured")
+    return ("context pressure: no usage source, so a run is not advised as the context window fills. Configure the "
+            "status-line sidecar (repair_registration.py --host claude --scope <scope> --statusline --apply), or give the "
+            "window with SUPREMETEAM_CONTEXT_WINDOW or runtime-manifest.yaml context_pressure.window_tokens")
+
+
 def host_notes(host: str) -> list[str]:
     """What an operator has to know about ``host`` that no hook state says."""
+    if host == "claude":
+        return [context_pressure_note()]
     if host != "copilot":
         return []
     notes = ["prompt routing on copilot is given at session start only: it drops what a command hook prints for a "

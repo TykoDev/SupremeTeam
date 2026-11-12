@@ -11,6 +11,7 @@ codex_destination="${HOME:-}/.codex/skills"
 claude_destination="${HOME:-}/.claude/skills"
 cursor_destination="${HOME:-}/.cursor/skills"
 opencode_destination="${HOME:-}/.config/opencode/skills"
+pi_extension=""
 install_claude=0
 register_hooks=0
 hooks_scope=user
@@ -64,9 +65,12 @@ Options:
                               design, build, review,
                               browser, release, safety, testing
   --target NAME             Install host-native support for one host. Repeatable.
-                              One of: auto, codex, claude, cursor, opencode, copilot.
-                              Default: auto. copilot has no skills folder, so it only
-                              takes part in --register-hooks, and auto never picks it.
+                              One of: auto, codex, claude, cursor, opencode, copilot, pi.
+                              Default: auto. copilot and pi have no skills folder of
+                              their own (pi reads the common one), so they only take
+                              part in --register-hooks. auto never picks copilot, and
+                              picks pi when ~/.pi/agent exists or PI_CODING_AGENT_DIR
+                              is set; a pi program on PATH is not enough.
   --destination PATH        Override the default agent skill path.
   --codex-destination PATH  Override the Codex skill path.
   --register-hooks          Register runtime harness hooks for selected hosts. This edits
@@ -80,6 +84,9 @@ Options:
   --claude-destination PATH Override the Claude Code skill path.
   --cursor-destination PATH Override the Cursor skill path.
   --opencode-destination PATH Override the OpenCode skill path.
+  --pi-extension PATH       Override where --register-hooks writes the pi extension
+                            (default: $PI_CODING_AGENT_DIR/extensions, else
+                            ~/.pi/agent/extensions, /supremeteam-guard.ts).
   --dry-run                 Show what would change and write nothing.
   -h, --help                Show this help message.
 
@@ -726,10 +733,24 @@ host_detected() {
         opencode)
             command -v opencode >/dev/null 2>&1 || [[ -d "$HOME/.config/opencode" ]]
             ;;
+        pi)
+            # The agent directory, or the variable that moves it. A program named pi on PATH proves nothing: the
+            # name is generic, and a false match would write an extension into the home directory.
+            [[ -d "$HOME/.pi/agent" ]] || [[ -n "${PI_CODING_AGENT_DIR:-}" ]]
+            ;;
         *)
             return 1
             ;;
     esac
+}
+
+# Where --register-hooks puts the pi extension: the override, else the agent directory pi itself reads.
+pi_extension_path() {
+    if [[ -n "$pi_extension" ]]; then
+        printf '%s' "$pi_extension"
+    else
+        printf '%s/extensions/supremeteam-guard.ts' "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+    fi
 }
 
 add_selected_target() {
@@ -757,13 +778,13 @@ resolve_targets() {
         normalized="$(printf '%s' "$target" | tr '[:upper:]' '[:lower:]')"
         case "$normalized" in
             auto)
-                for detected in codex claude cursor opencode; do
+                for detected in codex claude cursor opencode pi; do
                     if host_detected "$detected"; then
                         add_selected_target "$detected"
                     fi
                 done
                 ;;
-            codex|claude|cursor|opencode|copilot)
+            codex|claude|cursor|opencode|copilot|pi)
                 if [[ "$normalized" == codex ]]; then
                     codex_target_explicit=1
                 fi
@@ -773,7 +794,7 @@ resolve_targets() {
                 add_selected_target "$normalized"
                 ;;
             *)
-                die "Unknown target '$target'. Use auto, codex, claude, cursor, opencode, or copilot."
+                die "Unknown target '$target'. Use auto, codex, claude, cursor, opencode, copilot, or pi."
                 ;;
         esac
     done
@@ -851,7 +872,7 @@ warn_python_readiness() {
 
 register_harness_hooks() {
     if [[ ${#selected_targets[@]} -eq 0 ]]; then
-        printf 'Hook registration skipped: no host targets were detected. Pass --target codex, --target claude, --target cursor, --target opencode, or --target copilot to choose explicitly.\n'
+        printf 'Hook registration skipped: no host targets were detected. Pass --target codex, --target claude, --target cursor, --target opencode, --target copilot, or --target pi to choose explicitly.\n'
         return
     fi
 
@@ -870,6 +891,9 @@ register_harness_hooks() {
         hook_args+=(--target "$target")
     done
     hook_args+=(--scope "$hooks_scope")
+    if [[ -n "$pi_extension" ]]; then
+        hook_args+=(--pi-extension "$(native_path "$pi_extension")")
+    fi
     if [[ $hooks_yes -eq 1 ]]; then
         hook_args+=(--yes)
     fi
@@ -952,6 +976,11 @@ while [[ $# -gt 0 ]]; do
             opencode_destination="$2"
             shift 2
             ;;
+        --pi-extension)
+            [[ $# -ge 2 ]] || die "Missing value for --pi-extension."
+            pi_extension="$2"
+            shift 2
+            ;;
         --dry-run)
             dry_run=1
             shift
@@ -1019,6 +1048,10 @@ for ((i = 0; i < ${#install_roots[@]}; i++)); do
 done
 
 if [[ $dry_run -eq 1 ]]; then
+    if [[ $register_hooks -eq 1 ]] && has_target pi; then
+        # pi has no skills folder to mirror into, so its extension is the one file a real run would add for it.
+        printf '  pi: would write the guard extension %s\n' "$(pi_extension_path)"
+    fi
     printf '\nDry run complete: nothing was written.\n'
     exit 0
 fi

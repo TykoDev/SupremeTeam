@@ -3,7 +3,7 @@ param(
     [ValidateSet("All", "Design", "Build", "Review", "Browser", "Release", "Safety", "Testing")]
     [string[]]$Team = @("All"),
 
-    [ValidateSet("Auto", "Codex", "Claude", "Cursor", "OpenCode", "Copilot")]
+    [ValidateSet("Auto", "Codex", "Claude", "Cursor", "OpenCode", "Copilot", "Pi")]
     [string[]]$Target = @("Auto"),
 
     [string]$Destination = (Join-Path $env:USERPROFILE ".agents\skills"),
@@ -24,6 +24,8 @@ param(
     [string]$CursorDestination = (Join-Path $env:USERPROFILE ".cursor\skills"),
 
     [string]$OpenCodeDestination = (Join-Path $env:USERPROFILE ".config\opencode\skills"),
+
+    [string]$PiExtension = "",
 
     [switch]$DryRun
 )
@@ -921,6 +923,12 @@ function Test-HostDetected {
                 (Test-Path -LiteralPath (Join-Path $env:USERPROFILE ".config\opencode")) -or
                 (Test-Path -LiteralPath (Join-Path $env:APPDATA "opencode"))
         }
+        "pi" {
+            # The agent directory, or the variable that moves it. A program named pi on PATH proves nothing: the
+            # name is generic, and a false match would write an extension into the home directory.
+            return (Test-Path -LiteralPath (Join-Path $env:USERPROFILE ".pi\agent")) -or
+                (-not [string]::IsNullOrEmpty($env:PI_CODING_AGENT_DIR))
+        }
         default {
             return $false
         }
@@ -934,7 +942,7 @@ function Resolve-HostTargets {
     $normalizedTargets = $RequestedTargets | ForEach-Object { $_.ToLowerInvariant() }
 
     if ($normalizedTargets -contains "auto") {
-        foreach ($hostName in @("codex", "claude", "cursor", "opencode")) {
+        foreach ($hostName in @("codex", "claude", "cursor", "opencode", "pi")) {
             if (Test-HostDetected -HostName $hostName) {
                 $resolved = Add-UniqueValue -Values $resolved -Value $hostName
             }
@@ -956,6 +964,18 @@ function Resolve-HostTargets {
     return $resolved
 }
 
+# Where -RegisterHooks puts the pi extension: the override, else the agent directory pi itself reads.
+function Get-PiExtensionPath {
+    if (-not [string]::IsNullOrEmpty($PiExtension)) {
+        return $PiExtension
+    }
+    $agent = $env:PI_CODING_AGENT_DIR
+    if ([string]::IsNullOrEmpty($agent)) {
+        $agent = Join-Path $env:USERPROFILE ".pi\agent"
+    }
+    return (Join-Path (Join-Path $agent "extensions") "supremeteam-guard.ts")
+}
+
 function Register-HarnessHooks {
     param(
         [string[]]$HostTargets,
@@ -963,7 +983,7 @@ function Register-HarnessHooks {
     )
 
     if ($HostTargets.Count -eq 0) {
-        Write-Host "Hook registration skipped: no host targets were detected. Pass -Target Codex,Claude,Cursor,OpenCode,Copilot to choose explicitly."
+        Write-Host "Hook registration skipped: no host targets were detected. Pass -Target Codex,Claude,Cursor,OpenCode,Copilot,Pi to choose explicitly."
         return
     }
 
@@ -987,6 +1007,9 @@ function Register-HarnessHooks {
     $hookArgs += @("--scope", $HooksScope.ToLowerInvariant())
     if ($HooksYes) {
         $hookArgs += "--yes"
+    }
+    if (-not [string]::IsNullOrEmpty($PiExtension)) {
+        $hookArgs += @("--pi-extension", $PiExtension)
     }
 
     $pythonArgs = @($python.Arguments)
@@ -1056,6 +1079,10 @@ try {
     }
 
     if ($DryRun) {
+        if ($RegisterHooks -and ($hostTargets -contains "pi")) {
+            # pi has no skills folder to mirror into, so its extension is the one file a real run would add for it.
+            Write-Host "  pi: would write the guard extension $(Get-PiExtensionPath)"
+        }
         Write-Host ""
         Write-Host "Dry run complete: nothing was written."
         return

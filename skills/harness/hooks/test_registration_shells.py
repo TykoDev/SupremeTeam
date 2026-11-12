@@ -464,6 +464,33 @@ class ReadinessTests(Scratch):
         text = self.run_tool("check_readiness.py", "--host", "claude", "--probe").stdout
         self.assertIn("executes: claude:pre:", text)
 
+    def test_a_plugin_host_is_named_as_present_and_not_inspected(self):
+        """WP-09: pi, Cursor and OpenCode are registered through a file the verifier cannot read. Readiness says the
+        file is there and that the host reports its own state, instead of saying nothing about a guard that may run."""
+        self.assertEqual(json.loads(self.run_tool("check_readiness.py", "--host", "claude", "--json").stdout)["plugin_hosts"], {})
+        extension = self.home / ".pi" / "agent" / "extensions" / "supremeteam-guard.ts"
+        extension.parent.mkdir(parents=True)
+        extension.write_text("// stand-in\n", encoding="utf-8")
+        plugin = self.home / ".config" / "opencode" / "plugins" / "supremeteam-hooks.js"
+        plugin.parent.mkdir(parents=True)
+        plugin.write_text("// stand-in\n", encoding="utf-8")
+        report = json.loads(self.run_tool("check_readiness.py", "--host", "claude", "--json").stdout)
+        self.assertEqual(sorted(report["plugin_hosts"]), ["opencode", "pi"])
+        self.assertEqual(report["plugin_hosts"]["pi"]["path"], str(extension))
+        text = self.run_tool("check_readiness.py", "--host", "claude").stdout
+        self.assertIn(f"Plugin host: pi - extension at {extension}; not inspected here", text)
+        self.assertIn("at every session start", text)
+
+    def test_the_pi_extension_is_found_where_its_variable_puts_it(self):
+        agent = self.tmp / "moved-agent"
+        (agent / "extensions").mkdir(parents=True)
+        (agent / "extensions" / "supremeteam-guard.ts").write_text("// stand-in\n", encoding="utf-8")
+        with mock.patch.dict(os.environ, {"PI_CODING_AGENT_DIR": str(agent)}):
+            self.assertEqual(sorted(verify.plugin_hosts()), ["pi"])
+        with mock.patch.dict(os.environ):
+            os.environ.pop("PI_CODING_AGENT_DIR", None)
+            self.assertEqual(verify.plugin_hosts(), {})
+
     def test_without_the_flag_no_command_is_started(self):
         self.run_tool("repair_registration.py", "--host", "claude", "--scope", "project", "--apply", "--no-probe")
         report = json.loads(self.run_tool("check_readiness.py", "--host", "claude", "--json").stdout)

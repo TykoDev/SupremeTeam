@@ -53,6 +53,7 @@ creates carries a `.supremeteam-managed` marker. On an upgrade:
 |---|---|---|
 | Pick teams | `-Team Design,Review` | `--team design --team review` |
 | Pick hosts | `-Target Codex,Claude` | `--target codex --target claude` |
+| Where the pi extension goes | `-PiExtension "path"` | `--pi-extension "path"` |
 | Register hooks | `-RegisterHooks` | `--register-hooks` |
 | Which hook config | `-HooksScope Project` | `--hooks-scope project` |
 | Skip the hook question | `-HooksYes` | `--hooks-yes` |
@@ -60,7 +61,7 @@ creates carries a `.supremeteam-managed` marker. On an upgrade:
 | Preview only | `-DryRun` | `--dry-run` |
 
 Teams: `Design`, `Build`, `Review`, `Browser`, `Release`, `Safety`, `Testing`,
-`All`. Hosts: `auto`, `codex`, `claude`, `cursor`, `opencode`, `copilot` (hooks only; `auto` never picks it). Per-host
+`All`. Hosts: `auto`, `codex`, `claude`, `cursor`, `opencode`, `copilot` (hooks only; `auto` never picks it), `pi` (hooks only; `auto` picks it when `~/.pi/agent` exists or `PI_CODING_AGENT_DIR` is set, never because a program named `pi` is on `PATH`). Per-host
 destination flags exist too (`-CodexDestination`, `--claude-destination`, and so
 on); `-InstallClaude` and `--install-claude` are older aliases for the Claude
 target. `--help` (`Get-Help .\scripts\install.ps1`) lists every option.
@@ -135,6 +136,12 @@ added when there is local evidence of the host.
 GitHub Copilot has no skills directory here: only its hook configuration is
 written, and only when you name it (`--target copilot`, `-Target Copilot`) and register
 hooks for it (see [Runtime hooks](#runtime-hooks)).
+
+pi has no mirror either: it reads the common folder. With `--register-hooks` the
+installer writes its guard extension to `~/.pi/agent/extensions/supremeteam-guard.ts`
+(`$PI_CODING_AGENT_DIR/extensions/` when that is set, or the path given with
+`--pi-extension` / `-PiExtension`), and a `--dry-run` names that file. pi says at every
+session start whether the guard is enforcing.
 
 Claude Code and OpenCode mirror automatically when present. Codex and Cursor
 mirror only when named explicitly or already holding an install. On upgrade,

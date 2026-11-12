@@ -932,12 +932,64 @@ class InstallerBehaviourTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, listing(result))
         self.assertIn("Host targets: none detected", result.stdout)
 
-    def test_the_target_help_and_the_unknown_target_message_name_copilot(self):
+    def test_the_target_help_and_the_unknown_target_message_name_copilot_and_pi(self):
         box = Sandbox(self)
-        self.assertIn("opencode, copilot", box.run("--help").stdout)
+        self.assertIn("opencode, copilot, pi", box.run("--help").stdout)
         refused = box.install("--target", "windsurf")
         self.assertEqual(refused.returncode, 1, listing(refused))
-        self.assertIn("opencode, or copilot", refused.stderr)
+        self.assertIn("opencode, copilot, or pi", refused.stderr)
+
+    def test_pi_is_a_target_that_registers_hooks_and_installs_no_mirror(self):
+        """WP-09: install_hooks.py already wrote the pi extension; the installers rejected the name."""
+        box = Sandbox(self)
+        record = self.stub_hook_helper(box)
+        result = box.install("--target", "Pi", "--register-hooks", "--hooks-yes")
+        self.assertEqual(result.returncode, 0, listing(result))
+        self.assertIn("--target pi", record.read_text(encoding="utf-8"))
+        self.assertNotIn("--pi-extension", record.read_text(encoding="utf-8"))
+        for line in ("Host targets: pi", "Host mirrors: none", "Hook registration: completed"):
+            self.assertIn(line, result.stdout)
+        self.assertEqual([entry.name for entry in box.home.iterdir()], [".agents"], "pi reads the common skills folder")
+
+    def test_the_pi_extension_override_is_passed_to_the_hook_helper(self):
+        box = Sandbox(self)
+        record = self.stub_hook_helper(box)
+        extension = box.root / "elsewhere" / "supremeteam-guard.ts"
+        result = box.install("--target", "pi", "--register-hooks", "--hooks-yes", "--pi-extension", str(extension))
+        self.assertEqual(result.returncode, 0, listing(result))
+        self.assertIn(f"--pi-extension {extension}", record.read_text(encoding="utf-8"))
+        missing = box.install("--pi-extension")
+        self.assertEqual(missing.returncode, 1)
+        self.assertIn("Missing value for --pi-extension.", missing.stderr)
+
+    def test_auto_selects_pi_by_its_agent_directory_or_its_variable_and_never_by_a_program_named_pi(self):
+        box = Sandbox(self)
+        program = box.bin / "pi"
+        program.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        program.chmod(0o755)
+        result = box.install()
+        self.assertIn("Host targets: none detected", result.stdout, "a pi on PATH is a generic name, not the coding agent")
+        with_variable = box.install(env={"PI_CODING_AGENT_DIR": str(box.root / "agent")})
+        self.assertIn("Host targets: pi", with_variable.stdout)
+        (box.home / ".pi" / "agent").mkdir(parents=True)
+        with_directory = box.install()
+        self.assertEqual(with_directory.returncode, 0, listing(with_directory))
+        self.assertIn("Host targets: pi", with_directory.stdout)
+        self.assertIn("Host mirrors: none", with_directory.stdout)
+
+    def test_a_dry_run_names_the_pi_extension_it_would_write_and_writes_nothing(self):
+        box = Sandbox(self)
+        record = self.stub_hook_helper(box)
+        result = box.install("--target", "pi", "--register-hooks", "--dry-run")
+        self.assertEqual(result.returncode, 0, listing(result))
+        self.assertIn(f"pi: would write the guard extension {box.home}/.pi/agent/extensions/supremeteam-guard.ts", result.stdout)
+        self.assertFalse(record.exists(), "a dry run never runs the hook helper")
+        self.assertFalse((box.home / ".pi").exists())
+        moved = box.install("--target", "pi", "--register-hooks", "--dry-run", env={"PI_CODING_AGENT_DIR": "/opt/pi-agent"})
+        self.assertIn("pi: would write the guard extension /opt/pi-agent/extensions/supremeteam-guard.ts", moved.stdout)
+        named = box.install("--target", "pi", "--register-hooks", "--dry-run", "--pi-extension", "/tmp/x/guard.ts")
+        self.assertIn("pi: would write the guard extension /tmp/x/guard.ts", named.stdout)
+        self.assertNotIn("would write the guard extension", box.install("--target", "pi", "--dry-run").stdout)
 
     def test_a_host_whose_python_is_only_python3_13_still_registers_hooks(self):
         """DX-12: the probe tried python3 and python, so a host with only a versioned name warned and then refused."""
@@ -1257,7 +1309,7 @@ class PowerShellParityTests(unittest.TestCase):
         self.assertIn("copilot", hosts, "the hook helper supports Copilot, so both installers must let it be named")
 
     def test_both_name_every_host_where_they_tell_the_operator_which_to_pass(self):
-        hosts = ("codex", "claude", "cursor", "opencode", "copilot")
+        hosts = ("codex", "claude", "cursor", "opencode", "copilot", "pi")
         skipped = re.search(r'Hook registration skipped: no host targets were detected\. Pass ([^"\n]*?) to choose explicitly', self.ps).group(1)
         for host in hosts:
             self.assertIn(host, skipped.lower())
@@ -1448,6 +1500,31 @@ class WindowsInstallerRunTests(unittest.TestCase):
                 self.assertIn("Hook registration: completed", done.stdout)
         self.assert_registration_starts("claude", self.home / ".claude" / "settings.json")
         self.assert_registration_starts("codex", self.home / ".codex" / "hooks.json")
+
+    def test_install_ps1_takes_pi_as_a_target_and_writes_its_extension(self):
+        """WP-09: `-Target Pi` was not in the ValidateSet, so the extension install_hooks.py supports was unreachable."""
+        shells = _powershells()
+        if not shells:
+            self.skipTest("no PowerShell was found")
+        env = self.env()
+        env.pop("PI_CODING_AGENT_DIR", None)
+        command = [shells[0][1], "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(INSTALL_PS1)]
+        preview = subprocess.run([*command, "-Target", "Pi", "-RegisterHooks", "-DryRun"], capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace", cwd=str(self.project), env=env, stdin=subprocess.DEVNULL,
+                                 timeout=600, check=False)
+        self.assertEqual(preview.returncode, 0, preview.stdout + preview.stderr)
+        extension = self.home / ".pi" / "agent" / "extensions" / "supremeteam-guard.ts"
+        self.assertIn(f"pi: would write the guard extension {extension}", preview.stdout)
+        self.assertFalse(extension.exists())
+        done = subprocess.run([*command, "-Target", "Pi", "-RegisterHooks", "-HooksYes"], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", cwd=str(self.project), env=env, stdin=subprocess.DEVNULL,
+                              timeout=600, check=False)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("Host targets: pi", done.stdout)
+        self.assertIn("Host mirrors: none", done.stdout)
+        self.assertIn("Hook registration: completed", done.stdout)
+        self.assertTrue(extension.is_file())
+        self.assertEqual(sorted(name for name in (".agents", ".claude", ".codex", ".pi") if (self.home / name).exists()), [".agents", ".pi"])
 
     def test_install_ps1_dry_run_writes_nothing(self):
         shells = _powershells()

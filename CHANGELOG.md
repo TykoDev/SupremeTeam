@@ -196,6 +196,21 @@ of Claude Code 2.1.322, Codex CLI 0.166.0 and Antigravity CLI 1.4.12 on Windows.
     (`LINK_TO_SUPERSEDED`).
   - `gates.yaml` states both rules in `evidence_rules.evidence_root` and is at
     `spec_revision` 10. This changes the spec digest (see the upgrade notes).
+- pi is an installer target (WP-09, issue 5): `install_hooks.py --target pi` wrote the guard
+  extension, and neither installer let the name through (`install.sh` refused it as an
+  unknown target, `install.ps1` at parameter binding), so the extension could only be
+  installed by calling the helper by hand.
+  - `--target pi` / `-Target Pi` are accepted, with `--pi-extension PATH` / `-PiExtension`
+    passed on to the helper. pi has no mirror (it reads the common skills folder), so the
+    target takes part in `--register-hooks` only, and a dry run names the extension file a
+    real run would write.
+  - `auto` picks pi when `~/.pi/agent` exists or `PI_CODING_AGENT_DIR` is set. A program
+    named `pi` on `PATH` is not evidence: the name is generic, and a false match would write
+    an extension into the home directory.
+  - `check_readiness.py` names the plugin hosts whose registration file is present (pi,
+    Cursor, OpenCode) as `Plugin host: ... not inspected here`, with how each host reports
+    its own state, and lists them under `plugin_hosts` in the JSON report. It claims
+    presence only; `Ready` and the enforcement line are unchanged.
 
 Upgrade notes for this section:
 

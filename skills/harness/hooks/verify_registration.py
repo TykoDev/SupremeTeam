@@ -122,6 +122,39 @@ _PROBE = "import sys; print(*sys.version_info[:3])"
 _PROBED: dict[tuple, tuple | None] = {}
 
 
+# Hosts registered through a plugin package or an extension this verifier cannot read. Each tells the user its own
+# state: pi at every session start ("SupremeTeam guard active", or why it is not enforcing), Cursor and OpenCode
+# through their plugin lists. Readiness names the ones whose file is present, so that a guard which runs there is
+# not reported as no guard at all, and says that it has not inspected them.
+PLUGIN_HOSTS = {
+    "cursor": ("plugin package", "its plugin list shows whether the package loaded"),
+    "opencode": ("plugin", "it logs once when the interpreter cannot start"),
+    "pi": ("extension", "it reports 'SupremeTeam guard active', or why it is not enforcing, at every session start"),
+}
+
+
+def plugin_host_files() -> dict[str, Path]:
+    """Where each plugin host's registration lives on this machine (``scripts/install_hooks.py`` writes them)."""
+    home = Path.home()
+    agent = os.environ.get("PI_CODING_AGENT_DIR")
+    return {
+        "cursor": home / ".cursor" / "plugins" / "local" / "supremeteam-hooks" / "hooks" / "hooks.json",
+        "opencode": home / ".config" / "opencode" / "plugins" / "supremeteam-hooks.js",
+        "pi": (Path(agent).expanduser() if agent else home / ".pi" / "agent") / "extensions" / "supremeteam-guard.ts",
+    }
+
+
+def plugin_hosts() -> dict[str, dict]:
+    """The plugin hosts whose registration file exists: ``{host: {path, kind, reports}}``. Presence is all that is
+    claimed; nothing here says the host loaded the file."""
+    found = {}
+    for host, path in plugin_host_files().items():
+        if _exists(path):
+            kind, reports = PLUGIN_HOSTS[host]
+            found[host] = {"path": str(path), "kind": kind, "reports": reports}
+    return found
+
+
 def _norm(value) -> str:
     # normcase is case-insensitive on Windows and preserves case on POSIX.  A
     # vendored path with the wrong case must not pass on a case-sensitive host.

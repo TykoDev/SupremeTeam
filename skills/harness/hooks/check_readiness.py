@@ -43,7 +43,8 @@ from pathlib import Path
 try:
     from _saves import ACCESS_DENIED_STEP, inspect_saves, next_step, refused_detail
     import _state
-    from verify_registration import HOSTS, MATCHERS, REQUIRED, declared_minimum, enforcement, interpreter_warning, repair_command
+    from verify_registration import (HOSTS, MATCHERS, REQUIRED, declared_minimum, enforcement, interpreter_warning, plugin_hosts,
+                                     repair_command)
 except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
     if __name__ != "__main__":
         raise
@@ -342,6 +343,7 @@ def main() -> int:
         "blockers": blockers,
         "repair_hint": repair_hint,
         "enforcement": enforced,
+        "plugin_hosts": plugin_hosts(),
         "ready": ready,
     }
 
@@ -375,6 +377,9 @@ def main() -> int:
             print("\nNot ready because:")
             for blocker in blockers:
                 print(f"  - {blocker}")
+        for host, entry in report["plugin_hosts"].items():
+            # Present, not inspected: such a host says for itself whether the guard is running.
+            print(f"Plugin host: {host} - {entry['kind']} at {entry['path']}; not inspected here: {entry['reports']}")
         print(f"\nEnforcement: {enforced['status']} - {enforced['detail']}")
         print(f"Ready: {'yes' if ready else 'no'}")
 

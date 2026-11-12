@@ -19,7 +19,9 @@ import _testkit as kit
 HOOK_DIR = Path(__file__).resolve().parent
 HOOK = HOOK_DIR.as_posix()
 SCRIPTS = ("guard_hook.py", "pre_tool_use.py", "_state.py", "post_tool_use.py", "user_prompt_submit.py", "_cmdscan.py")
-REGISTRATION = (".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".github/hooks.json")
+REGISTRATION = (".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".github/hooks.json",
+                # WP-08: Copilot runs every *.json of its hook directories, so a second file there is a registration too.
+                ".github/hooks/supremeteam.json", ".github/hooks/another.json")
 UNRELATED_FREEZE = {"frozen_globs": [{"glob": "docs/**", "owner": "ops"}]}
 
 
@@ -103,10 +105,18 @@ class EngagedByABoundaryTests(HarnessFileCase):
                 self.assertProtected(self.edit(f"{self.root}/{path}"))
                 self.assertProtected(self.shell(f"echo '{{}}' > {path}"))
                 self.assertProtected(self.shell(f"python3 -c \"open('{path}','w').write('{{}}')\""))
-        for path in (".claude/settings.json", ".codex/hooks.json", ".config/github-copilot/hooks.json"):
+        for path in (".claude/settings.json", ".codex/hooks.json", ".config/github-copilot/hooks.json",
+                     ".copilot/hooks/supremeteam.json", ".copilot/hooks/another.json"):
             with self.subTest(user_scope=path):
                 self.assertProtected(self.edit(f"{self.home}/{path}"))
                 self.assertProtected(self.shell(f"cp x ~/{path}"))
+
+    def test_copilots_hook_directory_is_protected_where_its_variable_puts_it(self):
+        moved = self.root / "copilot-home"
+        with mock.patch.dict(os.environ, {"COPILOT_HOME": str(moved)}):
+            self.assertProtected(self.edit(f"{moved.as_posix()}/hooks/supremeteam.json"))
+            self.assertProtected(self.shell(f"echo '{{}}' > {moved.as_posix()}/hooks/another.json"))
+            self.assertEqual(self.edit(f"{moved.as_posix()}/settings.json"), "", "only the hook directory is a registration")
 
     def test_the_pi_extension_is_protected_where_pi_loads_it(self):
         self.assertProtected(self.edit(f"{self.home}/.pi/agent/extensions/supremeteam-guard.ts"))

@@ -153,7 +153,8 @@ are in [CONTRIBUTING.md](../CONTRIBUTING.md#run-the-suites).
     `test_run_heartbeat.py`, `test_state_hardening.py`, `test_fsutil.py`
   - the run record and its reader: `test_run_state.py`, `test_saves_reader.py`
   - registration and readiness: `test_registration_contract.py`,
-    `test_registration_hardening.py`, `test_registration_shells.py`, `test_installer_hooks.py`,
+    `test_registration_hardening.py`, `test_registration_shells.py`, `test_copilot_registration.py`,
+    `test_installer_hooks.py`,
     `test_documented_flags.py`
   - maintenance audits: `test_size_audit.py`, `test_audit_improve.py`,
     `test_audit_improve_parts.py`, `test_gate_watch.py`

@@ -82,8 +82,9 @@ def target_path(host: str, scope: str) -> Path:
         ("claude", "local"): project / ".claude/settings.local.json",
         ("codex", "user"): home / ".codex/hooks.json",
         ("codex", "project"): project / ".codex/hooks.json",
-        ("copilot", "user"): home / ".config/github-copilot/hooks.json",
-        ("copilot", "project"): project / ".github/hooks.json",
+        # Copilot reads every *.json in these two directories; the file written is ours alone.
+        ("copilot", "user"): verify.copilot_home() / "hooks" / verify.COPILOT_FILE,
+        ("copilot", "project"): project / ".github" / "hooks" / verify.COPILOT_FILE,
     }
     if (host, scope) not in table:
         raise ValueError(f"scope {scope!r} is not defined for host {host!r}")
@@ -98,6 +99,24 @@ def scope_warnings(host: str, scope: str, path: Path) -> list[str]:
         advice = "use --scope local for a per-machine file" if host == "claude" else "keep it out of the commit"
         return [f"project scope writes machine-absolute hook paths into {path}, a file projects usually commit; {advice}"]
     return []
+
+
+ALLOW_ABSOLUTE = "--allow-absolute"
+
+
+def absolute_refusal(host: str, scope: str, path: Path, allowed: bool = False) -> "str | None":
+    """Why a project-scope registration with machine-absolute paths is not written for ``host``, or None.
+
+    On a host that fails closed the usual warning is not enough. A repository's ``.github/hooks/*.json`` is read
+    wherever the repository is checked out, Copilot's cloud agent included, and there the interpreter and the hook
+    path of this machine do not exist: the pre-tool command exits non-zero, which that host reads as a deny, so every
+    tool call in the repository is refused. The file is written only when the operator says so."""
+    if scope != "project" or host not in verify.FAIL_CLOSED_HOSTS or allowed:
+        return None
+    return (f"project scope would write this machine's absolute interpreter and hook paths into {path}, which {host} reads "
+            f"wherever the repository is checked out (its cloud agent too). A pre-tool hook that cannot start denies the "
+            f"tool call on {host}, so every tool call would be refused there. Register at user scope (--scope user), or "
+            f"pass {ALLOW_ABSOLUTE} to write the file anyway and keep it out of the commit")
 
 
 def launcher_token(python: str) -> str:
@@ -277,6 +296,13 @@ def hook_handler(script: str, python: str, host: str = "claude", *, windows: "bo
     the same interpreter (``py_launcher``, ``py_launcher_for`` by default), else the host's fallback. Raises
     ``CommandRefused`` when the host has none. ``windows`` and ``hook_dir`` default to this machine and this directory;
     naming them builds the command for another."""
+    return _with_host_arguments(_start_fields(script, python, host, windows=windows, hook_dir=hook_dir, py_launcher=py_launcher),
+                                host)
+
+
+def _start_fields(script: str, python: str, host: str, *, windows: "bool | None", hook_dir: "str | Path | None",
+                  py_launcher) -> dict:
+    """``hook_handler`` before the host's own arguments are added."""
     windows = os.name == "nt" if windows is None else windows
     directory = str(HOOK_DIR if hook_dir is None else hook_dir)
     if not windows:
@@ -304,6 +330,17 @@ def hook_handler(script: str, python: str, host: str = "claude", *, windows: "bo
     return {"command": bare_form(launcher, hook) if form == "bare" else standard_form(launcher, hook)}
 
 
+def _with_host_arguments(handler: dict, host: str) -> dict:
+    """``handler`` with the arguments ``host`` needs after the script (``verify.HOST_ARGUMENTS``): ``--host copilot``
+    makes the hooks answer in the shape Copilot reads."""
+    extra = list(verify.HOST_ARGUMENTS.get(host, ()))
+    if not extra:
+        return handler
+    if "args" in handler:
+        return {**handler, "args": [*handler["args"], *extra]}
+    return {**handler, "command": " ".join([handler["command"], *extra])}
+
+
 def command_for(script: str, python: str, host: str = "claude", **options) -> str:
     """The command text that starts one hook on ``host`` (``hook_handler``), for a host whose config holds only text.
     Raises ``CommandRefused`` when the only form that starts there is the no-shell one."""
@@ -316,7 +353,7 @@ def command_for(script: str, python: str, host: str = "claude", **options) -> st
 
 def _own_handlers(config: dict, host: str, key: str, script: str) -> list[dict]:
     """The handlers under one event that launch ``script`` by the words they hold, whatever a shell makes of them."""
-    return [handler for handler, _ in verify._handlers([config], verify.EVENTS[host][key])
+    return [handler for handler, _ in verify._handlers([config], verify.EVENTS[host][key], host)
             if verify.analyse(handler["command"], script, verify.handler_tokens(handler))["executable"]]
 
 
@@ -327,6 +364,8 @@ def _replace_defective(config: dict, host: str, python: str) -> list[str]:
     working group beside it instead would leave the broken command registered, failing on every tool call. An entry
     that does not launch one of our scripts is never touched."""
     replaced = []
+    if host in verify.FLAT_HOSTS:
+        return replaced  # a flat host's entries are replaced whole by its own planner
     for key, script in verify.REQUIRED:
         for handler in _own_handlers(config, host, key, script):
             defects = verify.handler_defects(handler, host)
@@ -339,11 +378,72 @@ def _replace_defective(config: dict, host: str, python: str) -> list[str]:
     return replaced
 
 
+_FLAT_COMMAND_FIELDS = ("bash", "powershell", "command")
+
+
+def _launches(entry, script: str) -> bool:
+    """Whether a flat-host entry names ``script`` in any of its command fields, on whichever platform it was written."""
+    if not isinstance(entry, dict):
+        return False
+    return any(isinstance(entry.get(field), str) and verify.analyse(entry[field], script)["configured"]
+               for field in _FLAT_COMMAND_FIELDS)
+
+
+def flat_entry(script: str, python: str, host: str) -> dict:
+    """The handler the registrar writes for one hook on a flat host: the command in this platform's field, the matcher
+    on the handler, and an explicit timeout (on Copilot a hook that times out lets the call through)."""
+    entry = {"type": "command"}
+    matcher = matcher_for(script, host)
+    if matcher:
+        entry["matcher"] = matcher
+    entry[verify.command_field()] = command_for(script, python, host)
+    entry["timeoutSec"] = verify.COPILOT_TIMEOUT_SECONDS
+    return entry
+
+
+def _plan_flat(config: dict, host: str, python: str, also: "list[dict] | None") -> tuple[dict, list[str]]:
+    """``plan`` for a flat host. The file is ours, so each required hook ends as exactly one entry in the shape
+    written today; an entry that launches something else is left as it is. An entry of ours written on the other
+    platform keeps that platform's command beside the new one."""
+    desired = {"version": 1, **config}
+    hooks = desired.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise ValueError("existing 'hooks' key is not an object; refusing to rewrite it")
+    elsewhere = verify.hook_states(list(also or []), host)
+    field = verify.command_field()
+    other = "bash" if field == "powershell" else "powershell"
+    added = []
+    for key, script in verify.REQUIRED:
+        event = verify.EVENTS[host][key]
+        entries = hooks.setdefault(event, [])
+        if not isinstance(entries, list):
+            raise ValueError(f"existing hooks.{event} is not a list; refusing to rewrite it")
+        ours = [entry for entry in entries if _launches(entry, script)]
+        if not ours and elsewhere[key]["registered"] and not elsewhere[key]["missing_tools"]:
+            continue  # registered by another file of the same directory: a second entry would run it twice
+        fresh = flat_entry(script, python, host)
+        kept = next((entry[other] for entry in ours if isinstance(entry.get(other), str)), None)
+        if kept:
+            fresh[other] = kept
+        if ours == [fresh]:
+            continue
+        position = next((index for index, entry in enumerate(entries) if _launches(entry, script)), len(entries))
+        entries[:] = [entry for entry in entries if not _launches(entry, script)]
+        entries.insert(min(position, len(entries)), fresh)
+        added.append(f"{event} -> {script}" + (" (replaces the entry registered before)" if ours else ""))
+    if not added and config.get("version") != 1 and any(hooks.values()):
+        added.append("version -> 1")
+    return (desired, added) if added else (config, [])
+
+
 def plan(config: dict, host: str, python: str, also: "list[dict] | None" = None) -> tuple[dict, list[str]]:
     """The config with every required hook registered, and what changed.
 
-    ``also`` holds registrations the host reads from another file (Codex ``config.toml`` inline hooks): a hook
-    registered there counts as registered and is not written a second time."""
+    ``also`` holds registrations the host reads from another file (Codex ``config.toml`` inline hooks, the other
+    files of a Copilot hook directory; ``verify.other_registrations``): a hook registered there counts as registered
+    and is not written a second time."""
+    if host in verify.FLAT_HOSTS:
+        return _plan_flat(config, host, python, also)
     desired = dict(config)
     hooks = desired.setdefault("hooks", {})
     if not isinstance(hooks, dict):
@@ -397,6 +497,100 @@ def probe_written(before: dict, after: dict, host: str) -> tuple[list[str], list
             if result["executes"] is None and f"{script}: {result['detail']}" not in notes:
                 notes.append(f"{script}: {result['detail']}")
     return failures, notes
+
+
+def checked_start(before: dict, after: dict, host: str, skip: bool = False) -> tuple[list[str], list[str]]:
+    """``probe_written``, held to what ``host`` does with a hook that cannot start: ``(failures, notes)``.
+
+    ``skip`` (``--no-probe``) writes unprobed and is accepted for a host that fails open. On a host that fails closed
+    (``verify.FAIL_CLOSED_HOSTS``) a pre-tool command that does not start denies every tool call, so there the probe
+    is not optional, and a command that could not be probed is not written either."""
+    if host not in verify.FAIL_CLOSED_HOSTS:
+        return ([], []) if skip else probe_written(before, after, host)
+    if skip:
+        return ([f"--no-probe is not accepted for {host}: a pre-tool hook that cannot start denies every tool call "
+                 "there, so a command is written only after it has been started"], [])
+    failures, notes = probe_written(before, after, host)
+    unprobed = [f"{note}; on {host} a command that was not started is not written" for note in notes]
+    return failures + unprobed, []
+
+
+# --- files an earlier version wrote that the host does not read ------------------------------------------
+
+def _only_ours(config) -> bool:
+    """Whether a legacy hook file holds nothing but Supreme Team registrations: only ``hooks`` (and ``version``) at the
+    top, and under it only handlers that launch one of the three hook scripts."""
+    if not isinstance(config, dict) or set(config) - {"hooks", "version"}:
+        return False
+    hooks = config.get("hooks")
+    if not isinstance(hooks, dict) or not hooks:
+        return False
+    scripts = [script for _, script in verify.REQUIRED]
+    for groups in hooks.values():
+        if not isinstance(groups, list) or not groups:
+            return False
+        for group in groups:
+            handlers = group.get("hooks") if isinstance(group, dict) else None
+            if not isinstance(handlers, list) or not handlers or set(group) - {"hooks", "matcher"}:
+                return False
+            for handler in handlers:
+                command = handler.get("command") if isinstance(handler, dict) else None
+                if not isinstance(command, str) or not any(
+                        verify.analyse(command, script, verify.handler_tokens(handler))["configured"] for script in scripts):
+                    return False
+    return True
+
+
+def legacy_files(host: str, scope: str) -> list[tuple[Path, bool]]:
+    """``(path, only_ours)`` for each file an earlier version registered ``host`` in at ``scope`` that is still there.
+    Copilot reads neither ``~/.config/github-copilot/hooks.json`` nor ``.github/hooks.json``."""
+    legacy = verify.legacy_paths(host)
+    if not legacy:
+        return []
+    path = legacy[0] if scope == "user" else legacy[1]
+    if not verify._exists(path) or path.is_symlink() or not path.is_file():
+        return []
+    return [(path, _only_ours(verify._read(path)))]
+
+
+def set_legacy_aside(host: str, scope: str, apply: bool) -> list[str]:
+    """Move a legacy hook file that holds nothing but our entries out of the way, beside itself under the name a
+    registration backup gets, and say so; leave any other legacy file and say that. With ``apply`` false nothing
+    moves and the note says what would."""
+    notes = []
+    for path, ours in legacy_files(host, scope):
+        if not ours:
+            notes.append(f"{path} is where an earlier version registered {host} hooks, and {host} does not read it. It holds "
+                         "entries that are not Supreme Team's (or that this copy cannot recognise), so it is left as it is")
+            continue
+        target = path.with_name(path.name + ".bak-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
+        if not apply:
+            notes.append(f"{path} holds only Supreme Team entries and {host} does not read it: it would be moved to {target.name}")
+            continue
+        try:
+            os.replace(path, target)
+            notes.append(f"{path} held only Supreme Team entries and {host} does not read it: moved to {target}")
+        except OSError as exc:
+            notes.append(f"{path} holds only Supreme Team entries and {host} does not read it; it could not be moved "
+                         f"({type(exc).__name__}) and can be deleted")
+    return notes
+
+
+def double_run_note(host: str) -> "str | None":
+    """Copilot CLI also runs the hooks of a repository's ``.claude/settings.json`` and ``.claude/settings.local.json``.
+    When Supreme Team hooks are registered there, each tool call runs them twice: once in the shape Copilot reads and
+    once in Claude Code's."""
+    if host != "copilot":
+        return None
+    project = _state.project_root()
+    files = [path for path in (project / ".claude/settings.json", project / ".claude/settings.local.json")
+             if isinstance(verify._read(path), dict)
+             and any(state["registered"] for state in verify.hook_states([verify._read(path)], "claude").values())]
+    if not files:
+        return None
+    return (f"{' and '.join(str(path) for path in files)} registers the hooks for Claude Code, and Copilot CLI runs a "
+            "repository's Claude Code hooks as well: in this project each tool call starts them twice. The guard decides "
+            "the same both times and the post-tool hook records the call once")
 
 
 CODEX_TRUST_NOTE = ("Codex skips a new or changed hook until it is trusted: start Codex and run /hooks once. Until then the "
@@ -517,7 +711,11 @@ def main() -> int:
                         help="record the sha256 of the registered hook scripts and change no host config")
     parser.add_argument("--no-probe", action="store_true",
                         help="with --apply, write without first starting each new command the way the host will "
-                             "(the default refuses to write a command that does not start)")
+                             "(the default refuses to write a command that does not start; not accepted for copilot, "
+                             "where a hook that cannot start denies every tool call)")
+    parser.add_argument(ALLOW_ABSOLUTE, action="store_true",
+                        help="write a copilot project-scope file although it holds this machine's absolute paths "
+                             "(refused by default: where those paths do not exist, every tool call is denied)")
     args = parser.parse_args()
     if args.record_hashes:
         return _record_current(args.host)
@@ -548,15 +746,24 @@ def main() -> int:
         if not isinstance(config, dict):
             print(json.dumps({"ok": False, "path": str(path), "error": "existing config root is not an object"}))
             return 2
-    inline = verify.codex_inline_hooks(path) if args.host == "codex" else None
+    refusal = absolute_refusal(args.host, args.scope, link, args.allow_absolute)
+    if refusal:
+        print(json.dumps({"ok": False, "path": str(link), "error": refusal}))
+        return 2
+    others = verify.other_registrations(args.host, path)
+    inline = others if args.host == "codex" else []
     try:
-        desired, added = plan(json.loads(json.dumps(config)), args.host, args.python, [inline] if inline else None)
+        desired, added = plan(json.loads(json.dumps(config)), args.host, args.python, others or None)
     except ValueError as exc:
         print(json.dumps({"ok": False, "path": str(path), "error": str(exc)}))
         return 2
     after_text = json.dumps(desired, indent=2) + "\n"
     if not added:
-        print(json.dumps({"ok": True, "path": str(path), "changes": [], "applied": False, "note": "no changes: every required hook is already registered and executable"}))
+        legacy = set_legacy_aside(args.host, args.scope, args.apply)
+        for note in legacy:
+            print(f"warning: {note}", file=sys.stderr)
+        print(json.dumps({"ok": True, "path": str(path), "changes": [], "applied": False, "warnings": legacy,
+                          "note": "no changes: every required hook is already registered and executable"}))
         return 0
     warnings = scope_warnings(args.host, args.scope, link)
     if path != link:
@@ -565,6 +772,11 @@ def main() -> int:
         warnings.append(CODEX_INLINE_NOTE)
     if args.host == "codex":
         warnings.append(CODEX_TRUST_NOTE)
+    twice = double_run_note(args.host)
+    if twice:
+        warnings.append(twice)
+    if not args.apply:
+        warnings.extend(set_legacy_aside(args.host, args.scope, False))
     if any("args" in handler for _, handler in written_handlers(config, desired, args.host)):
         warnings.append(PARTS_NOTE)
     for warning in warnings:
@@ -574,19 +786,21 @@ def main() -> int:
         print(diff)
         print(json.dumps({"ok": True, "path": str(path), "changes": added, "applied": False, "warnings": warnings, "note": "dry run; re-run with --apply to write"}))
         return 1
-    probe_notes: list[str] = []
-    if not args.no_probe:
-        failures, probe_notes = probe_written(config, desired, args.host)
-        if failures:
-            print(json.dumps({"ok": False, "path": str(path), "changes": added, "applied": False,
-                              "error": "refusing to write a registration that cannot start: " + "; ".join(failures)}))
-            return 2
+    failures, probe_notes = checked_start(config, desired, args.host, skip=args.no_probe)
+    if failures:
+        print(json.dumps({"ok": False, "path": str(path), "changes": added, "applied": False,
+                          "error": "refusing to write a registration that cannot start: " + "; ".join(failures)}))
+        return 2
     try:
         backup = write_with_backup(path, after_text, private=args.scope == "user")
-        record = record_hashes(verify.hook_states([desired, *([inline] if inline else [])], args.host), args.host)
+        record = record_hashes(verify.hook_states([desired, *others], args.host), args.host)
     except OSError as exc:
         print(json.dumps({"ok": False, "path": str(path), "error": f"write failed: {exc}"}))
         return 2
+    moved = set_legacy_aside(args.host, args.scope, True)
+    for note in moved:
+        print(f"warning: {note}", file=sys.stderr)
+    warnings = warnings + moved
     print(json.dumps({"ok": True, "path": str(path), "changes": added, "applied": True, "backup": str(backup) if backup else None,
                       "hash_record": str(record), "warnings": warnings, "probe": "skipped" if args.no_probe else "started",
                       "probe_notes": probe_notes}))

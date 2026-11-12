@@ -82,7 +82,12 @@ except ImportError as exc:  # a catalog file this script imports is missing: say
 
 REQUIRED = [("pre", "pre_tool_use.py"), ("post", "post_tool_use.py"), ("prompt", "user_prompt_submit.py")]
 _EVENT_MAP = {"pre": "PreToolUse", "post": "PostToolUse", "prompt": "UserPromptSubmit"}
-EVENTS = {"claude": _EVENT_MAP, "codex": _EVENT_MAP, "copilot": _EVENT_MAP}
+# GitHub Copilot drops what a command hook prints for a prompt, so the routing reminder is registered on the start of
+# the session, whose context it reads. The names are PascalCase on purpose: with them Copilot sends the payload the
+# hooks already read (`tool_name`, `tool_input`, `cwd`) and reports its tools under the names Claude Code uses; the
+# camelCase events carry `toolName` and `toolArgs`, which the guard does not read.
+_COPILOT_EVENTS = {"pre": "PreToolUse", "post": "PostToolUse", "prompt": "SessionStart"}
+EVENTS = {"claude": _EVENT_MAP, "codex": _EVENT_MAP, "copilot": _COPILOT_EVENTS}
 HOSTS = tuple(EVENTS)
 
 # The tools each hook has to see. The verifier checks registered matchers against
@@ -100,6 +105,35 @@ MATCHERS = {
 HOST_EXTRA_TOOLS = {
     "codex": {"pre_tool_use.py": ("apply_patch",), "post_tool_use.py": ("apply_patch",)},
 }
+
+# GitHub Copilot, with the PascalCase events: its shell tools are reported as `Bash`, `create` as `Write`, and `edit`,
+# `str_replace_editor` and `apply_patch` as `Edit` (its hooks reference). These are the names a registration has to
+# select there; `PowerShell` and `NotebookEdit` are not names it uses.
+HOST_TOOLS = {
+    "copilot": {"pre_tool_use.py": ("Bash", "Edit", "Write"), "post_tool_use.py": ("Bash",)},
+}
+# Names the registrar writes beside the required ones: Copilot's own tool names, in case it reports a tool
+# untranslated. That mapping is documented and has not been seen in a session; a matcher that missed the name the
+# host really uses would leave the guard out of the call without a word.
+WRITTEN_EXTRA_TOOLS = {
+    "copilot": {"pre_tool_use.py": ("bash", "powershell", "create", "edit", "str_replace_editor", "apply_patch"),
+                "post_tool_use.py": ("bash", "powershell")},
+}
+
+# A host whose hook file is one flat list of handlers per event, each with its own `matcher` and with the command in a
+# field per platform (`bash`, `powershell`; `command` when the platform's field is absent). Claude Code and Codex
+# nest handlers in matcher groups and keep the command in `command`.
+FLAT_HOSTS = frozenset({"copilot"})
+# Arguments the registrar appends to a host's command, and the verifier requires: the hooks answer GitHub Copilot in
+# the shape it reads only when told to (`_state.output_host`). Without them a deny is not a deny there.
+HOST_ARGUMENTS = {"copilot": ("--host", "copilot")}
+# A host where a pre-tool hook that cannot start denies the tool call (any exit but 0 and a timeout). A registration
+# for it is never written unprobed.
+FAIL_CLOSED_HOSTS = frozenset({"copilot"})
+# The file the registrar writes in Copilot's hook directories. It is ours alone, so nobody else's hook file is edited.
+COPILOT_FILE = "supremeteam.json"
+COPILOT_TIMEOUT_SECONDS = 30
+_COPILOT_FILE_LIMIT = 32
 
 # Python options that consume the following token.
 _OPTS_WITH_ARG = {"-W", "-X", "--check-hash-based-pycs", "-Q"}
@@ -153,6 +187,47 @@ def plugin_hosts() -> dict[str, dict]:
             kind, reports = PLUGIN_HOSTS[host]
             found[host] = {"path": str(path), "kind": kind, "reports": reports}
     return found
+
+
+def copilot_home() -> Path:
+    """Copilot CLI's configuration directory: ``$COPILOT_HOME`` when that is set, else ``~/.copilot``."""
+    override = os.environ.get("COPILOT_HOME")
+    return Path(override).expanduser() if override else Path.home() / ".copilot"
+
+
+def copilot_hook_dirs() -> list[Path]:
+    """The two directories Copilot reads hook files from: the user's and the repository's."""
+    return [copilot_home() / "hooks", _state.project_root() / ".github" / "hooks"]
+
+
+def legacy_paths(host: str) -> list[Path]:
+    """Files an earlier version registered ``host`` in that the host does not read. Copilot reads ``*.json`` inside its
+    two hook directories; ``~/.config/github-copilot/hooks.json`` and ``.github/hooks.json`` are neither."""
+    if host != "copilot":
+        return []
+    return [Path.home() / ".config/github-copilot/hooks.json", _state.project_root() / ".github/hooks.json"]
+
+
+def command_field(windows: "bool | None" = None) -> str:
+    """The field of a flat handler that holds the command for this platform."""
+    return "powershell" if (os.name == "nt" if windows is None else windows) else "bash"
+
+
+def flat_command(entry: dict, windows: "bool | None" = None) -> "str | None":
+    """The command a flat-host handler runs on this platform: its platform field, else ``command``, as the host
+    falls back. None when it has neither, or is not a command handler."""
+    if not isinstance(entry, dict) or str(entry.get("type") or "command") != "command":
+        return None
+    for field in (command_field(windows), "command"):
+        if isinstance(entry.get(field), str) and entry[field].strip():
+            return entry[field]
+    return None
+
+
+def has_host_arguments(tokens: list, host: str) -> bool:
+    """Whether a command's words carry the arguments ``host`` needs (``HOST_ARGUMENTS``); true for a host that needs none."""
+    wanted = list(HOST_ARGUMENTS.get(host, ()))
+    return not wanted or any(tokens[index:index + len(wanted)] == wanted for index in range(len(tokens)))
 
 
 def _norm(value) -> str:
@@ -564,21 +639,27 @@ def probe_failures(results: list[dict], host: str, handler: "dict | None" = None
     return [result for result in results if result["executes"] is False and _SHELL_KINDS.get(result["shell"]) in kinds]
 
 
-def matcher_for(script: str, host: str) -> str | None:
-    """Return the tool matcher for one hook on one host, or None for an unmatched event."""
-    base = MATCHERS.get(script)
-    if base is None:
-        return None
-    tools = base.split("|")
+def required_tools(script: str, host: str) -> list[str]:
+    """The tool names a registration of ``script`` has to select on ``host``; empty for an event with no tools."""
+    if MATCHERS.get(script) is None:
+        return []
+    if host in HOST_TOOLS:
+        return list(HOST_TOOLS[host].get(script, ()))
+    tools = MATCHERS[script].split("|")
     for tool in HOST_EXTRA_TOOLS.get(host, {}).get(script, ()):
         if tool not in tools:
             tools.append(tool)
-    return "|".join(tools)
+    return tools
 
 
-def required_tools(script: str, host: str) -> list[str]:
-    matcher = matcher_for(script, host)
-    return matcher.split("|") if matcher else []
+def matcher_for(script: str, host: str) -> str | None:
+    """The tool matcher the registrar writes for one hook on one host, or None for an unmatched event: the required
+    names, then any the host may use in their place (``WRITTEN_EXTRA_TOOLS``)."""
+    tools = required_tools(script, host)
+    for tool in WRITTEN_EXTRA_TOOLS.get(host, {}).get(script, ()):
+        if tool not in tools:
+            tools.append(tool)
+    return "|".join(tools) or None
 
 
 def matcher_selects(matcher, tool: str) -> bool:
@@ -596,13 +677,23 @@ def matcher_selects(matcher, tool: str) -> bool:
         return tool in matcher.split("|")
 
 
-def _handlers(objects: list[dict], event: str) -> list[tuple[dict, object]]:
+def _handlers(objects: list[dict], event: str, host: "str | None" = None) -> list[tuple[dict, object]]:
     """Every registered ``(handler, matcher)`` pair for one event. The handler is the object in the config itself, so a
-    repair can change it in place."""
+    repair can change it in place.
+
+    For a flat host (``FLAT_HOSTS``) the handler is a copy of the entry with ``command`` set to the text the host runs
+    on this platform (``flat_command``), so that everything that reads a handler reads one shape; the registrar
+    replaces such an entry whole and never in place."""
     found = []
     for obj in objects:
         registered = obj.get("hooks") if isinstance(obj, dict) else None
         groups = registered.get(event) if isinstance(registered, dict) else None
+        if host in FLAT_HOSTS:
+            for entry in groups if isinstance(groups, list) else []:
+                text = flat_command(entry)
+                if text is not None:
+                    found.append(({**entry, "command": text}, entry.get("matcher")))
+            continue
         for group in groups if isinstance(groups, list) else []:
             hooks = group.get("hooks") or [] if isinstance(group, dict) else []
             matcher = group.get("matcher") if isinstance(group, dict) else None
@@ -720,11 +811,16 @@ def hook_states(objects: list[dict], host: str) -> dict[str, dict]:
         needed = required_tools(script, host)
         best = _blank("no command registered")
         runnable = []
-        for handler, matcher in _handlers(objects, EVENTS[host][key]):
+        for handler, matcher in _handlers(objects, EVENTS[host][key], host):
             command = handler["command"]
             candidate = analyse(command, script, handler_tokens(handler))
             candidate.update(command=command, args=handler["args"] if isinstance(handler.get("args"), list) else None,
                              handler=handler, matcher=matcher, shell_defects=[])
+            if candidate["executable"] and not has_host_arguments(handler_tokens(handler), host):
+                # The hook would start and answer in a shape this host does not read: a deny that denies nothing.
+                wanted = " ".join(HOST_ARGUMENTS[host])
+                candidate.update(executable=False, reason=f"the command does not carry '{wanted}', so the hook answers in a "
+                                                          f"shape {host} does not read and a deny is not a deny there")
             if candidate["executable"]:
                 # The words are right; now the shell that reads them. A command it cannot start is not a registration.
                 defects = handler_defects(handler, host)
@@ -847,7 +943,33 @@ def _paths(host: str) -> list[Path]:
         return [home / ".claude/settings.json", project / ".claude/settings.json", project / ".claude/settings.local.json"]
     if host == "codex":
         return [home / ".codex/hooks.json", project / ".codex/hooks.json"]
-    return [home / ".config/github-copilot/hooks.json", project / ".github/hooks.json"]
+    # Copilot runs the hooks of every `*.json` in its two hook directories, so each of them is read: the file the
+    # registrar writes first, then the others (a bounded number), in name order.
+    found: list[Path] = []
+    for directory in copilot_hook_dirs():
+        found.append(directory / COPILOT_FILE)
+        try:
+            others = sorted(path for path in directory.glob("*.json") if path.name != COPILOT_FILE and path.is_file())
+        except OSError:
+            others = []
+        found.extend(others[:_COPILOT_FILE_LIMIT])
+    return found
+
+
+def other_registrations(host: str, path: Path) -> list[dict]:
+    """What ``host`` reads besides the file at ``path``, as registration objects: a hook registered there is
+    registered, and writing it to ``path`` as well would run it twice. For Codex the inline ``[hooks]`` tables of the
+    ``config.toml`` beside ``hooks.json``; for Copilot the other ``*.json`` files of the same hook directory."""
+    if host == "codex":
+        inline = codex_inline_hooks(path)
+        return [inline] if inline else []
+    if host == "copilot":
+        try:
+            others = sorted(item for item in path.parent.glob("*.json") if item.name != path.name and item.is_file())
+        except OSError:
+            return []
+        return [value for value in (_read(item) for item in others[:_COPILOT_FILE_LIMIT]) if isinstance(value, dict)]
+    return []
 
 
 def codex_inline_hooks(hooks_json: Path) -> "dict | None":
@@ -918,7 +1040,7 @@ def resolve_hosts(selection: str) -> dict[str, str]:
         reasons = []
         if any(name.startswith(prefix) for name in os.environ for prefix in _HOST_SIGNALS[host]):
             reasons.append("environment signal")
-        if any(_exists(path) for path in _paths(host)):
+        if any(_exists(path) for path in [*_paths(host), *legacy_paths(host)]):
             reasons.append("config found")
         if reasons:
             chosen[host] = " and ".join(reasons)
@@ -948,6 +1070,20 @@ def enforcement(states: dict[str, dict]) -> dict:
     left = ", ".join(host for host in pre if host not in live)
     return {"status": "partial", "detail": f"pre_tool_use.py is missing or misses a tool for {left}, so a tool call there is "
                                            "not refused"}
+
+
+def host_notes(host: str) -> list[str]:
+    """What an operator has to know about ``host`` that no hook state says."""
+    if host != "copilot":
+        return []
+    notes = ["prompt routing on copilot is given at session start only: it drops what a command hook prints for a "
+             "prompt, so user_prompt_submit.py is registered on SessionStart and gives the reminder once per session"]
+    for path, directory in zip(legacy_paths(host), copilot_hook_dirs(), strict=True):
+        if _exists(path):
+            notes.append(f"{path} is where an earlier version registered Copilot hooks, and Copilot does not read it "
+                         f"(it reads *.json in {directory}). Registering again sets the file aside when it holds "
+                         "nothing but Supreme Team entries")
+    return notes
 
 
 def _hook_detail(state: dict) -> str:
@@ -993,6 +1129,8 @@ def _print(host, loaded, result, required, absent_is_missing=False):
             changed.extend(name for name in state["changed_files"] or [script] if name not in changed)
     for warning in warnings:
         print(f"  warning: {warning}")
+    for note in host_notes(host):
+        print(f"  note: {note}")
     recorded = record_path()
     states = {result[key]["integrity"] for key, _ in required if result[key]["registered"]}
     if changed:
@@ -1033,7 +1171,7 @@ def main() -> int:
         print("\n[auto]\n  status: MISSING - no host configuration was found, so no hook is registered anywhere.")
     if args.json:
         report = {h: {"status": "registered" if s is True else "missing" if s is False else "unknown",
-                      "hash_record": str(record_path()),
+                      "hash_record": str(record_path()), "notes": host_notes(h),
                       "hooks": {k: v for k, v in r.items()},
                       "config_files": [{"path": str(p), "state": "read" if v is not None else "absent" if not p.exists() else "unreadable"} for p, v in files]}
                   for (h, files, r, _), s in zip(checks, statuses, strict=True)}

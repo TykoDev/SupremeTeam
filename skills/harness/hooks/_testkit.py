@@ -109,12 +109,13 @@ def encode(payload) -> bytes:
 
 
 def run_hook(script: str, payload, root: Path, *, python: "str | None" = None, text: bool = False,
-             **env_extra: str) -> subprocess.CompletedProcess:
+             args: tuple = (), **env_extra: str) -> subprocess.CompletedProcess:
     """Run a registered hook script as a subprocess; ``payload`` may be bytes to send undecodable input.
 
     ``python`` names another interpreter than the one running the tests (see ``older_interpreters``); ``text`` gives
-    stdout and stderr as text, read as the UTF-8 the hooks write."""
-    proc = subprocess.run([python or sys.executable, str(HOOK_DIR / script)], input=encode(payload), capture_output=True,
+    stdout and stderr as text, read as the UTF-8 the hooks write; ``args`` are the words a registration puts after
+    the script (``("--host", "copilot")``)."""
+    proc = subprocess.run([python or sys.executable, str(HOOK_DIR / script), *args], input=encode(payload), capture_output=True,
                           env=clean_env(root, **env_extra), check=False)
     if text:
         return subprocess.CompletedProcess(proc.args, proc.returncode, proc.stdout.decode("utf-8", "replace"),

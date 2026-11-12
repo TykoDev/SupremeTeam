@@ -40,7 +40,7 @@ def _missing_module(event: str, exc: BaseException) -> None:
     """A module this hook imports is not there. A registered hook fails open: exit 0 and no reminder, with the fault
     counted when ``_state`` still loads and said on stderr when it does not. ``--selftest`` and an import of this file
     by another program are not host events, so they get the error itself."""
-    if __name__ != "__main__" or sys.argv[1:] == ["--selftest"]:
+    if __name__ != "__main__" or "--selftest" in sys.argv[1:]:
         return
     try:
         import _state as state
@@ -85,15 +85,19 @@ _ACTIVE_REMINDER = (
 )
 
 
-def _emit(context: str) -> None:
-    out = {
-        "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
-            "additionalContext": context,
-        }
-    }
-    print(json.dumps(out))
+def _emit(context: str, event: str = "UserPromptSubmit") -> None:
+    """Print the context in the shape the host reads (``_state.context_output``: the command line's ``--host``)."""
+    print(json.dumps(_state.context_output(event, context)))
     sys.exit(0)
+
+
+def _session_start(data: dict) -> bool:
+    """Whether the host ran this hook for the start of a session and not for a prompt.
+
+    GitHub Copilot drops what a command hook prints for a prompt, so the registrar puts this hook on its
+    ``SessionStart`` event, whose context it does read: the reminder is given once per session there, not once per
+    prompt. The payload names the event; it carries no prompt to route."""
+    return str(data.get("hook_event_name") or data.get("hookEventName") or "").strip().lower() == "sessionstart"
 
 
 def _saves_root() -> Path:
@@ -120,6 +124,10 @@ def main() -> None:
     _state.record_observation("UserPromptSubmit", data)
     run_heartbeat.refresh(data, "UserPromptSubmit")
     prompt = str(data.get("prompt", "") or "")
+
+    if _session_start(data):
+        # No prompt to read and no second chance: say which of the two states the session starts in.
+        _emit(_ACTIVE_REMINDER if _active_run() else _ROUTE_REMINDER, "SessionStart")
 
     # Empty prompt: nothing to route.
     if not prompt.strip():
@@ -155,9 +163,10 @@ def run() -> None:
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--selftest"]:
+    if "--selftest" in sys.argv[1:]:
         # Not a host event: prove the registered command starts and every module a hook runs imports, and fail
-        # loud when one does not (verify_registration.probe reads the exit status and the "ok").
+        # loud when one does not (verify_registration.probe reads the exit status and the "ok"). The argument is
+        # looked for anywhere on the line: a command registered with `--host <name>` is probed with it in place.
         import _bootstrap
 
         _bootstrap.selftest()

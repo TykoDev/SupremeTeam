@@ -36,8 +36,18 @@ class SharedDefinitionTests(unittest.TestCase):
         # a Codex file edit past the Layer 3 guard entirely.
         self.assertIn("apply_patch", repair.matcher_for("pre_tool_use.py", "codex"))
         self.assertIn("apply_patch", repair.matcher_for("post_tool_use.py", "codex"))
-        for host in ("claude", "copilot"):
-            self.assertNotIn("apply_patch", repair.matcher_for("pre_tool_use.py", host))
+        self.assertNotIn("apply_patch", repair.matcher_for("pre_tool_use.py", "claude"))
+
+    def test_copilot_is_required_to_select_the_names_it_documents_and_is_written_its_own_names_too(self):
+        """WP-08: with PascalCase events Copilot reports its tools as Bash, Write and Edit; the registrar also writes
+        Copilot's own names, in case a tool arrives untranslated, and the verifier does not require them."""
+        self.assertEqual(verify.required_tools("pre_tool_use.py", "copilot"), ["Bash", "Edit", "Write"])
+        self.assertEqual(verify.required_tools("post_tool_use.py", "copilot"), ["Bash"])
+        self.assertEqual(repair.matcher_for("pre_tool_use.py", "copilot"),
+                         "Bash|Edit|Write|bash|powershell|create|edit|str_replace_editor|apply_patch")
+        self.assertEqual(repair.matcher_for("post_tool_use.py", "copilot"), "Bash|bash|powershell")
+        for tool in ("Bash", "Write", "Edit", "bash", "powershell", "create", "edit", "str_replace_editor", "apply_patch"):
+            self.assertTrue(verify.matcher_selects(repair.matcher_for("pre_tool_use.py", "copilot"), tool), tool)
 
     def test_the_prompt_hook_has_no_matcher_on_any_host(self):
         for host in ("claude", "codex", "copilot"):

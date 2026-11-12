@@ -375,7 +375,9 @@ def rule_dangerous(call: "Call") -> "str | None":
 # --- the call a rule inspects ----------------------------------------------------------------
 
 _SHELL_TOOLS = frozenset({"bash", "powershell", "pwsh", "shell"})
-_WRITE_TOOLS = frozenset({"edit", "write", "notebookedit", "multiedit", "apply_patch"})
+# `create` and `str_replace_editor` are GitHub Copilot's own names for its file tools. With the PascalCase events the
+# registrar writes, Copilot documents that it reports them as `Write` and `Edit`; they are listed in case it does not.
+_WRITE_TOOLS = frozenset({"edit", "write", "notebookedit", "multiedit", "apply_patch", "create", "str_replace_editor"})
 # Tools whose input names a filesystem path we can match against a boundary.
 _PATH_KEYS = ("file_path", "filePath", "path", "notebook_path", "target_file")
 _PATCH_FILE = re.compile(r"^\*\*\* (?:Update File|Add File|Delete File|Move to):\s*(.+?)\s*$", re.MULTILINE)
@@ -1654,12 +1656,19 @@ def rule_single_writer(call: "Call") -> "str | None":
 # them inside a run starts the host with SUPREMETEAM_HARNESS_DEV=1, which only the human who launches the
 # host can set. The sanctioned registration writers (repair_registration.py, install_hooks.py) are
 # scripts, so their arguments are never write targets and they keep working.
-_REGISTRATION = (".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".github/hooks.json")
+# GitHub Copilot reads every `*.json` under `.github/hooks/` and `~/.copilot/hooks/` (`$COPILOT_HOME/hooks/` when
+# that is set), so the whole directory is a registration: a second file there adds a hook as surely as an edit to
+# ours. `.github/hooks.json` and `~/.config/github-copilot/hooks.json` are where earlier versions wrote.
+_REGISTRATION = (".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".github/hooks.json",
+                 ".github/hooks/**")
 _USER_REGISTRATION = ("~/.claude/settings.json", "~/.claude/settings.local.json", "~/.codex/hooks.json",
-                      "~/.config/github-copilot/hooks.json", "~/.cursor/plugins/local/supremeteam-hooks/**",
+                      "~/.config/github-copilot/hooks.json", "~/.copilot/hooks/**",
+                      "~/.cursor/plugins/local/supremeteam-hooks/**",
                       "~/.config/opencode/plugins/supremeteam-hooks.js", "~/.pi/agent/extensions/supremeteam-guard.ts")
-# pi reads its agent directory from this variable when it is set (install_hooks.pi_extension_path).
+# pi reads its agent directory from this variable when it is set (install_hooks.pi_extension_path), and Copilot its
+# home directory from this one.
 _PI_AGENT_ENV = "PI_CODING_AGENT_DIR"
+_COPILOT_HOME_ENV = "COPILOT_HOME"
 _HARNESS_REASON = (
     "Blocked by harness Action Realization layer: the hook scripts and the host files that register them are not "
     "edited while a run is pinned or a boundary is recorded, because an edit there would switch the guard off. "
@@ -1680,6 +1689,8 @@ def _harness_boundaries(root) -> list:
              *scripts, *_REGISTRATION, *(os.path.expanduser(p) for p in _USER_REGISTRATION)]
     if os.environ.get(_PI_AGENT_ENV):
         globs.append(os.path.join(os.path.expanduser(os.environ[_PI_AGENT_ENV]), "extensions", "supremeteam-guard.ts"))
+    if os.environ.get(_COPILOT_HOME_ENV):
+        globs.append(os.path.join(os.path.expanduser(os.environ[_COPILOT_HOME_ENV]), "hooks").replace("\\", "/") + "/**")
     return [_paths.Boundary(glob, root) for glob in globs]
 
 
@@ -1913,14 +1924,8 @@ RULES = [("A", rule_dangerous), ("G", rule_unplaced_write), ("H", rule_worktree_
 
 
 def _deny(reason: str) -> None:
-    out = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason,
-        }
-    }
-    print(json.dumps(out))
+    """Print the deny in the shape the host reads (``_state.deny_output``: the command line's ``--host``) and exit."""
+    print(json.dumps(_state.deny_output(reason)))
     _exit()
 
 
@@ -1945,13 +1950,16 @@ def _advise(notes: list) -> None:
     cannot be read is the owner's to repair, and the call is not the place to
     stop work the rules that still run have no objection to.
     """
-    out = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "additionalContext": "\n".join(notes),
-        }
-    }
-    print(json.dumps(out))
+    if _state.output_host() in _state.TOP_LEVEL_OUTPUT_HOSTS:
+        # GitHub Copilot documents no context channel for a pre-tool hook: its output is a decision or nothing, and
+        # an object it does not expect is not worth trying on a host that fails closed. The note goes to stderr,
+        # which the host logs, and the call is allowed.
+        try:
+            sys.stderr.write("\n".join(notes) + "\n")
+        except Exception:
+            pass
+        _exit()
+    print(json.dumps(_state.context_output("PreToolUse", "\n".join(notes))))
     _exit()
 
 

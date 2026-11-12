@@ -158,23 +158,31 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
         path = repair.resolve_config(link, through_links=overridden or args.scope == "user")
     except ValueError as exc:
         raise Refused(str(exc)) from exc
+    if not overridden:
+        # A host that fails closed is not given a repository file with this machine's paths unless that was asked for.
+        refusal = repair.absolute_refusal(host, args.scope, link, args.allow_absolute)
+        if refusal:
+            raise Refused(refusal)
     before = _read_text(path)
     config = _read_config(path)
-    # Codex also reads inline [hooks] tables from the config.toml beside hooks.json: what is registered there is
-    # registered, and writing it here as well would run it twice.
-    inline = verify.codex_inline_hooks(path) if host == "codex" else None
+    # What the host reads besides this file (Codex's inline [hooks] tables in the config.toml beside hooks.json, the
+    # other files of a Copilot hook directory): what is registered there is registered, and writing it here as well
+    # would run it twice.
+    others = verify.other_registrations(host, path)
+    inline = others if host == "codex" else []
     try:
-        desired, added = repair.plan(json.loads(json.dumps(config)), host, args.python_command, [inline] if inline else None)
+        desired, added = repair.plan(json.loads(json.dumps(config)), host, args.python_command, others or None)
     except ValueError as exc:
         raise Refused(f"{path}: {exc}") from exc
 
     after = json.dumps(desired, indent=2) + "\n"
     backup = None
     probe_notes: list[str] = []
-    if added and not args.dry_run and not args.no_probe:
+    if added and not args.dry_run:
         # Start each new command the way the host will before anything is written: a registration that cannot start
-        # reads as an enforced guard and enforces nothing.
-        failures, probe_notes = repair.probe_written(config, desired, host)
+        # reads as an enforced guard and enforces nothing, and on a host that fails closed it denies every tool call,
+        # so there the probe cannot be skipped.
+        failures, probe_notes = repair.checked_start(config, desired, host, skip=args.no_probe)
         if failures:
             raise Refused(f"{path}: refusing to write a registration that cannot start: {'; '.join(failures)}")
     if added:
@@ -182,6 +190,9 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
     elif args.dry_run:
         print(f"  (no change to {path})")
     written = repair.written_handlers(config, desired, host)
+    # A file an earlier version wrote where the host does not look: set aside when it is ours alone, named otherwise.
+    legacy = [] if overridden else repair.set_legacy_aside(host, args.scope, apply=not args.dry_run)
+    twice = repair.double_run_note(host) if added else None
 
     result = {
         "host": host,
@@ -195,6 +206,8 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
         + ([repair.CODEX_INLINE_NOTE] if inline else [])
         + ([repair.CODEX_TRUST_NOTE] if host == "codex" and added else [])
         + ([repair.PARTS_NOTE] if any("args" in handler for _, handler in written) else [])
+        + ([twice] if twice else [])
+        + legacy
         + probe_notes,
     }
     if args.dry_run:
@@ -204,7 +217,7 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
 
     # Re-read what is now on disk and ask the harness verifier, rather than
     # trusting that writing the file was the same thing as registering a hook.
-    states = verify.hook_states([_read_config(path), *([inline] if inline else [])], host)
+    states = verify.hook_states([_read_config(path), *others], host)
     hooks = {}
     for key, script in verify.REQUIRED:
         state = states[key]
@@ -710,8 +723,12 @@ def parse_args() -> argparse.Namespace:
                         help="do not ask before writing (a terminal run otherwise previews and asks)")
     parser.add_argument("--json", action="store_true", help="append a machine-readable report")
     parser.add_argument("--no-probe", action="store_true",
-                        help="write a codex, claude or copilot registration without first starting each new command the "
-                             "way the host will (the default refuses to write a command that does not start)")
+                        help="write a codex or claude registration without first starting each new command the way the "
+                             "host will (the default refuses to write a command that does not start). Not accepted for "
+                             "copilot, where a hook that cannot start denies every tool call")
+    parser.add_argument("--allow-absolute", action="store_true",
+                        help="write a copilot project-scope file although it holds this machine's absolute paths "
+                             "(refused by default: where those paths do not exist, every tool call is denied)")
     parser.add_argument("--codex-hooks", default=None, help="override the codex config path")
     parser.add_argument("--claude-settings", default=None, help="override the claude config path")
     parser.add_argument("--copilot-hooks", default=None, help="override the copilot config path")

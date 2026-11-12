@@ -235,7 +235,7 @@ Not skills. These are the files the skills are checked against.
 | **size_audit.py** | `skills/harness/hooks/size_audit.py` | Periodic bounded report of oversized runtime files and directories |
 | **gate_watch.py** | `skills/harness/hooks/gate_watch.py` | Re-runs `harness/gatekeeper/check.py` when a run manifest or intake log changes; advisory, bounded |
 | **audit_improve.py** | `skills/harness/hooks/audit_improve.py` | Bounded read-only audit of saved failures and a skill-maker handoff |
-| **user_prompt_submit.py** | `skills/harness/hooks/user_prompt_submit.py` | `UserPromptSubmit`: advisory entry-routing and session-pin reminder |
+| **user_prompt_submit.py** | `skills/harness/hooks/user_prompt_submit.py` | `UserPromptSubmit`: advisory entry-routing and session-pin reminder (registered on `SessionStart` for GitHub Copilot, which drops a prompt hook's output) |
 | **save_run.py** | `skills/harness/hooks/save_run.py` | The only writer of the run record |
 | **_saves.py** | `skills/harness/hooks/_saves.py` | Shared reader that classifies saved state |
 | **_state.py** | `skills/harness/hooks/_state.py` | Fail-open state helper: project root, hook input decoding, guard state, fault counting, trajectories |

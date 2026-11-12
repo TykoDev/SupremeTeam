@@ -276,6 +276,70 @@ def read_hook_input(event: "str | None" = None) -> dict:
         return {}
 
 
+# --- The answer a host reads ---------------------------------------------------------------------------
+#
+# Hosts do not read a hook's answer in one shape. Claude Code and Codex read the decision and the context under
+# ``hookSpecificOutput``. GitHub Copilot documents ``permissionDecision`` and ``additionalContext`` at the top level of
+# the object and nothing nested, and a pre-tool answer it cannot read lets the call through. The registrar appends
+# ``--host <name>`` to the command it writes for a host that needs another shape; without the argument the output is
+# what it always was. The shape is chosen by that argument and never by emitting both: Claude Code 2.1.322 honours a
+# deny that carries both and ignores one that carries only the top-level form, which is one host and one version.
+HOST_ARGUMENT = "--host"
+SELFTEST_ARGUMENT = "--selftest"
+TOP_LEVEL_OUTPUT_HOSTS = frozenset({"copilot"})
+
+
+def output_host(argv: "list | None" = None) -> str:
+    """The host a registered command names with ``--host <name>`` (or ``--host=<name>``), lower-cased; ``""`` for none."""
+    args = [str(arg) for arg in (sys.argv[1:] if argv is None else argv)]
+    for index, arg in enumerate(args):
+        if arg == HOST_ARGUMENT and index + 1 < len(args):
+            return args[index + 1].strip().lower()
+        if arg.startswith(HOST_ARGUMENT + "="):
+            return arg.split("=", 1)[1].strip().lower()
+    return ""
+
+
+def deny_output(reason: str, host: "str | None" = None) -> dict:
+    """A pre-tool deny in the shape ``host`` reads (the command line's host by default)."""
+    host = output_host() if host is None else host
+    if host in TOP_LEVEL_OUTPUT_HOSTS:
+        return {"permissionDecision": "deny", "permissionDecisionReason": reason}
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                   "permissionDecisionReason": reason}}
+
+
+def context_output(event: str, context: str, host: "str | None" = None) -> dict:
+    """Context for the model in the shape ``host`` reads (the command line's host by default)."""
+    host = output_host() if host is None else host
+    if host in TOP_LEVEL_OUTPUT_HOSTS:
+        return {"additionalContext": context}
+    return {"hookSpecificOutput": {"hookEventName": event, "additionalContext": context}}
+
+
+def event_key(data: dict) -> "str | None":
+    """What tells one tool event from the next, for a hook the host may run twice for the same event (GitHub Copilot
+    CLI runs the hooks of ``.github/hooks/*.json`` and of the project's ``.claude/settings.json``).
+
+    The host's own id for the call when the payload has one (Claude Code's ``tool_use_id``). Otherwise a digest of the
+    payload, and only when the payload carries a ``timestamp``: two deliveries of one event are the same bytes, while
+    the same command run again is a new event with a new time. With neither there is nothing to tell a second delivery
+    from a repeat, and a repeat must stay countable, so the answer is None and nothing is dropped."""
+    if not isinstance(data, dict):
+        return None
+    for name in ("tool_use_id", "toolUseId", "tool_call_id", "toolCallId"):
+        value = data.get(name)
+        if isinstance(value, str) and value.strip():
+            return "id:" + hashlib.sha256(value.strip().encode("utf-8", "replace")).hexdigest()[:24]
+    if data.get("timestamp") in (None, ""):
+        return None
+    try:
+        text = json.dumps(data, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return None
+    return "digest:" + hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:24]
+
+
 # --- Guard / Freeze boundary (written by the guard & freeze skills) ----------
 
 def is_released(entry: dict) -> bool:
@@ -655,11 +719,17 @@ def load_trajectory(identity: str) -> list:
     return data if isinstance(data, list) else []
 
 
-def append_trajectory(identity: str, entry: dict) -> list:
-    """Append one step signature and return the bounded recent history."""
+def append_trajectory(identity: str, entry: dict) -> "list | None":
+    """Append one step signature and return the bounded recent history.
+
+    An entry that carries an ``event`` (``event_key``) the history already holds is a second delivery of the same tool
+    event: it is not appended, and the answer is None so that the caller says nothing twice."""
     path = _traj_path(identity)
     with _fsutil.AdvisoryLock(path.parent / ".append.lock", TRAJECTORY_LOCK_WAIT, create_dir=True, fail_open=True):
         history = load_trajectory(identity)
+        key = entry.get("event")
+        if key and any(isinstance(step, dict) and step.get("event") == key for step in history):
+            return None
         history.append(entry)
         history = history[-_MAX_TRAJ:]
         write_json(path, history)

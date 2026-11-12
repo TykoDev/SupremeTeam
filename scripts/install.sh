@@ -67,7 +67,7 @@ Options:
   --target NAME             Install host-native support for one host. Repeatable.
                               One of: auto, codex, claude, cursor, opencode, copilot, pi.
                               Default: auto. copilot and pi have no skills folder of
-                              their own (pi reads the common one), so they only take
+                              their own (both read the common one), so they only take
                               part in --register-hooks. auto never picks copilot, and
                               picks pi when ~/.pi/agent exists or PI_CODING_AGENT_DIR
                               is set; a pi program on PATH is not enough.

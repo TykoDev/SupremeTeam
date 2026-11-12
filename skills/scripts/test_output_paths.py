@@ -221,7 +221,8 @@ class ResolverContractTests(unittest.TestCase):
         """`--kind product` returned ok for the version-control hooks directory and for the guard's own scripts."""
         for name in (".git/hooks/pre-commit", ".git", ".GIT/config", "./.git/hooks/x", "skillset-saves/runs/r1/_state.md",
                      ".harness-state/guard-state.json", "skills/harness/hooks/pre_tool_use.py", "Skills/Harness/gatekeeper/check.py",
-                     ".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".github/hooks.json"):
+                     ".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".github/hooks.json",
+                     ".github/hooks/supremeteam.json", ".github/hooks/team.json", ".GitHub/Hooks"):
             with self.subTest(name=name):
                 with self.assertRaises(ValueError) as raised:
                     resolve(self.root, "product", name=name)

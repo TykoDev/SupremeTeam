@@ -104,6 +104,11 @@ class CommandFormTests(unittest.TestCase):
                          {"command": "C:/Program Files/Py/python.exe", "args": ["-X", "utf8", "C:/h/pre_tool_use.py"]})
 
 
+def host_suffix(host: str) -> str:
+    """The arguments the registrar appends for a host whose hooks have to answer in another shape (WP-08)."""
+    return " --host copilot" if host == "copilot" else ""
+
+
 class LauncherChoiceTests(unittest.TestCase):
     """What each host is given on Windows, for the paths a real machine holds."""
 
@@ -112,13 +117,13 @@ class LauncherChoiceTests(unittest.TestCase):
                     '"C:/Users/Jane Doe/.agents/skills/harness/hooks/pre_tool_use.py"')
         for host in ("claude", "codex", "cursor", "copilot"):
             with self.subTest(host=host):
-                self.assertEqual(handler(JANE, host), {"command": expected})
+                self.assertEqual(handler(JANE, host), {"command": expected + host_suffix(host)})
 
     def test_the_py_launcher_stands_in_for_a_spaced_interpreter_when_it_starts_the_same_one(self):
         for host in ("claude", "codex", "cursor", "copilot"):
             with self.subTest(host=host):
                 self.assertEqual(handler(SPACED, host, launcher=py314)["command"],
-                                 'py -3.14 -X utf8 "C:/Users/Jane Doe/.agents/skills/harness/hooks/pre_tool_use.py"')
+                                 'py -3.14 -X utf8 "C:/Users/Jane Doe/.agents/skills/harness/hooks/pre_tool_use.py"' + host_suffix(host))
 
     def test_a_launcher_named_by_the_operator_is_used_as_given(self):
         self.assertEqual(handler("py -3", "codex")["command"], 'py -3 -X utf8 "C:/Users/Jane Doe/.agents/skills/harness/hooks/pre_tool_use.py"')
@@ -127,7 +132,8 @@ class LauncherChoiceTests(unittest.TestCase):
     def test_with_no_launcher_each_host_gets_its_fallback(self):
         hook = "C:/Users/Jane Doe/.agents/skills/harness/hooks/pre_tool_use.py"
         self.assertEqual(handler(SPACED, "claude"), {"command": "C:/Program Files/Python314/python.exe", "args": ["-X", "utf8", hook]})
-        self.assertEqual(handler(SPACED, "copilot"), {"command": f'& "C:/Program Files/Python314/python.exe" -X utf8 "{hook}"'})
+        self.assertEqual(handler(SPACED, "copilot"),
+                         {"command": f'& "C:/Program Files/Python314/python.exe" -X utf8 "{hook}" --host copilot'})
         for host in ("codex", "cursor", "antigravity"):
             with self.subTest(host=host), self.assertRaises(repair.CommandRefused) as caught:
                 handler(SPACED, host)
@@ -165,7 +171,7 @@ class LauncherChoiceTests(unittest.TestCase):
         for host in ("claude", "codex", "copilot", "cursor"):
             with self.subTest(host=host):
                 self.assertEqual(repair.hook_handler("pre_tool_use.py", "/usr/bin/python3", host, windows=False, hook_dir=hooks),
-                                 {"command": f'/usr/bin/python3 -X utf8 "{hooks}/pre_tool_use.py"'})
+                                 {"command": f'/usr/bin/python3 -X utf8 "{hooks}/pre_tool_use.py"' + host_suffix(host)})
         spaced = repair.hook_handler("pre_tool_use.py", "/opt/my python/bin/python3", "claude", windows=False, hook_dir=hooks)
         self.assertEqual(spaced["command"], f'"/opt/my python/bin/python3" -X utf8 "{hooks}/pre_tool_use.py"')
 

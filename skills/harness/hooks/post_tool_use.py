@@ -51,7 +51,7 @@ def _missing_module(event: str, exc: BaseException) -> None:
     """A module this hook imports is not there. A registered hook fails open: the action already ran, so exit 0, with
     the fault counted when ``_state`` still loads and said on stderr when it does not. ``--selftest`` and an import of
     this file by another program are not host events, so they get the error itself."""
-    if __name__ != "__main__" or sys.argv[1:] == ["--selftest"]:
+    if __name__ != "__main__" or "--selftest" in sys.argv[1:]:
         return
     try:
         import _state as state
@@ -124,12 +124,23 @@ def _signature(tool_name: str, tool_input: dict) -> str:
     return hashlib.sha256(key.encode("utf-8", "ignore")).hexdigest()[:16]
 
 
+def _response(data: dict):
+    """What the tool returned: ``tool_response`` (Claude Code, Codex), else GitHub Copilot's ``tool_result``."""
+    resp = data.get("tool_response")
+    return data.get("tool_result") if resp in (None, "") else resp
+
+
+# GitHub Copilot's result types: the one it documents for a call that worked, and the ones that say it did not.
+_RESULT_FAILED = {"success": False, "failure": True, "error": True, "failed": True}
+
+
 def _response_text(data: dict) -> str:
-    resp = data.get("tool_response", "")
+    resp = _response(data)
     if isinstance(resp, dict):
-        # Common shapes: {"stdout":..,"stderr":..} or {"output":..} or {"content":..}
+        # Common shapes: {"stdout":..,"stderr":..} or {"output":..} or {"content":..}; Copilot: {"text_result_for_llm":..}
         return " ".join(
-            str(resp.get(k, "")) for k in ("stdout", "stderr", "output", "content", "error")
+            str(resp.get(k, "")) for k in ("stdout", "stderr", "output", "content", "error", "text_result_for_llm",
+                                           "textResultForLlm") if resp.get(k) not in (None, "")
         )
     return str(resp or "")
 
@@ -142,9 +153,13 @@ def _explicit_failure(data: dict):
     This is the doctrine's "mechanically certain" Principles path: when the host reports an
     exit code or success flag, trust it instead of guessing from output text.
     """
-    resp = data.get("tool_response")
+    resp = _response(data)
     if not isinstance(resp, dict):
         return None
+    for k in ("result_type", "resultType"):
+        kind = resp.get(k)
+        if isinstance(kind, str) and kind.strip().lower() in _RESULT_FAILED:
+            return _RESULT_FAILED[kind.strip().lower()]
     for k in ("exit_code", "exitCode", "returncode", "returnCode", "code", "status"):
         v = resp.get(k)
         if isinstance(v, bool):
@@ -185,12 +200,8 @@ def _looks_failed(text: str) -> bool:
 
 
 def _envelope(context: str) -> str:
-    return json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PostToolUse",
-            "additionalContext": context,
-        }
-    })
+    """The context in the shape the host reads (``_state.context_output``: the command line's ``--host``)."""
+    return json.dumps(_state.context_output("PostToolUse", context))
 
 
 # Set by main() before the trajectory patterns are evaluated, so a sweep hint is
@@ -548,9 +559,17 @@ def main() -> None:
     empty = len(text.strip()) == 0
 
     sig = _signature(tool_name, tool_input)
-    history = _state.append_trajectory(
-        session_id, {"sig": sig, "failed": failed, "empty": empty, **_agent_fields(data)}
-    )
+    entry = {"sig": sig, "failed": failed, "empty": empty, **_agent_fields(data)}
+    event = _state.event_key(data)
+    if event:
+        entry["event"] = event
+    history = _state.append_trajectory(session_id, entry)
+    if history is None:
+        # The same tool event, delivered a second time: a host that reads two registrations of this hook (GitHub
+        # Copilot CLI reads `.github/hooks/*.json` and the project's `.claude/settings.json`) runs it once for each.
+        # The first run recorded the step and said what there was to say; a second record would count one failure
+        # as two and bring the repeat hint a call early.
+        return
 
     # Pattern 1: same command failing repeatedly.
     recent_same = [h for h in history[-_REPEAT_FAIL_THRESHOLD:] if h.get("sig") == sig]
@@ -607,9 +626,10 @@ def run() -> None:
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--selftest"]:
+    if "--selftest" in sys.argv[1:]:
         # Not a host event: prove the registered command starts and every module a hook runs imports, and fail
-        # loud when one does not (verify_registration.probe reads the exit status and the "ok").
+        # loud when one does not (verify_registration.probe reads the exit status and the "ok"). The argument is
+        # looked for anywhere on the line: a command registered with `--host <name>` is probed with it in place.
         _bootstrap.selftest()
         sys.exit(0)
     run()

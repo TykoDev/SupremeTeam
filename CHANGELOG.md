@@ -239,6 +239,37 @@ of Claude Code 2.1.322, Codex CLI 0.166.0 and Antigravity CLI 1.4.12 on Windows.
     says "use a path tool", which was the shape it denied.
   - The post-tool hook records the `agent_id` and `agent_type` Claude Code puts on a tool
     event inside a sub-agent. They are the host's word and grant nothing.
+- GitHub Copilot is registered where it looks, in its shape, and answered in its shape
+  (WP-08, issue 9). The registrar wrote `~/.config/github-copilot/hooks.json` and
+  `.github/hooks.json` in the nested shape Claude Code reads, and the guard answered under
+  `hookSpecificOutput`. Copilot reads `*.json` inside `~/.copilot/hooks/` and
+  `.github/hooks/`, as `{"version": 1, "hooks": {event: [handler]}}` with the command in a
+  `bash` or `powershell` field, and documents the decision at the top level. The hooks were
+  never started there. **Not run in a Copilot session: Copilot CLI is not installed on the
+  machine this was written on. It follows Copilot's hooks reference.**
+  - The registrar writes its own file, `supremeteam.json`, in Copilot's hook directory
+    (`$COPILOT_HOME/hooks/` when that is set), in Copilot's shape, with PascalCase events and
+    an explicit `timeoutSec`. The verifier reads every `*.json` of both directories.
+  - Each command ends in `--host copilot`. With it the guard prints a top-level
+    `permissionDecision` and the other hooks a top-level `additionalContext`; without it the
+    output is unchanged. A Copilot registration without the argument is reported as not
+    registered. The shape is chosen by the argument, never by emitting both.
+  - The routing reminder is registered on `SessionStart`, once per session: Copilot drops
+    what a command hook prints for a prompt.
+  - Copilot denies a tool call when a pre-tool hook exits with anything but 0, so a command
+    is written only after it has been started: `--no-probe` and an interpreter that is not
+    on this machine are refused for this host.
+  - A project-scope file is refused unless `--allow-absolute` is given: it would carry this
+    machine's paths to wherever the repository is checked out, and deny every tool call there.
+  - A file an earlier version wrote is moved beside itself as `hooks.json.bak-<time>` when
+    it holds only Supreme Team entries, and left and named otherwise.
+  - Copilot CLI also runs a repository's `.claude/settings.json` hooks. The registrar says
+    when that will happen, and `post_tool_use.py` records a tool event once (by
+    `tool_use_id`, else by a digest of a payload that carries a `timestamp`).
+  - The guard reads Copilot's own tool names `create` and `str_replace_editor`, the
+    post-tool hook reads Copilot's `tool_result`, Rule F covers Copilot's hook directories,
+    and `output_paths.py --kind product` refuses a path under `.github/hooks/`.
+  - `Install.md` no longer says Copilot has no skills: Copilot CLI reads `~/.agents/skills`.
 
 Upgrade notes for this section:
 
@@ -262,8 +293,13 @@ Upgrade notes for this section:
   absolute. A sub-orchestrator that builds the block from an older copy still works in the
   main checkout; a delegate in a linked worktree is refused a relative save path (Rule H)
   and told where the file belongs.
+- Copilot: a registration written by an earlier version was never read by Copilot. Register
+  again (`install_hooks.py --target copilot`, or `repair_registration.py --host copilot
+  --scope user --apply`); a legacy file holding only Supreme Team entries is moved to
+  `hooks.json.bak-<time>` beside itself. A project-scope registration now needs
+  `--allow-absolute`.
 - Hook hashes: the packages that change a file hashed at registration (WP-00, WP-02, WP-03,
-  WP-04, WP-06 and WP-10 so far; WP-03 also adds `scripts/checkout.py` to the record) make readiness report
+  WP-04, WP-06, WP-08 and WP-10 so far; WP-03 also adds `scripts/checkout.py` to the record) make readiness report
   the hook files as changed. After upgrading, re-record them for
   each host with `python skills/harness/hooks/repair_registration.py --host <host>
   --record-hashes`, or reinstall with hook registration.
@@ -1528,7 +1564,7 @@ recorded here, or a record the skill does not carry, fails it.
   lacks), a warning for a leading-slash glob outside the project that names a directory that
   exists, relative globs anchored at the project root, a writer lock, and what an
   unreadable record means.
-- `guard` 1.10.0: Rule H denies a write under the `skillset-saves/` of a linked git worktree and names the path in the main checkout, and a Rule D or Rule G denial of a run file says how one is written (`run_files.py write`); previously Rule C also gives a phase's `_superseded/` folder and its `index.json` a single writer, `run_files.py supersede`; previously from a linked git worktree the guard enforces the main checkout's record, a frozen or blocked glob and the registration files hold for the worktree's copy too, and Rule F also covers `skills/scripts/checkout.py`; previously an `apply_patch` call is judged wherever the host puts the patch text (Codex sends it as `command`), and one that names no file the guard can read is denied by Rule G while anything is protected; previously Rule A also denies an inline program's own delete of a root or home (`python3 -c 'shutil.rmtree("/")'`, `node -e 'fs.rmSync(os.homedir(), ...)'`) and a wipe spelled in base64 and decoded by a `base64 -d` of a literal into a shell (`echo cm0gLXJmIC8K | base64 -d | sh`, `sh -c "$(echo ... | base64 -d)"`); previously Rule C also protects the REVISE cycle history (`verdict_<boundary>.cycles.json`) and its lock, and refuses removing or moving a phase directory; previously gate verdict records have a single writer, `check.py --verdict-out` (Rule C); previously a grant is capped at 8 hours, the hook scripts are protected (Rule F,
+- `guard` 1.10.1: Rule F also covers the directories GitHub Copilot reads hook files from (`.github/hooks/`, `~/.copilot/hooks/`), and the write tools include Copilot's `create` and `str_replace_editor`; previously Rule H denies a write under the `skillset-saves/` of a linked git worktree and names the path in the main checkout, and a Rule D or Rule G denial of a run file says how one is written (`run_files.py write`); previously Rule C also gives a phase's `_superseded/` folder and its `index.json` a single writer, `run_files.py supersede`; previously from a linked git worktree the guard enforces the main checkout's record, a frozen or blocked glob and the registration files hold for the worktree's copy too, and Rule F also covers `skills/scripts/checkout.py`; previously an `apply_patch` call is judged wherever the host puts the patch text (Codex sends it as `command`), and one that names no file the guard can read is denied by Rule G while anything is protected; previously Rule A also denies an inline program's own delete of a root or home (`python3 -c 'shutil.rmtree("/")'`, `node -e 'fs.rmSync(os.homedir(), ...)'`) and a wipe spelled in base64 and decoded by a `base64 -d` of a literal into a shell (`echo cm0gLXJmIC8K | base64 -d | sh`, `sh -c "$(echo ... | base64 -d)"`); previously Rule C also protects the REVISE cycle history (`verdict_<boundary>.cycles.json`) and its lock, and refuses removing or moving a phase directory; previously gate verdict records have a single writer, `check.py --verdict-out` (Rule C); previously a grant is capped at 8 hours, the hook scripts are protected (Rule F,
   advisory, whole registration file), a write after an unfollowable directory chain is
   denied (Rule G, with its own failure-mode row), a read-only run denies writes with no
   named target (pipes, launchers, PowerShell blocks, diffs), an unreadable record is counted

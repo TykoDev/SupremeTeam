@@ -61,7 +61,7 @@ creates carries a `.supremeteam-managed` marker. On an upgrade:
 | Preview only | `-DryRun` | `--dry-run` |
 
 Teams: `Design`, `Build`, `Review`, `Browser`, `Release`, `Safety`, `Testing`,
-`All`. Hosts: `auto`, `codex`, `claude`, `cursor`, `opencode`, `copilot` (hooks only; `auto` never picks it), `pi` (hooks only; `auto` picks it when `~/.pi/agent` exists or `PI_CODING_AGENT_DIR` is set, never because a program named `pi` is on `PATH`). Per-host
+`All`. Hosts: `auto`, `codex`, `claude`, `cursor`, `opencode`, `copilot` (no mirror: it reads the common folder; `auto` never picks it), `pi` (hooks only; `auto` picks it when `~/.pi/agent` exists or `PI_CODING_AGENT_DIR` is set, never because a program named `pi` is on `PATH`). Per-host
 destination flags exist too (`-CodexDestination`, `--claude-destination`, and so
 on); `-InstallClaude` and `--install-claude` are older aliases for the Claude
 target. `--help` (`Get-Help .\scripts\install.ps1`) lists every option.
@@ -133,9 +133,10 @@ added when there is local evidence of the host.
 | Codex | `~/.codex/skills/` | `%USERPROFILE%\.codex\skills\` |
 | Cursor | `~/.cursor/skills/` | `%USERPROFILE%\.cursor\skills\` |
 
-GitHub Copilot has no skills directory here: only its hook configuration is
-written, and only when you name it (`--target copilot`, `-Target Copilot`) and register
-hooks for it (see [Runtime hooks](#runtime-hooks)).
+GitHub Copilot has no mirror: Copilot CLI reads skills from `~/.agents/skills`, the
+common folder, so no extra copy is installed for it. Naming it (`--target copilot`,
+`-Target Copilot`) only adds its hook registration, and only with `--register-hooks`
+(see [Runtime hooks](#runtime-hooks)).
 
 pi has no mirror either: it reads the common folder. With `--register-hooks` the
 installer writes its guard extension to `~/.pi/agent/extensions/supremeteam-guard.ts`
@@ -240,10 +241,27 @@ Registration edits these files, by default the global (`user`) ones:
 |---|---|---|
 | Claude Code | `~/.claude/settings.json` | `.claude/settings.json` / `.claude/settings.local.json` |
 | Codex | `~/.codex/hooks.json` | `.codex/hooks.json` |
-| GitHub Copilot | `~/.config/github-copilot/hooks.json` | `.github/hooks.json` |
+| GitHub Copilot | `~/.copilot/hooks/supremeteam.json` (`$COPILOT_HOME/hooks/` when set) | `.github/hooks/supremeteam.json`, refused without `--allow-absolute` |
 | Cursor | `~/.cursor/plugins/local/supremeteam-hooks/` | not scoped |
 | OpenCode | `~/.config/opencode/plugins/supremeteam-hooks.js` | not scoped |
 | pi | `~/.pi/agent/extensions/supremeteam-guard.ts` (`$PI_CODING_AGENT_DIR/extensions/` when set) | not scoped |
+
+GitHub Copilot differs from the other two JSON hosts in four ways, and the helper is
+stricter with it for the first. A pre-tool hook that exits with anything but 0 denies
+the tool call there, so a command is written only after it has been started
+(`--no-probe` is refused, and so is an interpreter that is not on this machine), and a
+project-scope file, which would carry this machine's paths to wherever the repository
+is checked out, is refused unless you pass `--allow-absolute` to `install_hooks.py` or
+`repair_registration.py`. The file is Supreme Team's own (`supremeteam.json`) in the
+directory Copilot reads every `*.json` from, in Copilot's shape: `"version": 1`, a
+flat list of handlers per event, the command in the `powershell` field on Windows and
+the `bash` field elsewhere, ending in `--host copilot` so that the hooks answer in the
+shape Copilot reads. Copilot drops what a command hook prints for a prompt, so the
+routing reminder is registered on `SessionStart` and given once per session. A file an
+earlier version wrote (`~/.config/github-copilot/hooks.json`, `.github/hooks.json`) is
+not read by Copilot: when it holds only Supreme Team entries it is moved beside itself
+as `hooks.json.bak-<time>`, and otherwise it is left and named. None of this has been
+run in a Copilot session yet; it follows Copilot's hooks reference.
 
 `--scope project|local` (`--hooks-scope`, `-HooksScope` on the installers) means the
 project around the directory you run it from. A `project` file is usually committed

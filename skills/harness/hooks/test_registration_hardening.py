@@ -162,10 +162,19 @@ class VerifyRegistrationTests(Scratch):
                 self.assertIn("[MISSING] PreToolUse", result.stdout)
 
     def test_copilot_native_config_is_detected(self):
-        self.write_json(self.project / ".github" / "hooks.json", self.BLOCK)
+        self.write_json(self.project / ".github" / "hooks" / "supremeteam.json", repair.plan({}, "copilot", sys.executable)[0])
         result = self.verify("copilot")
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("status: REGISTERED", result.stdout)
+
+    def test_the_file_an_earlier_version_wrote_for_copilot_is_not_a_registration(self):
+        """WP-08: Copilot reads `*.json` inside `.github/hooks/`, never `.github/hooks.json`, and not this shape."""
+        self.write_json(self.project / ".github" / "hooks.json", self.BLOCK)
+        result = self.run_tool("verify_registration.py", "--host", "auto")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("[copilot]", result.stdout)
+        self.assertIn("status: MISSING", result.stdout)
+        self.assertIn("is where an earlier version registered Copilot hooks, and Copilot does not read it", result.stdout)
 
 
 class RegistrationAnalysisTests(unittest.TestCase):
@@ -953,7 +962,7 @@ class ScopeWarningTests(Scratch):
         self.assertEqual(len(payload["warnings"]), 1)
 
     def test_other_hosts_are_told_to_keep_the_file_out_of_the_commit(self):
-        result = self.run_tool("repair_registration.py", "--host", "copilot", "--scope", "project")
+        result = self.run_tool("repair_registration.py", "--host", "codex", "--scope", "project")
         self.assertIn("keep it out of the commit", result.stderr)
 
     def test_local_scope_has_nothing_to_warn_about(self):

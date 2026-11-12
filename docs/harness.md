@@ -53,7 +53,8 @@ change and ask on a terminal; `--hooks-yes` (`-HooksYes`), or `--yes` on
 `install_hooks.py`, skips the question. Declining writes nothing;
 `install_hooks.py` exits 3. Claude Code, Codex and Copilot take JSON config that
 `verify_registration.py` reads back; Cursor, OpenCode and pi take a plugin or
-extension that is not machine-verifiable. Which file each host and scope edits:
+extension that is not machine-verifiable. Copilot's file is its own shape and is never written unprobed, because a
+pre-tool hook that cannot start denies the tool call there. Which file each host and scope edits:
 [Install.md](../Install.md#runtime-hooks).
 
 An install without `--register-hooks`, or one that declines or fails

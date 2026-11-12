@@ -23,6 +23,17 @@ of Claude Code 2.1.322, Codex CLI 0.166.0 and Antigravity CLI 1.4.12 on Windows.
   target: Rule G denies it while a boundary is recorded, a record directory holds a record or
   a run is pinned, and allows it otherwise. `guard_hook.py` is a hashed hook file: re-record
   the hook hashes after upgrading (see the upgrade notes below).
+- Safety floor (WP-01, issue 4): `contract_floor.py` exists so that weakening `gates.yaml`
+  cannot weaken a gate, and three documents say it rejects a weakened typed kind or artifact
+  backing. It did not pin the typed kinds of `decisions`, `acceptance`, `interfaces`,
+  `implementation` and `traceability`, the artifact backing of `acceptance` and `interfaces`
+  (design-to-build), `approved_design_revision` and `implementation` (build-to-review) and
+  `approved_delivery` (deploy-readiness), or the upstream boundary either `revision_ref` key
+  binds to: deleting all of them from a copy of the spec gave no floor error. The floor now
+  names every key the shipped spec types or backs, both upstream links, the REVISE cycle cap
+  of 3 (`_gatecycle.py` acts on it at gate time) and an owner for every required key, and
+  `test_contract_floor.py` compares floor and spec in both directions, so a key added to
+  `gates.yaml` without a floor entry fails the suite. `gates.yaml` is unchanged.
 
 Upgrade notes for this section:
 

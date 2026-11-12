@@ -297,7 +297,15 @@ digest and path-reference shapes, typed-record consistency, and the schema rule.
 `test_quality_audit.py` also covers the shipped spec safety floor, typed security-seed
 and human-go records, nested values and research/UI/CSO slot attribution. The floor
 in `skills/scripts/contract_floor.py` is independent of gates.yaml and is checked
-by the shipped loader, shape-wrapper catalog loader and manifest validator. Explicit
+by the shipped loader, shape-wrapper catalog loader and manifest validator. It pins,
+for every boundary, the submitter, the required keys and their artifact backing; the
+typed kind of every key the spec types; the upstream boundary each `revision_ref` key
+binds to (`approved_design_revision` to `design-to-build` with its acceptance key,
+`approved_delivery` to `review-to-delivery`); the REVISE cycle cap of 3; an owner for
+every required key; the finding policy, the judging gates, the waiver table and the
+variant and selection contracts. `test_contract_floor.py` compares it with the shipped
+spec in both directions, so a key typed or backed in `gates.yaml` and not in the floor
+fails the suite. Explicit
 `--gates` experiments remain non-shipped inputs, never approval authority. The
 revision cap is declared in `gates.yaml`, validated by `validate_manifests.py` and counted
 by this engine: `_gatecycle.py` records each distinct REVISE revision at `--judgment` /

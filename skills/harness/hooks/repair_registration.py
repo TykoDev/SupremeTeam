@@ -45,11 +45,12 @@ import getpass
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import _fsutil
 import _state
@@ -169,17 +170,180 @@ def utf8_flags(python: str) -> list[str]:
     return ["-X", "utf8"]
 
 
-def command_for(script: str, python: str) -> str:
-    return " ".join([launcher_token(python), *utf8_flags(python), f'"{HOOK_DIR / script}"'])
+# --- the command a host can start (Windows) ----------------------------------------------------------
+#
+# A hook command is text a shell reads, and on Windows the hosts do not share a shell: Claude Code uses Git Bash,
+# Codex and Copilot PowerShell or cmd, Antigravity ``cmd /C`` with the quotes escaped. One form starts in all of them
+# but the last: the interpreter unquoted, the hook path quoted, forward slashes throughout. It works because its first
+# word is never quoted (PowerShell reads a command that begins with a quote as a string) and holds no backslash (Git
+# Bash consumes them). Every form here was run through Git Bash, PowerShell 7, Windows PowerShell 5.1 and cmd, and
+# through real Claude Code sessions; test_registration_shells.py repeats the matrix.
+
+class CommandRefused(ValueError):
+    """No command that starts on the host can be written for these paths. The message names the ways out."""
 
 
-def plan(config: dict, host: str, python: str) -> tuple[dict, list[str]]:
+_DRIVE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
+_EXTENDED_PREFIX = "\\\\?\\"
+_REFUSAL_ADVICE = ("Install to a destination and an interpreter whose paths hold no space, or name a launcher with "
+                   "--python (for example --python \"py -3.13\").")
+# What each host is given on Windows: the form, and the fallback when no launcher without a space qualifies
+# (None refuses). OpenCode and pi start the interpreter without a shell through their own bridges and are not here.
+WINDOWS_FORMS = {"claude": ("standard", "parts"), "codex": ("standard", None), "cursor": ("standard", None),
+                 "copilot": ("standard", "call"), "antigravity": ("bare", None)}
+
+
+def windows_shaped(path: str) -> bool:
+    """A drive-letter path or a backslash UNC path. A backslash by itself proves nothing: it is a legal character in a
+    POSIX file name, so only these two shapes are converted."""
+    return bool(_DRIVE_PATH.match(path)) or path.startswith("\\\\")
+
+
+def forward_slashes(path: str) -> str:
+    """``path`` with forward slashes when it is Windows-shaped, unchanged otherwise.
+
+    An extended-length prefix (``\\\\?\\C:\\...``) is dropped when the rest is an ordinary drive path. Any other
+    extended path (``\\\\?\\UNC\\...``, a device) is refused: no shell command can name it."""
+    if path.startswith(_EXTENDED_PREFIX):
+        rest = path[len(_EXTENDED_PREFIX):]
+        if not _DRIVE_PATH.match(rest):
+            raise CommandRefused(f"{path} is an extended-length path that is not a plain drive path, and no shell command "
+                                 f"can name it. {_REFUSAL_ADVICE}")
+        path = rest
+    return PureWindowsPath(path).as_posix() if windows_shaped(path) else path
+
+
+def standard_form(launcher: list[str], script: str) -> str:
+    """``C:/Py/python.exe -X utf8 "C:/Users/Jane Doe/.agents/skills/harness/hooks/pre_tool_use.py"``: the interpreter
+    unquoted, the hook path quoted. Starts in Git Bash, both PowerShells and cmd."""
+    if " " in launcher[0]:
+        raise CommandRefused(f"the interpreter path {launcher[0]!r} holds a space, and the standard form leaves it unquoted")
+    return " ".join([*launcher, f'"{script}"'])
+
+
+def bare_form(launcher: list[str], script: str) -> str:
+    """``C:/Py/python.exe -X utf8 C:/h/pre_tool_use.py``: nothing quoted. The one form Antigravity can run."""
+    for part in (launcher[0], script):
+        if " " in part or '"' in part or "'" in part:
+            raise CommandRefused(f"{part!r} holds a space or a quote, and this host cannot run a command that contains a "
+                                 f"quote. {_REFUSAL_ADVICE}")
+    return " ".join([*launcher, script])
+
+
+def call_form(launcher: list[str], script: str) -> str:
+    """``& "C:/Program Files/Py/python.exe" -X utf8 "C:/h/pre_tool_use.py"``: PowerShell only."""
+    return " ".join(["&", f'"{launcher[0]}"', *launcher[1:], f'"{script}"'])
+
+
+def parts_form(launcher: list[str], script: str) -> dict:
+    """``{"command": interpreter, "args": [...]}``: started directly, with no shell to read it."""
+    return {"command": launcher[0], "args": [*launcher[1:], script]}
+
+
+def py_launcher_for(interpreter: str) -> "str | None":
+    """``py -<major>.<minor>`` when the ``py`` launcher is on PATH and that selector starts this very interpreter, else None.
+
+    A launcher is how a command avoids naming an interpreter whose path holds a space. It qualifies only when it
+    resolves to the same file: for a virtual environment it does not, and registering the base interpreter in its place
+    would run the hooks on another set of packages."""
+    launcher = shutil.which("py")
+    if not launcher:
+        return None
+    version = verify._probe_version(interpreter, [])
+    if not version:
+        return None
+    selector = f"-{version[0]}.{version[1]}"
+    try:
+        done = subprocess.run([launcher, selector, "-I", "-S", "-c", "import sys; print(sys.executable)"],
+                              capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL, check=False)
+        same = done.returncode == 0 and os.path.samefile(done.stdout.strip(), interpreter)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return f"py {selector}" if same else None
+
+
+def hook_handler(script: str, python: str, host: str = "claude", *, windows: "bool | None" = None,
+                 hook_dir: "str | Path | None" = None, py_launcher=None) -> dict:
+    """The fields that start one hook on ``host``: ``{"command": text}``, with ``args`` beside it for the no-shell form.
+
+    On POSIX the command is what it always was. On Windows the form is the host's row of ``WINDOWS_FORMS``, and the
+    first word has to hold no space: the interpreter's own path, else ``py -<major>.<minor>`` when the launcher starts
+    the same interpreter (``py_launcher``, ``py_launcher_for`` by default), else the host's fallback. Raises
+    ``CommandRefused`` when the host has none. ``windows`` and ``hook_dir`` default to this machine and this directory;
+    naming them builds the command for another."""
+    windows = os.name == "nt" if windows is None else windows
+    directory = str(HOOK_DIR if hook_dir is None else hook_dir)
+    if not windows:
+        hook = str(HOOK_DIR / script) if hook_dir is None else f"{directory.rstrip('/')}/{script}"
+        if host == "antigravity":
+            return {"command": bare_form([*launcher_parts(python), *utf8_flags(python)], hook)}
+        return {"command": " ".join([launcher_token(python), *utf8_flags(python), f'"{hook}"'])}
+    hook = forward_slashes(directory).rstrip("/") + "/" + script
+    interpreter, *extra = launcher_parts(python)
+    interpreter = forward_slashes(interpreter)
+    flags = utf8_flags(python)
+    form, fallback = WINDOWS_FORMS.get(host, ("standard", None))
+    launcher = [interpreter, *extra, *flags]
+    if " " in interpreter:
+        selector = (py_launcher or py_launcher_for)(interpreter)
+        if selector:
+            launcher = [*selector.split(), *extra, *flags]
+        elif fallback == "parts":
+            return parts_form(launcher, hook)
+        elif fallback == "call":
+            return {"command": call_form(launcher, hook)}
+        else:
+            raise CommandRefused(f"the interpreter path {interpreter!r} holds a space, no py launcher starts that interpreter, "
+                                 f"and {host} needs a command whose first word is unquoted. {_REFUSAL_ADVICE}")
+    return {"command": bare_form(launcher, hook) if form == "bare" else standard_form(launcher, hook)}
+
+
+def command_for(script: str, python: str, host: str = "claude", **options) -> str:
+    """The command text that starts one hook on ``host`` (``hook_handler``), for a host whose config holds only text.
+    Raises ``CommandRefused`` when the only form that starts there is the no-shell one."""
+    handler = hook_handler(script, python, host, **options)
+    if "args" in handler:
+        raise CommandRefused(f"the interpreter path {handler['command']!r} holds a space and no py launcher starts that "
+                             f"interpreter, so only a command with separate arguments starts it. {_REFUSAL_ADVICE}")
+    return handler["command"]
+
+
+def _own_handlers(config: dict, host: str, key: str, script: str) -> list[dict]:
+    """The handlers under one event that launch ``script`` by the words they hold, whatever a shell makes of them."""
+    return [handler for handler, _ in verify._handlers([config], verify.EVENTS[host][key])
+            if verify.analyse(handler["command"], script, verify.handler_tokens(handler))["executable"]]
+
+
+def _replace_defective(config: dict, host: str, python: str) -> list[str]:
+    """Rewrite, in place, each Supreme Team handler whose command cannot start in the host's shell.
+
+    The entry keeps its group, its matcher and every other field; only how the hook is started changes. Appending a
+    working group beside it instead would leave the broken command registered, failing on every tool call. An entry
+    that does not launch one of our scripts is never touched."""
+    replaced = []
+    for key, script in verify.REQUIRED:
+        for handler in _own_handlers(config, host, key, script):
+            defects = verify.handler_defects(handler, host)
+            if not defects:
+                continue
+            fresh = hook_handler(script, python, host)
+            handler.pop("args", None)
+            handler.update(fresh)
+            replaced.append(f"{verify.EVENTS[host][key]} -> {script} (replaces a command that cannot start: {defects[0]})")
+    return replaced
+
+
+def plan(config: dict, host: str, python: str, also: "list[dict] | None" = None) -> tuple[dict, list[str]]:
+    """The config with every required hook registered, and what changed.
+
+    ``also`` holds registrations the host reads from another file (Codex ``config.toml`` inline hooks): a hook
+    registered there counts as registered and is not written a second time."""
     desired = dict(config)
     hooks = desired.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         raise ValueError("existing 'hooks' key is not an object; refusing to rewrite it")
-    states = verify.hook_states([config], host)
-    added: list[str] = []
+    added = _replace_defective(desired, host, python)
+    states = verify.hook_states([desired, *(also or [])], host)
     for key, script in verify.REQUIRED:
         state = states[key]
         if state["registered"] and not state["missing_tools"]:
@@ -188,7 +352,7 @@ def plan(config: dict, host: str, python: str) -> tuple[dict, list[str]]:
         groups = hooks.setdefault(event, [])
         if not isinstance(groups, list):
             raise ValueError(f"existing hooks.{event} is not a list; refusing to rewrite it")
-        handler = {"type": "command", "command": command_for(script, python)}
+        handler = {"type": "command", **hook_handler(script, python, host)}
         status = STATUS_MESSAGES.get(script)
         if status:
             handler["statusMessage"] = status
@@ -200,6 +364,42 @@ def plan(config: dict, host: str, python: str) -> tuple[dict, list[str]]:
         groups.append(entry)
         added.append(f"{event} -> {script}" + (f" (adds {'|'.join(tools)} to a narrower matcher)" if state["registered"] else ""))
     return desired, added
+
+
+def written_handlers(before: dict, after: dict, host: str) -> list[tuple[str, dict]]:
+    """``(script, handler)`` for each Supreme Team handler ``after`` holds and ``before`` did not, in hook order."""
+    found = []
+    for key, script in verify.REQUIRED:
+        old = _own_handlers(before, host, key, script) if isinstance(before.get("hooks"), dict) else []
+        found.extend((script, handler) for handler in _own_handlers(after, host, key, script) if handler not in old)
+    return found
+
+
+def probe_written(before: dict, after: dict, host: str) -> tuple[list[str], list[str]]:
+    """Start each command this change writes, the way the host will (``verify.probe``): ``(failures, notes)``.
+
+    A registration that cannot start is worse than none, because readiness would report the guard as on: with a
+    failure nothing is written. A command that could not be probed (its interpreter is not on this machine) is a note.
+    The form is the same for every hook, so the first is tried in every shell the host may use and the others in the
+    first one only."""
+    failures, notes = [], []
+    for index, (script, handler) in enumerate(written_handlers(before, after, host)):
+        results = verify.probe(handler, host, first_shell_only=index > 0, counted_only=True)
+        for result in verify.probe_failures(results, host, handler):
+            failures.append(f"{script} does not start under {result['shell']}: {result['detail']}")
+        for result in results:
+            if result["executes"] is None and f"{script}: {result['detail']}" not in notes:
+                notes.append(f"{script}: {result['detail']}")
+    return failures, notes
+
+
+CODEX_TRUST_NOTE = ("Codex skips a new or changed hook until it is trusted: start Codex and run /hooks once. Until then the "
+                    "guard does not run there, and readiness cannot see whether a hook is trusted")
+PARTS_NOTE = ("the interpreter path holds a space and no py launcher starts that interpreter, so the hook is registered as a "
+              "command with separate arguments, which the host starts without a shell. A host version that does not read "
+              "'args' would start the interpreter alone; check_readiness.py --probe shows whether the hooks start")
+CODEX_INLINE_NOTE = ("config.toml beside this file has inline [hooks] tables. Codex reads both files and merges them with a "
+                     "warning; a hook already registered there is not written here a second time")
 
 
 def resolve_config(path: Path, through_links: bool) -> Path:
@@ -289,7 +489,7 @@ def record_hashes(states: dict, host: str) -> Path:
 
 def _record_current(host: str) -> int:
     """``--record-hashes``: record the scripts the host's existing registration launches."""
-    objects = [value for value in (verify._read(path) for path in verify._paths(host)) if isinstance(value, dict)]
+    objects = [value for _, value in verify._loaded(host) if isinstance(value, dict)]
     states = verify.hook_states(objects, host)
     missing = [script for key, script in verify.REQUIRED if not states[key]["registered"]]
     if missing:
@@ -309,6 +509,9 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true", help="write the change (default is a dry run)")
     parser.add_argument("--record-hashes", action="store_true",
                         help="record the sha256 of the registered hook scripts and change no host config")
+    parser.add_argument("--no-probe", action="store_true",
+                        help="with --apply, write without first starting each new command the way the host will "
+                             "(the default refuses to write a command that does not start)")
     args = parser.parse_args()
     if args.record_hashes:
         return _record_current(args.host)
@@ -339,8 +542,9 @@ def main() -> int:
         if not isinstance(config, dict):
             print(json.dumps({"ok": False, "path": str(path), "error": "existing config root is not an object"}))
             return 2
+    inline = verify.codex_inline_hooks(path) if args.host == "codex" else None
     try:
-        desired, added = plan(json.loads(json.dumps(config)), args.host, args.python)
+        desired, added = plan(json.loads(json.dumps(config)), args.host, args.python, [inline] if inline else None)
     except ValueError as exc:
         print(json.dumps({"ok": False, "path": str(path), "error": str(exc)}))
         return 2
@@ -351,6 +555,12 @@ def main() -> int:
     warnings = scope_warnings(args.host, args.scope, link)
     if path != link:
         warnings.append(link_warning(link, path))
+    if inline:
+        warnings.append(CODEX_INLINE_NOTE)
+    if args.host == "codex":
+        warnings.append(CODEX_TRUST_NOTE)
+    if any("args" in handler for _, handler in written_handlers(config, desired, args.host)):
+        warnings.append(PARTS_NOTE)
     for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
     diff = "".join(difflib.unified_diff(before_text.splitlines(True), after_text.splitlines(True), fromfile=str(path), tofile=str(path) + " (proposed)"))
@@ -358,14 +568,22 @@ def main() -> int:
         print(diff)
         print(json.dumps({"ok": True, "path": str(path), "changes": added, "applied": False, "warnings": warnings, "note": "dry run; re-run with --apply to write"}))
         return 1
+    probe_notes: list[str] = []
+    if not args.no_probe:
+        failures, probe_notes = probe_written(config, desired, args.host)
+        if failures:
+            print(json.dumps({"ok": False, "path": str(path), "changes": added, "applied": False,
+                              "error": "refusing to write a registration that cannot start: " + "; ".join(failures)}))
+            return 2
     try:
         backup = write_with_backup(path, after_text, private=args.scope == "user")
-        record = record_hashes(verify.hook_states([desired], args.host), args.host)
+        record = record_hashes(verify.hook_states([desired, *([inline] if inline else [])], args.host), args.host)
     except OSError as exc:
         print(json.dumps({"ok": False, "path": str(path), "error": f"write failed: {exc}"}))
         return 2
     print(json.dumps({"ok": True, "path": str(path), "changes": added, "applied": True, "backup": str(backup) if backup else None,
-                      "hash_record": str(record), "warnings": warnings}))
+                      "hash_record": str(record), "warnings": warnings, "probe": "skipped" if args.no_probe else "started",
+                      "probe_notes": probe_notes}))
     return 0
 
 

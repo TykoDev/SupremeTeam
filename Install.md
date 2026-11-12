@@ -162,7 +162,9 @@ but hook verification and registration stay unavailable.
 
 The shell installer tries `python3`, `python`, `python3.14` and `python3.13`, in that
 order, and the PowerShell installer tries `py -3`, `python`, `python3`, `python3.14` and
-`python3.13`; each takes the first that answers 3.13 or newer. If your 3.13 has another
+`python3.13`; each takes the first that answers 3.13 or newer. Under Git Bash, MSYS2 or
+Cygwin the shell installer tries `py -3` before those names, because on Windows `python3`
+and `python` are often the Microsoft Store stubs, which start nothing. If your 3.13 has another
 name, make one of those names answer to it (a symlink earlier on `PATH`, or a virtual
 environment), or skip the installer's registration step and run
 `python3.13 scripts/install_hooks.py ...` yourself, as the examples below do.
@@ -260,6 +262,50 @@ where a cloned repository could have planted the link. `repair_registration.py`
 takes only `--scope`, so it writes through at user scope alone. Afterward open
 `/hooks` or restart the host. Without hooks, entry routing and tool guards are
 advisory only.
+
+### Hook commands on Windows
+
+A hook command is text that the host hands to a shell, and on Windows the hosts do
+not use the same one. Claude Code runs hooks through Git Bash, which consumes the
+backslashes of an unquoted `C:\...` path, and PowerShell reads a command that begins
+with a quote as a string. So the registration is written in one form that starts in
+Git Bash, PowerShell 7, Windows PowerShell 5.1 and `cmd`: forward slashes, the
+interpreter unquoted, the hook path quoted.
+
+```text
+C:/Users/you/AppData/Local/Programs/Python/Python314/python.exe -X utf8 "C:/Users/you/.agents/skills/harness/hooks/pre_tool_use.py"
+```
+
+The first word of that form cannot hold a space. When the interpreter's path does
+(`C:\Program Files\...`), the registration names `py -<major>.<minor>` instead, if
+the `py` launcher is on `PATH` and starts that same interpreter. Otherwise Claude
+Code gets the command and its arguments as separate fields (`command` and `args`),
+which it starts with no shell, and Codex and Cursor are refused with the two ways
+out: install to a destination and an interpreter without spaces, or name a launcher
+with `--python-command "py -3.13"`.
+
+Before it writes, the helper starts each new command the way the host will, with
+`--selftest` appended, and writes nothing when one does not start (`--no-probe`
+skips this). To check an existing registration the same way:
+
+```powershell
+py -3 "$env:USERPROFILE\.agents\skills\harness\hooks\check_readiness.py" --host auto --require-hooks --probe
+```
+
+`--probe` prints `executes: yes` or `no` per host, hook and shell. Without it,
+readiness still reads each registered command against the rules of the shell its
+host uses, and reports a command that cannot start there as not registered. A
+registration written by an earlier version, with backslashes, is reported that way
+for Claude Code; replace it once with:
+
+```powershell
+py -3 "$env:USERPROFILE\.agents\skills\harness\hooks\repair_registration.py" --host claude --scope user --apply
+```
+
+Codex skips a new or changed hook until you trust it: start Codex and run `/hooks`
+after any registration or repair. Readiness cannot see whether a hook is trusted.
+Codex also reads inline `[hooks]` tables from `config.toml` beside `hooks.json`; a
+hook registered there counts as registered and is not written a second time.
 
 ## Verify
 

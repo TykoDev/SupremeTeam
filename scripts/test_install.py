@@ -7,10 +7,12 @@ skill tree, so their tests live beside them. The behavioural tests run the real
 touches the real home directory, and PATH is rebuilt from a shim directory so a
 host CLI on the developer's machine cannot change what auto-detection sees.
 
-`install.ps1` cannot run in this suite. Its behaviour is pinned by parity checks
-against `install.sh` (the item file, the record names, the flags, the refusals,
-the one recursive delete), and no test here proves it runs under PowerShell.
-Likewise the bash 3.2 rule is a static check: it fails on an unguarded
+`install.ps1` runs here only on Windows (`WindowsInstallerRunTests`: an install
+with hook registration into a scratch home, under each PowerShell found, and
+`install.sh` under Git Bash, each followed by a probe that starts what was
+registered). Everywhere else its behaviour is pinned by parity checks against
+`install.sh` (the item file, the record names, the flags, the refusals, the one
+recursive delete). The bash 3.2 rule is a static check: it fails on an unguarded
 possibly-empty array expansion or a bash 4 construct. The behavioural tests run
 under whatever bash `BASH` names, so they execute under bash 3.2 only on a Mac
 (or with SUPREMETEAM_TEST_BASH set); on Linux and in CI images with bash 5 they do not.
@@ -1271,6 +1273,13 @@ class PowerShellParityTests(unittest.TestCase):
         powershell = re.findall(r'Command = "(py(?:thon[\d.]*)?)"', self.ps)
         self.assertEqual(sorted(powershell), sorted(["py", *names]))
         self.assertEqual(powershell[-2:], names[-2:], "the versioned names are the last resort in both, newest first")
+        # N3: under Git Bash, MSYS2 and Cygwin `python3` and `python` are often the Microsoft Store stubs, so install.sh
+        # tries the py launcher first there, with the argument install.ps1 gives it, and nowhere else.
+        self.assertEqual(powershell[0], "py")
+        self.assertIn('@{ Command = "py"; Arguments = @("-3") }', self.ps)
+        launcher = self.sh.index("if on_windows_bash && command -v py >/dev/null 2>&1 && python_satisfies_minimum py -3; then")
+        self.assertLess(launcher, self.sh.index("for candidate in python3 python"))
+        self.assertIn("MINGW*|MSYS*|CYGWIN*) return 0 ;;", self.sh)
 
     def test_both_refuse_the_same_destinations_in_the_same_words(self):
         for message in ("Refusing to install into the filesystem root", "it is your home directory or one of its parents",
@@ -1353,6 +1362,114 @@ class PowerShellParityTests(unittest.TestCase):
             for variable in re.finditer(r"\$(\w+):(?!\w)", match.group(1)):
                 self.assertIn(variable.group(1), ("env", "script", "global", "local"),
                               f"'${variable.group(1)}:' in a string is read as a drive-qualified variable; use ${{{variable.group(1)}}}:")
+
+
+def _powershells() -> list[tuple[str, str]]:
+    """``(label, path)`` of Windows PowerShell 5.1 and PowerShell 7, whichever exist."""
+    found = []
+    for label, name in (("Windows PowerShell 5.1", "powershell"), ("PowerShell 7", "pwsh")):
+        path = shutil.which(name)
+        if path:
+            found.append((label, path))
+    return found
+
+
+@unittest.skipUnless(os.name == "nt", "runs install.ps1 under PowerShell, and install.sh under Git Bash, on Windows")
+class WindowsInstallerRunTests(unittest.TestCase):
+    """The installers run for real on Windows, into a scratch home, and what they register starts (WP-02, N2, N3, N10).
+
+    Until this class no test executed `install.ps1`, and the 44 behavioural tests of `install.sh` skip on Windows. That
+    is how a hook command that never starts in Claude Code shipped while readiness reported it live. Each case installs
+    with hook registration and then asks the installed readiness check to start every registered command the way the
+    host does (`--probe`)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name).resolve()
+        self.home = self.tmp / "home"
+        self.home.mkdir()
+        # The registrar records the hook hashes in the project around the working directory: a scratch one.
+        self.project = self.tmp / "project"
+        (self.project / ".git").mkdir(parents=True)
+
+    def env(self) -> dict:
+        """The environment of a plain terminal whose home is the scratch one: no host signal, no project variable."""
+        env = {name: value for name, value in os.environ.items()
+               if not name.upper().startswith(("CLAUDE", "CODEX_", "COPILOT", "GITHUB_COPILOT", "SUPREMETEAM_", "PI_CODING"))}
+        env["USERPROFILE"] = env["HOME"] = str(self.home)
+        env["APPDATA"] = str(self.home / "AppData" / "Roaming")
+        return env
+
+    def run_ps1(self, powershell: str, *args: str) -> subprocess.CompletedProcess:
+        # As Install.md says to run it: Windows PowerShell refuses a script under its default execution policy.
+        command = [powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(INSTALL_PS1), *args]
+        return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(self.project),
+                              env=self.env(), stdin=subprocess.DEVNULL, timeout=600, check=False)
+
+    def readiness(self, host: str) -> dict:
+        import json
+
+        script = self.home / ".agents" / "skills" / "harness" / "hooks" / "check_readiness.py"
+        done = subprocess.run([sys.executable, str(script), "--host", host, "--require-hooks", "--probe", "--json"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(self.project),
+                              env=self.env(), stdin=subprocess.DEVNULL, timeout=600, check=False)
+        self.assertTrue(done.stdout.strip().startswith("{"), done.stdout + done.stderr)
+        return json.loads(done.stdout)
+
+    def assert_registration_starts(self, host: str, config: Path) -> None:
+        import json
+
+        self.assertTrue(config.is_file(), f"{config} was not written")
+        handlers = [hook for groups in json.loads(config.read_text(encoding="utf-8"))["hooks"].values()
+                    for group in groups for hook in group["hooks"]]
+        self.assertEqual(len(handlers), 3)
+        for handler in handlers:
+            self.assertNotIn("\\", handler["command"], "a backslash in the command is what Git Bash consumes")
+            self.assertFalse(handler["command"].startswith('"'), "a command that begins with a quote is not a call in PowerShell")
+        report = self.readiness(host)
+        self.assertTrue(report["ready"], report["blockers"])
+        self.assertEqual(report["enforcement"]["status"], "live")
+        self.assertEqual(report["capabilities"]["hooks_probed"], "yes")
+        for name, state in report["hooks"]["states"].items():
+            self.assertTrue(state["probe"], name)
+            self.assertEqual([entry for entry in state["probe"] if not entry["executes"]], [], name)
+
+    def test_install_ps1_registers_commands_that_start(self):
+        shells = _powershells()
+        if not shells:
+            self.skipTest("no PowerShell was found")
+        # `-File` takes one `-Target` value per run, so each host is its own run; with two PowerShells each runs one.
+        runs = [("Claude", shells[0]), ("Codex", shells[-1])]
+        for target, (label, powershell) in runs:
+            with self.subTest(target=target, powershell=label):
+                done = self.run_ps1(powershell, "-Target", target, "-RegisterHooks", "-HooksScope", "User", "-HooksYes")
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertIn("Hook registration: completed", done.stdout)
+        self.assert_registration_starts("claude", self.home / ".claude" / "settings.json")
+        self.assert_registration_starts("codex", self.home / ".codex" / "hooks.json")
+
+    def test_install_ps1_dry_run_writes_nothing(self):
+        shells = _powershells()
+        if not shells:
+            self.skipTest("no PowerShell was found")
+        done = self.run_ps1(shells[0][1], "-Target", "Claude", "-RegisterHooks", "-HooksYes", "-DryRun")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("Dry run complete: nothing was written.", done.stdout)
+        # PowerShell itself may leave a cache folder under the scratch home; the installer's own folders are what count.
+        self.assertEqual([name for name in (".agents", ".claude", ".codex") if (self.home / name).exists()], [])
+
+    def test_install_sh_under_git_bash_finds_python_and_registers_commands_that_start(self):
+        if BASH is None or not os.path.exists(BASH):
+            self.skipTest("Git Bash was not found")
+        done = subprocess.run([BASH, str(INSTALL_SH), "--target", "claude", "--register-hooks", "--hooks-yes"], capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", cwd=str(self.project), env=self.env(),
+                              stdin=subprocess.DEVNULL, timeout=600, check=False)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        # N3: with only the py launcher starting Python, the script used to print this and register nothing.
+        self.assertNotIn("interpreter was found", done.stderr)
+        self.assertIn("Hook registration: completed", done.stdout)
+        self.assert_registration_starts("claude", self.home / ".claude" / "settings.json")
 
 
 class DocumentationTests(unittest.TestCase):

@@ -64,9 +64,9 @@ class VerifyRegistrationTests(Scratch):
 
     BLOCK = {
         "hooks": {
-            "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"python {HOOK_DIR / 'pre_tool_use.py'}"}]}],
-            "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"python {HOOK_DIR / 'post_tool_use.py'}"}]}],
-            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": f"python {HOOK_DIR / 'user_prompt_submit.py'}"}]}],
+            "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"python {(HOOK_DIR / 'pre_tool_use.py').as_posix()}"}]}],
+            "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"python {(HOOK_DIR / 'post_tool_use.py').as_posix()}"}]}],
+            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": f"python {(HOOK_DIR / 'user_prompt_submit.py').as_posix()}"}]}],
         }
     }
 
@@ -137,9 +137,9 @@ class VerifyRegistrationTests(Scratch):
             (explicit / name).write_text("# relocated hook\n", encoding="utf-8")
         self.claude_settings({
             "hooks": {
-                "PreToolUse": [{"hooks": [{"command": f"python {explicit / 'pre_tool_use.py'}"}]}],
-                "PostToolUse": [{"hooks": [{"command": f"python {explicit / 'post_tool_use.py'}"}]}],
-                "UserPromptSubmit": [{"hooks": [{"command": f"python {explicit / 'user_prompt_submit.py'}"}]}],
+                "PreToolUse": [{"hooks": [{"command": f"python {(explicit / 'pre_tool_use.py').as_posix()}"}]}],
+                "PostToolUse": [{"hooks": [{"command": f"python {(explicit / 'post_tool_use.py').as_posix()}"}]}],
+                "UserPromptSubmit": [{"hooks": [{"command": f"python {(explicit / 'user_prompt_submit.py').as_posix()}"}]}],
             }
         })
         result = self.verify(SUPREMETEAM_HOOK_ROOT=str(explicit))
@@ -803,7 +803,7 @@ class InterpreterTests(Scratch):
         config = json.loads((self.project / ".claude" / "settings.json").read_text(encoding="utf-8"))
         for event, groups in config["hooks"].items():
             command = groups[0]["hooks"][0]["command"]
-            self.assertTrue(command.startswith(repair.launcher_token(sys.executable)), (event, command))
+            self.assertTrue(os.path.samefile(verify._tokens(command)[0], sys.executable), (event, command))
 
     def test_the_command_starts_python_in_utf8_mode_once(self):
         self.assertIn(" -X utf8 ", repair.command_for("pre_tool_use.py", "python"))
@@ -816,8 +816,15 @@ class InterpreterTests(Scratch):
         self.assertTrue(verify.analyse(command, "pre_tool_use.py")["executable"], command)
 
     def test_the_utf8_flag_survives_a_spaced_interpreter_path(self):
-        command = repair.command_for("pre_tool_use.py", "C:/Program Files/Python313/python.exe")
-        self.assertTrue(command.startswith('"C:/Program Files/Python313/python.exe" -X utf8 "'), command)
+        """On POSIX the spaced path is quoted. On Windows a command may not begin with a quote (PowerShell reads it as a
+        string), so the path is not quoted there: the py launcher stands in for it, or the hook is started without a shell."""
+        command = repair.command_for("pre_tool_use.py", "/opt/my python/bin/python3", windows=False)
+        self.assertTrue(command.startswith('"/opt/my python/bin/python3" -X utf8 "'), command)
+        spaced = "C:/Program Files/Python313/python.exe"
+        launched = repair.command_for("pre_tool_use.py", spaced, windows=True, py_launcher=lambda path: "py -3.13")
+        self.assertTrue(launched.startswith('py -3.13 -X utf8 "'), launched)
+        direct = repair.hook_handler("pre_tool_use.py", spaced, "claude", windows=True, py_launcher=lambda path: None)
+        self.assertEqual((direct["command"], direct["args"][:2]), (spaced, ["-X", "utf8"]))
 
     def test_launcher_parts_split_the_command_from_its_arguments(self):
         for launcher, parts in (
@@ -835,9 +842,12 @@ class InterpreterTests(Scratch):
                 self.assertEqual(repair.launcher_parts(launcher), parts)
 
     def test_a_spaced_interpreter_path_with_options_quotes_only_the_path_and_verifies(self):
-        command = repair.command_for("pre_tool_use.py", "C:/Program Files/Python313/python.exe -X dev")
+        command = repair.command_for("pre_tool_use.py", "C:/Program Files/Python313/python.exe -X dev", windows=False)
         self.assertTrue(command.startswith('"C:/Program Files/Python313/python.exe" -X dev -X utf8 "'), command)
         self.assertEqual(verify._tokens(command)[:3], ["C:/Program Files/Python313/python.exe", "-X", "dev"])
+        direct = repair.hook_handler("pre_tool_use.py", "C:/Program Files/Python313/python.exe -X dev", "claude", windows=True,
+                                     py_launcher=lambda path: None)
+        self.assertEqual((direct["command"], direct["args"][:4]), ("C:/Program Files/Python313/python.exe", ["-X", "dev", "-X", "utf8"]))
         self.assertEqual(repair.launcher_token("/usr/bin/env python3 -E"), "/usr/bin/env python3 -E")
 
     def test_the_running_interpreter_is_read_without_being_launched(self):

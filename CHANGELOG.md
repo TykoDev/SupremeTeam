@@ -34,13 +34,55 @@ of Claude Code 2.1.322, Codex CLI 0.166.0 and Antigravity CLI 1.4.12 on Windows.
   of 3 (`_gatecycle.py` acts on it at gate time) and an owner for every required key, and
   `test_contract_floor.py` compares floor and spec in both directions, so a key added to
   `gates.yaml` without a floor entry fails the suite. `gates.yaml` is unchanged.
+- Hook commands that start on Windows (WP-02, issue 6): `install.ps1 -RegisterHooks` wrote
+  `<interpreter> -X utf8 "<hook path>"` with backslashes. Claude Code runs hooks through
+  Git Bash, which consumes the backslashes of the unquoted interpreter path, so in a real
+  session that registration ran zero times while the tool calls went ahead, and
+  `check_readiness.py` reported every hook registered and executable and enforcement `live`:
+  the verifier split the command without shell rules. No test ran `install.ps1`, and
+  `install.sh` under Git Bash found no interpreter, because `python3` and `python` are the
+  Microsoft Store stubs there.
+  - `repair_registration.hook_handler` writes, on Windows, one form that starts in Git Bash,
+    PowerShell 7, Windows PowerShell 5.1 and `cmd`: forward slashes, the interpreter
+    unquoted, the hook path quoted. Its first word cannot hold a space, so a spaced
+    interpreter is named through `py -<major>.<minor>` when that launcher starts the same
+    interpreter; otherwise Claude Code gets `command` and `args`, which it starts without a
+    shell, Copilot the PowerShell call form, and Codex and Cursor a refusal that names the
+    two ways out. Nothing changes on POSIX.
+  - `verify_registration.shell_defects` reads a registered command against the rules of
+    each shell its host can use on this platform, and a command with a defect is configured
+    and resolvable but not executable, so readiness no longer reports it as registered or
+    enforcement as live. A handler with `args` is read as one interpreter word.
+  - `check_readiness.py --probe` and `verify_registration.py --probe` start each registered
+    command the way its host does, with `--selftest` appended, and report `executes: yes` or
+    `no` per host, hook and shell. Every registered hook script accepts `--selftest`: it
+    imports every file a registered hook runs, prints `ok`, reads no input and writes no
+    state, and fails loud when a module does not import.
+  - `repair_registration.py --apply` and `install_hooks.py` start each command they are
+    about to write and write nothing when one does not start (`--no-probe` skips this). A
+    Supreme Team entry whose command cannot start is replaced in place and keeps its matcher;
+    before, a second group was appended and the broken one stayed.
+  - Codex: the output of a rewrite says that Codex skips a changed hook until it is trusted
+    with `/hooks`, readiness says it cannot see trust, and inline `[hooks]` tables in
+    `config.toml` count as registered and are not written a second time.
+  - `install.sh` tries `py -3` first under Git Bash, MSYS2 and Cygwin and hands the registrar
+    Windows paths. `scripts/test_install.py` now runs `install.ps1` under each PowerShell
+    found and `install.sh` under Git Bash, into a scratch home, and then probes what they
+    registered; `test_registration_shells.py` runs every form through every shell on the
+    machine. Three tests that pinned the quoted form of a spaced interpreter now pin it for
+    POSIX and pin the launcher and the no-shell form for Windows, and the fixtures that
+    registered an unquoted backslash path now spell it with forward slashes.
 
 Upgrade notes for this section:
 
-- Hook hashes: the packages that change a file hashed at registration (WP-00 so far) make
-  readiness report the hook files as changed. After upgrading, re-record them for each host
-  with `python skills/harness/hooks/repair_registration.py --host <host> --record-hashes`, or
-  reinstall with hook registration.
+- Hook hashes: the packages that change a file hashed at registration (WP-00 and WP-02 so
+  far) make readiness report the hook files as changed. After upgrading, re-record them for
+  each host with `python skills/harness/hooks/repair_registration.py --host <host>
+  --record-hashes`, or reinstall with hook registration.
+- Windows registrations: a registration written by an earlier version does not start in
+  Claude Code, and readiness now says so. Run `repair_registration.py --host <host> --scope
+  user --apply` once per host to replace the commands in place. Codex then needs the hooks
+  trusted again with `/hooks`.
 
 ### Third audit report, findings 1 to 4
 

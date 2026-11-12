@@ -39,3 +39,17 @@ def ensure_paths() -> None:
     for root in (HOOKS, SCRIPTS):
         if str(root) not in sys.path:
             sys.path.insert(0, str(root))
+
+
+def selftest() -> None:
+    """``<registered hook> --selftest``: import every file a registered hook runs, then print ``ok``.
+
+    It answers one question, whether the registered command starts and finds its modules, so it reads no input and
+    writes no state. It is not a host event: nothing is allowed or denied by it, so a module that does not import is
+    left to raise and end the process with a traceback and a non-zero status instead of failing open."""
+    import importlib
+
+    ensure_paths()
+    for name in (*HOOK_FILES, *SCRIPT_FILES):
+        importlib.import_module(name.removesuffix(".py"))
+    print("ok")

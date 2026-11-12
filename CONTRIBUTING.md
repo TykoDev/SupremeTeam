@@ -75,6 +75,17 @@ and `validate_manifests.py` fails when the workflow stops covering a declared
 platform, Python version, PyYAML variant or command. Change the manifest and the
 workflow together.
 
+Some tests run only on one platform, inside that same matrix; there is no separate
+job for them. On the Windows legs `skills/harness/hooks/test_registration_shells.py`
+runs every hook command form through Git Bash, PowerShell 7, Windows PowerShell 5.1
+and `cmd`, and `scripts/test_install.py` runs `install.ps1` and, under Git Bash,
+`install.sh` into a scratch home and then starts what they registered. On the POSIX
+legs the same modules run the `sh` leg and the behavioural tests of `install.sh`. A
+change to how a hook command is written, or to either installer, has to pass on both
+kinds of leg, so run the two modules on Windows as well before you push such a
+change. A link test on Windows uses a junction (`_winapi.CreateJunction`), which
+needs no privilege, so that it runs on an ordinary account and is not skipped.
+
 A new command goes into `commands` in the manifest, and into either
 `ci.commands` (and the workflow) or `ci.not_run` with the reason CI cannot run
 it.

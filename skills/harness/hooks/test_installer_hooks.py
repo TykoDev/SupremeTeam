@@ -114,7 +114,8 @@ class DefaultsTests(InstallerCase):
         config = json.loads(self.settings.read_text(encoding="utf-8"))
         for groups in config["hooks"].values():
             command = groups[0]["hooks"][0]["command"]
-            self.assertTrue(command.startswith(repair.launcher_token(sys.executable) + " -X utf8 "), command)
+            self.assertTrue(os.path.samefile(verify._tokens(command)[0], sys.executable), command)
+            self.assertIn(" -X utf8 ", command)
 
     def test_an_interpreter_that_cannot_start_the_hooks_is_named_before_and_after_the_write(self):
         missing = "/nonexistent/python3.13" if POSIX else "C:/nonexistent/python3.13.exe"

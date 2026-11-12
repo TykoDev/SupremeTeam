@@ -130,5 +130,12 @@ def run() -> None:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--selftest"]:
+        # Not a host event: prove the registered command starts and every module a hook runs imports, and fail
+        # loud when one does not (verify_registration.probe reads the exit status and the "ok").
+        import _bootstrap
+
+        _bootstrap.selftest()
+        sys.exit(0)
     run()
     sys.exit(0)

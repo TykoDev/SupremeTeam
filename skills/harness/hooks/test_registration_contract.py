@@ -82,6 +82,16 @@ class LauncherQuotingTests(unittest.TestCase):
         command = repair.command_for("pre_tool_use.py", sys.executable)
         self.assertTrue(verify.analyse(command, "pre_tool_use.py")["executable"], command)
 
+    def test_the_command_written_for_this_interpreter_starts_in_the_hosts_shell(self):
+        """The tokenizer agreeing with the command proved nothing about a shell: the command the installer wrote on
+        Windows passed every test above and never started in Git Bash. This one starts it (WP-02)."""
+        for host in ("claude", "codex", "copilot"):
+            entry = repair.hook_handler("pre_tool_use.py", sys.executable, host)
+            with self.subTest(host=host):
+                self.assertEqual(verify.handler_defects(entry, host), [])
+                results = verify.probe(entry, host)
+                self.assertTrue(results and all(result["executes"] for result in results), results)
+
 
 class SpacedLauncherTests(unittest.TestCase):
     """``launcher_parts`` on the shapes a host machine actually holds."""

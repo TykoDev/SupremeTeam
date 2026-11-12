@@ -45,9 +45,9 @@ import _state
 from verify_registration import HOSTS, MATCHERS, REQUIRED, declared_minimum, enforcement, interpreter_warning, repair_command
 
 
-def run_hook_verifier(host: str, project_root: Path) -> tuple[str, int, str, dict]:
+def run_hook_verifier(host: str, project_root: Path, probe: bool = False) -> tuple[str, int, str, dict]:
     verifier = Path(__file__).resolve().with_name("verify_registration.py")
-    command = [sys.executable, str(verifier), "--host", host, "--json"]
+    command = [sys.executable, str(verifier), "--host", host, "--json", *(["--probe"] if probe else [])]
     # The verifier resolves the project from its environment, so it is handed the
     # root readiness was asked about, and its output is read as UTF-8 on any platform.
     env = {**os.environ, "SUPREMETEAM_PROJECT_DIR": str(project_root), "PYTHONUTF8": "1"}
@@ -165,7 +165,38 @@ def _hook_warnings(hook_states: dict, hash_record: "str | None") -> list[str]:
         warnings.append(f"{host}: the hook files have no record in {hash_record}, so an edit of them is not noticed from "
                         f"this project (a registration records them in the project it ran from); record them here with "
                         f"{repair_command(host, '--record-hashes')}")
+    for name, state in hook_states.items():
+        # A command the host's shell cannot start is the difference between a guard that is on and one that only reads so.
+        if state["configured"] and not state["registered"] and (state["shell_defects"] or state["probe"]):
+            warnings.append(f"{name}: registered, but the command does not start: {state['reason']}. Replace it with "
+                            f"{repair_command(name.split(':', 1)[0], '--scope', '<scope>', '--apply')}")
+    if any(name.startswith("codex:") and state["registered"] for name, state in hook_states.items()):
+        warnings.append("codex: readiness cannot see whether Codex trusts these hooks. Codex skips a new or changed hook "
+                        "until it is trusted with /hooks, and the guard does not run there until then")
     return warnings
+
+
+def _probe_lines(hook_states: dict) -> list[str]:
+    """What ``--probe`` found, one line per hook: the shells its command was started in and whether it ran."""
+    lines = []
+    for name, state in hook_states.items():
+        results = state["probe"] or []
+        if results:
+            said = "; ".join(entry["detail"] if entry["executes"] is None else
+                             f"{entry['shell']} {'yes' if entry['executes'] else 'no (' + entry['detail'] + ')'}" for entry in results)
+            lines.append(f"{name}: {said}")
+    return lines
+
+
+def _probe_summary(hook_states: dict, requested: bool) -> str:
+    """``not_run``, or over every probed hook: ``yes`` when each started somewhere and none failed, ``no`` when one
+    failed, ``not_probed`` when none could be started."""
+    if not requested:
+        return "not_run"
+    results = [entry for state in hook_states.values() for entry in state["probe"] or []]
+    if any(entry["executes"] is False for entry in results):
+        return "no"
+    return "yes" if any(entry["executes"] for entry in results) else "not_probed"
 
 
 def main() -> int:
@@ -178,6 +209,10 @@ def main() -> int:
     parser.add_argument("--require-active-run", action="store_true", help="Fail when skillset-saves has no active pinned run.")
     parser.add_argument("--require-hooks", action="store_true",
                         help="Fail unless the hooks are registered with full matcher coverage and a usable interpreter (default: hooks are optional).")
+    parser.add_argument("--probe", action="store_true",
+                        help="Start each registered hook command the way its host does, with --selftest appended, and report "
+                             "per host, hook and shell whether it ran. This runs the registered commands; the self-test "
+                             "reads no input and writes no state.")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     args = parser.parse_args()
 
@@ -189,7 +224,7 @@ def main() -> int:
 
     project_root = (Path(args.project_root).expanduser() if args.project_root else _state.project_root()).resolve()
     py_status, py_detail = python_status(min_major, min_minor)
-    hook_status, hook_code, hook_output, hook_report = run_hook_verifier(args.host, project_root)
+    hook_status, hook_code, hook_output, hook_report = run_hook_verifier(args.host, project_root, args.probe)
     saves = inspect_saves(project_root)
     saves_status, saves_detail = str(saves["status"]), str(saves["detail"])
     # A record this account cannot read is named whatever the classification says: it is not damage, and may hold the pin.
@@ -217,6 +252,9 @@ def main() -> int:
                 "changed_files": state.get("changed_files") or [],
                 "interpreter": state.get("interpreter"),
                 "observed": state.get("observed", "unverified"),
+                "reason": str(state.get("reason") or ""),
+                "shell_defects": state.get("shell_defects") or [],
+                "probe": state.get("probe"),
             }
     # One record per project, so every host's report names the same file.
     hash_record = next((host_report["hash_record"] for host_report in hook_report.values() if host_report.get("hash_record")), None)
@@ -245,6 +283,7 @@ def main() -> int:
         "hooks_executable": hook_status == "registered",
         "hooks_coverage": coverage,
         "hooks_interpreter": interpreter,
+        "hooks_probed": _probe_summary(hook_states, args.probe),
         "hooks_observed": observations["summary"],
         "hooks_faults": observations["faults"],
         # Readable means neither `missing` nor `unreadable`, and no `access_denied`: a record this account cannot read makes
@@ -311,6 +350,10 @@ def main() -> int:
         if hook_status != "registered":
             print("\nHook verifier output:")
             print(hook_output)
+        if args.probe:
+            print("\nProbe (each registered command started with --selftest, the way its host starts it):")
+            for line in _probe_lines(hook_states) or ["no registered command to start"]:
+                print(f"  - executes: {line}")
         if warnings:
             print("\nWarnings:")
             for warning in warnings:

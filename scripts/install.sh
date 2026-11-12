@@ -798,16 +798,41 @@ minimum_python_version() {
     printf '3.13'
 }
 
+# Git Bash, MSYS2 and Cygwin: a POSIX shell on Windows, where the programs it starts are Windows programs.
+on_windows_bash() {
+    case "$(uname -s 2>/dev/null || true)" in
+        MINGW*|MSYS*|CYGWIN*) return 0 ;;
+    esac
+    return 1
+}
+
+# A path as a Windows program reads it (C:/Users/...). MSYS converts most arguments by itself; saying it removes the
+# guess, and the hook registrar writes this path into the host's configuration.
+native_path() {
+    if on_windows_bash && command -v cygpath >/dev/null 2>&1; then
+        cygpath -m -- "$1"
+    else
+        printf '%s' "$1"
+    fi
+}
+
+# The interpreter command and any arguments it needs (py -3), as separate words.
 python_satisfies_minimum() {
-    local candidate="$1" minimum major minor
+    local minimum major minor
     minimum="$(minimum_python_version)"
     major="${minimum%%.*}"
     minor="${minimum##*.}"
-    "$candidate" -c "import sys; raise SystemExit(0 if sys.version_info >= ($major, $minor) else 1)" >/dev/null 2>&1
+    "$@" -c "import sys; raise SystemExit(0 if sys.version_info >= ($major, $minor) else 1)" >/dev/null 2>&1
 }
 
 find_compatible_python() {
     local candidate
+    # On Windows the names python3 and python are often the Microsoft Store stubs, which start nothing, while the py
+    # launcher that a python.org install puts on PATH does: try it first there, as install.ps1 does.
+    if on_windows_bash && command -v py >/dev/null 2>&1 && python_satisfies_minimum py -3; then
+        printf '%s' "py -3"
+        return 0
+    fi
     for candidate in python3 python python3.14 python3.13; do
         if command -v "$candidate" >/dev/null 2>&1 && python_satisfies_minimum "$candidate"; then
             printf '%s' "$candidate"
@@ -839,7 +864,7 @@ register_harness_hooks() {
         hooks_failed=1
         return
     fi
-    hook_args=("$repo_root/scripts/install_hooks.py" --hook-root "$destination/harness/hooks")
+    hook_args=("$(native_path "$repo_root/scripts/install_hooks.py")" --hook-root "$(native_path "$destination/harness/hooks")")
 
     for target in "${selected_targets[@]}"; do
         hook_args+=(--target "$target")
@@ -851,7 +876,12 @@ register_harness_hooks() {
 
     # Exit 3 is the operator answering no at the preview: nothing was written.
     local status=0
-    "$python" "${hook_args[@]}" || status=$?
+    # "py -3" is two words; every other candidate is one.
+    if [[ "$python" == "py -3" ]]; then
+        py -3 "${hook_args[@]}" || status=$?
+    else
+        "$python" "${hook_args[@]}" || status=$?
+    fi
     if [[ $status -eq 3 ]]; then
         hooks_declined=1
     elif [[ $status -ne 0 ]]; then

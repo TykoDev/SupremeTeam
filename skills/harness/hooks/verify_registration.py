@@ -32,6 +32,16 @@ turns a registration into a failure, because each has a legitimate cause:
                noticed, until it records its own, and the output names the record
                compared against.
 
+``executable`` is also a statement about the shell. A host hands a hook command to
+a shell, and the same text does not start in every one: Git Bash consumes the
+backslashes of an unquoted Windows path, PowerShell reads a command that begins
+with a quote as a string, and Antigravity cannot pass a quote at all.
+``shell_defects`` reads the command text against the rules of each shell the host
+can use on this platform (``host_shells``), and a command with a defect is
+configured and resolvable but not executable. ``--probe`` goes further and starts
+each registered command the way its host does, with ``--selftest`` appended, and
+reports whether it ran, per shell. It runs the registered commands, so it is opt-in.
+
 Whether the host actually fires the hook is a separate, host-observed fact this
 verifier never claims; it is reported as ``observed: unverified``.
 
@@ -52,6 +62,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -184,10 +195,26 @@ def _place(token: str) -> Path:
     return (path if path.is_absolute() else _state.project_root() / path).resolve()
 
 
-def analyse(command: str, script: str) -> dict:
-    """Classify one registered command against one expected hook script."""
-    result = {"configured": False, "resolvable": False, "executable": False, "interpreter_on_path": None, "script": None, "reason": ""}
+def handler_tokens(handler: dict) -> list[str]:
+    """The words one registered handler starts.
+
+    ``command`` is split as text. With an ``args`` list the host starts ``command`` directly and no shell reads it, so
+    ``command`` is one word however many spaces its path holds. A leading PowerShell call operator (``&``) is not a word."""
+    command = handler.get("command") if isinstance(handler, dict) else None
+    if not isinstance(command, str):
+        return []
+    args = handler.get("args")
+    if isinstance(args, list):
+        return [command, *(str(arg) for arg in args)]
     tokens = _tokens(command)
+    return tokens[1:] if tokens[:1] == ["&"] else tokens
+
+
+def analyse(command: str, script: str, tokens: "list[str] | None" = None) -> dict:
+    """Classify one registered command against one expected hook script. ``tokens`` are its words when the caller
+    has them from a handler (``handler_tokens``); otherwise the command text is split."""
+    result = {"configured": False, "resolvable": False, "executable": False, "interpreter_on_path": None, "script": None, "reason": ""}
+    tokens = list(tokens) if tokens is not None else handler_tokens({"command": command})
     # Skip leading VAR=value assignments.
     while tokens and re.match(r"^\w+=", tokens[0]):
         tokens.pop(0)
@@ -250,6 +277,254 @@ def analyse(command: str, script: str) -> dict:
     return result
 
 
+# --- which shell reads the command ------------------------------------------------------------------
+#
+# Observed in real sessions on Windows (Claude Code 2.1.322, Codex CLI 0.166.0, Antigravity CLI 1.4.12): Claude Code
+# hands a hook command to Git Bash, to PowerShell when the handler says ``"shell": "powershell"``, and starts it directly
+# when the handler carries ``args``; Antigravity hands it to ``cmd /C`` with its quotes escaped. Codex's and Cursor's
+# shell is not established, so both ``cmd`` and PowerShell are assumed. On POSIX every host uses ``sh``.
+
+SELFTEST = "--selftest"
+_SHELL_KINDS = {"sh": "posix", "git-bash": "posix", "pwsh": "powershell", "powershell": "powershell", "cmd": "cmd",
+                "cmd /C": "antigravity", "direct": "direct"}
+
+
+def git_bash() -> "str | None":
+    """The bash Claude Code runs hooks through on Windows, or None.
+
+    ``CLAUDE_CODE_GIT_BASH_PATH`` when it names a file, else the bash of the Git for Windows that ``git`` on PATH belongs
+    to, else its default folders. Never ``bash`` from PATH: on Windows that is often ``System32\\bash.exe``, which starts
+    WSL, and Claude Code does not use it."""
+    if os.name != "nt":
+        return None
+    candidates = [os.environ.get("CLAUDE_CODE_GIT_BASH_PATH")]
+    git = shutil.which("git")
+    if git:
+        folder = Path(git).resolve().parent
+        candidates += [folder.parent / "bin" / "bash.exe", folder.parent.parent / "bin" / "bash.exe", folder / "bash.exe"]
+    for variable in ("ProgramFiles", "ProgramFiles(x86)", "LocalAppData"):
+        base = os.environ.get(variable)
+        if base:
+            candidates.append(Path(base) / ("Programs/Git" if variable == "LocalAppData" else "Git") / "bin" / "bash.exe")
+    for candidate in candidates:
+        try:
+            if candidate and Path(candidate).is_file():
+                return str(candidate)
+        except OSError:
+            continue
+    return None
+
+
+def powershells() -> list[tuple[str, str]]:
+    """``(label, path)`` of each PowerShell on this Windows machine: PowerShell 7 (``pwsh``) and Windows PowerShell."""
+    if os.name != "nt":
+        return []
+    found = []
+    seven = shutil.which("pwsh")
+    if not seven:
+        default = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "PowerShell" / "7" / "pwsh.exe"
+        seven = str(default) if default.is_file() else None
+    if seven:
+        found.append(("pwsh", seven))
+    five = shutil.which("powershell")
+    if five:
+        found.append(("powershell", five))
+    return found
+
+
+def host_shells(host: str, handler: "dict | None" = None, windows: "bool | None" = None) -> tuple:
+    """The kinds of shell (``posix``, ``powershell``, ``cmd``, ``antigravity``) that may read a handler's command on
+    ``host``. Empty for a handler the host starts directly (``args``)."""
+    windows = os.name == "nt" if windows is None else windows
+    handler = handler if isinstance(handler, dict) else {}
+    if isinstance(handler.get("args"), list):
+        return ()
+    if not windows:
+        return ("posix",)
+    if host == "claude":
+        pinned = {"bash": "posix", "powershell": "powershell"}.get(str(handler.get("shell") or "").lower())
+        if pinned:
+            return (pinned,)
+        return ("posix",) if git_bash() else ("powershell",)
+    if host == "antigravity":
+        return ("antigravity",)
+    if host == "copilot":
+        return ("powershell",)
+    return ("cmd", "powershell")
+
+
+def shell_defects(command: str, shell: str) -> list[str]:
+    """Why ``command`` cannot start under one kind of shell, read from its text alone. Empty when nothing is wrong.
+
+    Three rules, each a failure seen in a real shell:
+
+    * ``posix``: every word has to read the same under POSIX rules as it was written. Git Bash consumes the backslashes
+      of an unquoted ``C:\\Users\\...`` path, so the interpreter it looks for does not exist and the hook never starts.
+    * ``powershell``: a command may not begin with a quote unless it begins with the call operator. PowerShell reads
+      ``"C:/Program Files/Py/python.exe" -X utf8 ...`` as a string expression followed by a syntax error.
+    * ``antigravity``: no quote at all. Antigravity for Windows escapes them on the way to ``cmd /C``, and the
+      interpreter receives ``\\"C:\\...`` as its argument.
+
+    A leading call operator is PowerShell syntax, so it is a defect under ``posix`` and ``cmd``."""
+    text = command.strip()
+    literal = _tokens(text)
+    if not literal:
+        return []
+    if shell == "posix":
+        if literal[0] == "&":
+            return ["the command begins with the PowerShell call operator (&), which a POSIX shell cannot run"]
+        try:
+            read = shlex.split(text, posix=True)
+        except ValueError:
+            return ["a POSIX shell cannot parse the command (an unbalanced quote)"]
+        if read != literal:
+            index = next((i for i, (a, b) in enumerate(zip(read, literal, strict=False)) if a != b), min(len(read), len(literal)))
+            written = literal[index] if index < len(literal) else ""
+            seen = read[index] if index < len(read) else ""
+            return [f"a POSIX shell (Git Bash on Windows) reads {written!r} as {seen!r}: it takes the backslashes of an "
+                    "unquoted path as escapes, so the command never starts. Register it with forward slashes"]
+        return []
+    if shell == "powershell":
+        if text[0] in "\"'":
+            return ["the command begins with a quote, which PowerShell reads as a string and not as a program to start; "
+                    "leave the interpreter unquoted or begin with the call operator (&)"]
+        return []
+    if shell == "cmd":
+        if literal[0] == "&":
+            return ["the command begins with the PowerShell call operator (&), which cmd cannot run"]
+        return []
+    if shell == "antigravity":
+        if '"' in text or "'" in text:
+            return ["the command contains a quote: Antigravity escapes quotes on the way to cmd /C, so the interpreter "
+                    "receives a path that does not exist. Register paths that hold no space, unquoted"]
+        return []
+    return []
+
+
+def handler_defects(handler: dict, host: str) -> list[str]:
+    """``shell_defects`` of one handler under every shell ``host`` may read it with on this platform."""
+    command = handler.get("command") if isinstance(handler, dict) else None
+    if not isinstance(command, str):
+        return []
+    found: list[str] = []
+    for shell in host_shells(host, handler):
+        for defect in shell_defects(command, shell):
+            if defect not in found:
+                found.append(defect)
+    return found
+
+
+# A probe runs only a plain interpreter-and-script command: anything a shell would read as a second command is refused.
+_SHELL_OPERATORS = re.compile(r"[;|<>`\n\r&]|\$\(")
+_PROBE_TIMEOUT = 30.0
+_PROBE_CACHE: dict[tuple, dict] = {}
+
+
+def _probe_refusal(handler: dict, tokens: list[str]) -> "str | None":
+    """Why a registered command is not started by the probe, or None when it may be."""
+    if not tokens:
+        return "no command"
+    if not isinstance(handler.get("args"), list):
+        text = re.sub(r'"[^"]*"|\'[^\']*\'', " ", handler["command"].strip())
+        if _SHELL_OPERATORS.search(text[1:] if text.startswith("&") else text):
+            return "the command holds shell operators; a probe starts only a plain interpreter-and-script command"
+    launcher = _expand(tokens[0])
+    found = shutil.which(launcher) or (launcher if Path(launcher).is_file() else None)
+    if not found:
+        return f"interpreter {tokens[0]!r} was not found on this machine"
+    try:
+        if _state.project_root().resolve() in Path(found).resolve().parents:
+            return "the interpreter is inside the project directory, and a diagnostic does not run a binary a repository could have planted"
+    except OSError:
+        return "the interpreter path cannot be resolved"
+    return None
+
+
+def _probe_runs(host: str, handler: dict, text: str) -> list[tuple[str, object]]:
+    """``(shell label, what to start)`` for each way ``host`` may run the command ``text`` on this platform."""
+    if os.name != "nt":
+        return [("sh", ["sh", "-c", text])]
+    shells = [(label, [path, "-NoProfile", "-NonInteractive", "-Command", text]) for label, path in powershells()]
+    if host == "claude":
+        pinned = str(handler.get("shell") or "").lower()
+        if pinned == "powershell":
+            return shells[:1]
+        bash = git_bash()
+        runs = [("git-bash", [bash, "-c", text])] if bash else []
+        return runs if pinned == "bash" else runs + shells
+    if host == "antigravity":
+        # One argument under the standard argument-escaping rules, which is what Antigravity 1.4.12 does: a quote
+        # in the command arrives escaped, and the command does not start.
+        return [("cmd /C", ["cmd.exe", "/C", text])]
+    if host == "copilot":
+        return shells
+    return [("cmd", f'cmd /d /s /c "{text}"'), *shells]
+
+
+def _run_selftest(label: str, what, timeout: float) -> dict:
+    # A command registered through a project variable (`$CLAUDE_PROJECT_DIR/...`) is given the project the way a host
+    # gives it; a variable the environment already sets is left as it is.
+    env = dict(os.environ)
+    try:
+        project = str(_state.project_root())
+    except Exception:
+        project = None
+    for name in _state.PROJECT_ENV if project else ():
+        env.setdefault(name, project)
+    try:
+        done = subprocess.run(what, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                              stdin=subprocess.DEVNULL, check=False, env=env)
+    except subprocess.TimeoutExpired:
+        return {"shell": label, "executes": False, "detail": f"no answer within {timeout:g} seconds"}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"shell": label, "executes": False, "detail": f"could not be started ({type(exc).__name__})"}
+    lines = (done.stdout or "").strip().splitlines()
+    if done.returncode == 0 and lines[-1:] == ["ok"]:
+        return {"shell": label, "executes": True, "detail": "ok"}
+    said = ((done.stderr or "").strip() or (done.stdout or "").strip()).splitlines()
+    return {"shell": label, "executes": False,
+            "detail": f"exit {done.returncode}" + (f": {_state.safe_text(said[-1], 200)}" if said else ", no output")}
+
+
+def probe(handler: dict, host: str, *, first_shell_only: bool = False, counted_only: bool = False,
+          timeout: float = _PROBE_TIMEOUT) -> list[dict]:
+    """Start one registered hook the way ``host`` does, with ``--selftest`` appended, once per shell.
+
+    Each result is ``{"shell", "executes", "detail"}``. ``executes`` is None when the command was not started: it holds
+    shell operators, its interpreter is not on this machine (a registration written for another one), or the
+    interpreter sits inside the project. The self-test imports what the hooks import, prints ``ok`` and reads and
+    writes nothing, so a probe changes no state. ``counted_only`` leaves out the shells whose failure would not count
+    (``probe_failures``), which is what a registrar needs; a diagnostic shows every shell. Results are kept for the
+    life of the process."""
+    tokens = handler_tokens(handler)
+    refusal = _probe_refusal(handler, tokens)
+    if refusal:
+        return [{"shell": "none", "executes": None, "detail": "not probed: " + refusal}]
+    if isinstance(handler.get("args"), list):
+        runs: list[tuple[str, object]] = [("direct", [*tokens, SELFTEST])]
+    else:
+        runs = _probe_runs(host, handler, handler["command"].strip() + " " + SELFTEST)
+        if counted_only:
+            kinds = set(host_shells(host, handler))
+            runs = [run for run in runs if _SHELL_KINDS.get(run[0]) in kinds]
+    if not runs:
+        return [{"shell": "none", "executes": None, "detail": "not probed: no shell this host uses was found on this machine"}]
+    results = []
+    for label, what in runs[:1] if first_shell_only else runs:
+        key = (label, what if isinstance(what, str) else tuple(what))
+        if key not in _PROBE_CACHE:
+            _PROBE_CACHE[key] = _run_selftest(label, what, timeout)
+        results.append(dict(_PROBE_CACHE[key]))
+    return results
+
+
+def probe_failures(results: list[dict], host: str, handler: "dict | None" = None) -> list[dict]:
+    """The probe results that mean the hook does not start on ``host``: a failure under a shell the host uses here
+    (``host_shells``), or of a direct start. A failure under a shell the host has no reason to use is reported, not counted."""
+    kinds = set(host_shells(host, handler)) | {"direct"}
+    return [result for result in results if result["executes"] is False and _SHELL_KINDS.get(result["shell"]) in kinds]
+
+
 def matcher_for(script: str, host: str) -> str | None:
     """Return the tool matcher for one hook on one host, or None for an unmatched event."""
     base = MATCHERS.get(script)
@@ -282,8 +557,9 @@ def matcher_selects(matcher, tool: str) -> bool:
         return tool in matcher.split("|")
 
 
-def _entries(objects: list[dict], event: str) -> list[tuple[str, object]]:
-    """Every registered ``(command, matcher)`` pair for one event."""
+def _handlers(objects: list[dict], event: str) -> list[tuple[dict, object]]:
+    """Every registered ``(handler, matcher)`` pair for one event. The handler is the object in the config itself, so a
+    repair can change it in place."""
     found = []
     for obj in objects:
         registered = obj.get("hooks") if isinstance(obj, dict) else None
@@ -293,8 +569,13 @@ def _entries(objects: list[dict], event: str) -> list[tuple[str, object]]:
             matcher = group.get("matcher") if isinstance(group, dict) else None
             for hook in hooks if isinstance(hooks, list) else []:
                 if isinstance(hook, dict) and isinstance(hook.get("command"), str):
-                    found.append((hook["command"], matcher))
+                    found.append((hook, matcher))
     return found
+
+
+def _entries(objects: list[dict], event: str) -> list[tuple[str, object]]:
+    """Every registered ``(command, matcher)`` pair for one event."""
+    return [(handler["command"], matcher) for handler, matcher in _handlers(objects, event)]
 
 
 def declared_minimum(default: str = "3.13") -> str:
@@ -341,9 +622,9 @@ def _run_probe(path: str, selectors: list[str]) -> tuple | None:
         return None
 
 
-def interpreter_report(command: str) -> dict:
-    """Which Python a registered command launches, and whether it meets the floor."""
-    tokens = _tokens(command)
+def interpreter_report(command: str, tokens: "list[str] | None" = None) -> dict:
+    """Which Python a registered command launches, and whether it meets the floor. ``tokens`` as for ``analyse``."""
+    tokens = list(tokens) if tokens is not None else handler_tokens({"command": command})
     while tokens and re.match(r"^\w+=", tokens[0]):
         tokens.pop(0)
     launcher = tokens[0] if tokens else ""
@@ -385,8 +666,8 @@ def interpreter_warning(report: dict | None) -> str | None:
 
 def _blank(reason: str) -> dict:
     return {"configured": False, "resolvable": False, "executable": False, "interpreter_on_path": None, "script": None,
-            "reason": reason, "command": None, "matcher": None, "missing_tools": [], "coverage": None,
-            "registered": False, "interpreter": None, "changed_files": []}
+            "reason": reason, "command": None, "args": None, "handler": None, "shell_defects": [], "matcher": None,
+            "missing_tools": [], "coverage": None, "registered": False, "interpreter": None, "changed_files": []}
 
 
 def hook_states(objects: list[dict], host: str) -> dict[str, dict]:
@@ -400,9 +681,16 @@ def hook_states(objects: list[dict], host: str) -> dict[str, dict]:
         needed = required_tools(script, host)
         best = _blank("no command registered")
         runnable = []
-        for command, matcher in _entries(objects, EVENTS[host][key]):
-            candidate = analyse(command, script)
-            candidate.update(command=command, matcher=matcher)
+        for handler, matcher in _handlers(objects, EVENTS[host][key]):
+            command = handler["command"]
+            candidate = analyse(command, script, handler_tokens(handler))
+            candidate.update(command=command, args=handler["args"] if isinstance(handler.get("args"), list) else None,
+                             handler=handler, matcher=matcher, shell_defects=[])
+            if candidate["executable"]:
+                # The words are right; now the shell that reads them. A command it cannot start is not a registration.
+                defects = handler_defects(handler, host)
+                if defects:
+                    candidate.update(executable=False, shell_defects=defects, reason=defects[0])
             if candidate["executable"]:
                 runnable.append(candidate)
             elif candidate["configured"] and not best["configured"]:
@@ -416,7 +704,7 @@ def hook_states(objects: list[dict], host: str) -> dict[str, dict]:
             if not best["registered"]:
                 best["reason"] = (f"matcher {', '.join(repr(c['matcher']) for c in runnable)} selects none of the tools "
                                   f"this hook needs ({', '.join(needed)})")
-            best["interpreter"] = interpreter_report(best["command"])
+            best["interpreter"] = interpreter_report(best["command"], handler_tokens(best["handler"]))
         states[key] = best
     return states
 
@@ -523,12 +811,55 @@ def _paths(host: str) -> list[Path]:
     return [home / ".config/github-copilot/hooks.json", project / ".github/hooks.json"]
 
 
-def _check(host: str):
-    loaded = [(p, _read(p)) for p in _paths(host)]
+def codex_inline_hooks(hooks_json: Path) -> "dict | None":
+    """The ``[hooks]`` tables of the Codex ``config.toml`` beside ``hooks_json``, as a registration object, or None.
+
+    Codex reads hooks from ``hooks.json`` and from inline ``[hooks]`` tables in ``config.toml`` at the same level, and
+    merges the two with a warning. A hook registered inline is registered, and one written to both runs twice."""
+    try:
+        import tomllib
+
+        data = tomllib.loads(hooks_json.with_name("config.toml").read_text(encoding="utf-8"))
+    except (OSError, ValueError, ImportError):
+        return None
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    return {"hooks": hooks} if isinstance(hooks, dict) and hooks else None
+
+
+def _loaded(host: str) -> list[tuple[Path, object]]:
+    """Every config file of ``host`` with what it holds (None when absent or unreadable). For Codex a ``config.toml``
+    with inline ``[hooks]`` tables is listed after the ``hooks.json`` it sits beside."""
+    loaded: list[tuple[Path, object]] = []
+    for path in _paths(host):
+        loaded.append((path, _read(path)))
+        inline = codex_inline_hooks(path) if host == "codex" else None
+        if inline:
+            loaded.append((path.with_name("config.toml"), inline))
+    return loaded
+
+
+def _apply_probe(state: dict, host: str) -> None:
+    """Start the command behind one hook state and record the answer. A command that does not start under a shell the
+    host uses is not a registration, whatever its text looks like."""
+    handler = state.get("handler")
+    if not isinstance(handler, dict) or not state["configured"] or not state["resolvable"]:
+        return
+    state["probe"] = probe(handler, host)
+    failed = probe_failures(state["probe"], host, handler)
+    if failed and state["registered"]:
+        state.update(executable=False, registered=False,
+                     reason=f"the command does not start under {failed[0]['shell']} ({failed[0]['detail']})")
+
+
+def _check(host: str, probed: bool = False):
+    loaded = _loaded(host)
     objects = [value for _, value in loaded if isinstance(value, dict)]
     result = hook_states(objects, host)
     record, modules = load_hash_record(), load_module_record()
     for state in result.values():
+        state["probe"] = None
+        if probed:
+            _apply_probe(state, host)
         state["observed"] = "unverified"
         state["integrity"] = integrity_for(state["script"], record, modules) if state["registered"] else None
         state["changed_files"] = (changed_files(state["script"], record, modules) or []) if state["registered"] else []
@@ -557,7 +888,7 @@ def resolve_hosts(selection: str) -> dict[str, str]:
 
 def selected_states(selection: str = "auto") -> dict[str, dict]:
     """The hook states of each host ``selection`` picks, read from its config files as ``hook_states`` reads them."""
-    return {host: hook_states([value for path in _paths(host) if isinstance(value := _read(path), dict)], host)
+    return {host: hook_states([value for _, value in _loaded(host) if isinstance(value, dict)], host)
             for host in resolve_hosts(selection)}
 
 
@@ -589,6 +920,13 @@ def _hook_detail(state: dict) -> str:
     return f"  ({'; '.join(notes)})" if notes else ""
 
 
+def _probe_text(entry: dict) -> str:
+    """One probe result as readiness prints it: ``git-bash yes``, ``powershell no (exit 1: ...)``, ``not probed: ...``."""
+    if entry["executes"] is None:
+        return entry["detail"]
+    return f"{entry['shell']} yes" if entry["executes"] else f"{entry['shell']} no ({entry['detail']})"
+
+
 def _print(host, loaded, result, required, absent_is_missing=False):
     print(f"\n[{host}]\nConfig files inspected:")
     for path, value in loaded:
@@ -607,6 +945,8 @@ def _print(host, loaded, result, required, absent_is_missing=False):
         state = result[key]
         ok = ok and state["registered"]
         print(f"  [{'OK ' if state['registered'] else 'MISSING'}] {EVENTS[host][key]} -> {script}{_hook_detail(state)}")
+        if state.get("probe"):
+            print("      executes: " + "; ".join(_probe_text(entry) for entry in state["probe"]))
         warning = interpreter_warning(state["interpreter"])
         if warning and warning not in warnings:
             warnings.append(warning)
@@ -637,6 +977,9 @@ def main() -> int:
     parser.add_argument("--host", choices=["auto", "all", *HOSTS], default="auto",
                         help="auto checks the hosts that have an environment signal or a config file (default)")
     parser.add_argument("--json", action="store_true", help="append a machine-readable report")
+    parser.add_argument("--probe", action="store_true",
+                        help="start each registered command the way its host does, with --selftest appended, and report "
+                             "whether it ran, per shell. This runs the registered commands")
     args = parser.parse_args()
     chosen = resolve_hosts(args.host)
     print("Supreme Team harness hook registration check")
@@ -645,7 +988,7 @@ def main() -> int:
         print(f"Selected host scope: auto -> {listing}")
     else:
         print(f"Selected host scope: {args.host}")
-    checks = [_check(host) for host in chosen]
+    checks = [_check(host, probed=args.probe) for host in chosen]
     statuses = [_print(*check, absent_is_missing=args.host == "auto") for check in checks]
     if not chosen:
         print("\n[auto]\n  status: MISSING - no host configuration was found, so no hook is registered anywhere.")

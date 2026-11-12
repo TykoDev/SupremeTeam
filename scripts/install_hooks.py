@@ -160,17 +160,28 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
         raise Refused(str(exc)) from exc
     before = _read_text(path)
     config = _read_config(path)
+    # Codex also reads inline [hooks] tables from the config.toml beside hooks.json: what is registered there is
+    # registered, and writing it here as well would run it twice.
+    inline = verify.codex_inline_hooks(path) if host == "codex" else None
     try:
-        desired, added = repair.plan(json.loads(json.dumps(config)), host, args.python_command)
+        desired, added = repair.plan(json.loads(json.dumps(config)), host, args.python_command, [inline] if inline else None)
     except ValueError as exc:
         raise Refused(f"{path}: {exc}") from exc
 
     after = json.dumps(desired, indent=2) + "\n"
     backup = None
+    probe_notes: list[str] = []
+    if added and not args.dry_run and not args.no_probe:
+        # Start each new command the way the host will before anything is written: a registration that cannot start
+        # reads as an enforced guard and enforces nothing.
+        failures, probe_notes = repair.probe_written(config, desired, host)
+        if failures:
+            raise Refused(f"{path}: refusing to write a registration that cannot start: {'; '.join(failures)}")
     if added:
         backup = _write_text(path, before, after, args.dry_run, repair, private=args.scope == "user")
     elif args.dry_run:
         print(f"  (no change to {path})")
+    written = repair.written_handlers(config, desired, host)
 
     result = {
         "host": host,
@@ -180,7 +191,11 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
         "backup": str(backup) if backup else None,
         "applied": bool(added) and not args.dry_run,
         "notes": ([] if overridden else repair.scope_warnings(host, args.scope, link))
-        + ([repair.link_warning(link, path)] if path != link else []),
+        + ([repair.link_warning(link, path)] if path != link else [])
+        + ([repair.CODEX_INLINE_NOTE] if inline else [])
+        + ([repair.CODEX_TRUST_NOTE] if host == "codex" and added else [])
+        + ([repair.PARTS_NOTE] if any("args" in handler for _, handler in written) else [])
+        + probe_notes,
     }
     if args.dry_run:
         result["hooks"] = {}
@@ -189,7 +204,7 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
 
     # Re-read what is now on disk and ask the harness verifier, rather than
     # trusting that writing the file was the same thing as registering a hook.
-    states = verify.hook_states([_read_config(path)], host)
+    states = verify.hook_states([_read_config(path), *([inline] if inline else [])], host)
     hooks = {}
     for key, script in verify.REQUIRED:
         state = states[key]
@@ -204,6 +219,13 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
 def register_cursor(args: argparse.Namespace, repair) -> dict:
     """Write the Cursor plugin package. Cursor's schema is not the native hook schema."""
     root = Path(args.cursor_plugin).expanduser()
+
+    def command(script: str) -> str:
+        try:
+            return repair.command_for(script, args.python_command, "cursor")
+        except ValueError as exc:
+            raise Refused(str(exc)) from exc
+
     manifest = {
         "name": "supremeteam-hooks",
         "version": "1.0.0",
@@ -215,17 +237,17 @@ def register_cursor(args: argparse.Namespace, repair) -> dict:
             "preToolUse": [
                 {
                     "matcher": repair.matcher_for("pre_tool_use.py", "cursor"),
-                    "command": repair.command_for("pre_tool_use.py", args.python_command),
+                    "command": command("pre_tool_use.py"),
                 }
             ],
             "postToolUse": [
                 {
                     "matcher": repair.matcher_for("post_tool_use.py", "cursor"),
-                    "command": repair.command_for("post_tool_use.py", args.python_command),
+                    "command": command("post_tool_use.py"),
                 }
             ],
             "beforeSubmitPrompt": [
-                {"command": repair.command_for("user_prompt_submit.py", args.python_command)}
+                {"command": command("user_prompt_submit.py")}
             ],
         }
     }
@@ -687,6 +709,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--yes", action="store_true",
                         help="do not ask before writing (a terminal run otherwise previews and asks)")
     parser.add_argument("--json", action="store_true", help="append a machine-readable report")
+    parser.add_argument("--no-probe", action="store_true",
+                        help="write a codex, claude or copilot registration without first starting each new command the "
+                             "way the host will (the default refuses to write a command that does not start)")
     parser.add_argument("--codex-hooks", default=None, help="override the codex config path")
     parser.add_argument("--claude-settings", default=None, help="override the claude config path")
     parser.add_argument("--copilot-hooks", default=None, help="override the copilot config path")
@@ -725,7 +750,11 @@ def _run_targets(args: argparse.Namespace, targets: list[str], verify, repair) -
         results.append(result)
 
         # The interpreter is registered as given, so say now if it cannot run the hooks.
-        warning = verify.interpreter_warning(verify.interpreter_report(repair.command_for("pre_tool_use.py", args.python_command)))
+        try:
+            handler = repair.hook_handler("pre_tool_use.py", args.python_command, host if host in repair.WINDOWS_FORMS else "claude")
+            warning = verify.interpreter_warning(verify.interpreter_report(handler["command"], verify.handler_tokens(handler)))
+        except ValueError:
+            warning = None
         print(f"  config: {result['path']}")
         for note in [*result.get("notes", []), *([warning] if warning else [])]:
             print(f"  note: {note}")

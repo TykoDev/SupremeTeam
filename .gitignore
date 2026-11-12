@@ -8,6 +8,7 @@ gatekeeper-test-work/
 __pycache__/
 *.pyc
 .pytest_cache/
+tmp/
 
 # Local environments, credentials and machine files.
 .venv/

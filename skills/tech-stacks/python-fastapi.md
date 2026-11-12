@@ -1,7 +1,7 @@
-# Python 3.12+ and FastAPI 0.115+
+# Python 3.11+ and FastAPI 0.115+
 
 ## Baseline
-- Use Python 3.12+ with full type hints, FastAPI 0.115+, and an ASGI server such as Uvicorn.
+- Python 3.11 or newer with full type hints, FastAPI 0.115 or newer, and an ASGI server such as Uvicorn. FastAPI has no support policy; stay close to its current release.
 - Use async/await for I/O-bound work and isolate CPU-heavy work behind a process pool or separate worker boundary.
 - Use uv for dependency and environment management, with `pyproject.toml` as the configuration hub.
 - Keep FastAPI's OpenAPI generation and dependency injection aligned with explicit application boundaries rather than hiding behavior in global state.
@@ -26,7 +26,7 @@
 
 ## Deployment
 - Resolve dependencies from the locked project metadata and serve the application with a production ASGI process model suited to the host.
-- Use a multi-stage Python 3.12 image, copy the application and locked environment, and run as a non-root process.
+- Use a multi-stage image of the locked Python release, copy the application and locked environment, and run as a non-root process.
 - Inject database URLs, signing material, and log settings through a managed secret source or environment; do not commit local environment files.
 - Keep structured logs, OpenTelemetry instrumentation, and health behavior compatible with the selected worker count.
 

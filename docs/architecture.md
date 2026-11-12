@@ -92,7 +92,7 @@ commander -> [taste snapshot | researcher] -> architect -> [security-builder see
 
 `architect` owns the design system for user-facing surfaces
 ([`design-doctrine.md`](../skills/design-doctrine.md)). The stack lock names the
-registry slug, versions and overlay digest from
+registry slug, the versions in use by component and the overlay digest from
 [`tech-stacks/registry.yaml`](../skills/tech-stacks/registry.yaml), or the
 sanctioned fallback when no runtime or framework changes; detect the slug with
 `python skills/scripts/check_runtime.py --project-root . --detect-project`. A lock

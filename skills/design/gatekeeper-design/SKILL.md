@@ -8,7 +8,7 @@ description: >-
   readiness, or challenge the packet — even when they only ask "is the design
   done?". Defers the other gates to `build/gatekeeper-build`,
   `review/gatekeeper-code`, `gatekeeper-admiral`.
-version: 2.0.1
+version: 2.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -317,7 +317,7 @@ Do not skip gate evaluation; only reuse a prior verdict when the exact package r
 | Scenario | Response |
 | --- | --- |
 | The result reports `manifest_schema_version: 1`, so no typed record or finding policy was checked, and a bare sanctioned wording could stand in for an applicability record | Return `REVISE` to `commander` (or `redesign` at `redesign-review`) for a schema-2 manifest carrying `boundary` and `owner`. Exit 0 on a flat schema-1 package means the keys are present and the hashes hold, not that `stack_lock` was checked against the registry or that a waiver used the sanctioned wording. |
-| The result's `warnings` carry a stack-lock warning: the locked stack's support has ended (`support_ends` in `../../tech-stacks/registry.yaml`), or the registry was last verified longer ago than its `verification_ttl_days` | The validator still passes; the warning is a fact for this gate to act on, not a failure it raised. Do not approve silently. Name the warning in the verdict and return to `commander` for the owner's decision on the stack (a supported major, or an explicit acceptance recorded in `residual_risk`); approve only once that decision is in the package. |
+| The result's `warnings` carry a stack-lock warning: a locked version is below the registry's minimum for its component (`min_versions` in `../../tech-stacks/registry.yaml`) or past the release the overlay was read against (`verified_through`), upstream support for a minimum has ended (`support_ends`), the registry was last verified longer ago than its `verification_ttl_days`, or `versions` is still a list, the form from before the registry named its components | The validator still passes; the warning is a fact for this gate to act on, not a failure it raised. Do not approve silently. Name the warning in the verdict and return to `commander` for the owner's decision on the stack (a release at or above the minimum, the labelled `versions` mapping, or an explicit acceptance recorded in `residual_risk`); approve only once that decision is in the package. |
 | The architecture describes components, flows, or interfaces that are absent from the plan or implementation spec | Return `REVISE` and require a single coherent system view before build can rely on it. |
 | The package claims API readiness but endpoints lack request/response schemas, auth/authorization, error envelope, idempotency, or contract tests | Return `REVISE` and require the API endpoint contract template before the design package can exit. |
 | The package claims frontend readiness but lacks route inventory, screen-state coverage, API/data dependency mapping, form validation behavior, or breakpoint evidence | Return `REVISE` and require the UI/UX Handoff section before the design package can exit. |

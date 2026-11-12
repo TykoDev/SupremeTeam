@@ -65,6 +65,7 @@ SupremeTeam/
     │   ├── check_runtime.py              # Runtime contract check and the command line
     │   ├── project_inspection.py         # Read-only inspection behind --detect-project and friends
     │   ├── stack_detection.py            # Registry match and project classification
+    │   ├── stack_versions.py             # How a tech-stack version is read and compared: minimums, versions in use
     │   ├── language_entrypoints.py       # Python, Go and Rust entrypoints and start commands
     │   ├── script_commands.py            # Package-script and Makefile command reading
     │   ├── project_files.py              # Bounded read-only walk, text reads, path classes
@@ -173,7 +174,8 @@ are in [CONTRIBUTING.md](../CONTRIBUTING.md#run-the-suites).
   `test_lint_config.py`, `test_stdlib_only.py`, `test_contract_mirrors.py`
 - **Scripts**, `skills/scripts/`: `test_check_runtime_contract.py`,
   `test_check_runtime_layout.py`, `test_check_runtime_redaction.py`,
-  `test_stack_detection.py`, `test_project_classification.py`, `test_start_commands.py`,
+  `test_stack_detection.py`, `test_stack_versions.py`, `test_project_classification.py`,
+  `test_start_commands.py`,
   `test_project_walk.py`, `test_check_parity.py`, `test_data_formats.py`,
   `test_output_paths.py`, `test_package_check.py`, `test_scan_record.py`,
   `test_validate_manifests.py`, `test_contract_floor.py`, `test_mcp_registry.py`,

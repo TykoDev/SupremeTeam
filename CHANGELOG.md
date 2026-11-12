@@ -320,6 +320,31 @@ of Claude Code 2.1.322, Codex CLI 0.166.0 and Antigravity CLI 1.4.12 on Windows.
     documented ones and were not captured from a live session** (plan item E-10: a status
     line runs only in an interactive session). Out of the box, with no sidecar and no
     stated window, there is no advice.
+- Tech stacks state minimums, not pins (WP-13, issue 5). `tech-stacks/registry.yaml` pinned
+  exact majors and the gate failed any lock whose versions were not literally in the list, so
+  a project on a newer supported release could not pass. Five of the fourteen overlays pinned
+  a release upstream no longer supports (Angular 19, Astro 5, .NET 9, Go 1.23, Nuxt 3), and
+  the numbers were unlabelled: `react-tanstack: [19, 8]` meant React 19 and Vite 8.
+  - Registry schema 2: `min_versions` names each component and gives its minimum as text,
+    with optional `verified_through`, per-component `support_ends` (a date, or a month where
+    that is all upstream publishes) and a one-line `floor_reason`. `floor_rule` states how a
+    minimum is chosen, so the next update is mechanical. `versions` and the top-level
+    `support_ends` are gone. Data of 2026-11-12.
+  - A lock records what the project uses: `versions: {"node": "26.1.0", "typescript":
+    "6.0.3"}`. A component the entry names that the lock leaves out fails. A version below
+    its minimum passes with a warning that names both (a lock on Node 22 or Next.js 15, which
+    passed before, would otherwise fail); so does a version past `verified_through`.
+    Components the registry does not name are allowed.
+  - New `scripts/stack_versions.py`: a leading `v` is dropped, the dotted numbers compare as
+    a tuple (`6` equals `6.0`), a pre-release orders below its release, and a range, a
+    wildcard, a tag or a number is refused as not one version in use.
+  - A list-form lock passes for this release with a warning that gives the labelled form.
+  - `stack_detection.py` and `check_runtime.py --detect-project` read schema 2 and report a
+    detected stack's `min_versions` by component. They do not read the project's own versions.
+  - The fourteen overlays are retitled with their minimums and restated as "N or newer"; the
+    Nuxt, Astro and Deno overlays are rewritten (Nuxt 4's `app/` layout, Astro 7, Deno marked
+    as ending), and every digest is recomputed.
+  - `gates.yaml` states the rule and is at `spec_revision` 11 (see the upgrade notes).
 
 Upgrade notes for this section:
 
@@ -331,7 +356,11 @@ Upgrade notes for this section:
   record without `manifest_submission_id` is reported as unchecked
   (`HANDOFF_FIELD_MISSING`) for one release, then as a failure. A record has to carry
   `submission_status`, and its `package_path` has to be a phase directory of its own run.
-- Runs in flight: `gates.yaml` changed (`spec_revision` 10), and a stored verdict carries the
+- Stack locks: the registry is at schema 2 and every overlay digest changed, so a
+  `stack_lock` recorded before carries a stale `overlay_sha256` and fails until it is recorded
+  again, with `versions` as a mapping of component to the version in use. A list-form
+  `versions` is accepted for this release with a warning and is malformed after it.
+- Runs in flight: `gates.yaml` changed (`spec_revision` 10, then 11 with the stack-lock rule), and a stored verdict carries the
   spec digest, so afterwards a `--prior` record reads as not produced against the shipped
   spec. Finish the open boundary before upgrading, or accept one fresh judgment for it.
 - Evidence spelling: a cited path that is not the on-disk spelling, or that is reached
@@ -1607,7 +1636,7 @@ recorded here, or a record the skill does not carry, fails it.
 - `design/architect` 1.1.1: the Taste snapshot is not a start condition, because `pipelines.yaml` runs `taste-snapshot` beside research and requires it only at the design `phase-gate`; a snapshot that has not arrived yet is not the absent-snapshot failure; previously `interfaces` is a typed `interface_set` with `IF-<n>` ids that stand in the hashed artifact; previously directions use the reports destination; previously works from the stack the project already fixes, not a lock
   that comes later in the pipeline.
 - `design/engineer` 1.0.2: key-owner REVISE corrections arrive through commander; previously works from the detected stack, not a lock that comes later.
-- `design/commander` 1.3.0: Review discipline and mandatory third-REVISE user escalation; previously escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second; previously `decisions`, `interfaces` and `acceptance` are typed source-of-truth records, and the verdict is read from the gate's own record; previously both validators in the self-check, concurrent taste/research and seed/plan stages, rerun scope on REVISE; previously native delegation grants; previously confirmed Admiral intake, explicit Taste snapshot and unconditional security assessment; previously states the stack-lock rule the engine enforces (every
+- `design/commander` 1.4.0: `stack_lock.versions` records the versions in use by component, against the registry's minimums, and a version below one passes with a warning to decide before submitting; previously Review discipline and mandatory third-REVISE user escalation; previously escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second; previously `decisions`, `interfaces` and `acceptance` are typed source-of-truth records, and the verdict is read from the gate's own record; previously both validators in the self-check, concurrent taste/research and seed/plan stages, rerun scope on REVISE; previously native delegation grants; previously confirmed Admiral intake, explicit Taste snapshot and unconditional security assessment; previously states the stack-lock rule the engine enforces (every
   declared version is one the registry offers), and its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
 - `design/planner` 1.1.0: every acceptance row carries a stable `AC-<n>` id that gate findings cite, and `acceptance` is a typed `acceptance_table` read from the hashed plan.
 - `design/design-mapper` 1.0.2: parity examples use real run paths; previously states what `check_parity.py` now refuses in an inventory.
@@ -1627,7 +1656,7 @@ recorded here, or a record the skill does not carry, fails it.
 - `unfreeze` 1.1.1: explicit legacy adoption keeps protection active; previously releases by the normalised glob and records the cap on a grant.
 - `gatekeeper-admiral` 2.1.0: `scripts/check.py` reads `delivery/` as a ledger of handoff records, takes `--boundary`, and holds every earlier record to a recorded `APPROVED` that agrees with its cross-stage verdict record; previously the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously a schema-1 result is read as checking applicability records while still letting a bare sanctioned wording stand in for one, and no fallback map names `mock_rendering`; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; carries the phase judgment from the phase gate's own record; previously bounded cross-stage scope, severity threshold and resubmission batch rule; previously independent spec floor and typed security/human-go records; previously audit fixes for input containment, BOM manifests and confirmation-id consistency; previously a REVISE row for a schema-1 result, the typed-record
   roster and what a typed record leaves unchecked.
-- `design/gatekeeper-design` 2.0.1: the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously no fallback map, global or boundary, sanctions a wording for `mock_rendering`, and a schema-1 result is read as checking applicability records while still letting a bare sanctioned wording stand in for one; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously no invented mock-rendering fallback; previously spec floor, exact layer citation and corrected research/UI slots; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, and the stack-lock and
+- `design/gatekeeper-design` 2.1.0: the stack-lock warning row covers a version below the registry minimum, one past `verified_through`, and a list-form lock; previously the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously no fallback map, global or boundary, sanctions a wording for `mock_rendering`, and a schema-1 result is read as checking applicability records while still letting a bare sanctioned wording stand in for one; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously no invented mock-rendering fallback; previously spec floor, exact layer citation and corrected research/UI slots; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, and the stack-lock and
   selection rules the engine now enforces.
 - `build/gatekeeper-build` 2.1.0: the completeness certificate is read from `reports/report_completeness.md` only and has to declare the package's revision, and superseded copies under `_superseded/` are left out of the package and held to their index; previously the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously shared gate safety floor and layer-citation correction; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, with its package guard and
   optional slots.

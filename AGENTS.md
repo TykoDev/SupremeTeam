@@ -88,7 +88,7 @@ Declared in `skills/pipelines.yaml`, gated by `skills/gates.yaml`.
 
 The UI design system belongs to **architect** per `skills/design-doctrine.md`.
 There is no separate `designer` skill. `skills/tech-stacks/` is a resource library
-of 14 overlays behind `stack_lock`, not a skill.
+of 14 overlays behind `stack_lock`, not a skill; its registry states a minimum version per component, not a pin.
 
 ### Build (8)
 
@@ -194,7 +194,7 @@ Not skills. These are the files the skills are checked against.
 | `skills/runtime-manifest.yaml` | Runtime floor, launchers, supported commands, CI matrix |
 | `skills/package-manifest.yaml` | Include, exclude, delivery contract |
 | `skills/execution-contract.md` | The six preamble clauses and the tier table |
-| `skills/tech-stacks/registry.yaml` | 14 stack overlays with pinned versions and digests |
+| `skills/tech-stacks/registry.yaml` | 14 stack overlays with a minimum version per component and digests |
 
 ## Doctrine and protocol
 
@@ -259,7 +259,7 @@ Shared tooling is in `skills/scripts/`. Its command-line tools are
 `mcp_registry.py`, `run_files.py` and `catalog_imports.py`; `data_formats.py` is the JSON and YAML reader every script
 shares, `contract_floor.py` is the independent safety floor the gate validator
 loads, `checkout.py` maps a linked git worktree to the main checkout that holds its
-runtime state, and the rest are modules behind `check_runtime.py` and the save layout,
+runtime state, `stack_versions.py` is how a tech-stack minimum and a version in use are read and compared, and the rest are modules behind `check_runtime.py` and the save layout,
 listed in
 [docs/directory-structure.md](docs/directory-structure.md). Contract suites are in
 `skills/validation/`; the other suites sit beside the code they test: `test_*.py` in

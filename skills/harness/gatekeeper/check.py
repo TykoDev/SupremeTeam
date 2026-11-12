@@ -94,6 +94,7 @@ try:
                             spelling_defects)
     from data_formats import DataFormatError, content_sha256, load_data
     from contract_floor import gate_floor_errors
+    from stack_versions import VersionError, below, beyond, parse as parse_version
     from _gatecycle import write_mechanical, write_verdict
 except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
     if __name__ != "__main__":
@@ -299,6 +300,19 @@ def parse_date(value: object) -> date | None:
         return date.fromisoformat(value) if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) else None
     except ValueError:
         return None
+
+
+def parse_last_day(value: object) -> date | None:
+    """The last day a ``support_ends`` value covers: a ``YYYY-MM-DD`` date, or the last day of a ``YYYY-MM`` month,
+    which is all some upstreams publish. None for anything else."""
+    exact = parse_date(value)
+    if exact is not None or not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}", value):
+        return exact
+    year, month = int(value[:4]), int(value[5:])
+    if not 1 <= month <= 12:
+        return None
+    following = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    return date.fromordinal(following.toordinal() - 1)
 
 
 def timestamp_valid(value: object) -> bool:
@@ -1569,7 +1583,7 @@ class Package:
         overlay = value.get("overlay_sha256")
         overlay = overlay.strip() if isinstance(overlay, str) else overlay
         versions = value.get("versions")
-        if not filled(slug) or not is_sha256(overlay) or not isinstance(versions, list) or not versions:
+        if not filled(slug) or not is_sha256(overlay) or not isinstance(versions, (list, dict)) or not versions:
             self.failures.append(f"{key} record requires slug, versions, and overlay_sha256")
             return
         slug, overlay = slug.strip(), overlay.lower()
@@ -1592,34 +1606,80 @@ class Package:
             self.failures.append(f"{key} overlay file for {slug} is missing: {entry.get('path')}")
         elif overlay_digest(overlay_file) != overlay:
             self.failures.append(f"{key} overlay file digest does not match declared overlay_sha256")
-        offered = {str(v) for v in (entry.get("versions") or [])}
-        unoffered = [v for v in versions if str(v) not in offered]
-        if unoffered:
-            self.failures.append(f"{key} versions {unoffered} not offered by registry entry {slug}")
-        self.warn_registry_freshness(key, slug, registry)
+        self.check_lock_versions(key, slug, versions, entry)
+        self.warn_registry_freshness(key, slug, registry, entry)
 
-    def warn_registry_freshness(self, key: str, slug: str, registry: object) -> None:
-        """Say when a lock rests on pins the registry itself marks as past their date.
+    def check_lock_versions(self, key: str, slug: str, versions: object, entry: dict) -> None:
+        """Hold the versions a lock records to the minimums the registry entry states.
 
-        A lock on an overlay whose ``support_ends`` has passed, or against a
-        registry not re-read within its own ``verification_ttl_days``, still
-        passes: choosing a supported version is the owner's decision and the
-        gate makes none. The reader of the result is told, because the lock is
-        then a statement about versions nobody has confirmed are current.
+        A lock says what the project uses, component by component (``{"node": "26.1.0", "typescript": "6.0.3"}``),
+        and the registry says the least the overlay's guidance holds for (``min_versions``). A component the entry
+        names has to be in the lock, and every value has to be one version (``stack_versions``): those are
+        failures, because without them nothing was compared. A version below its minimum passes with a warning that
+        names both, which the design gatekeeper has to address in its judgment: locks on releases that passed
+        before this rule would otherwise all fail. A version past ``verified_through`` passes with a warning that
+        the overlay was not read against that release. Components the entry does not name are allowed.
+
+        The list form (``[19, 15]``) is what a lock was before the registry named its components. Nothing in it
+        can be compared, so it passes for one release with a warning that gives the labelled form, and is
+        malformed after that."""
+        minimums = entry.get("min_versions")
+        if not isinstance(minimums, dict) or not minimums:
+            self.failures.append(f"{key} registry entry {slug} states no min_versions, so nothing can vouch for a lock on it")
+            return
+        if isinstance(versions, list):
+            example = ", ".join(f'"{name}": "<version in use>"' for name in minimums)
+            self.warnings.append(
+                f"{key}: versions is a list, the form from before the registry named its components. It passes for this "
+                f"release and nothing in it was compared with the minimums of {slug}. Record what the project uses "
+                f"by component: {{{example}}}")
+            return
+        missing = [name for name in minimums if name not in versions]
+        if missing:
+            self.failures.append(f"{key} versions names no {', '.join(missing)}, which registry entry {slug} gives a minimum for")
+        limits = entry.get("verified_through") if isinstance(entry.get("verified_through"), dict) else {}
+        for name, version in versions.items():
+            try:
+                parse_version(version)
+            except VersionError as exc:
+                self.failures.append(f"{key} versions.{name}: {exc}")
+                continue
+            try:
+                if name in minimums and below(version, minimums[name]):
+                    self.warnings.append(
+                        f"{key}: {name} {version} is below {minimums[name]}, the minimum of the {slug} stack; the lock "
+                        "passes, and the design gatekeeper has to address it in its judgment")
+                if name in limits and beyond(version, limits[name]):
+                    self.warnings.append(
+                        f"{key}: {name} {version} is past {limits[name]}, the newest release the {slug} overlay was read "
+                        "against; its guidance is not known to hold there")
+            except VersionError as exc:
+                raise Engine(f"tech-stack registry entry {slug} states a version that is not one: {exc}") from exc
+
+    def warn_registry_freshness(self, key: str, slug: str, registry: object, entry: "dict | None" = None) -> None:
+        """Say when a lock rests on minimums the registry itself marks as past their date.
+
+        An entry gives ``support_ends`` per component: the day upstream stops supporting the release its minimum
+        names. A lock on an overlay with such a day behind it, or against a registry not re-read within its own
+        ``verification_ttl_days``, still passes: choosing a supported version is the owner's decision and the gate
+        makes none. The reader of the result is told, because the registry's minimum is then no longer one, and a
+        project at it is past its end of life.
         """
         if not isinstance(registry, dict):
             return
         today = utc_today()
-        support_ends = registry.get("support_ends")
-        ended = support_ends.get(slug) if isinstance(support_ends, dict) else None
-        if ended is not None:
-            last_day = parse_date(ended)
+        support_ends = entry.get("support_ends") if isinstance(entry, dict) else None
+        minimums = entry.get("min_versions") if isinstance(entry, dict) and isinstance(entry.get("min_versions"), dict) else {}
+        for component, ended in (support_ends.items() if isinstance(support_ends, dict) else ()):
+            last_day = parse_last_day(ended)
             if last_day is None:
-                self.warnings.append(f"{key}: support_ends for {slug} is not a YYYY-MM-DD date: {ended!r}")
+                self.warnings.append(f"{key}: support_ends for {component} of {slug} is not a YYYY-MM-DD date or a YYYY-MM "
+                                     f"month: {ended!r}")
             elif last_day < today:
                 self.warnings.append(
-                    f"{key}: support for the {slug} stack ended on {last_day.isoformat()}; the lock passes, "
-                    "but its pinned versions are past their end of life")
+                    f"{key}: upstream support for {component} {minimums.get(component, '')} of the {slug} stack ended on "
+                    f"{last_day.isoformat()}; the lock passes, but the registry's minimum is past its end of life and a "
+                    "project at it is too")
         ttl = registry.get("verification_ttl_days")
         if ttl is None:
             return
@@ -1631,7 +1691,7 @@ class Package:
         elif (today - verified).days > ttl:
             self.warnings.append(
                 f"{key}: the tech-stack registry was last verified on {verified.isoformat()}, more than {ttl} days ago; "
-                "its pins are not known to be current")
+                "its minimums are not known to be current")
 
     # ------------------------------------------------------------- lineage
     def check_identity(self) -> tuple[bool, set[str]]:

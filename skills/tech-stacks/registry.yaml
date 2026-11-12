@@ -1,113 +1,167 @@
-schema_version: 1
+schema_version: 2
 kind: supremeteam-tech-stack-registry
-verified_at: "2026-10-01"
+verified_at: "2026-11-12"
 verification_ttl_days: 180
+floor_rule: >-
+  A component's minimum is the oldest release that the overlay's guidance holds for
+  and that upstream supports until at least verified_at plus verification_ttl_days.
+  Where upstream publishes no support window, the second condition becomes the oldest
+  release line that still receives fixes, and the overlay's floor_reason says so in
+  one line. Re-reading the registry is then mechanical: collect the release and
+  support dates of every component on the day, apply this rule, move the minimums, set
+  verified_at.
 verification: >-
-  verified_at is the date every versions entry below was last read against its
-  overlay's own text and against support_ends; the entries are re-read together, so
-  one date covers them all. It is not a check against upstream releases, which this
-  repository cannot make offline: a version here is a major an owner accepted, not a
-  statement that it is current. The gate reads two things when it checks a stack lock
-  (harness/gatekeeper/check.py, warn_registry_freshness): a lock on an overlay whose
-  support_ends date has passed, and a registry whose verified_at is more than
-  verification_ttl_days old. Both still pass and each adds a warning to the result,
-  because choosing a supported version is the owner's decision and the gate makes none.
-  astro is marked in its own overlay as a historical, unmaintained snapshot with no
-  end date, so it has no support_ends entry.
-  vue-nuxt locks Nuxt 3 (versions 3 and 3.14), whose end of life passed on
-  2026-07-31, the date support_ends records, so every lock on it carries that
-  warning. The pin is unchanged on purpose: choosing a supported major for it is an
-  owner decision.
-support_ends:
-  vue-nuxt: "2026-07-31"
+  verified_at is the day every min_versions entry below was last set by floor_rule
+  from upstream's published releases and support dates, and read against its overlay's
+  own text; the entries are re-read together, so one date covers them all. A minimum
+  is the least the overlay's guidance holds for, not a pin: a project on any release
+  at or above it locks without a warning. min_versions names each component and gives
+  its minimum as text (the number 3.10 would be 3.1). verified_through, where an
+  overlay has one, names the newest release line it was read against; support_ends
+  gives, per component, the last day upstream supports the minimum's release, as a
+  date or as a month where that is all upstream publishes. The gate reads all of it
+  when it checks a stack lock (harness/gatekeeper/check.py, check_lock_versions and
+  warn_registry_freshness): a component the entry names that the lock leaves out, or a
+  value that is not one version, fails; a version below its minimum, a version past
+  verified_through, a support_ends day that has passed, and a registry whose
+  verified_at is more than verification_ttl_days old each pass with a warning, because
+  choosing a supported version is the owner's decision and the gate makes none.
+  deno-typescript is kept and marked as ending: Deno supports the runtime until about
+  October 2027 and then stops developing it.
 provenance: >-
   Each sha256 is the digest of the shipped overlay text with line endings folded to
   LF. It detects an edited overlay; it does not say where the guidance came from.
-  source names the file in the _refs authoring workspace this overlay was written
-  in. That workspace is not shipped with the catalog, so source cannot be followed
-  from a checkout and is checked only when the workspace is present.
+  source names the file in the _refs authoring workspace this overlay was written in.
+  That workspace is not shipped with the catalog, so source cannot be followed from a
+  checkout and is checked only when the workspace is present.
 overlays:
   - slug: angular
     path: tech-stacks/angular.md
     framework: Angular
-    versions: [19]
+    min_versions: {angular: "21"}
+    support_ends: {angular: "2027-06"}
     source: _refs/global/tech-stacks/angular.md
-    sha256: 668a93aae7e988b702f435d394e79285164f10adc341acf802cfdcb7b15a8e23
+    sha256: 67f1ea451dd1c890efd6ca8235cc1dba28d19aa998d0aed7ef567bbe4a74d3a5
   - slug: astro
     path: tech-stacks/astro.md
     framework: Astro
-    versions: [5]
+    min_versions: {astro: "7"}
+    floor_reason: >-
+      Astro publishes no support window. 7 is the line that receives releases: 6 has had
+      none since 7.0 shipped on 2026-06-22.
     source: _refs/global/tech-stacks/astro.md
-    sha256: 3300e3891944d1e2fdab1262d25b356c817a6dd8a9e58d5f13edb4c9f7005e59
+    sha256: 47dc06e4158aa62e92c5a0e7971d695e6a55568e34f02a612afd75dd14e2d06c
   - slug: bun-typescript
     path: tech-stacks/bun-typescript.md
     framework: Bun + TypeScript
-    versions: [1.2]
+    min_versions: {bun: "1.4"}
+    floor_reason: >-
+      Bun has no support policy and maintains only its newest line, which is 1.4 since
+      2026-08-20.
     source: _refs/global/tech-stacks/bun-typescript.md
-    sha256: 98cdfe6a10807e5e99222da3c94ca34f8d4b76095ac32c61ae74e27c0cc0bde1
+    sha256: 661d82bbf6ba4b7d3c3483d3da7c28f3c17755a482474e199d5a2f1021185166
   - slug: deno-typescript
     path: tech-stacks/deno-typescript.md
     framework: Deno + TypeScript
-    versions: [2]
+    min_versions: {deno: "2.9"}
+    support_ends: {deno: "2027-10"}
+    floor_reason: >-
+      Ending: Deno announced on 2026-10-09 that it supports the runtime for another year
+      and then stops developing it. Its documentation still gives 2027-01-31 for the 2.9
+      long-term channel; the later statement is the one recorded.
     source: _refs/global/tech-stacks/deno-typescript.md
-    sha256: a1afd468785cd3077688876f5cc86b9c19db904b5a8d0b0e3064f7f63eca577b
+    sha256: edf75a0c4f938dd2ad03e00f6f2c8cc76f2bda792075b1cbc44e96eb63323879
   - slug: dotnet-aspnet
     path: tech-stacks/dotnet-aspnet.md
     framework: .NET / ASP.NET Core
-    versions: [9]
+    min_versions: {dotnet: "10"}
+    support_ends: {dotnet: "2028-11-14"}
     source: _refs/global/tech-stacks/dotnet-aspnet.md
-    sha256: 02c343d7a76e80e4f551323bd8f53c699605616db64e3d175e97bb44d00d29d1
+    sha256: fe7df7ae7f9a12df31b6940f111ed55162114807c10464718c0b2e2ca0730c39
   - slug: go-gin
     path: tech-stacks/go-gin.md
     framework: Go / Gin
-    versions: [1.23]
+    min_versions: {go: "1.27"}
+    floor_reason: >-
+      Go supports its two newest releases and publishes no dates: 1.27 is supported until
+      1.29 ships, and 1.26 only until 1.28 does, which is expected inside the verification
+      window.
     source: _refs/global/tech-stacks/go-gin.md
-    sha256: 7d11c966ce45d86b703bcf0d6f254808316191f92da7bf7234313fdc5e58b277
+    sha256: 0c7ab9d187f073d534b30e24635e51691a00e4ac24dc2608e17b5a4f308f25bd
   - slug: node-typescript
     path: tech-stacks/node-typescript.md
     framework: Node.js + TypeScript
-    versions: [22, 5]
+    min_versions: {node: "24", typescript: "6.0"}
+    verified_through: {typescript: "6"}
+    support_ends: {node: "2028-04-30"}
+    floor_reason: >-
+      TypeScript publishes no support window; 6.0 is the oldest line the overlay's
+      guidance was read against.
     source: _refs/global/tech-stacks/node-typescript.md
-    sha256: e8d06dc75f1d3921e21aa5d5e170eb3a3a3d39bea3a377c36e9f5300f45096cd
+    sha256: 0ca43a14a9743527095c5b70b9a2fbeb80d816363c89dc1ed46a4e264cb22a95
   - slug: python-fastapi
     path: tech-stacks/python-fastapi.md
     framework: Python + FastAPI
-    versions: [3.12, 0.115]
+    min_versions: {python: "3.11", fastapi: "0.115"}
+    support_ends: {python: "2027-10"}
+    floor_reason: >-
+      FastAPI has no support policy; 0.115 is the oldest release the overlay's guidance
+      holds for.
     source: _refs/global/tech-stacks/python-fastapi.md
-    sha256: 0c722204b021901fc496223b268a7193b2fc8c324c7c15b89b118ea9a472c606
+    sha256: e5802322a296a8e64af8b58d7755450fc533952395956536e8fb46f9d5ff92dd
   - slug: react-nextjs
     path: tech-stacks/react-nextjs.md
     framework: React + Next.js
-    versions: [19, 15]
+    min_versions: {react: "19", next: "16"}
+    floor_reason: >-
+      Neither publishes an end date for these lines. Next.js 15 ends on 2027-01-31, inside
+      the verification window, so 16 is the oldest line supported through it; there is no
+      newer React major.
     source: _refs/global/tech-stacks/react-nextjs.md
-    sha256: 676452db8dbd64749c34f1a01c4ce8702c65213fd12a3046238993b2067f6281
+    sha256: eb75928ab667a059458a1943d0a43f7b04d23b02bf1282d4dd6ab7badcc52d3c
   - slug: react-tanstack
     path: tech-stacks/react-tanstack.md
     framework: React + TanStack Start
-    versions: [19, 8]
+    min_versions: {react: "19", tanstack-start: "1.0", vite: "8"}
+    floor_reason: >-
+      None of the three publishes a support window. TanStack Start 1.0 is the stable
+      release of 2026-10-13; its packages carry 1.x version numbers, all at or above this
+      minimum.
     source: _refs/global/tech-stacks/react-tanstack.md
-    sha256: faf4420f6c9a208bbb42fdf410226746e41ebb37cbca5026b6cd41ab58b1c71c
+    sha256: c32bfb2a5d8831dba76f5b4ba0c0a930fcd68065a66ab62c1950562025f3f7e7
   - slug: rust-axum
     path: tech-stacks/rust-axum.md
     framework: Rust + Axum
-    versions: [2024, 0.8]
+    min_versions: {rust-edition: "2024", axum: "0.8"}
+    floor_reason: >-
+      Editions do not expire and no newer one is announced; Axum publishes no support
+      window and 0.8 is its current line.
     source: _refs/global/tech-stacks/rust-axum.md
-    sha256: 3242a66f3157fa81208516687bd70e33188e8afb315b57090184dd28dd37557f
+    sha256: c21fe1a492a613eb76e7ca2005b3ce833026283419974d373035a1aec25ef631
   - slug: svelte-sveltekit
     path: tech-stacks/svelte-sveltekit.md
     framework: Svelte + SvelteKit
-    versions: [5]
+    min_versions: {svelte: "5", sveltekit: "2"}
+    verified_through: {sveltekit: "2"}
+    floor_reason: >-
+      Neither publishes a support window. The SvelteKit 2 line still receives fixes;
+      SvelteKit 3 is stable and the overlay has not been read against it.
     source: _refs/global/tech-stacks/svelte-sveltekit.md
-    sha256: e245af51eb241e4682d5a158b39a0c2b95dd92d0b5858eae8851d33f22932868
+    sha256: eb945b788a5d8501f14b46d4fcfcf797cab4e54edcef3c1822c37d4cee8f783b
   - slug: vite-spa
     path: tech-stacks/vite-spa.md
     framework: Vite SPA
-    versions: [8]
+    min_versions: {vite: "8"}
+    floor_reason: >-
+      Vite publishes no end date for 8, its current major.
     source: _refs/global/tech-stacks/vite-spa.md
-    sha256: 318e5893dc0dfa3c80eb52ee59f5145378c807959025adbee7d06978418c79c4
+    sha256: 2d0e79d19ce7a5d2dadf516cd5efd3fbdaf3ce57ed2b01e30a4b5690aad3f120
   - slug: vue-nuxt
     path: tech-stacks/vue-nuxt.md
     framework: Vue + Nuxt
-    versions: [3, 3.14]
+    min_versions: {vue: "3.5", nuxt: "4"}
+    floor_reason: >-
+      Nuxt 3 ended on 2026-07-31. Nuxt 4 is supported until six months after Nuxt 5 ships,
+      and Nuxt 5 has no release date.
     source: _refs/global/tech-stacks/vue-nuxt.md
-    sha256: 3dcaeea9b2be8da9ddfef392578a942f61b71e3dce872d3906ac7c851710f3df
+    sha256: 38f4cd418505630859cdcc7243b9fc8bffaf476234bb9f955519df8187d8fd50

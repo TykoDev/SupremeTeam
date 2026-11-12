@@ -14,6 +14,7 @@ Run from the repo root:
 """
 
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -977,14 +978,29 @@ class VersionTokenTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(data_formats.parse_scalar(text), value)
 
+    def test_a_quoted_version_is_text_in_both_readers_and_an_unquoted_one_is_not_the_same_in_both(self):
+        """WP-13: the registry gives a minimum as quoted text. Unquoted, `3.10` is text to the catalog's reader and
+        the number 3.1 to PyYAML, so the same registry would state two different minimums."""
+        quoted = 'min_versions: {python: "3.10", fastapi: "0.115"}\n'
+        self.assertEqual(data_formats.parse_yaml(quoted)["min_versions"], {"python": "3.10", "fastapi": "0.115"})
+        self.assertEqual(data_formats.parse_yaml("min_versions: {python: 3.10}\n")["min_versions"], {"python": "3.10"})
+        try:
+            import yaml
+        except ImportError:
+            return
+        self.assertEqual(yaml.safe_load(quoted)["min_versions"], {"python": "3.10", "fastapi": "0.115"})
+        self.assertEqual(yaml.safe_load("min_versions: {python: 3.10}\n")["min_versions"], {"python": 3.1})
+
     def test_the_registry_versions_read_back_as_spelled(self):
+        """The minimums of the shipped registry come back as the text the file spells, component by component."""
         registry = ENGINE_DIR.parents[1] / "tech-stacks" / "registry.yaml"
-        spelled = [[token.strip() for token in line.split("[", 1)[1].rstrip("]\n ").split(",")]
+        spelled = [re.findall(r'([a-z0-9-]+): "([^"]+)"', line)
                    for line in registry.read_text(encoding="utf-8").splitlines()
-                   if line.strip().startswith("versions:")]
-        parsed = [[str(v) for v in overlay["versions"]]
-                  for overlay in data_formats.load_data(registry)["overlays"]]
+                   if line.strip().startswith("min_versions:")]
+        parsed = [list(overlay["min_versions"].items()) for overlay in data_formats.load_data(registry)["overlays"]]
         self.assertEqual(parsed, spelled)
+        self.assertEqual(len(parsed), 14)
+        self.assertTrue(all(isinstance(version, str) for row in parsed for _, version in row))
 
 
 class FailLoudTests(unittest.TestCase):

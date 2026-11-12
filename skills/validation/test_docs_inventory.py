@@ -224,11 +224,13 @@ class GateProseTests(unittest.TestCase):
                 self.assertEqual(expected, set(rows))
                 self.assertEqual({name: self.spec["boundaries"][name]["submitter"] for name in rows}, rows)
 
-    def test_no_document_says_a_stack_locks_versions_intersect(self):
-        """RR-gate-2: every declared version has to be one the registry entry offers; one match is not enough."""
+    def test_no_document_states_a_version_rule_the_engine_no_longer_has(self):
+        """RR-gate-2 said "the versions intersect" was wrong; WP-13 replaced exact pins with minimums, so "one the
+        registry entry offers" is wrong now too: the registry offers no list to be in."""
         documents = sorted(SKILLS.rglob("*.md")) + (sorted((REPO / "docs").glob("*.md")) if IN_A_CHECKOUT else [])
+        documents.append(SKILLS / "gates.yaml")
         stale = [path.relative_to(REPO).as_posix() for path in documents
-                 if re.search(r"versions\s+intersect", path.read_text(encoding="utf-8"))]
+                 if re.search(r"versions\s+intersect|one\s+the\s+(?:registry\s+)?entry\s+offers", path.read_text(encoding="utf-8"))]
         self.assertEqual([], stale)
 
     def test_the_commander_and_the_design_gatekeeper_state_the_version_rule_the_engine_enforces(self):
@@ -236,7 +238,11 @@ class GateProseTests(unittest.TestCase):
                      SKILLS / "design" / "commander" / "references" / "gate-evidence.md",
                      SKILLS / "design" / "gatekeeper-design" / "references" / "boundary-evidence.md"):
             with self.subTest(document=path.name):
-                self.assertIn("every declared version is one the registry entry offers", path.read_text(encoding="utf-8"))
+                text = path.read_text(encoding="utf-8")
+                self.assertIn("every component the registry entry names is recorded at one version in use", text)
+                self.assertRegex(text, r"below\s+(?:the\s+registry's\s+minimum|its\s+minimum|the\s+entry's\s+`min_versions`)")
+        self.assertIn("every component the registry entry names is recorded at one version in use",
+                      (SKILLS / "gates.yaml").read_text(encoding="utf-8"))
 
     def test_every_gatekeeper_says_a_typed_record_is_the_submitters_own_statement(self):
         """SEC-T-01: the gate does not compare an artifact with its record, and says what it does read."""
@@ -265,6 +271,9 @@ class GateProseTests(unittest.TestCase):
         self.assertIn("support_ends", row, "no failure-mode row for a stack-lock warning")
         self.assertIn("verification_ttl_days", row)
         self.assertIn("Do not approve silently", row)
+        # WP-13: a version below the registry's minimum is a warning by decision (D1), so this row is what acts on it.
+        self.assertIn("min_versions", row)
+        self.assertIn("verified_through", row)
 
     def test_every_gatekeeper_says_what_a_schema_1_result_leaves_unchecked(self):
         """SEC-T-05: a flat schema-1 package outside a run passes, so the gatekeeper is told to read the result."""

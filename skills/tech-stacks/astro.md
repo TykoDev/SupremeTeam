@@ -1,14 +1,14 @@
-# Astro 5 content and islands
+# Astro 7+ content and islands
 
 ## Baseline
-- Use Astro 5 for content-driven sites, documentation, marketing pages, blogs, and other surfaces where static HTML is the primary output; this Astro 5 baseline is a historical, unmaintained snapshot rather than the current Astro release.
+- Astro 7 or newer, for content-driven sites, documentation, marketing pages, blogs, and other surfaces where static HTML is the primary output. Astro 7 builds on Vite 8 and needs Node.js 22.23.4 or newer; Astro publishes no support window, and 7 is the line that receives releases.
 - Treat zero JavaScript as the default. Add interactive islands only where a visible interaction requires client execution.
 - Use the Content Layer API with Zod-validated content schemas, and use the Vite-based build system as the default toolchain.
 - Choose among React, Vue, Svelte, Solid, or Preact components per island only when the interaction benefits from that library.
 
 ## Project shape
 - Keep file-based pages under `src/pages`, reusable wrappers under `src/layouts`, and static or interactive pieces under `src/components`.
-- Keep content entries under `src/content`; define Astro 5 Content Layer collections and schemas in `src/content.config.ts`; keep styles in `src/styles` and unprocessed assets in `public`.
+- Keep content entries under `src/content`; define Content Layer collections and schemas in `src/content.config.ts`; keep styles in `src/styles` and unprocessed assets in `public`.
 - Use a small root configuration with `astro.config.mjs`, `package.json`, and `tsconfig.json`; keep page-specific content out of global configuration.
 - Make each interactive island explicit in the component tree so the static shell remains easy to inspect.
 
@@ -19,7 +19,8 @@
 - Keep personalized data behind a server island or a server endpoint so CDN-cached page content does not accidentally contain request-specific data.
 
 ## Migration and versioning
-- Treat the Astro 5 Content Layer schema as a versioned content contract; update validators and representative fixtures together.
+- Treat the Content Layer schema as a versioned content contract; update validators and representative fixtures together.
+- A project on Astro 5 or 6 is below this overlay's minimum: plan the move to 7 with its Vite 8 and Node.js requirements, and re-run the content and island tests after it.
 - Review every hydration directive when converting a static component into an island, because the directive changes JavaScript timing and browser ownership.
 - Keep framework integrations version-aligned with Astro and verify that a component still renders correctly in both the static shell and its hydrated state.
 - Decide explicitly whether an adapter change moves the project from static output to server rendering; do not infer that change from a component import.

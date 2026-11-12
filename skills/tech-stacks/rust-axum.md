@@ -1,7 +1,7 @@
-# Rust 2024 and Axum 0.8+
+# Rust 2024+ and Axum 0.8+
 
 ## Baseline
-- Use Rust 2024 Edition with Axum 0.8+ and Tokio for asynchronous services.
+- The Rust 2024 Edition or newer with Axum 0.8 or newer and Tokio, for asynchronous services.
 - Use Tokio's multi-threaded scheduler for concurrent work, preserve ownership and borrowing guarantees, and keep error intent explicit with `thiserror` for libraries and `anyhow` for applications.
 - Use Axum extractors, method handlers, and Tower middleware as the HTTP boundary.
 - Treat Cargo workspaces and reproducible lockfile resolution as the dependency and build baseline.

@@ -1139,6 +1139,39 @@ class SingleWriterTests(GuardCase):
 
 # --- tokenisation failure, tool shapes, rule isolation, cost ------------------------------------
 
+class SupersededCopiesTests(GuardCase):
+    """WP-04: a phase's ``_superseded/`` folder and its index have one writer, ``run_files.py supersede``.
+
+    The gate leaves that folder out of the current package and holds every file in it to ``index.json``. A hand write
+    could plant a copy with an index entry to match, so every route into the folder is refused except the command."""
+
+    FAST = True
+    HOME = "skillset-saves/runs/r1/build/_superseded"
+
+    def test_edit_tools_and_patches_into_the_folder_are_denied(self):
+        for path in (f"{self.HOME}/index.json", f"{self.HOME}/rev-1/reports/report_completeness.md", f"{self.HOME}/new.md",
+                     f"{self.root.as_posix()}/{self.HOME}/index.json", "skillset-saves/runs/r1/build/_SUPERSEDED/index.json"):
+            with self.subTest(path=path):
+                self.assertIn("run_files.py supersede", kit.reason(self.edit(path)))
+        patch = _patch(f"{self.HOME}/rev-1/x.md")
+        self.assertIn("run_files.py supersede", kit.reason(kit.decide({"tool_name": "apply_patch", "tool_input": {"command": patch}}, self.root)))
+
+    def test_shell_writes_moves_and_removals_in_the_folder_are_denied(self):
+        self.check((f"echo x > {self.HOME}/index.json", f"cp old.md {self.HOME}/rev-1/old.md", f"mv reports/a.md {self.HOME}/rev-1/a.md",
+                    f"rm {self.HOME}/rev-1/reports/report_completeness.md", f"rm -rf {self.HOME}", f"mkdir -p {self.HOME}/rev-9",
+                    f"python3 -c \"open('{self.HOME}/index.json','w').write('x')\"", f"sed -i s/1/2/ {self.HOME}/index.json",
+                    "cd skillset-saves/runs/r1/build && touch _superseded/rev-1/x.md"), deny=True, fragment="run_files.py supersede")
+
+    def test_the_sanctioned_command_and_reads_stay_allowed(self):
+        self.check(("python skills/scripts/run_files.py supersede --run-id r1 --phase build --path reports/report_completeness.md --by-revision 2",
+                    f"cat {self.HOME}/index.json", f"ls -R {self.HOME}", f"grep -r revision {self.HOME}"), deny=False)
+
+    def test_a_folder_of_that_name_elsewhere_is_not_protected(self):
+        for path in ("src/_superseded/a.py", "docs/_superseded/index.json", "skillset-saves/runs/r1/build/reports/_superseded_notes.md"):
+            with self.subTest(path=path):
+                self.assertEqual(self.edit(path), "")
+
+
 class FallbackTests(GuardCase):
     """If the command cannot be tokenised the old textual rules apply, with the delimiter and redirect fixes."""
 
@@ -1474,6 +1507,8 @@ DENIAL_REASONS = (
     ("C", {}, "Bash", "echo x > skillset-saves/runs/r1/design/verdict_design-to-build.json", "check.py --verdict-out",
      "check.py --verdict-out"),
     ("C", {}, "Bash", "rm -rf skillset-saves/runs/r1/design", "phase directory", "removing or moving a phase directory"),
+    ("C", {}, "Bash", "echo x > skillset-saves/runs/r1/build/_superseded/index.json", "run_files.py supersede",
+     "run_files.py supersede"),
     ("C", {}, "Bash", "git clean -fdx", "is aimed at the project root", "is aimed at the project root and would"),
     ("D", READ_ONLY, "Bash", "touch notes.md", "is recorded read-only", "read_only"),
     ("D", READ_ONLY, "Bash", "cat list | xargs rm", "name each target in the shell command itself", "target is not in the command"),
@@ -1520,7 +1555,7 @@ class DenialReasonProseTests(GuardCase):
         """A denial added to `guard_hook` without an entry here would have no documented place."""
         defined = {name for name in dir(guard_hook) if name.endswith("_REASON") and isinstance(getattr(guard_hook, name), str)}
         covered = {"_DANGEROUS_REASON", "_CORE_SAVE_REASON", "_TASTE_SAVE_REASON", "_GUARD_STATE_REASON", "_HARNESS_REASON", "_UNPLACED_REASON",
-                   "_UNNAMED_REASON", "_ROOT_RECORDS_REASON", "_VERDICT_REASON", "_PHASE_DIR_REASON", "_UNPLACED_PATCH_REASON"}
+                   "_UNNAMED_REASON", "_ROOT_RECORDS_REASON", "_VERDICT_REASON", "_PHASE_DIR_REASON", "_UNPLACED_PATCH_REASON", "_SUPERSEDED_REASON"}
         self.assertEqual(defined, covered)
 
 

@@ -95,9 +95,37 @@ of Claude Code 2.1.322, Codex CLI 0.166.0 and Antigravity CLI 1.4.12 on Windows.
     (`src/payments/**`) and the worktree's own registration files are protected in both
     trees. Every row of the write table gives the same decision whichever of the two
     directories the host reports.
+- Superseded copies and exact-path slots (WP-04, issue 2): the protocol tells every owner to
+  preserve superseded artifacts, and the shape engine read every file of a package. Against
+  the build gate, a kept `reports/report_completeness.r1.md` beside the current certificate
+  gave `MIXED_REVISIONS`; with no current certificate an old copy at
+  `archive/report_completeness.md` filled the completeness slot; and so did an unrelated
+  `reports/deploy-confirmation.md`, because the slot accepted `*confirm*.md` anywhere.
+  - One convention, defined in `save-protocol.md` and mirrored in
+    `contracts/workflow-protocol.md`: a superseded file lives at
+    `<phase>/_superseded/rev-<n>/<original path>` and is listed in
+    `<phase>/_superseded/index.json` with its digest. There is no in-place marker.
+  - One writer, new `skills/scripts/run_files.py supersede`, which moves the file and adds
+    the entry and refuses a path outside the phase, a file already superseded, a verdict
+    record, a file reached through a link and a revision that is not higher than the file's
+    own. `save-ownership.yaml` gains the class `phase-superseded`, and the guard's Rule C
+    denies every other write into the folder.
+  - The engine reads the current files only for slots, lineage, declared identity, skip
+    records and the blocked-phrase scan (`iter_current_files`), holds every file under
+    `_superseded/` to the index (`SUPERSEDED_UNINDEXED`, `SUPERSEDED_INDEX_MISMATCH`) and
+    names the copies once (`SUPERSEDED_COPIES`). `ArtifactSpec.exact_paths` restricts a slot
+    to named package-relative paths; a name match elsewhere is `ARTIFACT_NOT_CANONICAL`.
+    The `MIXED_REVISIONS` message names the command.
+  - The build gate reads the completeness certificate from `reports/report_completeness.md`
+    only, no longer accepts `*confirm*.md` or `*cross-check*.md`, and fails a certificate
+    whose frontmatter revision is not the package's (`COMPLETENESS_REVISION_MISMATCH`).
 
 Upgrade notes for this section:
 
+- Build packages with hand-preserved copies (`*.r1.md`, an `archive/` folder) still fail
+  `MIXED_REVISIONS`. Run `python skills/scripts/run_files.py supersede` on each copy once;
+  the message names the command. A completeness certificate has to sit at
+  `build/reports/report_completeness.md` and declare the package's revision.
 - Worktree sessions: a `.harness-state/` folder that an earlier version created inside a
   linked worktree is no longer read. It can be deleted.
 - Hook hashes: the packages that change a file hashed at registration (WP-00, WP-02 and
@@ -1366,7 +1394,7 @@ recorded here, or a record the skill does not carry, fails it.
   lacks), a warning for a leading-slash glob outside the project that names a directory that
   exists, relative globs anchored at the project root, a writer lock, and what an
   unreadable record means.
-- `guard` 1.8.2: from a linked git worktree the guard enforces the main checkout's record, a frozen or blocked glob and the registration files hold for the worktree's copy too, and Rule F also covers `skills/scripts/checkout.py`; previously an `apply_patch` call is judged wherever the host puts the patch text (Codex sends it as `command`), and one that names no file the guard can read is denied by Rule G while anything is protected; previously Rule A also denies an inline program's own delete of a root or home (`python3 -c 'shutil.rmtree("/")'`, `node -e 'fs.rmSync(os.homedir(), ...)'`) and a wipe spelled in base64 and decoded by a `base64 -d` of a literal into a shell (`echo cm0gLXJmIC8K | base64 -d | sh`, `sh -c "$(echo ... | base64 -d)"`); previously Rule C also protects the REVISE cycle history (`verdict_<boundary>.cycles.json`) and its lock, and refuses removing or moving a phase directory; previously gate verdict records have a single writer, `check.py --verdict-out` (Rule C); previously a grant is capped at 8 hours, the hook scripts are protected (Rule F,
+- `guard` 1.9.0: Rule C also gives a phase's `_superseded/` folder and its `index.json` a single writer, `run_files.py supersede`; previously from a linked git worktree the guard enforces the main checkout's record, a frozen or blocked glob and the registration files hold for the worktree's copy too, and Rule F also covers `skills/scripts/checkout.py`; previously an `apply_patch` call is judged wherever the host puts the patch text (Codex sends it as `command`), and one that names no file the guard can read is denied by Rule G while anything is protected; previously Rule A also denies an inline program's own delete of a root or home (`python3 -c 'shutil.rmtree("/")'`, `node -e 'fs.rmSync(os.homedir(), ...)'`) and a wipe spelled in base64 and decoded by a `base64 -d` of a literal into a shell (`echo cm0gLXJmIC8K | base64 -d | sh`, `sh -c "$(echo ... | base64 -d)"`); previously Rule C also protects the REVISE cycle history (`verdict_<boundary>.cycles.json`) and its lock, and refuses removing or moving a phase directory; previously gate verdict records have a single writer, `check.py --verdict-out` (Rule C); previously a grant is capped at 8 hours, the hook scripts are protected (Rule F,
   advisory, whole registration file), a write after an unfollowable directory chain is
   denied (Rule G, with its own failure-mode row), a read-only run denies writes with no
   named target (pipes, launchers, PowerShell blocks, diffs), an unreadable record is counted
@@ -1378,7 +1406,7 @@ recorded here, or a record the skill does not carry, fails it.
   roster and what a typed record leaves unchecked.
 - `design/gatekeeper-design` 2.0.1: the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously no fallback map, global or boundary, sanctions a wording for `mock_rendering`, and a schema-1 result is read as checking applicability records while still letting a bare sanctioned wording stand in for one; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously no invented mock-rendering fallback; previously spec floor, exact layer citation and corrected research/UI slots; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, and the stack-lock and
   selection rules the engine now enforces.
-- `build/gatekeeper-build` 2.0.1: the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously shared gate safety floor and layer-citation correction; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, with its package guard and
+- `build/gatekeeper-build` 2.1.0: the completeness certificate is read from `reports/report_completeness.md` only and has to declare the package's revision, and superseded copies under `_superseded/` are left out of the package and held to their index; previously the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously shared gate safety floor and layer-citation correction; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, with its package guard and
   optional slots.
 - `review/gatekeeper-code` 2.0.1: the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously a schema-1 result is read as checking applicability records while still letting a bare sanctioned wording stand in for one; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously selection-dependent redesign render applicability; previously safety floor and corrected CSO/security attribution; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, with its package guard and
   optional slots.
@@ -1407,7 +1435,7 @@ recorded here, or a record the skill does not carry, fails it.
 - `build/test-builder` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously explicit report deliverable and canonical hashing; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
 - `build/debugger` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously candidate teardown preserves implementation ownership; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
 - `build/health-check` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously authorized library consumption smoke and canonical hashing; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
-- `build/cross-check-build-confirm` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously `traceability` is now a checked `trace_map`; the proven/unproven column stays an ownership contract; previously no-code decisions still owe non-waivable proof; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `build/cross-check-build-confirm` 1.2.0: one certificate per revision at `reports/report_completeness.md`, the previous one set aside with `run_files.py supersede` before the new one is written; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously `traceability` is now a checked `trace_map`; the proven/unproven column stays an ownership contract; previously no-code decisions still owe non-waivable proof; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
 - `qa-only` 1.1.1: the third REVISE is the gate's own ESCALATE to the user, handed on through `qa`; previously Review discipline and mandatory third-REVISE user escalation; previously escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second; previously dual-mode routing and session-pin admission; previously the read-only boundary reference states what the hook now denies,
   including index-only git commands, package-manager installs and writes with no named
   target.

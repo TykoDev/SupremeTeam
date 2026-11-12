@@ -104,7 +104,7 @@ enforcement:
 
 notes:
   - "Product source stays in the application's own layout. It is never written under skillset-saves; evidence that depends on it is snapshotted into <phase>/evidence/ with source path, revision, and sha256 provenance (typed-record inputs in gates.yaml)."
-  - "Nothing under a run is deleted by automation. Superseded revisions move to _history/."
+  - "Nothing under a run is deleted by automation. Superseded revisions move to _history/, and a superseded phase file moves to its phase's _superseded/ through scripts/run_files.py supersede."
   - "Four resolver-backed classes live outside any run (the temporary persistence-probe is a separate startup exception): harness-test-scratch, skill-eval-reports, skill-eval-workspaces, and standalone-packages. They are run-independent scratch and delivery outputs, they are excluded from the package by package-manifest.yaml, and nothing under them is gate evidence."
   - "Those four class ids are the same four paths generated_roots_rule names by resolver kind, in the other vocabulary: harness-test-scratch is test_work, skill-eval-reports is eval_reports, skill-eval-workspaces is eval_workspace, and standalone-packages is standalone_packages. The kind is what scripts/output_paths.py --kind takes; the class id is what this file declares a writer for."
   - "Global Taste state is governed by the same taste writer, skills/taste/taste_prefs.py, but lives in a deterministic user-data directory outside every checkout and therefore lies outside this project-relative glob policy."
@@ -186,6 +186,19 @@ classes:
       --cov-report, --report-dir/--temp-dir, or --coverage.reportsDirectory there instead of
       leaving .coverage, .coverage.*, htmlcov/, or .nyc_output/ at the project root, and
       harness/hooks/post_tool_use.py relocates that residue here when a step leaves it behind.
+  - id: phase-superseded
+    writer: phase-lead-or-delegated-specialist
+    tool: skills/scripts/run_files.py
+    patterns:
+      - skillset-saves/runs/*/*/_superseded/index.json
+      - skillset-saves/runs/*/*/_superseded/rev-*/*
+    rule: >-
+      Files of earlier revisions that their owner keeps, at the path they had inside the phase,
+      and the index that lists each with its digest. Written only through run_files.py supersede,
+      which moves the file and adds the entry; the pre-tool hook denies every other write here.
+      The gate leaves this folder out of the submission it judges and fails a file in it that the
+      index does not list or whose digest changed. A copy's path also matches the pattern of the
+      class it came from (phase-reports, phase-evidence); this narrower class wins.
   - id: phase-packages
     writer: phase-lead
     patterns:

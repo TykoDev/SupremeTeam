@@ -29,6 +29,9 @@ skillset-saves/
       verdict_design-to-build.cross-stage.json  # gatekeeper-admiral's, beside it
       verdict_design-to-build.cycles.json       # the boundary's REVISE streaks; check.py --judgment --verdict-out
       verdict_design-to-build.cycles.lock       # its mutex
+      _superseded/                 #   files of earlier revisions, moved here by run_files.py supersede
+        index.json                 #   and listed here with their digests
+        rev-1/reports/...          #   each at the path it had inside the phase
     build/  review/  security/  investigation/  qa/  taste/  redesign/  skill-creation/  release/
     delivery/reports/              # handoff_<boundary>.md and delivery-package.md
 ```

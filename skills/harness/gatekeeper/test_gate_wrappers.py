@@ -561,5 +561,232 @@ class WrapperManifestTests(unittest.TestCase):
                         self.assertIn(spec.evidence_key, required)
 
 
+
+def _fm(revision, body: str) -> str:
+    return f"---\nrevision: {revision}\nsubmission_id: build-{revision}\n---\n{body}"
+
+
+def _build_at(pkg: Path, revision=2, certificate: bool = True) -> None:
+    """A build package whose files all declare ``revision``."""
+    _write(pkg / "reports" / "report_implementation.md", _fm(revision, "# Implementation\nChanged files: app.py; the module was updated.\n"))
+    _write(pkg / "reports" / "report_tests.md", _fm(revision, "# Test results\nThe suite passed: 12 tests, coverage recorded.\n"))
+    if certificate:
+        _write(pkg / "reports" / "report_completeness.md", _fm(revision, "# Completeness\nThe build is complete and certified.\n"))
+
+
+class BuildGateCase(unittest.TestCase):
+    """The build gate wrapper run on a package in a scratch project, with the supersede command at hand."""
+
+    SCRIPT = SKILLS / "build" / "gatekeeper-build" / "scripts" / "check.py"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.project = Path(self._tmp.name).resolve()
+        (self.project / ".git").mkdir()
+        self.package = self.project / "skillset-saves" / "runs" / "r-1" / "build"
+        scripts = str(SKILLS / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import run_files
+        self.run_files = run_files
+
+    def check(self) -> tuple:
+        done = _run(self.SCRIPT, str(self.package), "--json", cwd=self.project)
+        self.assertIn(done.returncode, (0, 1), done.stderr + done.stdout)
+        report = json.loads(done.stdout)
+        return done.returncode, report, [f["code"] for f in report["findings"]]
+
+    def finding(self, report: dict, code: str) -> dict:
+        return next(f for f in report["findings"] if f["code"] == code)
+
+    def supersede(self, path: str, by=2, **more) -> None:
+        self.run_files.supersede(self.project, "r-1", "build", path, by, **more)
+
+
+class SupersededCopiesTests(BuildGateCase):
+    """WP-04 (issue 2): a preserved copy of an earlier revision is neither a lineage defect nor evidence.
+
+    The contracts tell every owner to preserve superseded artifacts, and the engine read every file of the package.
+    Reproduced against the build gate before the change: a kept ``report_completeness.r1.md`` beside the current
+    certificate gave MIXED_REVISIONS; with no current certificate an old copy at ``archive/report_completeness.md``
+    filled the completeness slot; and so did an unrelated ``reports/deploy-confirmation.md``."""
+
+    def test_a_kept_copy_fails_lineage_until_it_is_superseded_and_passes_afterwards(self):
+        _build_at(self.package, 2)
+        _write(self.package / "reports" / "report_completeness.r1.md", _fm(1, "# Completeness\nComplete and certified at r1.\n"))
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("MIXED_REVISIONS", codes)
+        self.assertIn("run_files.py supersede", self.finding(report, "MIXED_REVISIONS")["message"])
+        self.supersede("reports/report_completeness.r1.md")
+        code, report, codes = self.check()
+        self.assertEqual(code, 0, report)
+        self.assertNotIn("MIXED_REVISIONS", codes)
+        self.assertIn("REVISION_COHERENT", codes)
+        self.assertEqual(codes.count("SUPERSEDED_COPIES"), 1)
+        copies = self.finding(report, "SUPERSEDED_COPIES")
+        self.assertEqual(copies["status"], "PASS")
+        self.assertIn("_superseded/rev-1/reports/report_completeness.r1.md", copies["message"])
+        self.assertEqual(report["gate_status"], "NEEDS_JUDGMENT", "only the optional slots are left to the model")
+
+    def test_a_resubmission_that_kept_its_previous_certificate_passes(self):
+        """The ordinary sequence: supersede the r1 certificate, then write the r2 one at the same path."""
+        _build_at(self.package, 1)
+        self.supersede("reports/report_completeness.md")
+        _build_at(self.package, 2)
+        code, report, codes = self.check()
+        self.assertEqual(code, 0, report)
+        self.assertEqual([c for c in codes if c in ("MIXED_REVISIONS", "MIXED_SUBMISSION_IDS", "ARTIFACT_MISSING")], [])
+        self.assertIn("COMPLETENESS_REVISION_OK", codes)
+        self.assertEqual(self.finding(report, "ARTIFACT_PRESENT")["status"], "PASS")
+
+    def test_an_old_copy_elsewhere_does_not_fill_the_completeness_slot(self):
+        _build_at(self.package, 2, certificate=False)
+        _write(self.package / "archive" / "report_completeness.md", _fm(2, "# Completeness\nComplete and certified.\n"))
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("ARTIFACT_MISSING", codes)
+        missing = self.finding(report, "ARTIFACT_MISSING")
+        self.assertIn("completeness certification", missing["message"])
+        self.assertIn("expected at: reports/report_completeness.md", missing["message"])
+        stray = self.finding(report, "ARTIFACT_NOT_CANONICAL")
+        self.assertEqual((stray["status"], stray["location"]), ("UNCHECKED", "archive/report_completeness.md"))
+        self.assertIn("reports/report_completeness.md", stray["message"])
+
+    def test_an_unrelated_file_whose_name_matched_does_not_fill_it_either(self):
+        _build_at(self.package, 2, certificate=False)
+        _write(self.package / "reports" / "deploy-confirmation.md", _fm(2, "# Deploy\nThe deploy was confirmed and is complete.\n"))
+        _write(self.package / "reports" / "cross-check-notes.md", _fm(2, "# Notes\nCross-check complete, certified.\n"))
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("ARTIFACT_MISSING", codes)
+        self.assertNotIn("ARTIFACT_NOT_CANONICAL", codes)
+
+    def test_a_superseded_copy_fills_no_slot(self):
+        _build_at(self.package, 1)
+        self.supersede("reports/report_completeness.md")
+        _write(self.package / "reports" / "report_implementation.md", _fm(2, "# Implementation\nChanged files: app.py; the module.\n"))
+        _write(self.package / "reports" / "report_tests.md", _fm(2, "# Test results\nThe suite passed: 12 tests.\n"))
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("ARTIFACT_MISSING", codes)
+        self.assertIn("SUPERSEDED_COPIES", codes)
+
+    def test_a_file_placed_under_superseded_by_hand_is_unindexed(self):
+        _build_at(self.package, 2)
+        _write(self.package / "_superseded" / "rev-1" / "reports" / "report_completeness.md", _fm(1, "# Completeness\nComplete.\n"))
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        finding = self.finding(report, "SUPERSEDED_UNINDEXED")
+        self.assertEqual(finding["location"], "_superseded/rev-1/reports/report_completeness.md")
+        self.assertIn("run_files.py supersede", finding["message"])
+        self.assertNotIn("MIXED_REVISIONS", codes, "the planted copy is not read as part of the package either")
+
+    def test_a_superseded_folder_deeper_in_the_package_is_unindexed_too(self):
+        _build_at(self.package, 2)
+        _write(self.package / "reports" / "_Superseded" / "old.md", _fm(1, "# Old\n"))
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertEqual(self.finding(report, "SUPERSEDED_UNINDEXED")["location"], "reports/_Superseded/old.md")
+
+    def test_a_copy_changed_after_it_was_superseded_and_an_entry_with_no_file_fail(self):
+        _build_at(self.package, 1)
+        self.supersede("reports/report_completeness.md")
+        _build_at(self.package, 2)
+        copy = self.package / "_superseded" / "rev-1" / "reports" / "report_completeness.md"
+        copy.write_text(copy.read_text(encoding="utf-8") + "edited afterwards\n", encoding="utf-8")
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("changed afterwards", self.finding(report, "SUPERSEDED_INDEX_MISMATCH")["message"])
+        copy.unlink()
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("which is not there", self.finding(report, "SUPERSEDED_INDEX_MISMATCH")["message"])
+
+    def test_an_index_that_cannot_be_read_fails(self):
+        _build_at(self.package, 2)
+        for text in ("{ not json", "[]", '{"entries": {}}'):
+            _write(self.package / "_superseded" / "index.json", text)
+            with self.subTest(index=text):
+                code, report, codes = self.check()
+                self.assertEqual(code, 1)
+                self.assertIn("cannot be read as the index", self.finding(report, "SUPERSEDED_INDEX_MISMATCH")["message"])
+
+    def test_a_blocked_phrase_in_a_superseded_copy_is_not_the_current_packages(self):
+        _build_at(self.package, 1)
+        _write(self.package / "reports" / "report_tests.md", _fm(1, "# Test results\nTODO: the suite passed, 12 tests.\n"))
+        self.assertIn("BLOCKED_PHRASE", self.check()[2])
+        self.supersede("reports/report_tests.md")
+        self.supersede("reports/report_implementation.md")
+        self.supersede("reports/report_completeness.md")
+        _build_at(self.package, 2)
+        code, report, codes = self.check()
+        self.assertEqual(code, 0, report)
+        self.assertNotIn("BLOCKED_PHRASE", codes)
+
+    def test_a_package_with_no_superseded_folder_says_nothing_about_one(self):
+        _build_at(self.package, 2)
+        code, report, codes = self.check()
+        self.assertEqual(code, 0)
+        self.assertEqual([c for c in codes if c.startswith("SUPERSEDED")], [])
+        self.assertIn("superseded_copies", report["checks_run"])
+
+    def test_a_package_holding_only_superseded_copies_is_empty(self):
+        _build_at(self.package, 1)
+        for name in ("report_implementation.md", "report_tests.md", "report_completeness.md"):
+            self.supersede(f"reports/{name}")
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("PACKAGE_EMPTY", codes)
+
+
+class CompletenessRevisionTests(BuildGateCase):
+    """The certificate certifies one revision: the package's."""
+
+    def manifest(self, revision) -> None:
+        _write(self.package / "manifest.json", json.dumps({"schema_version": 2, "boundary": "build-to-review", "revision": revision,
+                                                           "submission_id": f"build-{revision}"}))
+
+    def test_a_certificate_from_the_previous_revision_is_a_mismatch(self):
+        _build_at(self.package, 2, certificate=False)
+        _write(self.package / "reports" / "report_completeness.md", "# Completeness\nComplete and certified.\n")
+        self.manifest(2)
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        finding = self.finding(report, "COMPLETENESS_REVISION_MISMATCH")
+        self.assertIn("declares no revision", finding["message"])
+        self.assertIn("revision 2 (manifest.json)", finding["message"])
+        _write(self.package / "reports" / "report_completeness.md", _fm(1, "# Completeness\nComplete and certified.\n"))
+        code, report, codes = self.check()
+        self.assertIn("declares revision 1", self.finding(report, "COMPLETENESS_REVISION_MISMATCH")["message"])
+        self.assertIn("run_files.py supersede", self.finding(report, "COMPLETENESS_REVISION_MISMATCH")["message"])
+
+    def test_the_manifest_and_the_certificate_may_spell_the_same_revision_differently(self):
+        for in_manifest, in_certificate in ((2, 2), ("r2", "r2"), (2, "r2")):
+            with self.subTest(manifest=in_manifest, certificate=in_certificate):
+                _write(self.package / "reports" / "report_implementation.md", "# Implementation\nChanged files: app.py; the module.\n")
+                _write(self.package / "reports" / "report_tests.md", "# Test results\nThe suite passed: 12 tests.\n")
+                _write(self.package / "reports" / "report_completeness.md", _fm(in_certificate, "# Completeness\nComplete and certified.\n"))
+                self.manifest(in_manifest)
+                code, report, codes = self.check()
+                self.assertIn("COMPLETENESS_REVISION_OK", codes)
+                self.assertNotIn("COMPLETENESS_REVISION_MISMATCH", codes)
+
+    def test_without_a_manifest_the_other_artifacts_give_the_revision(self):
+        _build_at(self.package, 3, certificate=False)
+        _write(self.package / "reports" / "report_completeness.md", "# Completeness\nComplete and certified.\n")
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("revision 3 (the other artifacts)", self.finding(report, "COMPLETENESS_REVISION_MISMATCH")["message"])
+
+    def test_a_package_that_declares_no_revision_anywhere_is_left_to_lineage(self):
+        _build(self.package, True)
+        code, report, codes = self.check()
+        self.assertEqual(code, 0)
+        self.assertIn("REVISION_ABSENT", codes)
+        self.assertEqual([c for c in codes if c.startswith("COMPLETENESS_REVISION")], [])
+
+
 if __name__ == "__main__":
     unittest.main()

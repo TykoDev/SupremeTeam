@@ -8,7 +8,7 @@ description: >-
   check build readiness, review build phase output, or challenge this build packet.
   Judges inside the build phase; the handoff between stages is `gatekeeper-admiral`,
   and a list of what is missing with no decision is `build/cross-check-build-confirm`.
-version: 2.0.1
+version: 2.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -210,7 +210,7 @@ the left never reads as satisfaction of the right.
 | `implementation` | an `*implementation*.md`, `deliverable_*build*.md`, or `diff` deliverable (`diff.md`, `diff-*.md`, `*-diff.md`) in the package directory | `implementation` — same name, different object: a `change_set` record whose files are re-hashed and named by the hashed diff, not a file-presence fact |
 | `tests` | a `*test*.md` deliverable — a written report | `tests` — same name, different object: a `probe` record whose artifact is the hashed test-runner log under `build/evidence/` |
 | `security` | a `*security*.md` deliverable; conditional, so its absence is `UNCHECKED` and names the waiver and the stage condition | `security_evidence` — the names differ, and so do the objects: a `findings` record `{items: [{id, severity, status, …}]}`, or the one sanctioned applicability record |
-| `completeness` | the cross-check-build-confirm certification file | none. A file-presence key of this script alone; the gate spec has no completeness key |
+| `completeness` | the cross-check-build-confirm certification at `reports/report_completeness.md` and nowhere else: a file named like it in another folder is reported `ARTIFACT_NOT_CANONICAL` and does not fill the slot, and a certificate whose frontmatter `revision` is not the package's fails as `COMPLETENESS_REVISION_MISMATCH` | none. A file-presence key of this script alone; the gate spec has no completeness key |
 | `build_verdict` | conditional — this gate's own verdict lineage for the revision | none. A file-presence key of this script alone |
 
 Three evidence keys have no shape-key counterpart at all — `runtime`,

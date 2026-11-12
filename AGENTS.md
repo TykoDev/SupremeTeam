@@ -252,8 +252,8 @@ Not skills. These are the files the skills are checked against.
 
 Shared tooling is in `skills/scripts/`. Its command-line tools are
 `check_runtime.py`, `output_paths.py`, `scan_record.py`, `check_parity.py`,
-`content_hash.py`, `validate_manifests.py`, `package_check.py` and
-`mcp_registry.py`; `data_formats.py` is the JSON and YAML reader every script
+`content_hash.py`, `validate_manifests.py`, `package_check.py`,
+`mcp_registry.py` and `run_files.py`; `data_formats.py` is the JSON and YAML reader every script
 shares, `contract_floor.py` is the independent safety floor the gate validator
 loads, `checkout.py` maps a linked git worktree to the main checkout that holds its
 runtime state, and the rest are modules behind `check_runtime.py` and the save layout,

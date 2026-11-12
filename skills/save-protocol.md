@@ -63,6 +63,9 @@ skillset-saves/
       verdict_{boundary}.cross-stage.json  # writer: gatekeeper-admiral, beside the phase record
       verdict_{boundary}.cycles.json       # writer: check.py --judgment --verdict-out; the REVISE streaks and the
       verdict_{boundary}.cycles.lock       #   shared boundary budget, and the mutex that guards them
+      _superseded/                   # files of earlier revisions, set aside (writer: run_files.py supersede)
+        index.json                   #   one entry per copy: path, sha256, from_revision, superseded_by, superseded_at
+        rev-{n}/{original path}      #   the copy, at the path it had inside the phase
 ```
 
 `design/`, `build/`, and `review/` hold the three delivery phases owned by
@@ -99,6 +102,30 @@ Each phase directory has four governed subdirectories:
 | `evidence/` | command logs, scan records, captures | `tests.log`, `scan-pip-audit.json`, `capture-1280-dark.png` |
 | `evidence/coverage/` | coverage data files and reports | `.coverage`, `coverage.xml`, `html/index.html` |
 | `packages/` | exported archives | `my-skill.skill`, `release-bundle.zip` |
+
+**Superseded copies.** A phase directory holds one revision's submission. A file of
+an earlier revision that its owner keeps has one place and one record:
+
+```text
+{phase}/_superseded/rev-{n}/{original path inside the phase}
+{phase}/_superseded/index.json   {"schema_version": 1, "entries": [{path, sha256, from_revision, superseded_by, superseded_at}]}
+```
+
+`python skills/scripts/run_files.py supersede --run-id <run> --phase <phase> --path
+<file inside the phase> --by-revision <n>` is the only writer: it moves the file and
+adds the entry, and it takes `from_revision` from the file's frontmatter, or from
+`--from-revision` when the file declares none. It refuses a path outside the phase
+directory, a file already under `_superseded/`, a gate verdict record or cycle
+history, a file reached through a link, and a `--by-revision` that is not higher
+than the file's own. There is no in-place marker: a copy renamed `*.r1.md` or
+left in an `archive/` folder is still part of the package to every reader.
+
+The gate leaves `_superseded/` out of the submission it judges (slots, lineage,
+declared identity, skip records and the blocked-phrase scan read the current files
+only), requires every file under it to be listed in the index with a matching
+digest (`SUPERSEDED_UNINDEXED`, `SUPERSEDED_INDEX_MISMATCH`), and names the copies
+once (`SUPERSEDED_COPIES`). The guard denies every other write into the folder
+(Rule C), so the index cannot be edited to match a file somebody put there.
 
 Coverage output is run evidence, never project-root residue. Resolve its
 destination with `scripts/output_paths.py --kind coverage`
@@ -303,9 +330,9 @@ at the destination the delegation names. Gatekeepers write verdict records but
 never modify submissions.
 
 The authoritative, machine-readable path policy is
-[save-ownership.yaml](save-ownership.yaml): one writer per path class. Eighteen
+[save-ownership.yaml](save-ownership.yaml): one writer per path class. Nineteen
 are declared; the run-facing ones are the core run record, grilling log, phase
-manifest, reports, artifacts, evidence, packages, gate verdict, harness guards,
+manifest, reports, artifacts, evidence, superseded copies, packages, gate verdict, harness guards,
 harness trajectories, and harness observations, with the preference store, test
 scratch, the two skill-eval classes, and standalone packages alongside them.
 [ownership.yaml](ownership.yaml) keeps the artifact-level owner map, and
@@ -358,7 +385,8 @@ Record run id, status, session pin, execution mode, persistence result, active
 owner, skills engaged, artifact revisions and hashes, verdicts, earliest
 incomplete boundary, blockers, and next action (`--set key=value` for
 non-reserved fields). Append events; never erase prior evidence. Preserve
-superseded revisions with clear lineage (`parent_revision`, `_history/`).
+superseded revisions with clear lineage (`parent_revision`, `_history/`), and a
+superseded phase file under its phase's `_superseded/` (§1, Superseded copies).
 
 The trail holds thirteen events and no others: `create`, `checkpoint`, `reopen`,
 `resume`, `complete`, `blocked`, `released`, `recover`, `rollforward`,

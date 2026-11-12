@@ -242,6 +242,21 @@ structural check. It reports PASS / FAIL / UNCHECKED facts. Frontmatter is read
 past a leading byte-order mark and with quoted keys (`"revision":`), so neither
 hides a second revision or submission id. A file named as an artifact that is
 empty or holds only whitespace fills no slot and fails as `ARTIFACT_EMPTY`.
+
+A package holds one revision's submission. A file of an earlier revision that its
+owner kept is set aside under `<package>/_superseded/rev-<n>/<original path>` and
+listed, with its digest, in `_superseded/index.json`; `skills/scripts/run_files.py
+supersede` is the only writer. The engine reads the current files only
+(`iter_current_files`) for slots, lineage, declared identity, skip records and the
+blocked-phrase scan, so a preserved copy neither fills a slot nor mixes revisions.
+`check_superseded` accounts for what is left out: a file under `_superseded/` that
+the index does not list fails as `SUPERSEDED_UNINDEXED`, one whose digest changed
+or whose entry has no file as `SUPERSEDED_INDEX_MISMATCH`, and the copies are named
+once as `SUPERSEDED_COPIES`. A slot may name the one place its artifact is read from
+(`ArtifactSpec.exact_paths`): only a file there fills it, and a file elsewhere whose
+name matches is reported as `ARTIFACT_NOT_CANONICAL`. The build gate reads the
+completeness certificate from `reports/report_completeness.md` this way and fails a
+certificate whose revision is not the package's (`COMPLETENESS_REVISION_MISMATCH`).
 Below the Python floor `runtime-manifest.yaml` declares, a wrapper exits 2 and
 names the floor before reading the package.
 

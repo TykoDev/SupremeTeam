@@ -74,6 +74,7 @@ SupremeTeam/
     │   ├── content_hash.py               # The catalog's sha256 (text folded to LF) for evidence files
     │   ├── save_taxonomy.py              # Shared save constants and phase-to-protocol state mapping
     │   ├── checkout.py                   # Maps a linked git worktree to the main checkout that holds its runtime state
+    │   ├── run_files.py                  # Sanctioned writer for phase files: supersede moves an earlier revision's file to _superseded/
     │   ├── contract_floor.py             # Independent safety floor for the shipped gate spec
     │   ├── mcp_registry.py               # Read-only project MCP freshness/identity diagnostic
     │   ├── validate_manifests.py         # Manifest and cross-reference contracts
@@ -170,7 +171,7 @@ are in [CONTRIBUTING.md](../CONTRIBUTING.md#run-the-suites).
   `test_project_walk.py`, `test_check_parity.py`, `test_data_formats.py`,
   `test_output_paths.py`, `test_package_check.py`, `test_scan_record.py`,
   `test_validate_manifests.py`, `test_contract_floor.py`, `test_mcp_registry.py`,
-  `test_checkout.py`
+  `test_checkout.py`, `test_run_files.py`
 - **Taste**, `skills/taste/`: `test_taste_prefs.py`, `test_taste_store.py`, `test_lock_contracts.py`
 - **Installers**, `scripts/`: `test_install.py`
 - **Skill-creator**, `skills/skill-maker/skill-creator/scripts/`: `test_aggregate_benchmark.py`,

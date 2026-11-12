@@ -169,6 +169,14 @@ class ArtifactSpec:
     required slot whose key is waivable, or whose every stage carries a ``when``,
     is held as conditional (see ``Contracts``). ``key`` is the slot's short name
     for whoever reads the wrapper; the engine names a slot by its ``label``.
+
+    exact_paths:    package-relative paths (``reports/report_completeness.md``).
+                    When set, only a file at one of them fills the slot. A file
+                    elsewhere whose name matches ``patterns`` is not evidence for
+                    it and is reported as ARTIFACT_NOT_CANONICAL with the expected
+                    path: a slot found by name alone was filled by an old copy in
+                    ``archive/`` and by an unrelated file whose name happened to
+                    match.
     """
 
     key: str
@@ -179,6 +187,7 @@ class ArtifactSpec:
     fields: Sequence[str] = ()
     evidence_key: Optional[str] = None
     stages: Sequence[str] = ()
+    exact_paths: Sequence[str] = ()
 
 
 @dataclass
@@ -475,9 +484,38 @@ def iter_all_files(root: Path) -> List[Path]:
             if p.is_file() and not _leaves(p, real_root)]
 
 
+# A file of an earlier revision that its owner kept is set aside under
+# ``<phase>/_superseded/rev-<n>/<original path>`` and listed in
+# ``_superseded/index.json`` (skills/scripts/run_files.py supersede is the one
+# writer; save-protocol.md defines the layout). It is part of the package's
+# history, not of the submission being judged.
+SUPERSEDED_DIR = "_superseded"
+SUPERSEDED_INDEX = "index.json"
+_SUPERSEDED_HOUSEKEEPING = (SUPERSEDED_INDEX, SUPERSEDED_INDEX + ".lock")
+
+
+def is_superseded(path: Path, root: Path) -> bool:
+    """True when ``path`` lies under a ``_superseded`` directory of the package,
+    at any depth and in any letter case."""
+    try:
+        parts = path.relative_to(root).parts[:-1]
+    except ValueError:
+        return False
+    return any(part.casefold() == SUPERSEDED_DIR for part in parts)
+
+
+def iter_current_files(root: Path) -> List[Path]:
+    """The files of the submission being judged: every file of the package
+    except the ``_superseded`` trees. Slots, lineage, declared identity, skip
+    records and the blocked-phrase scan read these, so a preserved copy of an
+    earlier revision neither fills a slot nor mixes revisions.
+    ``check_superseded`` accounts for what is left out."""
+    return [p for p in iter_all_files(root) if not is_superseded(p, root)]
+
+
 def iter_package_files(root: Path) -> List[Path]:
-    """All readable text files under the package, sorted for stable output."""
-    return [p for p in iter_all_files(root)
+    """All readable text files of the current submission, sorted for stable output."""
+    return [p for p in iter_current_files(root)
             if p.suffix.lower() in _TEXT_SUFFIXES]
 
 
@@ -717,11 +755,94 @@ def check_package_links(root: Path, report: Report) -> None:
         ))
 
 
+def _content_sha256(path: Path) -> str:
+    """The catalog's digest of a file (text folded to LF), from skills/scripts."""
+    scripts = str(Path(__file__).resolve().parents[2] / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    from data_formats import content_sha256
+    return content_sha256(path)
+
+
+def check_superseded(root: Path, report: Report) -> None:
+    """Hold every file under ``_superseded/`` to the index that lists it.
+
+    The current-file checks leave these files out, so nothing else would notice
+    one that was placed there by hand to be found later, or one whose bytes
+    changed after it was set aside. Each has to be the copy the index records:
+    at ``_superseded/rev-<from_revision>/<path>`` with the recorded digest. The
+    copies are named once, so that leaving them out is visible, not silent."""
+    report.checks_run.append("superseded_copies")
+    home = root / SUPERSEDED_DIR
+    index_path = home / SUPERSEDED_INDEX
+    copies = [p for p in iter_all_files(root) if is_superseded(p, root)
+              and not (p.parent == home and p.name in _SUPERSEDED_HOUSEKEEPING)]
+    if not copies and not index_path.exists():
+        return
+    entries: List[dict] = []
+    if index_path.exists():
+        try:
+            data = json.loads(_read(index_path))
+            listed = data.get("entries") if isinstance(data, dict) else None
+            if not isinstance(listed, list) or any(not isinstance(e, dict) for e in listed):
+                raise ValueError("it holds no list of entries")
+            entries = listed
+        except (OSError, ValueError) as exc:
+            report.add(Finding(
+                code="SUPERSEDED_INDEX_MISMATCH", severity="major", status=FAIL,
+                message=(f"{SUPERSEDED_DIR}/{SUPERSEDED_INDEX} cannot be read as the index of superseded "
+                         f"copies ({exc}), so no file under {SUPERSEDED_DIR}/ can be accounted for."),
+                location=f"{SUPERSEDED_DIR}/{SUPERSEDED_INDEX}",
+            ))
+            return
+    expected: Dict[str, object] = {
+        f"{SUPERSEDED_DIR}/rev-{entry.get('from_revision')}/{entry.get('path')}": entry.get("sha256")
+        for entry in entries}
+    seen: Set[str] = set()
+    clean = True
+    for path in copies:
+        rel = _rel(path, root)
+        seen.add(rel)
+        if rel not in expected:
+            clean = False
+            report.add(Finding(
+                code="SUPERSEDED_UNINDEXED", severity="major", status=FAIL,
+                message=(f"{rel} is under {SUPERSEDED_DIR}/ but {SUPERSEDED_DIR}/{SUPERSEDED_INDEX} does not list it. "
+                         f"A superseded copy is put there only by `python skills/scripts/run_files.py supersede`, "
+                         f"which records it; remove the file or supersede the original through the command."),
+                location=rel,
+            ))
+        elif _content_sha256(path) != expected[rel]:
+            clean = False
+            report.add(Finding(
+                code="SUPERSEDED_INDEX_MISMATCH", severity="major", status=FAIL,
+                message=(f"{rel} does not have the digest {SUPERSEDED_DIR}/{SUPERSEDED_INDEX} recorded when it was "
+                         f"superseded: the copy was changed afterwards."),
+                location=rel,
+            ))
+    for rel in sorted(set(expected) - seen):
+        clean = False
+        report.add(Finding(
+            code="SUPERSEDED_INDEX_MISMATCH", severity="major", status=FAIL,
+            message=(f"{SUPERSEDED_DIR}/{SUPERSEDED_INDEX} lists {rel}, which is not there: a superseded copy is "
+                     f"preserved, not removed."),
+            location=rel,
+        ))
+    if clean and copies:
+        named = ", ".join(sorted(seen)[:8]) + (f" (+{len(seen) - 8} more)" if len(seen) > 8 else "")
+        report.add(Finding(
+            code="SUPERSEDED_COPIES", severity="info", status=PASS,
+            message=(f"{len(seen)} superseded cop{'y' if len(seen) == 1 else 'ies'} of earlier revisions, indexed "
+                     f"with matching digests, left out of the current package: {named}."),
+            location=SUPERSEDED_DIR,
+        ))
+
+
 def check_required_artifacts(root: Path, manifest: Manifest,
                              report: Report) -> None:
     report.checks_run.append("required_artifacts")
     specs = list(manifest.artifacts)
-    files = iter_all_files(root)
+    files = iter_current_files(root)
     real = {f: f.resolve() for f in files}
     contracts = _contracts_for(manifest, report)
     why = [_optional_because(spec, manifest, contracts) for spec in specs]
@@ -732,8 +853,17 @@ def check_required_artifacts(root: Path, manifest: Manifest,
     blank: Dict[Path, bool] = {}
     candidates: List[List[Path]] = []
     lacking: List[Dict[Path, List[str]]] = []
+    stray: List[List[Path]] = []
     for spec in specs:
         named = [f for f in files if _named(f, spec.patterns)]
+        if spec.exact_paths:
+            # Only the canonical location fills the slot; a name match elsewhere
+            # is reported, never read as the artifact.
+            canonical = [f for f in files if _rel(f, root) in spec.exact_paths]
+            stray.append([f for f in named if f not in canonical])
+            named = canonical
+        else:
+            stray.append([])
         for f in named:
             if f not in blank:
                 blank[f] = is_blank_file(f)
@@ -758,6 +888,16 @@ def check_required_artifacts(root: Path, manifest: Manifest,
     holder = {real[p]: i for i, p in chosen.items() if p is not None}
 
     for i, spec in enumerate(specs):
+        for f in stray[i]:
+            rel = _rel(f, root)
+            report.add(Finding(
+                code="ARTIFACT_NOT_CANONICAL", severity="minor", status=UNCHECKED,
+                message=(f"{rel} is named like the {spec.label} but is not at "
+                         f"{' or '.join(spec.exact_paths)}, the only place that artifact is read from. It does "
+                         f"not fill the slot; confirm what the file is, and move a current one to that path or "
+                         f"set an old one aside with `python skills/scripts/run_files.py supersede`."),
+                location=rel,
+            ))
         if chosen[i] is not None:
             report.add(Finding(
                 code="ARTIFACT_PRESENT", severity="info", status=PASS,
@@ -781,7 +921,8 @@ def check_required_artifacts(root: Path, manifest: Manifest,
             report.add(Finding(
                 code="ARTIFACT_MISSING", severity="major", status=FAIL,
                 message=(f"Required artifact missing: {spec.label} "
-                         f"(expected one of: {', '.join(spec.patterns)}{near})."),
+                         + (f"(expected at: {', '.join(spec.exact_paths)}{near})." if spec.exact_paths else
+                            f"(expected one of: {', '.join(spec.patterns)}{near}).")),
                 location="package",
             ))
 
@@ -832,7 +973,10 @@ def check_lineage(root: Path, report: Report) -> None:
             code="MIXED_REVISIONS", severity="major", status=FAIL,
             message=(f"Package mixes deliverables from {len(revisions)} different "
                      f"revisions ({detail}). Reject as untrusted and require a "
-                     f"coherent single-revision set."),
+                     f"coherent single-revision set. A file of an earlier revision that is "
+                     f"kept on purpose is set aside with `python skills/scripts/run_files.py "
+                     f"supersede --run-id <run> --phase <phase> --path <file> --by-revision <n>`, "
+                     f"which moves it to {SUPERSEDED_DIR}/ and out of the current package."),
             location="package",
         ))
     elif len(revisions) == 1:
@@ -955,7 +1099,7 @@ def _declared_identity(root: Path) -> Tuple[Set[str], Set[str]]:
     evidence records its identity."""
     sids: Set[str] = set()
     revs: Set[str] = set()
-    for path in iter_all_files(root):
+    for path in iter_current_files(root):
         if path.suffix.lower() not in _TEXT_SUFFIXES and path != root / "manifest.json":
             continue
         record = _read_record(path)
@@ -1128,7 +1272,7 @@ def run_gate(root: Path, manifest: Manifest,
         ))
         return report
     check_package_links(root, report)
-    if not iter_all_files(root):
+    if not iter_current_files(root):
         report.add(Finding(
             code="PACKAGE_EMPTY", severity="critical", status=FAIL,
             message=f"No artifacts under {root}.",
@@ -1136,6 +1280,7 @@ def run_gate(root: Path, manifest: Manifest,
         ))
         return report
 
+    check_superseded(root, report)
     check_required_artifacts(root, manifest, report)
     check_lineage(root, report)
     check_skip_records(root, report)

@@ -885,6 +885,16 @@ _VERDICT_REASON = (
     "which checks the package and the gatekeeper's judgment before it writes one and counts the REVISE rounds that "
     "escalate to the user. Write the judgment draft as verdict_<boundary>.judgment.json and pass it with --judgment."
 )
+# A phase's superseded copies and the index that lists them. The gate leaves `_superseded/` out of the current package
+# and holds every file in it to `index.json`, so a hand write there could plant a copy and an index entry to match, or
+# edit the entry of a real one. One writer (run_files.py supersede) moves a file in and records its digest.
+_SUPERSEDED_PATH = re.compile(r"(?:^|/)skillset-saves/runs/[^/]+/[^/]+/_superseded(?:/.*)?$", re.I)
+_SUPERSEDED_REASON = (
+    "Blocked by harness Action Realization layer: a phase's _superseded/ folder and its index.json are written only by "
+    "'python skills/scripts/run_files.py supersede --run-id <run> --phase <phase> --path <file> --by-revision <n>', "
+    "which moves a file of an earlier revision there and records its digest. The gate holds every file under "
+    "_superseded/ to that index, so a copy placed or edited by hand fails it."
+)
 # A phase directory is the only place those records live. Removing or moving the directory itself (`rm -r`, `mv`,
 # `shutil.rmtree`, `shutil.move`, `find -delete` aimed at it, `rsync --delete` over it) takes every verdict record and
 # the cycle history with it, so a boundary held for the user would reopen with no history at all. The files inside it
@@ -923,6 +933,8 @@ def _protected_reason(target: "_paths.Target", above: bool = False, removes: boo
             return _GUARD_STATE_REASON
         if _VERDICT_RECORD.search(form):
             return _VERDICT_REASON
+        if _SUPERSEDED_PATH.search(form):
+            return _SUPERSEDED_REASON
     if above:
         for form in forms:
             if _PROTECTED_DIRS.search(form):

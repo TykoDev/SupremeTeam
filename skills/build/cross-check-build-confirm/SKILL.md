@@ -8,7 +8,7 @@ description: >-
   `build/gatekeeper-build`'s verdict, not this report. Internal build specialist
   reached through `build/build-management`, not directly, even when the request is
   only "did we finish everything?".
-version: 1.1.0
+version: 1.2.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -73,7 +73,7 @@ Everything below returns to `build/build-management`, the only skill
 2. Build one matrix row per approved decision, binding each to its changed artifact, test evidence, and security evidence. The column schema, the status vocabulary, and the completeness threshold are in `references/workflow.md`.
 3. Verify each binding against what is actually in the package — the path exists, its hash is registered, and its revision matches — rather than against the summary that claims it does.
 4. Mark every row proven or unproven, attach a reason code to each unproven row, and record contradictions rather than reconciling them.
-5. Return the completeness report and the gap list to `build/build-management`, routing each gap to the specialist that owns it. Nothing in the package is edited here.
+5. Return the completeness report and the gap list to `build/build-management`, routing each gap to the specialist that owns it. Nothing in the package is edited here. The report is one file per revision at `reports/report_completeness.md`, declaring that revision in its frontmatter: on a resubmission, set the previous certificate aside first with `python skills/scripts/run_files.py supersede --run-id <run-id> --phase build --path reports/report_completeness.md --by-revision <n>`, then write the new one at the same path. A copy kept beside it under another name fails the build gate's lineage check, and the gate reads the certificate from that path only.
 
 ## Required Contracts
 

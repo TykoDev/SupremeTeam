@@ -173,6 +173,29 @@ of Claude Code 2.1.322, Codex CLI 0.166.0 and Antigravity CLI 1.4.12 on Windows.
     now says what exit 2 and `CONTRACTS_UNREADABLE` mean.
   - `validate_manifests.py` gains exit 2 (could not run). `check_runtime.py` takes about a
     second longer, the cost of reading the scripts' imports.
+- Evidence has to cite the current file by its own path (WP-07, issue 3):
+  `Package.contain()` decided on the spelling of a path and on whether it left the evidence
+  root, and never asked which file the path reaches. On Windows a junction inside the package
+  that pointed at an old copy passed with `pass: true`, and so did a direct citation of
+  `_history/rev-1/...` and an upper-case spelling; the trailing-dot, `::$DATA` and short-name
+  spellings were refused as evidence values only because the path pattern rejects them, and
+  were accepted as `artifact_hashes` keys.
+  - A path that resolves into a `_superseded/` or `_history/` directory fails at once,
+    however it is spelled or linked (`cites a superseded copy: <path> (resolves to <file>)`),
+    for artifacts and for the `inputs` of typed records under `skillset-saves/`.
+  - An artifact whose digest is that of a superseded copy fails (`artifact content matches
+    superseded copy rev <n>`), unless it is the file at the path the copy was superseded
+    from: a log or a JSON record can be byte-identical across revisions.
+  - `_gatecheck.spelling_defects` compares each component of a cited path with the listing
+    of its parent directory, so one rule covers a different letter case, a trailing dot, a
+    short name, a stream, a symlink and a junction on every platform. A path that is not
+    the on-disk spelling, or that passes through a link to a current file, is a warning for
+    one release and a failure after it: schema 2 is mandatory inside a run, so an immediate
+    failure would break manifests that pass today.
+  - The shape engine fails a link inside the package to a superseded copy
+    (`LINK_TO_SUPERSEDED`).
+  - `gates.yaml` states both rules in `evidence_rules.evidence_root` and is at
+    `spec_revision` 10. This changes the spec digest (see the upgrade notes).
 
 Upgrade notes for this section:
 
@@ -184,6 +207,12 @@ Upgrade notes for this section:
   record without `manifest_submission_id` is reported as unchecked
   (`HANDOFF_FIELD_MISSING`) for one release, then as a failure. A record has to carry
   `submission_status`, and its `package_path` has to be a phase directory of its own run.
+- Runs in flight: `gates.yaml` changed (`spec_revision` 10), and a stored verdict carries the
+  spec digest, so afterwards a `--prior` record reads as not produced against the shipped
+  spec. Finish the open boundary before upgrading, or accept one fresh judgment for it.
+- Evidence spelling: a cited path that is not the on-disk spelling, or that is reached
+  through a link, is a warning for one release, then a failure. A citation of a superseded
+  copy (`_superseded/`, `_history/`) fails from the start.
 - Worktree sessions: a `.harness-state/` folder that an earlier version created inside a
   linked worktree is no longer read. It can be deleted.
 - Hook hashes: the packages that change a file hashed at registration (WP-00, WP-02, WP-03,

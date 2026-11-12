@@ -258,6 +258,20 @@ name matches is reported as `ARTIFACT_NOT_CANONICAL`. The build gate reads the
 completeness certificate from `reports/report_completeness.md` this way and fails a
 certificate whose revision is not the package's (`COMPLETENESS_REVISION_MISMATCH`).
 
+`check.py` asks which file an evidence path reaches, not only how the path is
+spelled. A path that resolves into a `_superseded/` or `_history/` directory fails
+as `cites a superseded copy: <path> (resolves to <file>)`, whether it is written
+out, reached through a symlink or a junction, or spelled in another letter case;
+the same holds for a typed record's `inputs` under `skillset-saves/`. An artifact
+whose content is a superseded copy's under another path fails as `artifact content
+matches superseded copy rev <n>`; the file at the path the copy was superseded from
+is the current one and passes. A path that is not the spelling the directory lists
+(`spelling_defects` in `_gatecheck.py` compares each component with `os.listdir` of
+its parent, so a different case, a trailing dot, a short name and a stream are one
+rule on every platform) or that passes through a link to a current file is a
+warning for one release and a failure after it. The shape engine fails a link
+inside the package to a superseded copy as `LINK_TO_SUPERSEDED`.
+
 One package is a ledger and not a submission: admiral's `delivery/`, whose
 `reports/handoff_<boundary>.md` records each carry their own submission id and
 revision (`Manifest.ledger_pattern`). The one-revision rule would fail it at its

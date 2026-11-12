@@ -90,7 +90,8 @@ for _path in (SKILLS_ROOT / "scripts", Path(__file__).resolve().parent):
         sys.path.insert(0, str(_path))
 
 try:
-    from _gatecheck import DEFAULT_BLOCKED_PHRASES, compile_blocked_phrases, is_blank_file
+    from _gatecheck import (DEFAULT_BLOCKED_PHRASES, compile_blocked_phrases, in_superseded_location, is_blank_file,
+                            spelling_defects)
     from data_formats import DataFormatError, content_sha256, load_data
     from contract_floor import gate_floor_errors
     from _gatecycle import write_mechanical, write_verdict
@@ -471,6 +472,7 @@ class Package:
                 "required to be hashed; a non-string run_id was not refused; declare schema_version 2")
         self.root, self.root_kind, self.run_dir, self.project_root = self._evidence_root()
         self.artifact_hashes: dict[str, str] = {}
+        self._superseded: "list | None" = None
         self.hashed_ok: set[str] = set()
         #: Hashed artifacts that are zero bytes or whitespace only.
         self.blank_artifacts: set[str] = set()
@@ -566,11 +568,32 @@ class Package:
             real = Path(os.path.realpath(candidate))
             real_root = Path(os.path.realpath(root))
             try:
-                real.relative_to(real_root)
+                inside = real.relative_to(real_root)
             except ValueError:
                 self.failures.append(f"{label} escapes evidence root via link: {relative}")
                 return None
+            # Which file the path reaches, not only how it is spelled: a superseded copy is never evidence, whether it
+            # is cited directly, through a link or under another spelling.
+            if in_superseded_location(inside.parts[:-1]):
+                self.failures.append(f"{label} cites a superseded copy: {relative} (resolves to {inside.as_posix()})")
+                return None
+            self._warn_spelling(raw, label, inside.as_posix())
         return candidate
+
+    def _warn_spelling(self, cited: str, label: str, resolved: str) -> None:
+        """Say when a cited path is not the spelling the directory gives, or is reached through a link.
+
+        Either lets two different strings name one file, or one string name different files over time, so the path
+        in a manifest stops identifying its evidence. A warning for one release, because schema 2 is mandatory inside
+        a run and manifests that pass today would fail at once; a failure after it."""
+        for kind, part, detail in spelling_defects(self.base, cited):
+            if kind == "link":
+                note = f"{label} reached through a link: {cited} (resolves to {resolved})"
+            else:
+                note = f"{label} is not the on-disk spelling: {cited} (on disk: {detail or 'no entry spelled ' + repr(part)})"
+            note += "; this becomes a failure in the next release"
+            if note not in self.warnings:
+                self.warnings.append(note)
 
     def project_path(self, relative: str, label: str) -> Path | None:
         """Resolve a project-root-relative *input* reference (binding, not evidence)."""
@@ -589,11 +612,47 @@ class Package:
         # Resolve even a missing leaf: a parent symlink/junction can already
         # leave the project. Hashing an external file is not input containment.
         try:
-            Path(os.path.realpath(candidate)).relative_to(Path(os.path.realpath(self.project_root)))
+            inside = Path(os.path.realpath(candidate)).relative_to(Path(os.path.realpath(self.project_root)))
         except ValueError:
             self.failures.append(f"{label} input path escapes project root via link: {relative}")
             return None
+        # A superseded copy in the save tree is no more an input than it is evidence. A product directory that
+        # happens to be called _history is the project's own and is left alone.
+        if inside.parts[:1] == ("skillset-saves",) and in_superseded_location(inside.parts[:-1]):
+            self.failures.append(f"{label} cites a superseded copy: {relative} (resolves to {inside.as_posix()})")
+            return None
         return candidate
+
+    def _superseded_entries(self) -> list:
+        """``(phase directory, index entry)`` for every superseded copy recorded inside the evidence root."""
+        if self._superseded is None:
+            found = []
+            for index in (*self.root.glob("_superseded/index.json"), *self.root.glob("*/_superseded/index.json")):
+                try:
+                    listed = json.loads(index.read_text(encoding="utf-8-sig")).get("entries")
+                except (OSError, ValueError, AttributeError):
+                    continue
+                found.extend((index.parent.parent, entry) for entry in listed if isinstance(entry, dict)) \
+                    if isinstance(listed, list) else None
+            self._superseded = found
+        return self._superseded
+
+    def superseded_copy_of(self, candidate: Path, actual: str) -> "object | None":
+        """The revision of a superseded copy whose content ``candidate`` repeats, or None.
+
+        A file copied out of ``_superseded/`` under a new name is the old evidence again. The one exception is the
+        file at the path the superseded copy came from: a log or a JSON record can be byte-identical from one
+        revision to the next, and that file is the current one."""
+        for phase, entry in self._superseded_entries():
+            if str(entry.get("sha256", "")).lower() != actual:
+                continue
+            try:
+                if os.path.realpath(phase / str(entry.get("path", ""))) == os.path.realpath(candidate):
+                    continue
+            except OSError:
+                pass
+            return entry.get("from_revision", "?")
+        return None
 
     # ------------------------------------------------------------ artifacts
     def check_artifacts(self) -> list[Path]:
@@ -612,9 +671,13 @@ class Package:
                 continue
             if is_blank_file(candidate):
                 self.blank_artifacts.add(relative)
+            actual = digest(candidate)
+            copied = self.superseded_copy_of(candidate, actual)
+            if copied is not None:
+                self.failures.append(f"artifact content matches superseded copy rev {copied}: {relative}")
             if not is_sha256(expected):
                 self.failures.append(f"invalid artifact digest: {relative}")
-            elif digest(candidate) != expected.lower():
+            elif actual != expected.lower():
                 self.failures.append(f"artifact hash mismatch: {relative}")
             else:
                 self.hashed_ok.add(relative)

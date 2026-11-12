@@ -43,6 +43,7 @@ import argparse
 import dataclasses
 import fnmatch
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -489,6 +490,71 @@ def find_escaping_links(root: Path) -> List[Path]:
             if (p.is_symlink() or p.is_junction()) and _leaves(p, real_root)]
 
 
+# Where a file that is no longer current lives: a phase's superseded copies, and the run record's own history.
+HISTORY_DIR = "_history"
+_NOT_CURRENT = frozenset({"_superseded", HISTORY_DIR})
+
+
+def in_superseded_location(parts: Sequence[str]) -> bool:
+    """Whether a path with these directory components lies under ``_superseded`` or ``_history``, in any letter case."""
+    return any(part.casefold() in _NOT_CURRENT for part in parts)
+
+
+def _entry_for(directory: Path, part: str, names: Sequence[str]) -> Optional[str]:
+    """The directory entry the file system opens for ``part`` when no entry is spelled that way: a different letter
+    case, a Windows short name (``VALIDA~1.MD``), a trailing dot or space, or an alternate data stream."""
+    folded = next((name for name in names if name.casefold() == part.casefold()), None)
+    if folded is not None:
+        return folded
+    try:
+        opened = Path(os.path.realpath(directory / part)).name
+    except OSError:
+        opened = ""
+    if opened in names:
+        return opened
+    trimmed = part.split(":", 1)[0].rstrip(". ")
+    return next((name for name in names if name.casefold() == trimmed.casefold()), None)
+
+
+def spelling_defects(base: Path, cited: str) -> List[Tuple[str, str, str]]:
+    """How a cited path differs from the files it names, one component at a time.
+
+    Each component has to appear, exactly as written, in the listing of its parent directory, and may not be a link.
+    The result is ``(kind, component, detail)`` per defect: ``("spelling", part, the entry on disk or "")`` and
+    ``("link", part, where the link leads)``. Empty for the path a directory listing would give.
+
+    One rule covers every alias: a different letter case on a case-insensitive volume, a trailing dot, a short name,
+    a stream, a symlink and a junction. It asks the directory, so it does not depend on what ``os.path.realpath``
+    corrects on a given platform (on macOS it does not correct case). ``..`` moves up and is not a defect; an empty
+    or ``.`` component names nothing and is skipped."""
+    found: List[Tuple[str, str, str]] = []
+    node = base
+    for part in re.split(r"[\\/]+", cited):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            node = node.parent
+            continue
+        try:
+            names = os.listdir(node)
+        except OSError:
+            break
+        entry = part
+        if part not in names:
+            entry = _entry_for(node, part, names) or ""
+            found.append(("spelling", part, entry))
+            if not entry:
+                break
+        child = node / entry
+        try:
+            if child.is_symlink() or child.is_junction():
+                found.append(("link", part, os.path.realpath(child)))
+        except OSError:
+            break
+        node = child
+    return found
+
+
 def iter_all_files(root: Path) -> List[Path]:
     """Every regular file under the package (JSON evidence records and HTML
     prototypes included), sorted for stable output. Used for artifact
@@ -767,7 +833,8 @@ def check_package_links(root: Path, report: Report) -> None:
     """A link out of the package lets a file elsewhere stand in for a member, so
     it is a defect in itself and is never read."""
     report.checks_run.append("package_links")
-    for link in find_escaping_links(root):
+    escaping = find_escaping_links(root)
+    for link in escaping:
         rel = _rel(link, root)
         report.add(Finding(
             code="LINK_ESCAPES_PACKAGE", severity="major", status=FAIL,
@@ -775,6 +842,24 @@ def check_package_links(root: Path, report: Report) -> None:
                      f"package. It is not read; ship the file itself."),
             location=rel,
         ))
+    # A link that stays inside the package can still stand a superseded copy in a current file's place.
+    real_root = root.resolve()
+    for link in sorted(root.rglob("*")):
+        try:
+            if not (link.is_symlink() or link.is_junction()) or link in escaping or is_superseded(link, root):
+                continue
+            target = link.resolve()
+            inside = target.relative_to(real_root).parts
+        except (OSError, ValueError):
+            continue
+        if in_superseded_location(inside[:-1] if target.is_file() else inside):
+            rel = _rel(link, root)
+            report.add(Finding(
+                code="LINK_TO_SUPERSEDED", severity="major", status=FAIL,
+                message=(f"{rel} is a link to {'/'.join(inside)}, a superseded copy. A link there puts a file of an "
+                         f"earlier revision under a current name; ship the current file itself."),
+                location=rel,
+            ))
 
 
 def _content_sha256(path: Path) -> str:

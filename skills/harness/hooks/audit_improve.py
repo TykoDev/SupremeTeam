@@ -470,7 +470,7 @@ def maybe_audit(root: Path | None = None, *, force: bool = False, now: float | N
     harness-observations ownership class, never a run or skill record.
     """
     if root is None:
-        root = _state.project_root()
+        root = _state.state_root()
     root = Path(root).resolve()
     moment = time.time() if now is None else now
     marker = root / ".harness-state" / "observations" / "audit-improve.json"
@@ -521,7 +521,7 @@ def main() -> None:
     if args.project_root:
         root = args.project_root
     else:
-        root = _state.project_root()
+        root = _state.state_root()
     if args.run:
         print(json.dumps(audit(root), sort_keys=True))
         return

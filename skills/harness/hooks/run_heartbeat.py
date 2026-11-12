@@ -54,7 +54,7 @@ def refresh(data: dict, event: str) -> dict | None:
         session = str((data or {}).get("session_id") or "").strip()
         if not session:
             return None
-        root = _state.project_root()
+        root = _state.state_root()
         runs = root / "skillset-saves" / "runs"
         if not runs.is_dir():
             return None

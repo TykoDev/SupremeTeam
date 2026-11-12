@@ -72,7 +72,7 @@ def _emit(context: str) -> None:
 
 
 def _saves_root() -> Path:
-    return _state.project_root() / "skillset-saves"
+    return _state.state_root() / "skillset-saves"
 
 
 def _active_run() -> bool:

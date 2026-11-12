@@ -178,7 +178,7 @@ def maybe_scan(
 ) -> dict | None:
     """Scan when due, returning a result or None; all runtime faults fail open."""
     try:
-        root = Path(root) if root is not None else _state.project_root()
+        root = Path(root) if root is not None else _state.state_root()
         if not any(not (root / name).is_symlink() and (root / name).is_dir()
                    for name in (".harness-state", "skillset-saves")):
             return None

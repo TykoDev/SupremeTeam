@@ -1434,7 +1434,10 @@ class EnforcementRecordTests(Scratch):
             entry["files"] = {name: digest for name, digest in entry["files"].items() if not name.startswith("scripts/")}
         self.write_json(self.project / ".harness-state" / verify.HASH_RECORD, record)
         reported = self.verify_json(**env)
-        self.assertEqual({tuple(h["changed_files"]) for h in reported.values()}, {("scripts/data_formats.py", "scripts/save_taxonomy.py")})
+        # Every script module the hooks import (`_bootstrap.SCRIPT_FILES`; WP-03 added checkout.py), and nothing else.
+        self.assertEqual({tuple(h["changed_files"]) for h in reported.values()},
+                         {tuple(sorted(f"scripts/{name}" for name in _bootstrap.SCRIPT_FILES))})
+        self.assertIn("scripts/checkout.py", next(iter(reported.values()))["changed_files"])
         self.run_tool("repair_registration.py", "--host", "claude", "--record-hashes", **env)
         self.assertEqual({h["integrity"] for h in self.verify_json(**env).values()}, {"unchanged"})
 

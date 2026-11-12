@@ -72,11 +72,37 @@ of Claude Code 2.1.322, Codex CLI 0.166.0 and Antigravity CLI 1.4.12 on Windows.
     machine. Three tests that pinned the quoted form of a spaced interpreter now pin it for
     POSIX and pin the launcher and the no-shell form for Windows, and the fixtures that
     registered an unquoted backslash path now spell it with forward slashes.
+- Guard state in a linked git worktree (WP-03, issue 7): `.harness-state/` and
+  `skillset-saves/` are git-ignored, so a linked worktree has neither. A session started with
+  `claude --worktree` reports the worktree as the project, and `_state.project_root()` took
+  it as one, because a worktree's `.git` file is a root marker: the guard found no record
+  there and enforced no frozen, blocked or read-only boundary (all 15 write shapes tried were
+  allowed, a product file under a read-only run included), and the hooks created a second
+  `.harness-state/` inside the worktree. A worktree-isolated sub-agent was not affected; its
+  project directory stays at the session's root.
+  - New `skills/scripts/checkout.py`: `checkout_root(root)` maps a linked worktree to its
+    main checkout by reading the `.git` file, its `commondir` and the `gitdir` back-link, and
+    never starts `git`. A submodule, the worktree of a bare repository and a directory with a
+    copied `.git` file are not mapped. It is one of the script modules the hooks import, so
+    it is hashed at registration and protected by Rule F.
+  - `_state.state_root()` is `checkout_root(project_root())`. The guard record, the run
+    records, the heartbeat, the trajectories, the observation counters, the routing reminder
+    and the maintenance audits read and write under it; `save_run.py` and `guard_state.py`
+    run from a worktree session write the main checkout's records. `project_root()` keeps its
+    meaning, the tree a call acts in.
+  - The guard judges a call from such a session against the main checkout, and reads Rule B
+    and Rule F a second time against the worktree, so a project-relative glob
+    (`src/payments/**`) and the worktree's own registration files are protected in both
+    trees. Every row of the write table gives the same decision whichever of the two
+    directories the host reports.
 
 Upgrade notes for this section:
 
-- Hook hashes: the packages that change a file hashed at registration (WP-00 and WP-02 so
-  far) make readiness report the hook files as changed. After upgrading, re-record them for
+- Worktree sessions: a `.harness-state/` folder that an earlier version created inside a
+  linked worktree is no longer read. It can be deleted.
+- Hook hashes: the packages that change a file hashed at registration (WP-00, WP-02 and
+  WP-03 so far; WP-03 also adds `scripts/checkout.py` to the record) make readiness report
+  the hook files as changed. After upgrading, re-record them for
   each host with `python skills/harness/hooks/repair_registration.py --host <host>
   --record-hashes`, or reinstall with hook registration.
 - Windows registrations: a registration written by an earlier version does not start in
@@ -1340,7 +1366,7 @@ recorded here, or a record the skill does not carry, fails it.
   lacks), a warning for a leading-slash glob outside the project that names a directory that
   exists, relative globs anchored at the project root, a writer lock, and what an
   unreadable record means.
-- `guard` 1.8.1: an `apply_patch` call is judged wherever the host puts the patch text (Codex sends it as `command`), and one that names no file the guard can read is denied by Rule G while anything is protected; previously Rule A also denies an inline program's own delete of a root or home (`python3 -c 'shutil.rmtree("/")'`, `node -e 'fs.rmSync(os.homedir(), ...)'`) and a wipe spelled in base64 and decoded by a `base64 -d` of a literal into a shell (`echo cm0gLXJmIC8K | base64 -d | sh`, `sh -c "$(echo ... | base64 -d)"`); previously Rule C also protects the REVISE cycle history (`verdict_<boundary>.cycles.json`) and its lock, and refuses removing or moving a phase directory; previously gate verdict records have a single writer, `check.py --verdict-out` (Rule C); previously a grant is capped at 8 hours, the hook scripts are protected (Rule F,
+- `guard` 1.8.2: from a linked git worktree the guard enforces the main checkout's record, a frozen or blocked glob and the registration files hold for the worktree's copy too, and Rule F also covers `skills/scripts/checkout.py`; previously an `apply_patch` call is judged wherever the host puts the patch text (Codex sends it as `command`), and one that names no file the guard can read is denied by Rule G while anything is protected; previously Rule A also denies an inline program's own delete of a root or home (`python3 -c 'shutil.rmtree("/")'`, `node -e 'fs.rmSync(os.homedir(), ...)'`) and a wipe spelled in base64 and decoded by a `base64 -d` of a literal into a shell (`echo cm0gLXJmIC8K | base64 -d | sh`, `sh -c "$(echo ... | base64 -d)"`); previously Rule C also protects the REVISE cycle history (`verdict_<boundary>.cycles.json`) and its lock, and refuses removing or moving a phase directory; previously gate verdict records have a single writer, `check.py --verdict-out` (Rule C); previously a grant is capped at 8 hours, the hook scripts are protected (Rule F,
   advisory, whole registration file), a write after an unfollowable directory chain is
   denied (Rule G, with its own failure-mode row), a read-only run denies writes with no
   named target (pipes, launchers, PowerShell blocks, diffs), an unreadable record is counted

@@ -225,7 +225,9 @@ def main() -> int:
     project_root = (Path(args.project_root).expanduser() if args.project_root else _state.project_root()).resolve()
     py_status, py_detail = python_status(min_major, min_minor)
     hook_status, hook_code, hook_output, hook_report = run_hook_verifier(args.host, project_root, args.probe)
-    saves = inspect_saves(project_root)
+    # Saved runs and the hooks' own records are the main checkout's when the project is a linked git worktree.
+    state_root = Path(_state.checkout_root(project_root))
+    saves = inspect_saves(state_root)
     saves_status, saves_detail = str(saves["status"]), str(saves["detail"])
     # A record this account cannot read is named whatever the classification says: it is not damage, and may hold the pin.
     access_denied = list(saves.get("access_denied") or [])
@@ -258,7 +260,7 @@ def main() -> int:
             }
     # One record per project, so every host's report names the same file.
     hash_record = next((host_report["hash_record"] for host_report in hook_report.values() if host_report.get("hash_record")), None)
-    observations = _observations_for(project_root, hook_states)
+    observations = _observations_for(state_root, hook_states)
     registered = [s for s in hook_states.values() if s["registered"]]
     interpreters = [s["interpreter"] for s in registered if s["interpreter"]]
     # Coverage is the tool surface the hooks that need tools reach. The prompt hook has no matcher, so counting it as
@@ -327,6 +329,7 @@ def main() -> int:
                   "selected_hosts": list(hook_report), "states": hook_states, "observations": observations["events"],
                   "hash_record": hash_record},
         "saves": {"status": saves_status, "detail": saves_detail, "next_step": saves_next, "project_root": str(project_root),
+                  "state_root": str(state_root),
                   "access_denied": access_denied},
         "capabilities": capabilities,
         "warnings": warnings,
@@ -344,6 +347,8 @@ def main() -> int:
         print(f"Python: {py_status} - {py_detail}")
         print(f"Hooks: {hook_status} - verifier exit {hook_code} (hosts: {hosts}; {'required' if args.require_hooks else 'optional'})")
         print(f"Saves: {saves_status} - {saves_detail}")
+        if state_root != project_root:
+            print(f"  state: {project_root} is a linked git worktree; its runs and hook records are read from {state_root}")
         if saves_next:
             print(f"  next: {saves_next}")
         print("Capabilities: " + ", ".join(f"{key}={value}" for key, value in capabilities.items()))

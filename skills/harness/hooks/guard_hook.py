@@ -430,11 +430,14 @@ def _written_paths(tool_input: dict, *, include_patch: bool = False) -> list:
 class Call:
     """One tool call and everything a rule may ask about it, each computed once."""
 
-    def __init__(self, tool_name, tool_input, guard: dict, root, cwd=None) -> None:
+    def __init__(self, tool_name, tool_input, guard: dict, root, cwd=None, state_root=None) -> None:
         self.tool = str(tool_name or "").strip().lower()
         self.input = tool_input if isinstance(tool_input, dict) else {}
         self.guard = guard
         self.root = Path(root)
+        # Where the runs and the guard record are. It differs from ``root`` only in the second reading of a call
+        # made from a linked worktree, whose paths are judged against the worktree (``main()``).
+        self.state_root = Path(state_root) if state_root is not None else self.root
         self.shell = self.tool in _SHELL_TOOLS
         self.writer = self.tool in _WRITE_TOOLS
         self.powershell = self.tool in ("powershell", "pwsh")
@@ -1632,7 +1635,7 @@ def _run_active(call: "Call") -> bool:
     _bootstrap.ensure_paths()
     from _saves import has_active_run
 
-    return has_active_run(call.root)
+    return has_active_run(call.state_root)
 
 
 def _protection_engaged(call: "Call") -> bool:
@@ -1872,6 +1875,29 @@ def _project_root() -> Path:
         return Path(".")
 
 
+def _state_root(project: Path) -> Path:
+    """The checkout that holds the guard record and the runs (``_state.state_root``), or the project when it cannot be found."""
+    try:
+        return Path(_state.checkout_root(project))
+    except Exception as exc:
+        _state.record_fault("PreToolUse", exc)
+        return project
+
+
+def _same_directory(first: Path, second: Path) -> bool:
+    try:
+        return os.path.realpath(first) == os.path.realpath(second)
+    except (OSError, ValueError):
+        return str(first) == str(second)
+
+
+# The rules read a second time against the worktree when the host calls a linked worktree the project. A frozen or
+# blocked glob is relative to the tree the session works in (`src/payments/**`), and so are the registration files
+# (`.claude/settings.json`), so both hold for the worktree's copy as well as the main checkout's. The single-writer
+# records, a read-only run's allow list and the unplaced-write rule are about the state, which is in one place.
+_WORKTREE_RULES = frozenset({"B", "F"})
+
+
 def main() -> None:
     data = _state.read_hook_input("PreToolUse")
     _state.record_observation("PreToolUse", data)
@@ -1885,10 +1911,23 @@ def main() -> None:
         tool_input = {"patch": tool_input}
     if not isinstance(tool_input, dict):
         return
-    call = Call(tool_name, tool_input, _guard_state(), _project_root(), data.get("cwd"))
-    for _label, rule in RULES:
+    project = _project_root()
+    root = _state_root(project)
+    cwd = data.get("cwd")
+    guard = _guard_state()
+    local = None
+    if not _same_directory(project, root):
+        # The host calls a linked worktree the project. Its guard record and its runs are the main checkout's, so the
+        # call is judged there; a relative path with no working directory in the payload means a path in the worktree.
+        if not (isinstance(cwd, str) and cwd.strip()):
+            cwd = str(project)
+        local = Call(tool_name, tool_input, guard, project, cwd, state_root=root)
+    call = Call(tool_name, tool_input, guard, root, cwd)
+    for label, rule in RULES:
         try:
             reason = rule(call)
+            if not reason and local is not None and label in _WORKTREE_RULES:
+                reason = rule(local)
         except BaseException as exc:
             # No rule exits: a `SystemExit` here came from a module a rule imported, so it is a fault like any other
             # and the remaining rules still run.

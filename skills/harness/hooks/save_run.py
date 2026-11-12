@@ -910,7 +910,7 @@ def main() -> int:
         parser.error("--run-id is required for mutations")
     store = None
     try:
-        root = Path(args.project_root) if args.project_root else _state.project_root()
+        root = Path(args.project_root) if args.project_root else _state.state_root()
         if args.operation == "status" and not args.run_id:
             result = inspect_saves(root)
             result.update({"operation": "status", "result": "ok"})

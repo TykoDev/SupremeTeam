@@ -31,6 +31,17 @@ resolves every kind under these roots except `product` (application source) and
 `global_preferences` (the per-user data root outside the checkout, refused when
 that root lies inside the project), and rejects escapes.
 
+Both roots are git-ignored, so they exist only in the *main checkout*: the working
+tree that holds the real `.git` directory. A *linked worktree* (`git worktree add`;
+its `.git` is a file) has neither. When the project a host reports is a linked
+worktree, as in a session started with `claude --worktree`, the hooks and the
+writers they share (`save_run.py`, `guard_state.py`) read and write the state of
+the main checkout: the guard record, the run records, the heartbeat and the
+observations (`_state.state_root()`, which maps the worktree with
+`scripts/checkout.py`). Nothing is created under the worktree, and a boundary
+recorded from a worktree session is recorded once, in the main checkout. A root
+named on a command line (`--project-root`) is used as given.
+
 ```text
 skillset-saves/
   _latest.md                         # pointer (schema 1): run_id, revision, updated_at

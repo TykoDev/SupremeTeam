@@ -400,6 +400,9 @@ def _sweep_coverage_residue(tool_name: str) -> "str | None":
         return None
     try:
         root = _state.project_root().resolve()
+        # The residue is in the tree the command ran in; the run and the scratch class it is filed under, and the allow
+        # list of a read-only run, are the main checkout's when that tree is a linked worktree.
+        home = _state.state_root().resolve()
         entries, truncated = _scan_root(root)
         if not entries:
             return None
@@ -409,9 +412,9 @@ def _sweep_coverage_residue(tool_name: str) -> "str | None":
         movable = [e for e in entries if e not in protected]
         if not movable:
             return None
-        dest, label, scoped = _destination(root)
+        dest, label, scoped = _destination(home)
         records = guard.get("read_only") or []
-        held = _held_by_read_only(movable, dest, records, root) if records else []
+        held = _held_by_read_only(movable, dest, records, home) if records else []
         movable = [e for e in movable if e not in held]
         if not movable:
             return (f"[harness:coverage-residue] Found {len(held)} project-root coverage "

@@ -548,6 +548,88 @@ class StateWriteTests(StateCase):
         self.assertLess(waited, 5, "the append gave up on a lock another writer held, instead of waiting for it")
 
 
+class StateRootTests(unittest.TestCase):
+    """WP-03 (N1): from a linked git worktree the hooks read and write the main checkout's state.
+
+    ``.harness-state/`` and ``skillset-saves/`` are git-ignored, so a worktree has neither. In a real session started
+    with ``claude --worktree`` the project the host reported was the worktree: the hooks found no record there and made
+    a second ``.harness-state/`` inside it."""
+
+    def setUp(self):
+        self.main = self.enterContext(kit.project())
+        self.worktree = kit.linked_worktree(self.main, self.main / ".claude" / "worktrees" / "wtsess")
+        self.enterContext(kit.in_project(self.worktree))
+
+    def test_the_state_root_of_a_worktree_is_its_main_checkout_and_the_project_root_is_unchanged(self):
+        self.assertEqual(_state.project_root(), self.worktree)
+        self.assertEqual(_state.state_root().resolve(), self.main.resolve())
+        self.assertEqual(_state.state_dir(create=False).resolve(), (self.main / ".harness-state").resolve())
+        with kit.in_project(self.main):
+            self.assertEqual(_state.state_root(), self.main, "a main checkout is its own state root")
+
+    def test_a_root_named_by_the_caller_is_used_as_given(self):
+        self.assertEqual(_state.state_dir(self.worktree, create=False), self.worktree / ".harness-state")
+        self.assertIsNone(_state.existing_state_dir(self.worktree))
+
+    def test_the_guard_record_and_the_active_run_are_read_from_the_main_checkout(self):
+        kit.write_guard(self.main, {"frozen_globs": [{"glob": "src/**", "owner": "ops"}]})
+        kit.write_run(self.main, "r1")
+        self.assertEqual(_state.load_guard_state().get("frozen_globs"), ["src/**"])
+        self.assertEqual(_state.active_run_id(), "r1")
+        self.assertEqual(_state.existing_state_dir().resolve(), (self.main / ".harness-state").resolve())
+
+    def test_every_registered_hook_records_in_the_main_checkout_and_makes_nothing_in_the_worktree(self):
+        payloads = {"pre_tool_use.py": ("PreToolUse", kit.bash("ls")), "post_tool_use.py": ("PostToolUse", kit.bash("ls")),
+                    "user_prompt_submit.py": ("UserPromptSubmit", {"prompt": "build the thing"})}
+        for script, (event, payload) in payloads.items():
+            with self.subTest(hook=script):
+                done = kit.run_hook(script, {**payload, "hook_event_name": event, "session_id": "s1", "cwd": str(self.worktree)},
+                                    self.worktree, text=True)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                self.assertTrue((self.main / ".harness-state" / "observations" / f"{event}.json").is_file())
+        self.assertEqual(sorted(path.name for path in self.worktree.iterdir()), [".git"])
+
+    def test_the_routing_reminder_sees_a_run_pinned_in_the_main_checkout(self):
+        kit.pin_a_run(self.main, "r1")
+        done = kit.run_hook("user_prompt_submit.py", {"prompt": "carry on", "session_id": "s1"}, self.worktree, text=True)
+        self.assertIn("a run is active", done.stdout)
+        self.assertFalse((self.worktree / "skillset-saves").exists())
+
+    def test_the_guard_writer_records_a_boundary_in_the_main_checkout_from_a_worktree_session(self):
+        done = kit.run_cli("guard_state.py", "freeze", "--glob", "src/payments/**", "--owner", "ops", env=kit.clean_env(self.worktree),
+                           cwd=self.worktree)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertTrue((self.main / ".harness-state" / "guard-state.json").is_file())
+        self.assertFalse((self.worktree / ".harness-state").exists())
+        out = kit.decide(kit.edit((self.worktree / "src" / "payments" / "a.py").as_posix()), self.worktree)
+        self.assertIn("frozen boundary", kit.reason(out))
+
+    def test_the_run_writer_creates_a_run_in_the_main_checkout_from_a_worktree_session(self):
+        (self.worktree / "README.md").write_text("# fixture\n", encoding="utf-8")
+        (self.main / "README.md").write_text("# fixture\n", encoding="utf-8")
+        done = kit.run_cli("save_run.py", "create", "--run-id=r1", "--evidence", "README.md", env=kit.clean_env(self.worktree),
+                           cwd=self.worktree)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertTrue((self.main / "skillset-saves" / "runs" / "r1" / "_state.md").is_file())
+        self.assertFalse((self.worktree / "skillset-saves").exists())
+
+    def test_a_copy_of_the_hooks_without_the_scripts_directory_still_resolves_a_root(self):
+        """The mapping lives in skills/scripts. Without it the project is its own state root, as before."""
+        code = ("import sys, importlib.abc\n"
+                "class Hide(importlib.abc.MetaPathFinder):\n"
+                "    def find_spec(self, name, path, target=None):\n"
+                "        if name == 'checkout':\n            raise ImportError(name)\n"
+                "sys.meta_path.insert(0, Hide())\n"
+                "import _state\nprint(_state.state_root())\n")
+        done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=str(self.worktree),
+                              env=kit.clean_env(self.worktree, PYTHONPATH=str(HOOK_DIR)), check=False)
+        self.assertEqual((done.returncode, done.stdout.strip()), (0, str(self.worktree)), done.stderr)
+
+    def test_a_fault_in_the_mapping_answers_with_the_project_root(self):
+        with mock.patch.object(_state, "checkout_root", side_effect=RuntimeError("x")):
+            self.assertEqual(_state.state_root(), self.worktree)
+
+
 class ProjectIsolationTests(unittest.TestCase):
     """The suite's own runners kept `SUPREMETEAM_PROJECT_DIR`, which outranks `CLAUDE_PROJECT_DIR`, so a suite started from a
     shell that set it wrote hook records into that project, and the registration repair rewrote its `.claude/settings.json`.

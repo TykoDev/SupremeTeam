@@ -17,6 +17,7 @@ import io
 import os
 import random
 import re
+import shutil
 import sys
 import tarfile
 import tempfile
@@ -1316,6 +1317,145 @@ class PatchToolTests(GuardCase):
             nested = {"wrapped": nested}
         self.guard(FROZEN)
         self.assertIn("names no file the guard can read", kit.reason(self.decide(nested)))
+
+
+
+def _write(path, cwd=None) -> dict:
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(path), "content": "x"}}
+    if cwd is not None:
+        payload["cwd"] = str(cwd)
+    return payload
+
+
+def _shell(command: str, cwd=None) -> dict:
+    payload = kit.bash(command)
+    if cwd is not None:
+        payload["cwd"] = str(cwd)
+    return payload
+
+
+class WorktreeProjectTests(GuardCase):
+    """WP-03: the guard enforces the main checkout's record whichever checkout the host calls the project.
+
+    ``.harness-state/`` and ``skillset-saves/`` are git-ignored, so a linked worktree has neither. A session started
+    with ``claude --worktree`` reports the worktree as the project; the guard looked for its record there, found none
+    and allowed every write, a product file under a read-only run included. Each row below is decided twice, once
+    with the main checkout as the project and once with the worktree, and the two answers have to be the same."""
+
+    FAST = True
+    RUN = "R1"
+
+    def setUp(self):
+        super().setUp()
+        self.main = self.root
+        self.worktree = kit.linked_worktree(self.main, self.main / ".claude" / "worktrees" / "agent-a1")
+        (self.main / "skillset-saves" / "runs" / self.RUN / "review" / "reports").mkdir(parents=True)
+        (self.main / "src" / "payments").mkdir(parents=True)
+        (self.worktree / "src" / "payments").mkdir(parents=True)
+        self.rel = f"skillset-saves/runs/{self.RUN}/review/reports/packet.md"
+        self.read_only = {"read_only": [{"run_id": self.RUN, "owner": "code-chief", "allow": [f"skillset-saves/runs/{self.RUN}/**"]}]}
+
+    def decide_both(self, payload: dict) -> tuple:
+        return (kit.denied(kit.decide(payload, self.main)), kit.denied(kit.decide(payload, self.worktree)))
+
+    def table(self) -> list:
+        main_abs, worktree_abs = (self.main / self.rel).as_posix(), (self.worktree / self.rel).as_posix()
+        resolver = ("python3 skills/scripts/output_paths.py --project-root . --run-id R1 --phase review --kind reports "
+                    "--name packet.md")
+        return [
+            ("edit tool, absolute path in the main run", _write(main_abs, self.main), False),
+            ("edit tool, relative path, working directory = the main checkout", _write(self.rel, self.main), False),
+            ("edit tool, relative path, working directory = the worktree", _write(self.rel, self.worktree), True),
+            ("edit tool, absolute path into the worktree's own run directory", _write(worktree_abs, self.worktree), True),
+            ("cat > a literal relative path", _shell(f"cat > {self.rel} <<EOF\nx\nEOF", self.main), False),
+            ("a destination from a variable", _shell(f'OUT=$({resolver}) && cat > "$OUT" <<EOF\nx\nEOF', self.main), True),
+            ("a destination from a substitution", _shell(f'cat > "$({resolver})" <<EOF\nx\nEOF', self.main), True),
+            ("mkdir -p and tee to a literal", _shell(f"mkdir -p skillset-saves/runs/{self.RUN}/review/reports && printf x | tee {self.rel}",
+                                                     self.main), False),
+            ("inline Python that opens a literal", _shell(f"python3 -c \"open('{self.rel}','w').write('x')\"", self.main), False),
+            ("edit tool, absolute main-run path, working directory = the worktree", _write(main_abs, self.worktree), False),
+            ("cat > an absolute main-run path, from the worktree", _shell(f"cat > {main_abs} <<EOF\nx\nEOF", self.worktree), False),
+            ("cd to the main checkout, then a relative path, from the worktree",
+             _shell(f"cd {self.main.as_posix()} && cat > {self.rel} <<EOF\nx\nEOF", self.worktree), False),
+            ("edit tool, absolute main-run path in the platform's own spelling, from the worktree",
+             _write(self.main / self.rel, self.worktree), False),
+            ("edit tool, a product file in the worktree", _write((self.worktree / "src" / "a.py").as_posix(), self.worktree), True),
+            ("edit tool, a product file in the main checkout", _write((self.main / "src" / "a.py").as_posix(), self.main), True),
+        ]
+
+    def test_a_read_only_run_is_enforced_the_same_from_either_checkout(self):
+        self.guard(self.read_only)
+        for label, payload, denied in self.table():
+            with self.subTest(write=label):
+                self.assertEqual(self.decide_both(payload), (denied, denied))
+
+    def test_the_guard_record_is_read_from_the_main_checkout_and_none_is_made_in_the_worktree(self):
+        self.guard(self.read_only)
+        out = kit.decide(_write((self.worktree / "src" / "a.py").as_posix(), self.worktree), self.worktree)
+        self.assertIn("is recorded read-only", kit.reason(out))
+        self.assertFalse((self.worktree / ".harness-state").exists())
+        self.assertFalse((self.worktree / "skillset-saves").exists())
+
+    def test_a_frozen_glob_covers_the_main_copy_and_the_worktree_copy(self):
+        """A project-relative glob names a path in the tree the session works in, so it holds in both."""
+        self.guard(FROZEN)
+        in_main = (self.main / "src" / "payments" / "a.py").as_posix()
+        in_worktree = (self.worktree / "src" / "payments" / "a.py").as_posix()
+        for project in (self.main, self.worktree):
+            for label, payload in (("the main copy", _write(in_main, project)),
+                                   ("the main copy, by shell", _shell(f"echo x > {in_main}", project)),
+                                   ("a relative path", _write("src/payments/a.py", project))):
+                with self.subTest(project=project.name, write=label):
+                    self.assertIn("frozen boundary", kit.reason(kit.decide(payload, project)))
+        for label, payload in (("the worktree copy", _write(in_worktree, self.worktree)),
+                               ("the worktree copy, by shell", _shell(f"echo x > {in_worktree}", self.worktree)),
+                               ("a relative path from the worktree, with no working directory in the payload", _write("src/payments/a.py")),
+                               ("a relative shell write from the worktree", _shell("echo x > src/payments/a.py", self.worktree))):
+            with self.subTest(project="the worktree", write=label):
+                self.assertIn("frozen boundary", kit.reason(kit.decide(payload, self.worktree)))
+        for label, payload in (("a neighbour in the worktree", _write((self.worktree / "src" / "other.py").as_posix(), self.worktree)),
+                               ("a neighbour in the main checkout", _write((self.main / "src" / "other.py").as_posix(), self.worktree))):
+            with self.subTest(allowed=label):
+                self.assertEqual(kit.decide(payload, self.worktree), "")
+
+    def test_the_single_writer_records_are_the_main_checkouts_from_a_worktree_session(self):
+        for path, fragment in ((self.main / ".harness-state" / "guard-state.json", "guard_state.py"),
+                               (self.main / "skillset-saves" / "runs" / self.RUN / "_state.md", "save_run.py")):
+            with self.subTest(path=path.name):
+                self.assertIn(fragment, kit.reason(kit.decide(_write(path.as_posix(), self.worktree), self.worktree)))
+                self.assertIn(fragment, kit.reason(kit.decide(_shell(f"echo x > {path.as_posix()}", self.worktree), self.worktree)))
+
+    def test_the_registration_files_of_both_checkouts_are_protected_while_a_boundary_is_recorded(self):
+        self.guard(FROZEN)
+        with mock.patch.dict(os.environ):
+            os.environ.pop("SUPREMETEAM_HARNESS_DEV", None)
+            for label, path in (("the worktree's settings", self.worktree / ".claude" / "settings.json"),
+                                ("the main checkout's settings", self.main / ".claude" / "settings.json")):
+                with self.subTest(file=label):
+                    out = kit.decide(_write(path.as_posix(), self.worktree), self.worktree)
+                    self.assertIn("SUPREMETEAM_HARNESS_DEV", kit.reason(out))
+
+    def test_a_pinned_run_protects_the_worktrees_registration_file_too(self):
+        """Rule F is engaged by a run as well as by a boundary, and the run is in the main checkout."""
+        kit.pin_a_run(self.main, "pinned")
+        with mock.patch.dict(os.environ):
+            os.environ.pop("SUPREMETEAM_HARNESS_DEV", None)
+            out = kit.decide(_write((self.worktree / ".claude" / "settings.json").as_posix(), self.worktree), self.worktree)
+        self.assertIn("SUPREMETEAM_HARNESS_DEV", kit.reason(out))
+
+    def test_with_no_record_anywhere_a_worktree_session_writes_freely(self):
+        for payload in (_write((self.worktree / "src" / "a.py").as_posix(), self.worktree), _shell("echo x > src/a.py", self.worktree)):
+            self.assertEqual(kit.decide(payload, self.worktree), "")
+
+    def test_a_directory_that_only_looks_like_a_worktree_keeps_its_own_state(self):
+        """A copied ``.git`` file does not hand a directory the main checkout's record, in either direction."""
+        forged = self.root.parent / (self.root.name + "-forged")
+        forged.mkdir()
+        self.addCleanup(shutil.rmtree, forged, True)
+        shutil.copy2(self.worktree / ".git", forged / ".git")
+        self.guard(self.read_only)
+        self.assertEqual(kit.decide(_write((forged / "a.py").as_posix(), forged), forged), "")
+        self.assertEqual(_state.checkout_root(forged), forged)
 
 
 GUARD_SKILL = HOOK_DIR.parent.parent / "guard" / "SKILL.md"

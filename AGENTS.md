@@ -255,7 +255,8 @@ Shared tooling is in `skills/scripts/`. Its command-line tools are
 `content_hash.py`, `validate_manifests.py`, `package_check.py` and
 `mcp_registry.py`; `data_formats.py` is the JSON and YAML reader every script
 shares, `contract_floor.py` is the independent safety floor the gate validator
-loads, and the rest are modules behind `check_runtime.py` and the save layout,
+loads, `checkout.py` maps a linked git worktree to the main checkout that holds its
+runtime state, and the rest are modules behind `check_runtime.py` and the save layout,
 listed in
 [docs/directory-structure.md](docs/directory-structure.md). Contract suites are in
 `skills/validation/`; the other suites sit beside the code they test: `test_*.py` in

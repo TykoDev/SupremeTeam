@@ -66,6 +66,20 @@ except ImportError:
 except (Exception, SystemExit) as _exc:
     RUN_ID, TAXONOMY_FAULT = None, _exc
 
+# A linked git worktree keeps its runtime state in the main checkout (``state_root``). The mapping lives in
+# skills/scripts so the path tools share it; a copy of the hooks without that directory still guards, with the project
+# as its own state root, and a module that fails its import is counted like the taxonomy above.
+try:
+    from checkout import checkout_root
+except ImportError:
+    def checkout_root(root):
+        return Path(root)
+except (Exception, SystemExit) as _exc:
+    TAXONOMY_FAULT = TAXONOMY_FAULT or _exc
+
+    def checkout_root(root):
+        return Path(root)
+
 # Maximum trajectory signatures retained per identity (bounded memory).
 _MAX_TRAJ = 40
 # Trajectory files older than this are pruned on the next append.
@@ -120,6 +134,21 @@ def project_root() -> Path:
     return find_project_root()
 
 
+def state_root() -> Path:
+    """Where the project's runtime state lives: ``project_root()``, or its main checkout when that is a linked worktree.
+
+    ``.harness-state/`` and ``skillset-saves/`` are git-ignored, so a linked git worktree has neither: the guard record,
+    the run records, the heartbeat, the trajectories and the observation counters are the main checkout's. A host that
+    reports a worktree as the project (a session started with ``claude --worktree``) used to be read as a project with
+    no record at all, and no boundary was enforced there. ``project_root()`` keeps its meaning, the tree a call acts in;
+    this is the tree its state is in. A fault answers with the project root."""
+    root = project_root()
+    try:
+        return Path(checkout_root(root))
+    except Exception:
+        return root
+
+
 def _fallback_dir(base: Path) -> Path:
     namespace = hashlib.sha256(str(base).encode("utf-8", "ignore")).hexdigest()[:16]
     return Path(tempfile.gettempdir()) / "supremeteam-harness-state" / namespace
@@ -128,15 +157,15 @@ def _fallback_dir(base: Path) -> Path:
 def state_dir(root: "str | Path | None" = None, *, create: bool = True) -> Path:
     """Return the harness state directory, creating it unless ``create`` is false.
 
-    Prefers ``<project root>/.harness-state`` (the root resolves as
-    ``project_root`` documents, or is the ``root`` given) so guard/freeze records
+    Prefers ``<state root>/.harness-state`` (the root resolves as
+    ``state_root`` documents, or is the ``root`` given) so guard/freeze records
     and trajectory state live with the project; falls back to a *project-namespaced*
     private directory under the OS temp root when that cannot be created (never
     one shared temp directory across unrelated projects). A reader passes
     ``create=False``: looking at state never makes any, and it finds the fallback
     where a writer put it.
     """
-    base = Path(root) if root is not None else project_root()
+    base = Path(root) if root is not None else state_root()
     primary = base / ".harness-state"
     if not create:
         try:
@@ -194,7 +223,7 @@ def existing_state_dir(base: "str | Path | None" = None) -> "Path | None":
     same two places (the project's ``.harness-state`` and the temp fallback) and
     never creates either.
     """
-    root = Path(base) if base else project_root()
+    root = Path(base) if base else state_root()
     namespace = hashlib.sha256(str(root).encode("utf-8", "ignore")).hexdigest()[:16]
     for candidate in (root / ".harness-state", Path(tempfile.gettempdir()) / "supremeteam-harness-state" / namespace):
         try:
@@ -401,7 +430,7 @@ def read_mapping(path: Path) -> "dict | None":
 def active_run_id(root: "str | Path | None" = None) -> str:
     """Best-effort run scope from the save pointer; never raises."""
     try:
-        pointer = (Path(root) if root is not None else project_root()) / "skillset-saves" / "_latest.md"
+        pointer = (Path(root) if root is not None else state_root()) / "skillset-saves" / "_latest.md"
         if not pointer.is_file():
             return "no-run"
         text = pointer.read_text(encoding="utf-8")

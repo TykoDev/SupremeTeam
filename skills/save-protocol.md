@@ -31,6 +31,17 @@ resolves every kind under these roots except `product` (application source) and
 `global_preferences` (the per-user data root outside the checkout, refused when
 that root lies inside the project), and rejects escapes.
 
+Both roots are git-ignored, so they exist only in the *main checkout*: the working
+tree that holds the real `.git` directory. A *linked worktree* (`git worktree add`;
+its `.git` is a file) has neither. When the project a host reports is a linked
+worktree, as in a session started with `claude --worktree`, the hooks and the
+writers they share (`save_run.py`, `guard_state.py`) read and write the state of
+the main checkout: the guard record, the run records, the heartbeat and the
+observations (`_state.state_root()`, which maps the worktree with
+`scripts/checkout.py`). Nothing is created under the worktree, and a boundary
+recorded from a worktree session is recorded once, in the main checkout. A root
+named on a command line (`--project-root`) is used as given.
+
 ```text
 skillset-saves/
   _latest.md                         # pointer (schema 1): run_id, revision, updated_at
@@ -41,6 +52,7 @@ skillset-saves/
     _audit-trail.md                  # append-only events (writer: save_run.py)
     _journal.json                    # publish journal; present only mid-publish
     _history/                        # rev-<n>.state.json / rev-<n>.lock.json snapshots
+    _context/                        # dump-<n>.md context dumps (writer: save_run.py dump)
     intake/report_grilling.md        # decisions artifact (writer: admiral)
     {phase}/                         # design, build, review, security, investigation,
       manifest.json                  #   qa, taste, redesign, skill-creation, delivery, release
@@ -52,6 +64,9 @@ skillset-saves/
       verdict_{boundary}.cross-stage.json  # writer: gatekeeper-admiral, beside the phase record
       verdict_{boundary}.cycles.json       # writer: check.py --judgment --verdict-out; the REVISE streaks and the
       verdict_{boundary}.cycles.lock       #   shared boundary budget, and the mutex that guards them
+      _superseded/                   # files of earlier revisions, set aside (writer: run_files.py supersede)
+        index.json                   #   one entry per copy: path, sha256, from_revision, superseded_by, superseded_at
+        rev-{n}/{original path}      #   the copy, at the path it had inside the phase
 ```
 
 `design/`, `build/`, and `review/` hold the three delivery phases owned by
@@ -89,6 +104,30 @@ Each phase directory has four governed subdirectories:
 | `evidence/coverage/` | coverage data files and reports | `.coverage`, `coverage.xml`, `html/index.html` |
 | `packages/` | exported archives | `my-skill.skill`, `release-bundle.zip` |
 
+**Superseded copies.** A phase directory holds one revision's submission. A file of
+an earlier revision that its owner keeps has one place and one record:
+
+```text
+{phase}/_superseded/rev-{n}/{original path inside the phase}
+{phase}/_superseded/index.json   {"schema_version": 1, "entries": [{path, sha256, from_revision, superseded_by, superseded_at}]}
+```
+
+`python skills/scripts/run_files.py supersede --run-id <run> --phase <phase> --path
+<file inside the phase> --by-revision <n>` is the only writer: it moves the file and
+adds the entry, and it takes `from_revision` from the file's frontmatter, or from
+`--from-revision` when the file declares none. It refuses a path outside the phase
+directory, a file already under `_superseded/`, a gate verdict record or cycle
+history, a file reached through a link, and a `--by-revision` that is not higher
+than the file's own. There is no in-place marker: a copy renamed `*.r1.md` or
+left in an `archive/` folder is still part of the package to every reader.
+
+The gate leaves `_superseded/` out of the submission it judges (slots, lineage,
+declared identity, skip records and the blocked-phrase scan read the current files
+only), requires every file under it to be listed in the index with a matching
+digest (`SUPERSEDED_UNINDEXED`, `SUPERSEDED_INDEX_MISMATCH`), and names the copies
+once (`SUPERSEDED_COPIES`). The guard denies every other write into the folder
+(Rule C), so the index cannot be edited to match a file somebody put there.
+
 Coverage output is run evidence, never project-root residue. Resolve its
 destination with `scripts/output_paths.py --kind coverage`
 (`skillset-saves/runs/<run>/<phase>/evidence/coverage/<name>`) and point the
@@ -116,7 +155,17 @@ a CRLF checkout and an LF checkout agree and `sha256sum` on a CRLF file is the
 wrong value.
 `scripts/output_paths.py` resolves every kind to its destination, accepts only the
 phase directories [save-ownership.yaml](save-ownership.yaml) declares, and rejects
-escapes.
+escapes. Run from a linked git worktree, it resolves every kind but `product` against the
+main checkout, where the runs are, and says so in a `worktree` key. It prints a JSON
+object and writes nothing: `python skills/scripts/run_files.py write --run-id <run>
+--phase <phase> --kind reports|artifacts|evidence --name <file>` resolves the same
+destination and writes the content it is given on standard input or with `--from
+FILE`. It is the writer for a delegate, from the main checkout and from a worktree; it
+refuses a kind that has a writer of its own, a path [save-ownership.yaml](save-ownership.yaml)
+gives no delegated specialist, a run with no directory, and a destination the guard
+record freezes, blocks or leaves outside a read-only run's allow list. A write under a
+worktree's own `skillset-saves/` is refused by the guard (Rule H), because no gate
+reads it.
 
 `_latest.md` is only a pointer. Scan `runs/` when it is absent, stale, or
 conflicts with a reclaimable active run.
@@ -292,9 +341,9 @@ at the destination the delegation names. Gatekeepers write verdict records but
 never modify submissions.
 
 The authoritative, machine-readable path policy is
-[save-ownership.yaml](save-ownership.yaml): one writer per path class. Eighteen
-are declared; the run-facing ones are the core run record, grilling log, phase
-manifest, reports, artifacts, evidence, packages, gate verdict, harness guards,
+[save-ownership.yaml](save-ownership.yaml): one writer per path class. Twenty
+are declared; the run-facing ones are the core run record, context dumps, grilling log, phase
+manifest, reports, artifacts, evidence, superseded copies, packages, gate verdict, harness guards,
 harness trajectories, and harness observations, with the preference store, test
 scratch, the two skill-eval classes, and standalone packages alongside them.
 [ownership.yaml](ownership.yaml) keeps the artifact-level owner map, and
@@ -302,6 +351,19 @@ scratch, the two skill-eval classes, and standalone packages alongside them.
 your class, or writing a core run file by any means other than `save_run.py`,
 is a write-ownership violation; the pre-tool hook denies edit-tool writes to
 core run files and the reader classifies an incoherent result as corrupt.
+
+Context dumps: `save_run.py dump --run-id <run-id> [--trigger <what>] [--narrative-from <file>|-]`
+writes `runs/<run-id>/_context/dump-<n>.md`, what a session needs to pick the run up
+again after the host compacts its conversation: the run state as `save_run.py` reads it
+(revision, phase state, delegate, next action, evidence with digests, the newest handoff
+record), and below it the narrative the agent gives. A dump is not a checkpoint. The
+revision, the lock and the pointer stay as they are, so a checkpoint made next with the
+revision the agent knows is not refused; and `_context/` is beside `_history/`, outside
+every phase directory, so no gate reads a dump as part of a package. Where the hooks
+are registered, `harness/hooks/context_events.py` has the dump written before a
+compaction with no agent involved, and after it a `[harness:context-resume]` note names
+the run, the revision, the next action and the dump: read the dump, then `_state.md`,
+then continue inside the same run. A dump is never deleted.
 
 Checkpoint discipline: checkpoint before every delegation and at every return or
 boundary (`save_run.py checkpoint --run-id <run-id> --owner <owner> --expect-revision <n> --evidence <path>`).
@@ -347,7 +409,8 @@ Record run id, status, session pin, execution mode, persistence result, active
 owner, skills engaged, artifact revisions and hashes, verdicts, earliest
 incomplete boundary, blockers, and next action (`--set key=value` for
 non-reserved fields). Append events; never erase prior evidence. Preserve
-superseded revisions with clear lineage (`parent_revision`, `_history/`).
+superseded revisions with clear lineage (`parent_revision`, `_history/`), and a
+superseded phase file under its phase's `_superseded/` (§1, Superseded copies).
 
 The trail holds thirteen events and no others: `create`, `checkpoint`, `reopen`,
 `resume`, `complete`, `blocked`, `released`, `recover`, `rollforward`,
@@ -378,7 +441,8 @@ neither file may drop a field the other carries.
 ### Save Context
 - Run ID: {run-id}
 - Phase: {phase}
-- Save path: skillset-saves/runs/{run-id}/{phase}/
+- Project root: {absolute path of the main checkout}
+- Save path: {project-root}/skillset-saves/runs/{run-id}/{phase}/
 - Persistence active: {yes|no}
 - Persistence probe result: {ok|reason}
 - Context tier: {1|2|3}
@@ -395,6 +459,15 @@ neither file may drop a field the other carries.
 - Risks: {known risks|none declared}
 - Return boundary: {gate boundary for the returned package}
 ```
+
+`Project root` and `Save path` are absolute paths in the main checkout, also when the
+session or the delegate works in a linked git worktree. A delegate writes a report, an
+artifact or an evidence file with `python skills/scripts/run_files.py write --run-id
+<run> --phase <phase> --kind reports|artifacts|evidence --name <file>` (content on
+standard input or `--from FILE`), which works from either tree, or with an edit tool
+given a literal path under `Save path`; never to a destination built when the command
+runs. [contracts/handoff-templates.md](contracts/handoff-templates.md) has the rule in
+full.
 
 A delegate that receives `Persistence active: no` treats every save call as a
 no-op and returns its deliverable inline. A delegate that receives

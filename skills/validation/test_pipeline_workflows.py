@@ -122,10 +122,10 @@ def _typed_record(kind: str, artifact: str, digest: str, key: str = "") -> objec
     if kind == "verdict":
         return {"recommendation": "APPROVED", "revision": 1}
     if kind == "stack_lock":
-        # `versions` is a list, and the slug and digest are checked against the
-        # tech-stack registry and the overlay file on disk.
+        # `versions` records what the project uses, by component, and the slug and digest are checked against
+        # the tech-stack registry and the overlay file on disk. Here the project is at the registry's minimums.
         return {"slug": OVERLAY["slug"],
-                "versions": [OVERLAY["versions"][0]],
+                "versions": dict(OVERLAY["min_versions"]),
                 "overlay_sha256": OVERLAY["sha256"]}
     if kind == "confirmation":
         return {"artifacts": [artifact], "actor": "user", "confirmed_scope": "project",

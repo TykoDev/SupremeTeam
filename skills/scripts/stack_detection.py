@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,10 +27,33 @@ from project_files import (
     safe_regular_file,
 )
 from redaction import add_error
+from stack_versions import is_component, is_version
 from script_commands import makefile_runtime_signals, runtime_signals, script_uses_command
 
 
-REGISTRY_ROW_KEYS = frozenset({"slug", "path", "framework", "versions", "source", "sha256"})
+# A row of the registry at schema 2: what it has to carry, and what it may. A minimum is named by component and given
+# as text; `versions`, the unlabelled list of numbers schema 1 had, is not a field any more.
+REGISTRY_ROW_KEYS = frozenset({"slug", "path", "framework", "min_versions", "source", "sha256"})
+REGISTRY_OPTIONAL_KEYS = frozenset({"verified_through", "support_ends", "floor_reason"})
+REGISTRY_SCHEMA = 2
+SUPPORT_END_RE = re.compile(r"^\d{4}-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12]\d|3[01]))?$")
+
+
+def _version_map_problem(value: Any, known: "set[str] | None" = None) -> "str | None":
+    """Why ``value`` is not a ``{component: "version"}`` mapping, or None. ``known`` limits the components it may name."""
+    if not isinstance(value, dict) or not value:
+        return "must be a non-empty mapping of component to version"
+    for component, version in value.items():
+        if not is_component(component):
+            return f"names a component that is not lower-case letters, digits and dashes: {component!r}"
+        if known is not None and component not in known:
+            return f"names {component!r}, which min_versions does not"
+        if not isinstance(version, str):
+            return (f"gives {component} as {version!r}, which is not text; at schema {REGISTRY_SCHEMA} a version is a "
+                    "string, because the number 3.10 is 3.1")
+        if not is_version(version):
+            return f"gives {component} as {version!r}, which is not one version"
+    return None
 REGISTRY_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 REGISTRY_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -132,8 +154,11 @@ def load_registry(catalog_root: Path, errors: list[str]) -> dict[str, dict[str, 
         add_error(errors, "tech-stacks/registry.yaml: root must be a mapping")
         return {}
     registry_valid = True
-    if type(value.get("schema_version")) is not int or value.get("schema_version") != 1:
-        add_error(errors, "tech-stacks/registry.yaml: schema_version must be 1")
+    if type(value.get("schema_version")) is not int or value.get("schema_version") != REGISTRY_SCHEMA:
+        add_error(errors, f"tech-stacks/registry.yaml: schema_version must be {REGISTRY_SCHEMA}")
+        registry_valid = False
+    if not isinstance(value.get("floor_rule"), str) or not value["floor_rule"].strip():
+        add_error(errors, "tech-stacks/registry.yaml: floor_rule must say how a minimum is chosen")
         registry_valid = False
     if value.get("kind") != "supremeteam-tech-stack-registry":
         add_error(errors, "tech-stacks/registry.yaml: kind is invalid")
@@ -147,7 +172,7 @@ def load_registry(catalog_root: Path, errors: list[str]) -> dict[str, dict[str, 
             add_error(errors, f"tech-stacks/registry.yaml: overlay row {index} must be a mapping")
             continue
         missing = sorted(REGISTRY_ROW_KEYS - set(item))
-        extra = sorted(set(item) - REGISTRY_ROW_KEYS)
+        extra = sorted(set(item) - REGISTRY_ROW_KEYS - REGISTRY_OPTIONAL_KEYS)
         if missing:
             add_error(errors, f"tech-stacks/registry.yaml: overlay row {index} missing fields {missing}")
         if extra:
@@ -169,18 +194,27 @@ def load_registry(catalog_root: Path, errors: list[str]) -> dict[str, dict[str, 
         if not isinstance(item.get("framework"), str) or not item["framework"].strip():
             add_error(errors, f"tech-stacks/registry.yaml: {slug} framework must be a string")
             row_valid = False
-        versions = item.get("versions")
-        if (
-            not isinstance(versions, list)
-            or not versions
-            or any(
-                not isinstance(version, (int, float))
-                or isinstance(version, bool)
-                or (isinstance(version, float) and not math.isfinite(version))
-                for version in versions
-            )
-        ):
-            add_error(errors, f"tech-stacks/registry.yaml: {slug} versions must be a non-empty finite number list")
+        minimums = item.get("min_versions")
+        problem = _version_map_problem(minimums)
+        if problem:
+            add_error(errors, f"tech-stacks/registry.yaml: {slug} min_versions {problem}")
+            row_valid = False
+        named = set(minimums) if isinstance(minimums, dict) else set()
+        if "verified_through" in item:
+            problem = _version_map_problem(item["verified_through"], named)
+            if problem:
+                add_error(errors, f"tech-stacks/registry.yaml: {slug} verified_through {problem}")
+                row_valid = False
+        if "support_ends" in item:
+            ends = item["support_ends"]
+            if not isinstance(ends, dict) or not ends or any(
+                    component not in named or not isinstance(day, str) or not SUPPORT_END_RE.fullmatch(day)
+                    for component, day in ends.items()):
+                add_error(errors, f"tech-stacks/registry.yaml: {slug} support_ends must map a component of min_versions "
+                                  "to a YYYY-MM-DD date or a YYYY-MM month")
+                row_valid = False
+        if "floor_reason" in item and (not isinstance(item["floor_reason"], str) or not item["floor_reason"].strip()):
+            add_error(errors, f"tech-stacks/registry.yaml: {slug} floor_reason must be one line of text")
             row_valid = False
         if item.get("source") != expected_source:
             add_error(errors, f"tech-stacks/registry.yaml: {slug} source must be {expected_source}")
@@ -503,7 +537,9 @@ def _detect_in_scope(
             {
                 "slug": slug,
                 "framework": row.get("framework"),
-                "versions": row.get("versions", []),
+                # The registry's minimums for this stack, by component: the form a stack lock records its own
+                # versions in. They are not read from the project.
+                "min_versions": dict(row.get("min_versions") or {}),
                 "evidence": _sorted_evidence(scope.matches[slug]),
             }
         )
@@ -549,7 +585,7 @@ def _detect_across_packages(
                 {
                     "slug": stack["slug"],
                     "framework": stack.get("framework"),
-                    "versions": stack.get("versions", []),
+                    "min_versions": dict(stack.get("min_versions") or {}),
                     "evidence": [],
                 },
             )

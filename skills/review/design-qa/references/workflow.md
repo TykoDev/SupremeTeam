@@ -42,7 +42,7 @@ sequence and the judgment calls inside it.
 `../SKILL.md` states the contracts; this section records only where each one
 lands in the sequence above, so the two documents do not restate each other.
 
-- Read-only over the reviewed surface — binds from step 1 through packaging; the corrections written at step 3 are the deliverable, and editing the surface would invalidate the captures taken at step 1.
+- Read-only over the reviewed surface — binds from step 1 through packaging; the corrections written at step 3 are the deliverable, and editing the surface would invalidate the captures taken at step 1. The packet itself is written into the run with `run_files.py write` or to the literal `Save path` (SKILL.md, Read-only over the reviewed surface), never to a path built when the command runs.
 - Digest-bound Taste conformance — enforced at step 1, before any comparison: the digest check is the first action of the pass, because a comparison made against the wrong baseline cannot be repaired later in the sequence. The traceability rows filled at step 3 carry the effective preference ids this evidence answers for.
 - Before/After Evidence — the "before" is the approved design and the baseline captures; the "after" is the capture set produced in this pass, which is why both are hashed rather than described.
 - Shared severity — assigned at step 3, once the affected screen and rule are known, and preserved through packaging.

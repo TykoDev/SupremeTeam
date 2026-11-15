@@ -242,6 +242,55 @@ structural check. It reports PASS / FAIL / UNCHECKED facts. Frontmatter is read
 past a leading byte-order mark and with quoted keys (`"revision":`), so neither
 hides a second revision or submission id. A file named as an artifact that is
 empty or holds only whitespace fills no slot and fails as `ARTIFACT_EMPTY`.
+
+A package holds one revision's submission. A file of an earlier revision that its
+owner kept is set aside under `<package>/_superseded/rev-<n>/<original path>` and
+listed, with its digest, in `_superseded/index.json`; `skills/scripts/run_files.py
+supersede` is the only writer. The engine reads the current files only
+(`iter_current_files`) for slots, lineage, declared identity, skip records and the
+blocked-phrase scan, so a preserved copy neither fills a slot nor mixes revisions.
+`check_superseded` accounts for what is left out: a file under `_superseded/` that
+the index does not list fails as `SUPERSEDED_UNINDEXED`, one whose digest changed
+or whose entry has no file as `SUPERSEDED_INDEX_MISMATCH`, and the copies are named
+once as `SUPERSEDED_COPIES`. A slot may name the one place its artifact is read from
+(`ArtifactSpec.exact_paths`): only a file there fills it, and a file elsewhere whose
+name matches is reported as `ARTIFACT_NOT_CANONICAL`. The build gate reads the
+completeness certificate from `reports/report_completeness.md` this way and fails a
+certificate whose revision is not the package's (`COMPLETENESS_REVISION_MISMATCH`).
+
+`check.py` asks which file an evidence path reaches, not only how the path is
+spelled. A path that resolves into a `_superseded/` or `_history/` directory fails
+as `cites a superseded copy: <path> (resolves to <file>)`, whether it is written
+out, reached through a symlink or a junction, or spelled in another letter case;
+the same holds for a typed record's `inputs` under `skillset-saves/`. An artifact
+whose content is a superseded copy's under another path fails as `artifact content
+matches superseded copy rev <n>`; the file at the path the copy was superseded from
+is the current one and passes. A path that is not the spelling the directory lists
+(`spelling_defects` in `_gatecheck.py` compares each component with `os.listdir` of
+its parent, so a different case, a trailing dot, a short name and a stream are one
+rule on every platform) or that passes through a link to a current file is a
+warning for one release and a failure after it. The shape engine fails a link
+inside the package to a superseded copy as `LINK_TO_SUPERSEDED`.
+
+One package is a ledger and not a submission: admiral's `delivery/`, whose
+`reports/handoff_<boundary>.md` records each carry their own submission id and
+revision (`Manifest.ledger_pattern`). The one-revision rule would fail it at its
+second record, so the records are left out of the lineage check and held to
+`check_handoff_records` instead. `gatekeeper-admiral/scripts/check.py --boundary
+<name>` names the record being judged; without it a single record is that record,
+and among several the one still `PENDING`, and anything else exits 2 and names the
+records, because the gate never picks one. The record being judged has to match the
+package it hands over (`HANDOFF_MANIFEST_MISMATCH`). Every other record has to be
+`VERDICT_RECORDED` and `APPROVED` (`HANDOFF_STATUS`, `HANDOFF_NOT_APPROVED`), every
+recorded one has to agree with `<package_path>/verdict_<boundary>.cross-stage.json`
+on `verdict`, `verdict_id` and `revision` (`HANDOFF_VERDICT_MISMATCH`), every
+`package_path` has to be a phase directory of the run (`HANDOFF_PACKAGE_PATH`), and
+a record older than the record of the boundary upstream of it is stale after a
+rewind (`HANDOFF_STALE_AFTER_REWIND`). The order is `upstream_boundary` in
+`pipelines.yaml`, which `validate_manifests.py` holds to the upstream links
+`gates.yaml` gives the two `revision_ref` keys. `--prior` is compared with the
+record being judged only, so the verdict of an earlier boundary is never read as
+reusable for this one.
 Below the Python floor `runtime-manifest.yaml` declares, a wrapper exits 2 and
 names the floor before reading the package.
 
@@ -297,7 +346,15 @@ digest and path-reference shapes, typed-record consistency, and the schema rule.
 `test_quality_audit.py` also covers the shipped spec safety floor, typed security-seed
 and human-go records, nested values and research/UI/CSO slot attribution. The floor
 in `skills/scripts/contract_floor.py` is independent of gates.yaml and is checked
-by the shipped loader, shape-wrapper catalog loader and manifest validator. Explicit
+by the shipped loader, shape-wrapper catalog loader and manifest validator. It pins,
+for every boundary, the submitter, the required keys and their artifact backing; the
+typed kind of every key the spec types; the upstream boundary each `revision_ref` key
+binds to (`approved_design_revision` to `design-to-build` with its acceptance key,
+`approved_delivery` to `review-to-delivery`); the REVISE cycle cap of 3; an owner for
+every required key; the finding policy, the judging gates, the waiver table and the
+variant and selection contracts. `test_contract_floor.py` compares it with the shipped
+spec in both directions, so a key typed or backed in `gates.yaml` and not in the floor
+fails the suite. Explicit
 `--gates` experiments remain non-shipped inputs, never approval authority. The
 revision cap is declared in `gates.yaml`, validated by `validate_manifests.py` and counted
 by this engine: `_gatecycle.py` records each distinct REVISE revision at `--judgment` /

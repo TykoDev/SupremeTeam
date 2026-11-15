@@ -5,9 +5,16 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import sys
 from pathlib import Path
 
-from data_formats import parse_frontmatter
+try:
+    from data_formats import parse_frontmatter
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    sys.stderr.write(f"ERROR: mcp_registry.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog.\n")
+    raise SystemExit(2) from exc
 
 
 def inspect_registry(path: Path, *, host: str, workspace: Path, now: datetime | None = None) -> dict:

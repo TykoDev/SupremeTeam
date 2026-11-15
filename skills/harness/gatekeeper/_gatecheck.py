@@ -23,8 +23,14 @@ Doctrine alignment (../../harness-doctrine.md):
 
 Posture difference vs. ``harness/hooks`` (which FAIL OPEN): a gate must **fail
 loud**. A hook that errors lets the action proceed; a gate that cannot prove a
-package is clean must NOT silently approve it. So an internal error becomes an
-``UNCHECKED`` finding and a non-zero exit, never a hidden PASS.
+package is clean must NOT silently approve it. So an internal error, a refused
+package directory, a ledger whose current record cannot be told and a wrapper that
+cannot find this engine all end with exit 2 and no report of facts (``gate_status:
+ERROR`` where a report was asked for), never a hidden PASS. Exit 1 means the checks
+ran and found a blocking defect. A contract file or the safety-floor module that
+cannot be read is the one fault that does not stop the run: it is reported as
+``CONTRACTS_UNREADABLE`` (UNCHECKED) and every slot is held to its declared
+requirement, which is stricter, never looser.
 
 Stdlib only — no ``pip install``. The supported floor is Python 3.13, declared
 once in ``skills/runtime-manifest.yaml`` (``runtime.python.minimum``) and checked by
@@ -34,8 +40,10 @@ once in ``skills/runtime-manifest.yaml`` (``runtime.python.minimum``) and checke
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import fnmatch
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -169,6 +177,14 @@ class ArtifactSpec:
     required slot whose key is waivable, or whose every stage carries a ``when``,
     is held as conditional (see ``Contracts``). ``key`` is the slot's short name
     for whoever reads the wrapper; the engine names a slot by its ``label``.
+
+    exact_paths:    package-relative paths (``reports/report_completeness.md``).
+                    When set, only a file at one of them fills the slot. A file
+                    elsewhere whose name matches ``patterns`` is not evidence for
+                    it and is reported as ARTIFACT_NOT_CANONICAL with the expected
+                    path: a slot found by name alone was filled by an old copy in
+                    ``archive/`` and by an unrelated file whose name happened to
+                    match.
     """
 
     key: str
@@ -179,6 +195,7 @@ class ArtifactSpec:
     fields: Sequence[str] = ()
     evidence_key: Optional[str] = None
     stages: Sequence[str] = ()
+    exact_paths: Sequence[str] = ()
 
 
 @dataclass
@@ -188,12 +205,22 @@ class Manifest:
     ``pipeline`` names the pipelines.yaml pipeline that closes at this boundary;
     without it a slot's ``evidence_key`` and ``stages`` cannot be looked up.
     ``sub_orchestrator`` records the submitter for whoever reads the wrapper; the
-    engine does not read it (gates.yaml carries the checked submitter)."""
+    engine does not read it (gates.yaml carries the checked submitter).
+
+    A *ledger* is a package that holds one record per boundary instead of one
+    submission: admiral's ``delivery/`` with ``reports/handoff_<boundary>.md``.
+    ``ledger_pattern`` is the package-relative path of a record with
+    ``{boundary}`` where the boundary name stands, and ``ledger_slot`` the key of
+    the slot the record being judged fills. Each record has its own submission
+    id and revision, so the one-revision rule of a phase package does not apply
+    to them: see ``check_handoff_records``."""
 
     boundary: str
     sub_orchestrator: str
     artifacts: Sequence[ArtifactSpec] = field(default_factory=tuple)
     pipeline: Optional[str] = None
+    ledger_pattern: Optional[str] = None
+    ledger_slot: Optional[str] = None
 
 
 @dataclass
@@ -463,6 +490,71 @@ def find_escaping_links(root: Path) -> List[Path]:
             if (p.is_symlink() or p.is_junction()) and _leaves(p, real_root)]
 
 
+# Where a file that is no longer current lives: a phase's superseded copies, and the run record's own history.
+HISTORY_DIR = "_history"
+_NOT_CURRENT = frozenset({"_superseded", HISTORY_DIR})
+
+
+def in_superseded_location(parts: Sequence[str]) -> bool:
+    """Whether a path with these directory components lies under ``_superseded`` or ``_history``, in any letter case."""
+    return any(part.casefold() in _NOT_CURRENT for part in parts)
+
+
+def _entry_for(directory: Path, part: str, names: Sequence[str]) -> Optional[str]:
+    """The directory entry the file system opens for ``part`` when no entry is spelled that way: a different letter
+    case, a Windows short name (``VALIDA~1.MD``), a trailing dot or space, or an alternate data stream."""
+    folded = next((name for name in names if name.casefold() == part.casefold()), None)
+    if folded is not None:
+        return folded
+    try:
+        opened = Path(os.path.realpath(directory / part)).name
+    except OSError:
+        opened = ""
+    if opened in names:
+        return opened
+    trimmed = part.split(":", 1)[0].rstrip(". ")
+    return next((name for name in names if name.casefold() == trimmed.casefold()), None)
+
+
+def spelling_defects(base: Path, cited: str) -> List[Tuple[str, str, str]]:
+    """How a cited path differs from the files it names, one component at a time.
+
+    Each component has to appear, exactly as written, in the listing of its parent directory, and may not be a link.
+    The result is ``(kind, component, detail)`` per defect: ``("spelling", part, the entry on disk or "")`` and
+    ``("link", part, where the link leads)``. Empty for the path a directory listing would give.
+
+    One rule covers every alias: a different letter case on a case-insensitive volume, a trailing dot, a short name,
+    a stream, a symlink and a junction. It asks the directory, so it does not depend on what ``os.path.realpath``
+    corrects on a given platform (on macOS it does not correct case). ``..`` moves up and is not a defect; an empty
+    or ``.`` component names nothing and is skipped."""
+    found: List[Tuple[str, str, str]] = []
+    node = base
+    for part in re.split(r"[\\/]+", cited):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            node = node.parent
+            continue
+        try:
+            names = os.listdir(node)
+        except OSError:
+            break
+        entry = part
+        if part not in names:
+            entry = _entry_for(node, part, names) or ""
+            found.append(("spelling", part, entry))
+            if not entry:
+                break
+        child = node / entry
+        try:
+            if child.is_symlink() or child.is_junction():
+                found.append(("link", part, os.path.realpath(child)))
+        except OSError:
+            break
+        node = child
+    return found
+
+
 def iter_all_files(root: Path) -> List[Path]:
     """Every regular file under the package (JSON evidence records and HTML
     prototypes included), sorted for stable output. Used for artifact
@@ -475,9 +567,38 @@ def iter_all_files(root: Path) -> List[Path]:
             if p.is_file() and not _leaves(p, real_root)]
 
 
+# A file of an earlier revision that its owner kept is set aside under
+# ``<phase>/_superseded/rev-<n>/<original path>`` and listed in
+# ``_superseded/index.json`` (skills/scripts/run_files.py supersede is the one
+# writer; save-protocol.md defines the layout). It is part of the package's
+# history, not of the submission being judged.
+SUPERSEDED_DIR = "_superseded"
+SUPERSEDED_INDEX = "index.json"
+_SUPERSEDED_HOUSEKEEPING = (SUPERSEDED_INDEX, SUPERSEDED_INDEX + ".lock")
+
+
+def is_superseded(path: Path, root: Path) -> bool:
+    """True when ``path`` lies under a ``_superseded`` directory of the package,
+    at any depth and in any letter case."""
+    try:
+        parts = path.relative_to(root).parts[:-1]
+    except ValueError:
+        return False
+    return any(part.casefold() == SUPERSEDED_DIR for part in parts)
+
+
+def iter_current_files(root: Path) -> List[Path]:
+    """The files of the submission being judged: every file of the package
+    except the ``_superseded`` trees. Slots, lineage, declared identity, skip
+    records and the blocked-phrase scan read these, so a preserved copy of an
+    earlier revision neither fills a slot nor mixes revisions.
+    ``check_superseded`` accounts for what is left out."""
+    return [p for p in iter_all_files(root) if not is_superseded(p, root)]
+
+
 def iter_package_files(root: Path) -> List[Path]:
-    """All readable text files under the package, sorted for stable output."""
-    return [p for p in iter_all_files(root)
+    """All readable text files of the current submission, sorted for stable output."""
+    return [p for p in iter_current_files(root)
             if p.suffix.lower() in _TEXT_SUFFIXES]
 
 
@@ -552,7 +673,12 @@ class Contracts:
         if not isinstance(gates, dict) or not isinstance(pipelines, dict):
             raise ContractsUnreadable("gates.yaml and pipelines.yaml must be mappings")
         if catalog is None:
-            from contract_floor import gate_floor_errors
+            # A missing floor module is a contract that cannot be read, not a crash: the gate reports it and
+            # holds every slot to its declared requirement.
+            try:
+                from contract_floor import gate_floor_errors
+            except ImportError as exc:
+                raise ContractsUnreadable(f"{type(exc).__name__}: {exc}") from exc
             floor = gate_floor_errors(gates)
             if floor:
                 raise ContractsUnreadable("; ".join(floor))
@@ -707,7 +833,8 @@ def check_package_links(root: Path, report: Report) -> None:
     """A link out of the package lets a file elsewhere stand in for a member, so
     it is a defect in itself and is never read."""
     report.checks_run.append("package_links")
-    for link in find_escaping_links(root):
+    escaping = find_escaping_links(root)
+    for link in escaping:
         rel = _rel(link, root)
         report.add(Finding(
             code="LINK_ESCAPES_PACKAGE", severity="major", status=FAIL,
@@ -715,13 +842,116 @@ def check_package_links(root: Path, report: Report) -> None:
                      f"package. It is not read; ship the file itself."),
             location=rel,
         ))
+    # A link that stays inside the package can still stand a superseded copy in a current file's place.
+    real_root = root.resolve()
+    for link in sorted(root.rglob("*")):
+        try:
+            if not (link.is_symlink() or link.is_junction()) or link in escaping or is_superseded(link, root):
+                continue
+            target = link.resolve()
+            inside = target.relative_to(real_root).parts
+        except (OSError, ValueError):
+            continue
+        if in_superseded_location(inside[:-1] if target.is_file() else inside):
+            rel = _rel(link, root)
+            report.add(Finding(
+                code="LINK_TO_SUPERSEDED", severity="major", status=FAIL,
+                message=(f"{rel} is a link to {'/'.join(inside)}, a superseded copy. A link there puts a file of an "
+                         f"earlier revision under a current name; ship the current file itself."),
+                location=rel,
+            ))
+
+
+def _content_sha256(path: Path) -> str:
+    """The catalog's digest of a file (text folded to LF), from skills/scripts."""
+    scripts = str(Path(__file__).resolve().parents[2] / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    from data_formats import content_sha256
+    return content_sha256(path)
+
+
+def check_superseded(root: Path, report: Report) -> None:
+    """Hold every file under ``_superseded/`` to the index that lists it.
+
+    The current-file checks leave these files out, so nothing else would notice
+    one that was placed there by hand to be found later, or one whose bytes
+    changed after it was set aside. Each has to be the copy the index records:
+    at ``_superseded/rev-<from_revision>/<path>`` with the recorded digest. The
+    copies are named once, so that leaving them out is visible, not silent."""
+    report.checks_run.append("superseded_copies")
+    home = root / SUPERSEDED_DIR
+    index_path = home / SUPERSEDED_INDEX
+    copies = [p for p in iter_all_files(root) if is_superseded(p, root)
+              and not (p.parent == home and p.name in _SUPERSEDED_HOUSEKEEPING)]
+    if not copies and not index_path.exists():
+        return
+    entries: List[dict] = []
+    if index_path.exists():
+        try:
+            data = json.loads(_read(index_path))
+            listed = data.get("entries") if isinstance(data, dict) else None
+            if not isinstance(listed, list) or any(not isinstance(e, dict) for e in listed):
+                raise ValueError("it holds no list of entries")
+            entries = listed
+        except (OSError, ValueError) as exc:
+            report.add(Finding(
+                code="SUPERSEDED_INDEX_MISMATCH", severity="major", status=FAIL,
+                message=(f"{SUPERSEDED_DIR}/{SUPERSEDED_INDEX} cannot be read as the index of superseded "
+                         f"copies ({exc}), so no file under {SUPERSEDED_DIR}/ can be accounted for."),
+                location=f"{SUPERSEDED_DIR}/{SUPERSEDED_INDEX}",
+            ))
+            return
+    expected: Dict[str, object] = {
+        f"{SUPERSEDED_DIR}/rev-{entry.get('from_revision')}/{entry.get('path')}": entry.get("sha256")
+        for entry in entries}
+    seen: Set[str] = set()
+    clean = True
+    for path in copies:
+        rel = _rel(path, root)
+        seen.add(rel)
+        if rel not in expected:
+            clean = False
+            report.add(Finding(
+                code="SUPERSEDED_UNINDEXED", severity="major", status=FAIL,
+                message=(f"{rel} is under {SUPERSEDED_DIR}/ but {SUPERSEDED_DIR}/{SUPERSEDED_INDEX} does not list it. "
+                         f"A superseded copy is put there only by `python skills/scripts/run_files.py supersede`, "
+                         f"which records it; remove the file or supersede the original through the command."),
+                location=rel,
+            ))
+        elif _content_sha256(path) != expected[rel]:
+            clean = False
+            report.add(Finding(
+                code="SUPERSEDED_INDEX_MISMATCH", severity="major", status=FAIL,
+                message=(f"{rel} does not have the digest {SUPERSEDED_DIR}/{SUPERSEDED_INDEX} recorded when it was "
+                         f"superseded: the copy was changed afterwards."),
+                location=rel,
+            ))
+    for rel in sorted(set(expected) - seen):
+        clean = False
+        report.add(Finding(
+            code="SUPERSEDED_INDEX_MISMATCH", severity="major", status=FAIL,
+            message=(f"{SUPERSEDED_DIR}/{SUPERSEDED_INDEX} lists {rel}, which is not there: a superseded copy is "
+                     f"preserved, not removed."),
+            location=rel,
+        ))
+    if clean and copies:
+        named = ", ".join(sorted(seen)[:8]) + (f" (+{len(seen) - 8} more)" if len(seen) > 8 else "")
+        report.add(Finding(
+            code="SUPERSEDED_COPIES", severity="info", status=PASS,
+            message=(f"{len(seen)} superseded cop{'y' if len(seen) == 1 else 'ies'} of earlier revisions, indexed "
+                     f"with matching digests, left out of the current package: {named}."),
+            location=SUPERSEDED_DIR,
+        ))
 
 
 def check_required_artifacts(root: Path, manifest: Manifest,
-                             report: Report) -> None:
+                             report: Report, skip: Sequence[Path] = ()) -> None:
+    """``skip`` holds files that are in the package and fill no slot: the records
+    of a ledger other than the one being judged."""
     report.checks_run.append("required_artifacts")
     specs = list(manifest.artifacts)
-    files = iter_all_files(root)
+    files = [f for f in iter_current_files(root) if f not in skip]
     real = {f: f.resolve() for f in files}
     contracts = _contracts_for(manifest, report)
     why = [_optional_because(spec, manifest, contracts) for spec in specs]
@@ -732,8 +962,17 @@ def check_required_artifacts(root: Path, manifest: Manifest,
     blank: Dict[Path, bool] = {}
     candidates: List[List[Path]] = []
     lacking: List[Dict[Path, List[str]]] = []
+    stray: List[List[Path]] = []
     for spec in specs:
         named = [f for f in files if _named(f, spec.patterns)]
+        if spec.exact_paths:
+            # Only the canonical location fills the slot; a name match elsewhere
+            # is reported, never read as the artifact.
+            canonical = [f for f in files if _rel(f, root) in spec.exact_paths]
+            stray.append([f for f in named if f not in canonical])
+            named = canonical
+        else:
+            stray.append([])
         for f in named:
             if f not in blank:
                 blank[f] = is_blank_file(f)
@@ -758,6 +997,16 @@ def check_required_artifacts(root: Path, manifest: Manifest,
     holder = {real[p]: i for i, p in chosen.items() if p is not None}
 
     for i, spec in enumerate(specs):
+        for f in stray[i]:
+            rel = _rel(f, root)
+            report.add(Finding(
+                code="ARTIFACT_NOT_CANONICAL", severity="minor", status=UNCHECKED,
+                message=(f"{rel} is named like the {spec.label} but is not at "
+                         f"{' or '.join(spec.exact_paths)}, the only place that artifact is read from. It does "
+                         f"not fill the slot; confirm what the file is, and move a current one to that path or "
+                         f"set an old one aside with `python skills/scripts/run_files.py supersede`."),
+                location=rel,
+            ))
         if chosen[i] is not None:
             report.add(Finding(
                 code="ARTIFACT_PRESENT", severity="info", status=PASS,
@@ -781,7 +1030,8 @@ def check_required_artifacts(root: Path, manifest: Manifest,
             report.add(Finding(
                 code="ARTIFACT_MISSING", severity="major", status=FAIL,
                 message=(f"Required artifact missing: {spec.label} "
-                         f"(expected one of: {', '.join(spec.patterns)}{near})."),
+                         + (f"(expected at: {', '.join(spec.exact_paths)}{near})." if spec.exact_paths else
+                            f"(expected one of: {', '.join(spec.patterns)}{near}).")),
                 location="package",
             ))
 
@@ -805,17 +1055,24 @@ def _submission_token(value: object) -> Optional[str]:
     return None
 
 
-def check_lineage(root: Path, report: Report) -> None:
+def check_lineage(root: Path, report: Report, records: Sequence[Path] = ()) -> None:
     """Detect packages that mix deliverables from different revisions, and
     surface the submission id / revision the gate keys idempotency on.
 
     Two distinct ``revision:`` values across the package's frontmatter is the
     mechanical signature of a contaminated, mixed-revision submission.
+
+    ``records`` are a ledger's handoff records. Each is one boundary's own
+    submission with its own id and revision, so they are left out here and
+    checked one by one (``check_handoff_records``); a ledger whose other files
+    declare no revision says nothing, because its records carry the lineage.
     """
     report.checks_run.append("lineage")
     revisions: Dict[str, List[str]] = {}
     submission_ids: Dict[str, List[str]] = {}
     for path in iter_package_files(root):
+        if path in records:
+            continue
         fm = parse_frontmatter(_read(path))
         rel = _rel(path, root)
         rev = _revision_token(fm.get("revision"))
@@ -832,7 +1089,10 @@ def check_lineage(root: Path, report: Report) -> None:
             code="MIXED_REVISIONS", severity="major", status=FAIL,
             message=(f"Package mixes deliverables from {len(revisions)} different "
                      f"revisions ({detail}). Reject as untrusted and require a "
-                     f"coherent single-revision set."),
+                     f"coherent single-revision set. A file of an earlier revision that is "
+                     f"kept on purpose is set aside with `python skills/scripts/run_files.py "
+                     f"supersede --run-id <run> --phase <phase> --path <file> --by-revision <n>`, "
+                     f"which moves it to {SUPERSEDED_DIR}/ and out of the current package."),
             location="package",
         ))
     elif len(revisions) == 1:
@@ -842,7 +1102,7 @@ def check_lineage(root: Path, report: Report) -> None:
             message=f"All revision-bearing artifacts agree on revision {rev}.",
             location="package",
         ))
-    else:
+    elif not records:
         report.add(Finding(
             code="REVISION_ABSENT", severity="info", status=UNCHECKED,
             message=("No artifact declares a `revision:` in frontmatter. Confirm "
@@ -955,7 +1215,7 @@ def _declared_identity(root: Path) -> Tuple[Set[str], Set[str]]:
     evidence records its identity."""
     sids: Set[str] = set()
     revs: Set[str] = set()
-    for path in iter_all_files(root):
+    for path in iter_current_files(root):
         if path.suffix.lower() not in _TEXT_SUFFIXES and path != root / "manifest.json":
             continue
         record = _read_record(path)
@@ -969,12 +1229,17 @@ def _declared_identity(root: Path) -> Tuple[Set[str], Set[str]]:
 
 
 def check_idempotency(root: Path, report: Report,
-                      prior_path: Optional[Path]) -> None:
+                      prior_path: Optional[Path],
+                      identity: Optional[Tuple[Set[str], Set[str]]] = None) -> None:
     """Compare the current submission against a prior verdict record so the same
     package is not re-gated under conflicting rationale, and so a reused
     submission id with changed contents is flagged as silent drift. Two packages
     are called different only when both declare an identity; a side that declares
     none leaves the comparison undetermined, never a pass.
+
+    ``identity`` is the ``(submission ids, revisions)`` to compare instead of
+    everything the package declares: a ledger passes the record being judged, so
+    a prior verdict of an earlier boundary is not read as reusable for this one.
     """
     report.checks_run.append("idempotency")
     if prior_path is None:
@@ -1000,7 +1265,7 @@ def check_idempotency(root: Path, report: Report,
     if prior_verdict is None and isinstance(prior.get("pass"), bool):
         prior_verdict = "mechanical pass" if prior["pass"] else "mechanical fail"
 
-    cur_sids, cur_revs = _declared_identity(root)
+    cur_sids, cur_revs = identity if identity is not None else _declared_identity(root)
     known_sid = prior_sid is not None and bool(cur_sids)
     known_rev = prior_rev is not None and bool(cur_revs)
     same_sid = known_sid and prior_sid in cur_sids
@@ -1041,6 +1306,287 @@ def check_idempotency(root: Path, report: Report,
                      f"manually."),
             location=str(prior_path),
         ))
+
+
+# =============================================================================
+# A ledger: one handoff record per boundary
+# =============================================================================
+
+HANDOFF_FIELDS = ("submission_id", "revision", "package_path", "submission_status", "verdict")
+_RECORDED, _PENDING = "VERDICT_RECORDED", "PENDING"
+
+
+class GateCannotRun(Exception):
+    """The gate has no answer and says why: exit 2, never a verdict."""
+
+
+def _ledger_regex(pattern: str) -> re.Pattern:
+    return re.compile(re.escape(pattern).replace(re.escape("{boundary}"), r"(?P<boundary>[^/]+)"))
+
+
+def ledger_records(root: Path, manifest: Manifest) -> Dict[str, Path]:
+    """The current handoff records of a ledger, by boundary name. Empty for a
+    package that is not one."""
+    if not manifest.ledger_pattern:
+        return {}
+    shape = _ledger_regex(manifest.ledger_pattern)
+    found: Dict[str, Path] = {}
+    for path in iter_current_files(root):
+        match = shape.fullmatch(_rel(path, root))
+        if match:
+            found[match.group("boundary")] = path
+    return found
+
+
+def current_record(records: Dict[str, Path], boundary: Optional[str], root: Path) -> Optional[str]:
+    """The boundary whose record is being judged, or None when the ledger holds
+    no record at all.
+
+    Named with ``--boundary``, it is that one, present or not. Otherwise a single
+    record is the current one, and among several the one record still
+    ``submission_status: PENDING``. Anything else has no answer: the gate never
+    picks a record, it asks which one."""
+    if boundary:
+        return boundary
+    if len(records) <= 1:
+        return next(iter(records), None)
+    pending = [name for name, path in sorted(records.items())
+               if str(parse_frontmatter(_read(path)).get("submission_status", "")).strip().upper() == _PENDING]
+    if len(pending) == 1:
+        return pending[0]
+    names = ", ".join(_rel(path, root) for _, path in sorted(records.items()))
+    raise GateCannotRun(
+        f"{len(records)} handoff records and {len(pending) or 'none'} of them PENDING "
+        f"({', '.join(_rel(records[name], root) for name in pending) or 'no pending record'}): the record "
+        f"being judged cannot be told from the earlier ones. Pass --boundary <name>. Records found: {names}.")
+
+
+def _revision_number(value: object) -> Optional[int]:
+    """``3`` and ``r3`` as 3, for comparing two revisions; None for anything else."""
+    token = _revision_token(value)
+    if token is None:
+        return None
+    digits = token[1:] if token[:1] in "rR" else token
+    return int(digits) if digits.isdigit() else None
+
+
+def _same_revision(first: object, second: object) -> bool:
+    a, b = _revision_number(first), _revision_number(second)
+    if a is not None and b is not None:
+        return a == b
+    return _revision_token(first) is not None and _revision_token(first) == _revision_token(second)
+
+
+def _run_directory(root: Path) -> Optional[Path]:
+    """The run directory when ``root`` is a phase directory in the save layout
+    (``skillset-saves/runs/<run>/<phase>``), else None."""
+    real = root.resolve()
+    run = real.parent
+    if run.parent.name == "runs" and run.parent.parent.name == "skillset-saves":
+        return run
+    return None
+
+
+def _handoff_package(run_dir: Path, value: object) -> Optional[Path]:
+    """The phase directory of this run that a record's ``package_path`` names,
+    or None: a path into another run, outside the run, or to nothing."""
+    text = str(value).strip().replace("\\", "/").rstrip("/")
+    if not text:
+        return None
+    candidate = Path(text)
+    path = candidate if candidate.is_absolute() else run_dir.parents[2] / candidate
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+    if resolved.parent != run_dir or resolved.name.startswith("_") or not resolved.is_dir():
+        return None
+    return resolved
+
+
+def _upstream_boundaries(contracts: Optional[Contracts]) -> Dict[str, str]:
+    """``boundary -> the boundary upstream of it`` as pipelines.yaml declares
+    (``upstream_boundary`` on the pipeline that closes the boundary)."""
+    if contracts is None:
+        return {}
+    links: Dict[str, str] = {}
+    for pipeline in _mapping(contracts.pipelines.get("pipelines")).values():
+        pipeline = _mapping(pipeline)
+        if pipeline.get("boundary") and pipeline.get("upstream_boundary"):
+            links[str(pipeline["boundary"])] = str(pipeline["upstream_boundary"])
+    return links
+
+
+def check_handoff_records(root: Path, manifest: Manifest, report: Report,
+                          records: Dict[str, Path], current: Optional[str]) -> None:
+    """Hold every record of a ledger to what it has to be at the moment one
+    boundary is judged.
+
+    The record being judged may be pending; every other one is history and has
+    to be a recorded approval that still agrees with the gate's own verdict
+    record. Without this the ledger failed outright on its second record (two
+    revisions, two submission ids), and nothing tied an earlier record to the
+    verdict it claims or noticed one left stale by a rewind."""
+    report.checks_run.append("handoff_records")
+    if not records:
+        return
+    before = len(report.failures)
+    run_dir = _run_directory(root)
+    contracts: Optional[Contracts] = None
+    if len(records) > 1:
+        # The order of the boundaries is pipelines.yaml's. Without it a stale record cannot be told, and the report says so.
+        try:
+            contracts = Contracts.load()
+        except ContractsUnreadable as exc:
+            report.add(Finding(
+                code="CONTRACTS_UNREADABLE", severity="minor", status=UNCHECKED,
+                message=(f"Could not read gates.yaml / pipelines.yaml ({exc}), so the order of the boundaries is unknown "
+                         f"and a handoff record left stale by a rewind cannot be detected. Check the order by hand."),
+                location="package",
+            ))
+    parsed: Dict[str, dict] = {}
+    for boundary, path in sorted(records.items()):
+        rel = _rel(path, root)
+        fields = parse_frontmatter(_read(path))
+        missing = [name for name in HANDOFF_FIELDS if fields.get(name) in (None, "")]
+        if missing:
+            report.add(Finding(
+                code="HANDOFF_RECORD_INCOMPLETE", severity="major", status=FAIL,
+                message=(f"{rel} has no {', '.join(missing)} in its frontmatter. A handoff record carries "
+                         f"{', '.join(HANDOFF_FIELDS)}."),
+                location=rel))
+            continue
+        parsed[boundary] = fields
+
+    by_submission: Dict[str, List[str]] = {}
+    for boundary, fields in parsed.items():
+        by_submission.setdefault(str(fields["submission_id"]).strip(), []).append(_rel(records[boundary], root))
+    for submission, files in sorted(by_submission.items()):
+        if len(files) > 1:
+            report.add(Finding(
+                code="HANDOFF_DUPLICATE_SUBMISSION", severity="major", status=FAIL,
+                message=f"Submission id {submission!r} is carried by {len(files)} handoff records: {', '.join(files)}. "
+                        f"Each boundary's submission has its own id.",
+                location=files[0]))
+
+    for boundary, fields in sorted(parsed.items()):
+        rel = _rel(records[boundary], root)
+        judged = boundary == current
+        status = str(fields["submission_status"]).strip().upper()
+        verdict = str(fields["verdict"]).strip().upper()
+        if status not in ((_PENDING, _RECORDED) if judged else (_RECORDED,)):
+            wanted = f"{_PENDING} or {_RECORDED}" if judged else f"{_RECORDED}: it is an earlier boundary's record, and its verdict was given"
+            report.add(Finding(
+                code="HANDOFF_STATUS", severity="major", status=FAIL,
+                message=f"{rel}: submission_status is {fields['submission_status']!r}; it has to be {wanted}.",
+                location=rel))
+        if not judged and verdict != "APPROVED":
+            report.add(Finding(
+                code="HANDOFF_NOT_APPROVED", severity="major", status=FAIL,
+                message=(f"{rel}: verdict is {fields['verdict']!r}. A run passes a boundary only on APPROVED, so an "
+                         f"earlier record that is anything else means the run did not get here by its gates."),
+                location=rel))
+        if run_dir is None:
+            continue
+        package = _handoff_package(run_dir, fields["package_path"])
+        if package is None:
+            report.add(Finding(
+                code="HANDOFF_PACKAGE_PATH", severity="major", status=FAIL,
+                message=(f"{rel}: package_path {fields['package_path']!r} is not an existing phase directory of this "
+                         f"run ({run_dir.name})."),
+                location=rel))
+            continue
+        if status == _RECORDED:
+            name = f"verdict_{boundary}.cross-stage.json"
+            verdict_file = package / name
+            where = f"{package.name}/{name}"
+            record = _read_record(verdict_file) if verdict_file.is_file() else None
+            if record is None:
+                report.add(Finding(
+                    code="HANDOFF_VERDICT_MISMATCH", severity="major", status=FAIL,
+                    message=f"{rel} says its verdict is recorded, but {where} does not exist.",
+                    location=rel))
+            else:
+                judgment = record.get("judgment") if isinstance(record.get("judgment"), dict) else {}
+                differing = []
+                if str(judgment.get("verdict", "")).strip().upper() != verdict:
+                    differing.append(f"verdict ({fields['verdict']!r} in the record, {judgment.get('verdict')!r} in judgment.verdict)")
+                if str(fields.get("verdict_id") or "").strip() != str(record.get("verdict_id") or "").strip() or not record.get("verdict_id"):
+                    differing.append(f"verdict_id ({fields.get('verdict_id')!r} in the record, {record.get('verdict_id')!r} in the verdict record)")
+                if not _same_revision(fields["revision"], record.get("revision")):
+                    differing.append(f"revision ({fields['revision']!r} in the record, {record.get('revision')!r} in the verdict record)")
+                for field_text in differing:
+                    report.add(Finding(
+                        code="HANDOFF_VERDICT_MISMATCH", severity="major", status=FAIL,
+                        message=f"{rel} disagrees with {where} on {field_text}. The gate's own record is the verdict.",
+                        location=rel))
+        if judged:
+            manifest_file = package / "manifest.json"
+            data = _read_record(manifest_file) if manifest_file.is_file() else None
+            if data is None:
+                report.add(Finding(
+                    code="HANDOFF_MANIFEST_MISMATCH", severity="major", status=FAIL,
+                    message=f"{rel}: {package.name}/manifest.json does not exist, so the record names no submission.",
+                    location=rel))
+            else:
+                if not _same_revision(fields["revision"], data.get("revision")):
+                    report.add(Finding(
+                        code="HANDOFF_MANIFEST_MISMATCH", severity="major", status=FAIL,
+                        message=(f"{rel} is at revision {fields['revision']!r}; {package.name}/manifest.json is at "
+                                 f"{data.get('revision')!r}. The record hands over the package as submitted."),
+                        location=rel))
+                named = fields.get("manifest_submission_id")
+                if named in (None, ""):
+                    report.add(Finding(
+                        code="HANDOFF_FIELD_MISSING", severity="minor", status=UNCHECKED,
+                        message=(f"{rel} has no manifest_submission_id, the submission_id of {package.name}/manifest.json "
+                                 f"({data.get('submission_id')!r}). Confirm the record hands over that submission; the "
+                                 f"field becomes mandatory in the next release."),
+                        location=rel))
+                elif str(named).strip() != str(data.get("submission_id") or "").strip():
+                    report.add(Finding(
+                        code="HANDOFF_MANIFEST_MISMATCH", severity="major", status=FAIL,
+                        message=(f"{rel}: manifest_submission_id is {named!r}; {package.name}/manifest.json carries "
+                                 f"{data.get('submission_id')!r}."),
+                        location=rel))
+
+    for boundary, upstream in sorted(_upstream_boundaries(contracts).items()):
+        if boundary not in parsed or upstream not in parsed:
+            continue
+        own, above = _revision_number(parsed[boundary]["revision"]), _revision_number(parsed[upstream]["revision"])
+        if own is not None and above is not None and above > own:
+            rel = _rel(records[boundary], root)
+            report.add(Finding(
+                code="HANDOFF_STALE_AFTER_REWIND", severity="major", status=FAIL,
+                message=(f"{rel} is at revision {own}, and the record of the boundary upstream of it, "
+                         f"{_rel(records[upstream], root)}, is at revision {above}: {upstream} was judged again after "
+                         f"this record was written, so it describes a package that no longer follows from its input. "
+                         f"Set it aside with `python skills/scripts/run_files.py supersede` when the run rewinds."),
+                location=rel))
+
+    if run_dir is None:
+        report.add(Finding(
+            code="HANDOFF_PATHS_UNCHECKED", severity="minor", status=UNCHECKED,
+            message=("The ledger is not in the save layout (skillset-saves/runs/<run>/delivery), so no record's "
+                     "package_path, verdict record or manifest could be checked. Confirm them by hand."),
+            location="package"))
+    if len(report.failures) == before:
+        listing = ", ".join(f"{name} r{_revision_number(fields['revision']) if _revision_number(fields['revision']) is not None else fields['revision']} "
+                            f"{str(fields['verdict']).upper()}" for name, fields in sorted(parsed.items()))
+        report.add(Finding(
+            code="HANDOFF_LEDGER_OK", severity="info", status=PASS,
+            message=(f"{len(parsed)} handoff record{'' if len(parsed) == 1 else 's'} ({listing}); the record being judged "
+                     f"is {current or 'none'}."),
+            location="package"))
+
+
+def _record_identity(path: Optional[Path]) -> Optional[Tuple[Set[str], Set[str]]]:
+    """The submission id and revision one record declares, as ``check_idempotency`` takes them."""
+    if path is None or not path.is_file():
+        return None
+    fields = parse_frontmatter(_read(path))
+    sid, rev = _submission_token(fields.get("submission_id")), _revision_token(fields.get("revision"))
+    return ({sid} if sid is not None else set(), {rev} if rev is not None else set())
 
 
 def check_harness_doctrine(root: Path, report: Report) -> None:
@@ -1118,7 +1664,11 @@ def load_blocked_phrases(extra_path: Optional[Path]) -> List[str]:
 
 def run_gate(root: Path, manifest: Manifest,
              prior_path: Optional[Path] = None,
-             blocked_phrases_path: Optional[Path] = None) -> Report:
+             blocked_phrases_path: Optional[Path] = None,
+             boundary: Optional[str] = None) -> Report:
+    """``boundary`` names the record being judged in a ledger (``--boundary``).
+    Raises ``GateCannotRun`` when a ledger holds several records and none can be
+    told to be the current one."""
     report = Report(boundary=manifest.boundary, package_path=str(root))
     if not root.exists() or not root.is_dir():
         report.add(Finding(
@@ -1128,7 +1678,7 @@ def run_gate(root: Path, manifest: Manifest,
         ))
         return report
     check_package_links(root, report)
-    if not iter_all_files(root):
+    if not iter_current_files(root):
         report.add(Finding(
             code="PACKAGE_EMPTY", severity="critical", status=FAIL,
             message=f"No artifacts under {root}.",
@@ -1136,11 +1686,26 @@ def run_gate(root: Path, manifest: Manifest,
         ))
         return report
 
-    check_required_artifacts(root, manifest, report)
-    check_lineage(root, report)
+    records = ledger_records(root, manifest)
+    current = current_record(records, boundary, root) if manifest.ledger_pattern else None
+    identity = None
+    if manifest.ledger_pattern and current is not None:
+        # The record being judged fills the ledger slot from its own path, and the other records fill none.
+        own = manifest.ledger_pattern.replace("{boundary}", current)
+        manifest = dataclasses.replace(manifest, artifacts=tuple(
+            dataclasses.replace(spec, exact_paths=(own,)) if spec.key == manifest.ledger_slot else spec
+            for spec in manifest.artifacts))
+        identity = _record_identity(records.get(current))
+    others = [path for name, path in records.items() if name != current]
+
+    check_superseded(root, report)
+    check_required_artifacts(root, manifest, report, skip=others)
+    check_lineage(root, report, records=list(records.values()))
+    if manifest.ledger_pattern:
+        check_handoff_records(root, manifest, report, records, current)
     check_skip_records(root, report)
     scan_blocked_phrases(root, report, load_blocked_phrases(blocked_phrases_path))
-    check_idempotency(root, report, prior_path)
+    check_idempotency(root, report, prior_path, identity)
     check_harness_doctrine(root, report)
     return report
 
@@ -1229,11 +1794,26 @@ def main_with_manifest(manifest: Manifest, argv: Optional[List[str]] = None,
     always means the gate could not run: a refused package directory, bad
     arguments, or an internal error; it is never a verdict."""
     parser = build_arg_parser(f"Deterministic gate check for {manifest.boundary}.")
+    if manifest.ledger_pattern:
+        parser.add_argument("--boundary", default=None,
+                            help="The gates.yaml boundary whose record is being judged ("
+                                 + manifest.ledger_pattern.replace("{boundary}", "<boundary>") + "). Needed once the "
+                                 "package holds more than one record and not exactly one of them is PENDING.")
     args = parser.parse_args(argv)
     floor_error = runtime_floor_error()
     if floor_error is not None:
         sys.stderr.write(f"ERROR: {floor_error}\n")
         return 2
+    boundary = getattr(args, "boundary", None)
+    if boundary is not None:
+        try:
+            known = sorted(_mapping(Contracts.load().gates.get("boundaries")))
+        except ContractsUnreadable as exc:
+            sys.stderr.write(f"ERROR: --boundary cannot be checked against gates.yaml ({exc}). Gate cannot run.\n")
+            return 2
+        if boundary not in known:
+            sys.stderr.write(f"ERROR: --boundary {boundary!r} is not a boundary in gates.yaml. One of: {', '.join(known)}.\n")
+            return 2
     try:
         package = resolve_package_dir(args.package)
     except PackageRefused as exc:
@@ -1245,12 +1825,16 @@ def main_with_manifest(manifest: Manifest, argv: Optional[List[str]] = None,
             manifest,
             prior_path=Path(args.prior) if args.prior else None,
             blocked_phrases_path=Path(args.blocked_phrases) if args.blocked_phrases else None,
+            boundary=boundary,
         )
         # An empty or missing package has already failed critically and a
         # layout check would only repeat it.
         if not any(f.code in ("PACKAGE_NOT_FOUND", "PACKAGE_EMPTY") for f in report.findings):
             for check in extra_checks:
                 check(package, report)
+    except GateCannotRun as exc:
+        sys.stderr.write(f"ERROR: {exc}\n")
+        return 2
     except Exception as exc:  # fail loud — never a silent pass
         err = {
             "boundary": manifest.boundary,

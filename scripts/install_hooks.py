@@ -63,7 +63,7 @@ EXIT_REFUSED = 2
 EXIT_DECLINED = 3
 
 # Hosts whose registration this script can verify after writing it.
-NATIVE_HOSTS = ("codex", "claude", "copilot")
+NATIVE_HOSTS = ("codex", "claude", "copilot", "antigravity")
 # Hosts that need a plugin package the harness verifier cannot inspect.
 PLUGIN_HOSTS = ("cursor", "opencode", "pi")
 HOSTS = NATIVE_HOSTS + PLUGIN_HOSTS
@@ -142,7 +142,8 @@ def _write_text(path: Path, before: str, after: str, dry_run: bool, repair, priv
 
 def _native_target(args: argparse.Namespace, host: str, repair) -> tuple[Path, bool]:
     """Resolve one native host's config file (an explicit override, else --scope) and whether it was overridden."""
-    override = {"codex": args.codex_hooks, "claude": args.claude_settings, "copilot": args.copilot_hooks}[host]
+    override = {"codex": args.codex_hooks, "claude": args.claude_settings, "copilot": args.copilot_hooks,
+                "antigravity": args.antigravity_hooks}[host]
     if override:
         return Path(override).expanduser(), True
     try:
@@ -158,19 +159,52 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
         path = repair.resolve_config(link, through_links=overridden or args.scope == "user")
     except ValueError as exc:
         raise Refused(str(exc)) from exc
+    if not overridden:
+        # A host that fails closed is not given a repository file with this machine's paths unless that was asked for.
+        refusal = repair.absolute_refusal(host, args.scope, link, args.allow_absolute)
+        if refusal:
+            raise Refused(refusal)
     before = _read_text(path)
     config = _read_config(path)
+    # What the host reads besides this file (Codex's inline [hooks] tables in the config.toml beside hooks.json, the
+    # other files of a Copilot hook directory): what is registered there is registered, and writing it here as well
+    # would run it twice.
+    others = verify.other_registrations(host, path)
+    inline = others if host == "codex" else []
     try:
-        desired, added = repair.plan(json.loads(json.dumps(config)), host, args.python_command)
+        desired, added = repair.plan(json.loads(json.dumps(config)), host, args.python_command, others or None)
     except ValueError as exc:
         raise Refused(f"{path}: {exc}") from exc
 
+    status_notes: list[str] = []
+    if args.statusline and host == repair.STATUSLINE_HOST:
+        # The status-line sidecar that tells the hooks how full the context window is: set when none is configured.
+        desired, status_added, status_notes = repair.plan_statusline(desired, host, args.python_command)
+        added = added + status_added
     after = json.dumps(desired, indent=2) + "\n"
     backup = None
+    probe_notes: list[str] = []
+    if added and not args.dry_run:
+        # Start each new command the way the host will before anything is written: a registration that cannot start
+        # reads as an enforced guard and enforces nothing, and on a host that fails closed it denies every tool call,
+        # so there the probe cannot be skipped.
+        failures, probe_notes = repair.checked_start(config, desired, host, skip=args.no_probe)
+        if failures:
+            raise Refused(f"{path}: refusing to write a registration that cannot start: {'; '.join(failures)}")
     if added:
         backup = _write_text(path, before, after, args.dry_run, repair, private=args.scope == "user")
     elif args.dry_run:
         print(f"  (no change to {path})")
+    written = repair.written_handlers(config, desired, host)
+    # A file an earlier version wrote where the host does not look: set aside when it is ours alone, named otherwise.
+    legacy = [] if overridden else repair.set_legacy_aside(host, args.scope, apply=not args.dry_run)
+    if repair.replaces_legacy_bridge(config, desired):
+        legacy.append(repair.LEGACY_BRIDGE_NOTE)
+    if host == "antigravity" and not overridden and args.scope == "user":
+        # Antigravity lists the catalog's skills only when its skills.json names the common install by an absolute
+        # path, so that file is written with the hooks.
+        legacy.extend(repair.sync_antigravity_skills(apply=not args.dry_run))
+    twice = repair.double_run_note(host) if added else None
 
     result = {
         "host": host,
@@ -180,7 +214,14 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
         "backup": str(backup) if backup else None,
         "applied": bool(added) and not args.dry_run,
         "notes": ([] if overridden else repair.scope_warnings(host, args.scope, link))
-        + ([repair.link_warning(link, path)] if path != link else []),
+        + ([repair.link_warning(link, path)] if path != link else [])
+        + ([repair.CODEX_INLINE_NOTE] if inline else [])
+        + ([repair.CODEX_TRUST_NOTE] if host == "codex" and added else [])
+        + ([repair.PARTS_NOTE] if any("args" in handler for _, handler in written) else [])
+        + ([twice] if twice else [])
+        + legacy
+        + status_notes
+        + probe_notes,
     }
     if args.dry_run:
         result["hooks"] = {}
@@ -189,7 +230,7 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
 
     # Re-read what is now on disk and ask the harness verifier, rather than
     # trusting that writing the file was the same thing as registering a hook.
-    states = verify.hook_states([_read_config(path)], host)
+    states = verify.hook_states([_read_config(path), *others], host)
     hooks = {}
     for key, script in verify.REQUIRED:
         state = states[key]
@@ -204,6 +245,13 @@ def register_native(args: argparse.Namespace, host: str, verify, repair) -> dict
 def register_cursor(args: argparse.Namespace, repair) -> dict:
     """Write the Cursor plugin package. Cursor's schema is not the native hook schema."""
     root = Path(args.cursor_plugin).expanduser()
+
+    def command(script: str) -> str:
+        try:
+            return repair.command_for(script, args.python_command, "cursor")
+        except ValueError as exc:
+            raise Refused(str(exc)) from exc
+
     manifest = {
         "name": "supremeteam-hooks",
         "version": "1.0.0",
@@ -215,17 +263,17 @@ def register_cursor(args: argparse.Namespace, repair) -> dict:
             "preToolUse": [
                 {
                     "matcher": repair.matcher_for("pre_tool_use.py", "cursor"),
-                    "command": repair.command_for("pre_tool_use.py", args.python_command),
+                    "command": command("pre_tool_use.py"),
                 }
             ],
             "postToolUse": [
                 {
                     "matcher": repair.matcher_for("post_tool_use.py", "cursor"),
-                    "command": repair.command_for("post_tool_use.py", args.python_command),
+                    "command": command("post_tool_use.py"),
                 }
             ],
             "beforeSubmitPrompt": [
-                {"command": repair.command_for("user_prompt_submit.py", args.python_command)}
+                {"command": command("user_prompt_submit.py")}
             ],
         }
     }
@@ -668,7 +716,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Register Supreme Team harness hooks in a host's native configuration.",
         epilog=(
-            "codex, claude and copilot are verified after writing. cursor, opencode and pi need a "
+            "codex, claude, copilot and antigravity are verified after writing. cursor, opencode and pi need a "
             "plugin package or extension the harness verifier cannot inspect."
         ),
     )
@@ -680,16 +728,29 @@ def parse_args() -> argparse.Namespace:
                         help="interpreter to register (a path, or a launcher with arguments such as 'py -3'); "
                              "default: the interpreter running this script")
     parser.add_argument("--scope", choices=["user", "project", "local"], default="user",
-                        help="which config file to write for codex/claude/copilot: user is the global file, "
+                        help="which config file to write for codex/claude/copilot/antigravity: user is the global file, "
                              "project and local belong to the project around the working directory (default: user)")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the unified diff for every file and write nothing")
     parser.add_argument("--yes", action="store_true",
                         help="do not ask before writing (a terminal run otherwise previews and asks)")
     parser.add_argument("--json", action="store_true", help="append a machine-readable report")
+    parser.add_argument("--no-probe", action="store_true",
+                        help="write a codex or claude registration without first starting each new command the way the "
+                             "host will (the default refuses to write a command that does not start). Not accepted for "
+                             "copilot, where a hook that cannot start denies every tool call")
+    parser.add_argument("--statusline", action="store_true",
+                        help="claude: also register context_statusline.py as the status line, when none is configured, so "
+                             "that a run in flight is advised as the context window fills (a configured one is left alone "
+                             "and the command that keeps it is printed)")
+    parser.add_argument("--allow-absolute", action="store_true",
+                        help="write a copilot project-scope file although it holds this machine's absolute paths "
+                             "(refused by default: where those paths do not exist, every tool call is denied)")
     parser.add_argument("--codex-hooks", default=None, help="override the codex config path")
     parser.add_argument("--claude-settings", default=None, help="override the claude config path")
     parser.add_argument("--copilot-hooks", default=None, help="override the copilot config path")
+    parser.add_argument("--antigravity-hooks", default=None,
+                        help="override the antigravity hooks.json path (skills.json is then left alone)")
     parser.add_argument("--cursor-plugin",
                         default=str(Path.home() / ".cursor" / "plugins" / "local" / "supremeteam-hooks"))
     parser.add_argument("--opencode-plugin",
@@ -725,7 +786,11 @@ def _run_targets(args: argparse.Namespace, targets: list[str], verify, repair) -
         results.append(result)
 
         # The interpreter is registered as given, so say now if it cannot run the hooks.
-        warning = verify.interpreter_warning(verify.interpreter_report(repair.command_for("pre_tool_use.py", args.python_command)))
+        try:
+            handler = repair.hook_handler("pre_tool_use.py", args.python_command, host if host in repair.WINDOWS_FORMS else "claude")
+            warning = verify.interpreter_warning(verify.interpreter_report(handler["command"], verify.handler_tokens(handler)))
+        except ValueError:
+            warning = None
         print(f"  config: {result['path']}")
         for note in [*result.get("notes", []), *([warning] if warning else [])]:
             print(f"  note: {note}")

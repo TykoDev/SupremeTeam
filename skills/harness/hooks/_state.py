@@ -45,6 +45,8 @@ try:
 except ModuleNotFoundError:  # loaded by path (a tool that reads ROOT_MARKERS), not run from this directory
     import importlib.util
 
+    if not Path(__file__).resolve().with_name("_bootstrap.py").is_file():
+        raise  # the file is not there at all: an import error the caller can name, not a FileNotFoundError
     _spec = importlib.util.spec_from_file_location("_bootstrap", Path(__file__).resolve().with_name("_bootstrap.py"))
     _bootstrap = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(_bootstrap)
@@ -65,6 +67,20 @@ except ImportError:
     RUN_ID = None
 except (Exception, SystemExit) as _exc:
     RUN_ID, TAXONOMY_FAULT = None, _exc
+
+# A linked git worktree keeps its runtime state in the main checkout (``state_root``). The mapping lives in
+# skills/scripts so the path tools share it; a copy of the hooks without that directory still guards, with the project
+# as its own state root, and a module that fails its import is counted like the taxonomy above.
+try:
+    from checkout import checkout_root
+except ImportError:
+    def checkout_root(root):
+        return Path(root)
+except (Exception, SystemExit) as _exc:
+    TAXONOMY_FAULT = TAXONOMY_FAULT or _exc
+
+    def checkout_root(root):
+        return Path(root)
 
 # Maximum trajectory signatures retained per identity (bounded memory).
 _MAX_TRAJ = 40
@@ -120,6 +136,21 @@ def project_root() -> Path:
     return find_project_root()
 
 
+def state_root() -> Path:
+    """Where the project's runtime state lives: ``project_root()``, or its main checkout when that is a linked worktree.
+
+    ``.harness-state/`` and ``skillset-saves/`` are git-ignored, so a linked git worktree has neither: the guard record,
+    the run records, the heartbeat, the trajectories and the observation counters are the main checkout's. A host that
+    reports a worktree as the project (a session started with ``claude --worktree``) used to be read as a project with
+    no record at all, and no boundary was enforced there. ``project_root()`` keeps its meaning, the tree a call acts in;
+    this is the tree its state is in. A fault answers with the project root."""
+    root = project_root()
+    try:
+        return Path(checkout_root(root))
+    except Exception:
+        return root
+
+
 def _fallback_dir(base: Path) -> Path:
     namespace = hashlib.sha256(str(base).encode("utf-8", "ignore")).hexdigest()[:16]
     return Path(tempfile.gettempdir()) / "supremeteam-harness-state" / namespace
@@ -128,15 +159,15 @@ def _fallback_dir(base: Path) -> Path:
 def state_dir(root: "str | Path | None" = None, *, create: bool = True) -> Path:
     """Return the harness state directory, creating it unless ``create`` is false.
 
-    Prefers ``<project root>/.harness-state`` (the root resolves as
-    ``project_root`` documents, or is the ``root`` given) so guard/freeze records
+    Prefers ``<state root>/.harness-state`` (the root resolves as
+    ``state_root`` documents, or is the ``root`` given) so guard/freeze records
     and trajectory state live with the project; falls back to a *project-namespaced*
     private directory under the OS temp root when that cannot be created (never
     one shared temp directory across unrelated projects). A reader passes
     ``create=False``: looking at state never makes any, and it finds the fallback
     where a writer put it.
     """
-    base = Path(root) if root is not None else project_root()
+    base = Path(root) if root is not None else state_root()
     primary = base / ".harness-state"
     if not create:
         try:
@@ -194,7 +225,7 @@ def existing_state_dir(base: "str | Path | None" = None) -> "Path | None":
     same two places (the project's ``.harness-state`` and the temp fallback) and
     never creates either.
     """
-    root = Path(base) if base else project_root()
+    root = Path(base) if base else state_root()
     namespace = hashlib.sha256(str(root).encode("utf-8", "ignore")).hexdigest()[:16]
     for candidate in (root / ".harness-state", Path(tempfile.gettempdir()) / "supremeteam-harness-state" / namespace):
         try:
@@ -243,6 +274,70 @@ def read_hook_input(event: "str | None" = None) -> dict:
         if event:
             record_fault(event, exc)
         return {}
+
+
+# --- The answer a host reads ---------------------------------------------------------------------------
+#
+# Hosts do not read a hook's answer in one shape. Claude Code and Codex read the decision and the context under
+# ``hookSpecificOutput``. GitHub Copilot documents ``permissionDecision`` and ``additionalContext`` at the top level of
+# the object and nothing nested, and a pre-tool answer it cannot read lets the call through. The registrar appends
+# ``--host <name>`` to the command it writes for a host that needs another shape; without the argument the output is
+# what it always was. The shape is chosen by that argument and never by emitting both: Claude Code 2.1.322 honours a
+# deny that carries both and ignores one that carries only the top-level form, which is one host and one version.
+HOST_ARGUMENT = "--host"
+SELFTEST_ARGUMENT = "--selftest"
+TOP_LEVEL_OUTPUT_HOSTS = frozenset({"copilot"})
+
+
+def output_host(argv: "list | None" = None) -> str:
+    """The host a registered command names with ``--host <name>`` (or ``--host=<name>``), lower-cased; ``""`` for none."""
+    args = [str(arg) for arg in (sys.argv[1:] if argv is None else argv)]
+    for index, arg in enumerate(args):
+        if arg == HOST_ARGUMENT and index + 1 < len(args):
+            return args[index + 1].strip().lower()
+        if arg.startswith(HOST_ARGUMENT + "="):
+            return arg.split("=", 1)[1].strip().lower()
+    return ""
+
+
+def deny_output(reason: str, host: "str | None" = None) -> dict:
+    """A pre-tool deny in the shape ``host`` reads (the command line's host by default)."""
+    host = output_host() if host is None else host
+    if host in TOP_LEVEL_OUTPUT_HOSTS:
+        return {"permissionDecision": "deny", "permissionDecisionReason": reason}
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                   "permissionDecisionReason": reason}}
+
+
+def context_output(event: str, context: str, host: "str | None" = None) -> dict:
+    """Context for the model in the shape ``host`` reads (the command line's host by default)."""
+    host = output_host() if host is None else host
+    if host in TOP_LEVEL_OUTPUT_HOSTS:
+        return {"additionalContext": context}
+    return {"hookSpecificOutput": {"hookEventName": event, "additionalContext": context}}
+
+
+def event_key(data: dict) -> "str | None":
+    """What tells one tool event from the next, for a hook the host may run twice for the same event (GitHub Copilot
+    CLI runs the hooks of ``.github/hooks/*.json`` and of the project's ``.claude/settings.json``).
+
+    The host's own id for the call when the payload has one (Claude Code's ``tool_use_id``). Otherwise a digest of the
+    payload, and only when the payload carries a ``timestamp``: two deliveries of one event are the same bytes, while
+    the same command run again is a new event with a new time. With neither there is nothing to tell a second delivery
+    from a repeat, and a repeat must stay countable, so the answer is None and nothing is dropped."""
+    if not isinstance(data, dict):
+        return None
+    for name in ("tool_use_id", "toolUseId", "tool_call_id", "toolCallId"):
+        value = data.get(name)
+        if isinstance(value, str) and value.strip():
+            return "id:" + hashlib.sha256(value.strip().encode("utf-8", "replace")).hexdigest()[:24]
+    if data.get("timestamp") in (None, ""):
+        return None
+    try:
+        text = json.dumps(data, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return None
+    return "digest:" + hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:24]
 
 
 # --- Guard / Freeze boundary (written by the guard & freeze skills) ----------
@@ -401,7 +496,7 @@ def read_mapping(path: Path) -> "dict | None":
 def active_run_id(root: "str | Path | None" = None) -> str:
     """Best-effort run scope from the save pointer; never raises."""
     try:
-        pointer = (Path(root) if root is not None else project_root()) / "skillset-saves" / "_latest.md"
+        pointer = (Path(root) if root is not None else state_root()) / "skillset-saves" / "_latest.md"
         if not pointer.is_file():
             return "no-run"
         text = pointer.read_text(encoding="utf-8")
@@ -624,11 +719,17 @@ def load_trajectory(identity: str) -> list:
     return data if isinstance(data, list) else []
 
 
-def append_trajectory(identity: str, entry: dict) -> list:
-    """Append one step signature and return the bounded recent history."""
+def append_trajectory(identity: str, entry: dict) -> "list | None":
+    """Append one step signature and return the bounded recent history.
+
+    An entry that carries an ``event`` (``event_key``) the history already holds is a second delivery of the same tool
+    event: it is not appended, and the answer is None so that the caller says nothing twice."""
     path = _traj_path(identity)
     with _fsutil.AdvisoryLock(path.parent / ".append.lock", TRAJECTORY_LOCK_WAIT, create_dir=True, fail_open=True):
         history = load_trajectory(identity)
+        key = entry.get("event")
+        if key and any(isinstance(step, dict) and step.get("event") == key for step in history):
+            return None
         history.append(entry)
         history = history[-_MAX_TRAJ:]
         write_json(path, history)

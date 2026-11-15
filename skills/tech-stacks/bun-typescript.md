@@ -1,7 +1,7 @@
-# Bun 1.2+ and TypeScript
+# Bun 1.4+ and TypeScript
 
 ## Baseline
-- Use Bun 1.2+ as the runtime, package manager, bundler, and built-in test runner for TypeScript services.
+- Bun 1.4 or newer, as the runtime, package manager, bundler, and built-in test runner for TypeScript services. Bun has no support policy: only the newest release line is maintained.
 - Treat native TypeScript execution and ESM as the default; keep CommonJS only where a dependency requires it.
 - Use a single event loop for I/O-bound work and move CPU-heavy work behind an explicit worker or separate service boundary.
 - Choose Elysia for a typed full HTTP service, Hono for a portable edge service, or `Bun.serve()` for a deliberately small endpoint surface.

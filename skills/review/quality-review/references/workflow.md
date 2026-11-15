@@ -43,7 +43,7 @@ judgment calls inside it.
 `../SKILL.md` states the contracts; this section records only where each one
 lands in the sequence above, so the two documents do not restate each other.
 
-- Read-only over the reviewed surface — binds from step 1 through packaging; the remediation order produced at step 4 is the deliverable, and no step of this sequence restructures the code it judges.
+- Read-only over the reviewed surface — binds from step 1 through packaging; the remediation order produced at step 4 is the deliverable, and no step of this sequence restructures the code it judges. The packet itself is written into the run with `run_files.py write` or to the literal `Save path` (SKILL.md, Read-only over the reviewed surface), never to a path built when the command runs.
 - Before/After Evidence — the "before" is the boundary map built at step 1, which is what a later claim of reduced coupling is measured against.
 - Shared severity — assigned at step 3 using the grade table in `../SKILL.md`, so blocking and tracked debt stay inside the four tiers instead of becoming a parallel vocabulary.
 - Save-Protocol Adherence — the step 4 packet is what the save path receives, under the filename `../SKILL.md` mandates for the gate slot.

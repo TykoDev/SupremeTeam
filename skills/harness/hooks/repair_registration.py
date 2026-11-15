@@ -45,15 +45,22 @@ import getpass
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
-import _fsutil
-import _state
-import verify_registration as verify
+try:
+    import _fsutil
+    import _state
+    import verify_registration as verify
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    print(json.dumps({"ok": False, "error": f"repair_registration.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog."}))
+    raise SystemExit(2) from exc
 
 HOOK_DIR = Path(__file__).resolve().parent
 matcher_for = verify.matcher_for
@@ -63,6 +70,7 @@ STATUS_MESSAGES = {
     "pre_tool_use.py": "SupremeTeam: checking pending tool use",
     "post_tool_use.py": "SupremeTeam: checking trajectory",
     "user_prompt_submit.py": "SupremeTeam: checking entry routing",
+    "context_events.py": "SupremeTeam: saving run context",
 }
 
 
@@ -75,8 +83,12 @@ def target_path(host: str, scope: str) -> Path:
         ("claude", "local"): project / ".claude/settings.local.json",
         ("codex", "user"): home / ".codex/hooks.json",
         ("codex", "project"): project / ".codex/hooks.json",
-        ("copilot", "user"): home / ".config/github-copilot/hooks.json",
-        ("copilot", "project"): project / ".github/hooks.json",
+        # Copilot reads every *.json in these two directories; the file written is ours alone.
+        ("copilot", "user"): verify.copilot_home() / "hooks" / verify.COPILOT_FILE,
+        ("copilot", "project"): project / ".github" / "hooks" / verify.COPILOT_FILE,
+        # Antigravity: its global hook file, or the workspace's. The group `supremeteam` in it is ours.
+        ("antigravity", "user"): verify.antigravity_files()["hooks"],
+        ("antigravity", "project"): verify.antigravity_files()["workspace"],
     }
     if (host, scope) not in table:
         raise ValueError(f"scope {scope!r} is not defined for host {host!r}")
@@ -91,6 +103,24 @@ def scope_warnings(host: str, scope: str, path: Path) -> list[str]:
         advice = "use --scope local for a per-machine file" if host == "claude" else "keep it out of the commit"
         return [f"project scope writes machine-absolute hook paths into {path}, a file projects usually commit; {advice}"]
     return []
+
+
+ALLOW_ABSOLUTE = "--allow-absolute"
+
+
+def absolute_refusal(host: str, scope: str, path: Path, allowed: bool = False) -> "str | None":
+    """Why a project-scope registration with machine-absolute paths is not written for ``host``, or None.
+
+    On a host that fails closed the usual warning is not enough. A repository's ``.github/hooks/*.json`` is read
+    wherever the repository is checked out, Copilot's cloud agent included, and there the interpreter and the hook
+    path of this machine do not exist: the pre-tool command exits non-zero, which that host reads as a deny, so every
+    tool call in the repository is refused. The file is written only when the operator says so."""
+    if scope != "project" or host not in verify.FAIL_CLOSED_HOSTS or allowed:
+        return None
+    return (f"project scope would write this machine's absolute interpreter and hook paths into {path}, which {host} reads "
+            f"wherever the repository is checked out (its cloud agent too). A pre-tool hook that cannot start denies the "
+            f"tool call on {host}, so every tool call would be refused there. Register at user scope (--scope user), or "
+            f"pass {ALLOW_ABSOLUTE} to write the file anyway and keep it out of the commit")
 
 
 def launcher_token(python: str) -> str:
@@ -169,17 +199,399 @@ def utf8_flags(python: str) -> list[str]:
     return ["-X", "utf8"]
 
 
-def command_for(script: str, python: str) -> str:
-    return " ".join([launcher_token(python), *utf8_flags(python), f'"{HOOK_DIR / script}"'])
+# --- the command a host can start (Windows) ----------------------------------------------------------
+#
+# A hook command is text a shell reads, and on Windows the hosts do not share a shell: Claude Code uses Git Bash,
+# Codex and Copilot PowerShell or cmd, Antigravity ``cmd /C`` with the quotes escaped. One form starts in all of them
+# but the last: the interpreter unquoted, the hook path quoted, forward slashes throughout. It works because its first
+# word is never quoted (PowerShell reads a command that begins with a quote as a string) and holds no backslash (Git
+# Bash consumes them). Every form here was run through Git Bash, PowerShell 7, Windows PowerShell 5.1 and cmd, and
+# through real Claude Code sessions; test_registration_shells.py repeats the matrix.
+
+class CommandRefused(ValueError):
+    """No command that starts on the host can be written for these paths. The message names the ways out."""
 
 
-def plan(config: dict, host: str, python: str) -> tuple[dict, list[str]]:
+_DRIVE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
+_EXTENDED_PREFIX = "\\\\?\\"
+_REFUSAL_ADVICE = ("Install to a destination and an interpreter whose paths hold no space, or name a launcher with "
+                   "--python (for example --python \"py -3.13\").")
+# What each host is given on Windows: the form, and the fallback when no launcher without a space qualifies
+# (None refuses). OpenCode and pi start the interpreter without a shell through their own bridges and are not here.
+WINDOWS_FORMS = {"claude": ("standard", "parts"), "codex": ("standard", None), "cursor": ("standard", None),
+                 "copilot": ("standard", "call"), "antigravity": ("bare", None)}
+
+
+def windows_shaped(path: str) -> bool:
+    """A drive-letter path or a backslash UNC path. A backslash by itself proves nothing: it is a legal character in a
+    POSIX file name, so only these two shapes are converted."""
+    return bool(_DRIVE_PATH.match(path)) or path.startswith("\\\\")
+
+
+def forward_slashes(path: str) -> str:
+    """``path`` with forward slashes when it is Windows-shaped, unchanged otherwise.
+
+    An extended-length prefix (``\\\\?\\C:\\...``) is dropped when the rest is an ordinary drive path. Any other
+    extended path (``\\\\?\\UNC\\...``, a device) is refused: no shell command can name it."""
+    if path.startswith(_EXTENDED_PREFIX):
+        rest = path[len(_EXTENDED_PREFIX):]
+        if not _DRIVE_PATH.match(rest):
+            raise CommandRefused(f"{path} is an extended-length path that is not a plain drive path, and no shell command "
+                                 f"can name it. {_REFUSAL_ADVICE}")
+        path = rest
+    return PureWindowsPath(path).as_posix() if windows_shaped(path) else path
+
+
+def standard_form(launcher: list[str], script: str) -> str:
+    """``C:/Py/python.exe -X utf8 "C:/Users/Jane Doe/.agents/skills/harness/hooks/pre_tool_use.py"``: the interpreter
+    unquoted, the hook path quoted. Starts in Git Bash, both PowerShells and cmd."""
+    if " " in launcher[0]:
+        raise CommandRefused(f"the interpreter path {launcher[0]!r} holds a space, and the standard form leaves it unquoted")
+    return " ".join([*launcher, f'"{script}"'])
+
+
+def bare_form(launcher: list[str], script: str) -> str:
+    """``C:/Py/python.exe -X utf8 C:/h/pre_tool_use.py``: nothing quoted. The one form Antigravity can run."""
+    for part in (launcher[0], script):
+        if " " in part or '"' in part or "'" in part:
+            raise CommandRefused(f"{part!r} holds a space or a quote, and this host cannot run a command that contains a "
+                                 f"quote. {_REFUSAL_ADVICE}")
+    return " ".join([*launcher, script])
+
+
+def call_form(launcher: list[str], script: str) -> str:
+    """``& "C:/Program Files/Py/python.exe" -X utf8 "C:/h/pre_tool_use.py"``: PowerShell only."""
+    return " ".join(["&", f'"{launcher[0]}"', *launcher[1:], f'"{script}"'])
+
+
+def parts_form(launcher: list[str], script: str) -> dict:
+    """``{"command": interpreter, "args": [...]}``: started directly, with no shell to read it."""
+    return {"command": launcher[0], "args": [*launcher[1:], script]}
+
+
+def py_launcher_for(interpreter: str) -> "str | None":
+    """``py -<major>.<minor>`` when the ``py`` launcher is on PATH and that selector starts this very interpreter, else None.
+
+    A launcher is how a command avoids naming an interpreter whose path holds a space. It qualifies only when it
+    resolves to the same file: for a virtual environment it does not, and registering the base interpreter in its place
+    would run the hooks on another set of packages."""
+    launcher = shutil.which("py")
+    if not launcher:
+        return None
+    version = verify._probe_version(interpreter, [])
+    if not version:
+        return None
+    selector = f"-{version[0]}.{version[1]}"
+    try:
+        done = subprocess.run([launcher, selector, "-I", "-S", "-c", "import sys; print(sys.executable)"],
+                              capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL, check=False)
+        same = done.returncode == 0 and os.path.samefile(done.stdout.strip(), interpreter)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return f"py {selector}" if same else None
+
+
+def hook_handler(script: str, python: str, host: str = "claude", *, windows: "bool | None" = None,
+                 hook_dir: "str | Path | None" = None, py_launcher=None, event: "str | None" = None) -> dict:
+    """The fields that start one hook on ``host``: ``{"command": text}``, with ``args`` beside it for the no-shell form.
+
+    On POSIX the command is what it always was. On Windows the form is the host's row of ``WINDOWS_FORMS``, and the
+    first word has to hold no space: the interpreter's own path, else ``py -<major>.<minor>`` when the launcher starts
+    the same interpreter (``py_launcher``, ``py_launcher_for`` by default), else the host's fallback. Raises
+    ``CommandRefused`` when the host has none. ``windows`` and ``hook_dir`` default to this machine and this directory;
+    naming them builds the command for another. ``event`` is the event the command is registered under, which a host
+    whose bridge serves every event is given as the script's argument."""
+    return _with_host_arguments(_start_fields(script, python, host, windows=windows, hook_dir=hook_dir, py_launcher=py_launcher),
+                                verify.registration_arguments(script, host, event))
+
+
+def _start_fields(script: str, python: str, host: str, *, windows: "bool | None", hook_dir: "str | Path | None",
+                  py_launcher) -> dict:
+    """``hook_handler`` before the host's own arguments are added."""
+    windows = os.name == "nt" if windows is None else windows
+    directory = str(HOOK_DIR if hook_dir is None else hook_dir)
+    if not windows:
+        hook = str(HOOK_DIR / script) if hook_dir is None else f"{directory.rstrip('/')}/{script}"
+        if host == "antigravity":
+            return {"command": bare_form([*launcher_parts(python), *utf8_flags(python)], hook)}
+        return {"command": " ".join([launcher_token(python), *utf8_flags(python), f'"{hook}"'])}
+    hook = forward_slashes(directory).rstrip("/") + "/" + script
+    interpreter, *extra = launcher_parts(python)
+    interpreter = forward_slashes(interpreter)
+    flags = utf8_flags(python)
+    form, fallback = WINDOWS_FORMS.get(host, ("standard", None))
+    launcher = [interpreter, *extra, *flags]
+    if " " in interpreter:
+        selector = (py_launcher or py_launcher_for)(interpreter)
+        if selector:
+            launcher = [*selector.split(), *extra, *flags]
+        elif fallback == "parts":
+            return parts_form(launcher, hook)
+        elif fallback == "call":
+            return {"command": call_form(launcher, hook)}
+        else:
+            raise CommandRefused(f"the interpreter path {interpreter!r} holds a space, no py launcher starts that interpreter, "
+                                 f"and {host} needs a command whose first word is unquoted. {_REFUSAL_ADVICE}")
+    return {"command": bare_form(launcher, hook) if form == "bare" else standard_form(launcher, hook)}
+
+
+def _with_host_arguments(handler: dict, arguments: tuple) -> dict:
+    """``handler`` with the arguments that go after the script on its host (``verify.host_arguments``): ``--host
+    copilot`` makes the hooks answer in the shape Copilot reads."""
+    extra = list(arguments)
+    if not extra:
+        return handler
+    if "args" in handler:
+        return {**handler, "args": [*handler["args"], *extra]}
+    return {**handler, "command": " ".join([handler["command"], *extra])}
+
+
+def command_for(script: str, python: str, host: str = "claude", **options) -> str:
+    """The command text that starts one hook on ``host`` (``hook_handler``), for a host whose config holds only text.
+    Raises ``CommandRefused`` when the only form that starts there is the no-shell one."""
+    handler = hook_handler(script, python, host, **options)
+    if "args" in handler:
+        raise CommandRefused(f"the interpreter path {handler['command']!r} holds a space and no py launcher starts that "
+                             f"interpreter, so only a command with separate arguments starts it. {_REFUSAL_ADVICE}")
+    return handler["command"]
+
+
+def hook_events(host: str) -> list[tuple[str, str]]:
+    """``(event, script)`` for every hook the registrar writes on ``host``: the required three, then the recommended ones."""
+    return [(verify.EVENTS[host][key], verify.registered_script(host, script)) for key, script in verify.REQUIRED] + \
+        [(event, script) for _, script, event in verify.recommended(host)]
+
+
+def _own_handlers(config: dict, host: str, event: str, script: str) -> list[dict]:
+    """The handlers under one event that launch ``script`` by the words they hold, whatever a shell makes of them."""
+    return [handler for handler, _ in verify._handlers([config], event, host)
+            if verify.analyse(handler["command"], script, verify.handler_tokens(handler))["executable"]]
+
+
+def _replace_defective(config: dict, host: str, python: str) -> list[str]:
+    """Rewrite, in place, each Supreme Team handler whose command cannot start in the host's shell.
+
+    The entry keeps its group, its matcher and every other field; only how the hook is started changes. Appending a
+    working group beside it instead would leave the broken command registered, failing on every tool call. An entry
+    that does not launch one of our scripts is never touched."""
+    replaced = []
+    if host in verify.FLAT_HOSTS or host in verify.GROUPED_HOSTS:
+        return replaced  # such a host's entries are replaced whole by its own planner
+    for event, script in hook_events(host):
+        for handler in _own_handlers(config, host, event, script):
+            defects = verify.handler_defects(handler, host)
+            if not defects:
+                continue
+            fresh = hook_handler(script, python, host)
+            handler.pop("args", None)
+            handler.update(fresh)
+            replaced.append(f"{event} -> {script} (replaces a command that cannot start: {defects[0]})")
+    return replaced
+
+
+_FLAT_COMMAND_FIELDS = ("bash", "powershell", "command")
+
+
+def _launches(entry, script: str) -> bool:
+    """Whether a flat-host entry names ``script`` in any of its command fields, on whichever platform it was written."""
+    if not isinstance(entry, dict):
+        return False
+    return any(isinstance(entry.get(field), str) and verify.analyse(entry[field], script)["configured"]
+               for field in _FLAT_COMMAND_FIELDS)
+
+
+def flat_entry(script: str, python: str, host: str) -> dict:
+    """The handler the registrar writes for one hook on a flat host: the command in this platform's field, the matcher
+    on the handler, and an explicit timeout (on Copilot a hook that times out lets the call through)."""
+    entry = {"type": "command"}
+    matcher = matcher_for(script, host)
+    if matcher:
+        entry["matcher"] = matcher
+    entry[verify.command_field()] = command_for(script, python, host)
+    entry["timeoutSec"] = verify.COPILOT_TIMEOUT_SECONDS
+    return entry
+
+
+def _plan_flat(config: dict, host: str, python: str, also: "list[dict] | None") -> tuple[dict, list[str]]:
+    """``plan`` for a flat host. The file is ours, so each required hook ends as exactly one entry in the shape
+    written today; an entry that launches something else is left as it is. An entry of ours written on the other
+    platform keeps that platform's command beside the new one."""
+    desired = {"version": 1, **config}
+    hooks = desired.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise ValueError("existing 'hooks' key is not an object; refusing to rewrite it")
+    elsewhere = verify.hook_states(list(also or []), host)
+    field = verify.command_field()
+    other = "bash" if field == "powershell" else "powershell"
+    added = []
+    for key, script in verify.REQUIRED:
+        event = verify.EVENTS[host][key]
+        entries = hooks.setdefault(event, [])
+        if not isinstance(entries, list):
+            raise ValueError(f"existing hooks.{event} is not a list; refusing to rewrite it")
+        ours = [entry for entry in entries if _launches(entry, script)]
+        if not ours and elsewhere[key]["registered"] and not elsewhere[key]["missing_tools"]:
+            continue  # registered by another file of the same directory: a second entry would run it twice
+        fresh = flat_entry(script, python, host)
+        kept = next((entry[other] for entry in ours if isinstance(entry.get(other), str)), None)
+        if kept:
+            fresh[other] = kept
+        if ours == [fresh]:
+            continue
+        position = next((index for index, entry in enumerate(entries) if _launches(entry, script)), len(entries))
+        entries[:] = [entry for entry in entries if not _launches(entry, script)]
+        entries.insert(min(position, len(entries)), fresh)
+        added.append(f"{event} -> {script}" + (" (replaces the entry registered before)" if ours else ""))
+    if not added and config.get("version") != 1 and any(hooks.values()):
+        added.append("version -> 1")
+    return (desired, added) if added else (config, [])
+
+
+ANTIGRAVITY_TIMEOUT = 30
+LEGACY_BRIDGE_NOTE = ("the registration of the hand-installed bridge (.agents/supremeteam-agy/supremeteam_agy_bridge.py) is "
+                      "replaced by the catalog's own. Its folder is left in place and can be deleted")
+
+
+def _runs_a_bridge(handler) -> "str | None":
+    """``"ours"`` or ``"legacy"`` when a handler's command runs the catalog's bridge or the hand-installed one."""
+    command = handler.get("command") if isinstance(handler, dict) else None
+    if not isinstance(command, str):
+        return None
+    text = command.replace("\\", "/")
+    return "legacy" if verify.LEGACY_BRIDGE in text else "ours" if verify.BRIDGE in text else None
+
+
+def _without_bridges(entries: list) -> tuple[list, set]:
+    """``entries`` of one event with every bridge handler taken out, and which kinds were there. A matcher group that
+    held nothing else goes with them; one that also holds somebody else's handler keeps that handler."""
+    kept, kinds = [], set()
+    for entry in entries:
+        nested = entry.get("hooks") if isinstance(entry, dict) else None
+        if isinstance(nested, list):
+            others = [hook for hook in nested if not _runs_a_bridge(hook)]
+            kinds.update(kind for kind in map(_runs_a_bridge, nested) if kind)
+            if len(others) == len(nested):
+                kept.append(entry)
+            elif others:
+                kept.append({**entry, "hooks": others})
+        elif _runs_a_bridge(entry):
+            kinds.add(_runs_a_bridge(entry))
+        else:
+            kept.append(entry)
+    return kept, kinds
+
+
+def _plan_grouped(config: dict, host: str, python: str) -> tuple[dict, list[str]]:
+    """``plan`` for Antigravity. Its file is groups by name; the group ``supremeteam`` is ours and every other group
+    is kept as it is. Under each of the three events the group ends with one registration of the bridge, named with
+    its event: a matcher group for a tool event, a bare handler for ``PreInvocation``. A registration of the
+    hand-installed bridge in the group is replaced."""
+    desired = dict(config)
+    group = desired.get(verify.ANTIGRAVITY_GROUP, {})
+    if not isinstance(group, dict):
+        raise ValueError(f"existing '{verify.ANTIGRAVITY_GROUP}' group is not an object; refusing to rewrite it")
+    group = dict(group)
+    added = []
+    for key, script in verify.REQUIRED:
+        event = verify.EVENTS[host][key]
+        entries = group.get(event, [])
+        if not isinstance(entries, list):
+            raise ValueError(f"existing {verify.ANTIGRAVITY_GROUP}.{event} is not a list; refusing to rewrite it")
+        handler = {"type": "command", **hook_handler(verify.BRIDGE, python, host, event=event), "timeout": ANTIGRAVITY_TIMEOUT}
+        matcher = matcher_for(script, host)
+        fresh = {"matcher": matcher, "hooks": [handler]} if matcher else handler
+        kept, kinds = _without_bridges(entries)
+        if entries == [*kept, fresh]:
+            continue
+        group[event] = [*kept, fresh]
+        added.append(f"{event} -> {verify.BRIDGE}" + (" (replaces the hand-installed bridge)" if "legacy" in kinds
+                                                     else " (replaces the entry registered before)" if kinds else ""))
+    if not added and group.get("enabled") is not False:
+        return config, []
+    if group.get("enabled") is False:
+        added.append(f"{verify.ANTIGRAVITY_GROUP}.enabled -> true (the group was switched off, so nothing in it ran)")
+    desired[verify.ANTIGRAVITY_GROUP] = {"enabled": True, **{name: value for name, value in group.items() if name != "enabled"}}
+    return desired, added
+
+
+def replaces_legacy_bridge(before: dict, after: dict) -> bool:
+    """Whether a planned change takes the hand-installed bridge out of the group."""
+    def legacy(config: dict) -> bool:
+        group = config.get(verify.ANTIGRAVITY_GROUP) if isinstance(config, dict) else None
+        return isinstance(group, dict) and verify.LEGACY_BRIDGE in json.dumps(group).replace("\\\\", "/")
+    return legacy(before) and not legacy(after)
+
+
+def plan_skills(config: dict, install: "Path | None" = None) -> tuple[dict, list[str]]:
+    """Antigravity's ``skills.json`` with the common install named by an absolute path, and what changed.
+
+    Antigravity lists skills from the folders this file names, one level deep, and ignores an entry that is not an
+    absolute path: with ``~/.agents/skills`` it listed none of the catalog and said so only in its log. An entry
+    that names the common install with ``~`` is replaced by the absolute path, with forward slashes; one that is
+    already absolute is left alone; every other entry is kept. No copy of the skills is made."""
+    install = verify.common_install() if install is None else Path(install)
+    wanted = install.as_posix()
+    entries = config.get("entries", [])
+    if not isinstance(entries, list):
+        raise ValueError("existing 'entries' key is not a list; refusing to rewrite it")
+    if verify.lists_common_install({"entries": entries}) and not any(
+            isinstance(entry, dict) and isinstance(entry.get("path"), str) and entry["path"].startswith("~")
+            and Path(os.path.expanduser(entry["path"])) == install for entry in entries):
+        return config, []
+    kept, replaced = [], False
+    for entry in entries:
+        path = entry.get("path") if isinstance(entry, dict) else None
+        if isinstance(path, str) and path.startswith("~") and Path(os.path.expanduser(path)) == install:
+            replaced = True
+            continue
+        kept.append(entry)
+    already = verify.lists_common_install({"entries": kept})
+    desired = {**config, "entries": kept if already else [*kept, {"path": wanted}]}
+    return desired, [f"skills.json: {'the ~ entry for the common install is replaced by' if replaced else 'adds'} {wanted}"]
+
+
+def sync_antigravity_skills(apply: bool) -> list[str]:
+    """Write the common install into Antigravity's global ``skills.json`` (``plan_skills``) and say what was done.
+    With ``apply`` false nothing is written and the note says what would be."""
+    path = verify.antigravity_files()["skills"]
+    install = verify.common_install()
+    if not install.is_dir():
+        return [f"{path} was left alone: {install} does not exist, so there is no common install to list. Install the "
+                "catalog first"]
+    config = verify._read(path) if verify._exists(path) else {}
+    if not isinstance(config, dict):
+        return [f"{path} is not a JSON object and was left alone; add an entry with the path {install.as_posix()} by hand"]
+    try:
+        desired, changes = plan_skills(config, install)
+    except ValueError as exc:
+        return [f"{path} was left alone: {exc}"]
+    if not changes:
+        return []
+    if not apply:
+        return [f"{path}: would write: {'; '.join(changes)}"]
+    try:
+        backup = write_with_backup(path, json.dumps(desired, indent=2) + "\n", private=True)
+    except OSError as exc:
+        return [f"{path} could not be written ({type(exc).__name__}); add an entry with the path {install.as_posix()} by hand"]
+    return [f"{path}: {'; '.join(changes)}" + (f" (the file as it was: {backup})" if backup else "")]
+
+
+def plan(config: dict, host: str, python: str, also: "list[dict] | None" = None) -> tuple[dict, list[str]]:
+    """The config with every required hook registered, and what changed.
+
+    ``also`` holds registrations the host reads from another file (Codex ``config.toml`` inline hooks, the other
+    files of a Copilot hook directory; ``verify.other_registrations``): a hook registered there counts as registered
+    and is not written a second time."""
+    if host in verify.FLAT_HOSTS:
+        return _plan_flat(config, host, python, also)
+    if host in verify.GROUPED_HOSTS:
+        return _plan_grouped(config, host, python)
     desired = dict(config)
     hooks = desired.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         raise ValueError("existing 'hooks' key is not an object; refusing to rewrite it")
-    states = verify.hook_states([config], host)
-    added: list[str] = []
+    added = _replace_defective(desired, host, python)
+    states = verify.hook_states([desired, *(also or [])], host)
     for key, script in verify.REQUIRED:
         state = states[key]
         if state["registered"] and not state["missing_tools"]:
@@ -188,7 +600,7 @@ def plan(config: dict, host: str, python: str) -> tuple[dict, list[str]]:
         groups = hooks.setdefault(event, [])
         if not isinstance(groups, list):
             raise ValueError(f"existing hooks.{event} is not a list; refusing to rewrite it")
-        handler = {"type": "command", "command": command_for(script, python)}
+        handler = {"type": "command", **hook_handler(script, python, host)}
         status = STATUS_MESSAGES.get(script)
         if status:
             handler["statusMessage"] = status
@@ -199,7 +611,185 @@ def plan(config: dict, host: str, python: str) -> tuple[dict, list[str]]:
             entry = {"matcher": "|".join(tools), **entry}
         groups.append(entry)
         added.append(f"{event} -> {script}" + (f" (adds {'|'.join(tools)} to a narrower matcher)" if state["registered"] else ""))
+    # The hooks a host should also run: written like the others, and never what decides whether it is registered.
+    wanted = verify.recommended_states([desired, *(also or [])], host)
+    # The pre-tool hook as it was registered before this plan (one this plan adds runs from this directory anyway).
+    # Classifying the planned config again would start the interpreter being registered, to read its version.
+    registered = states["pre"]
+    for key, script, event in verify.recommended(host):
+        if wanted[key]["registered"]:
+            continue
+        groups = hooks.setdefault(event, [])
+        if not isinstance(groups, list):
+            raise ValueError(f"existing hooks.{event} is not a list; refusing to rewrite it")
+        # Beside the hooks that are registered: a registration that runs an installed copy gets this hook from that
+        # copy too, when it has it (a copy from before the hook existed does not, and gets this directory's).
+        beside = Path(registered["script"]).parent if registered["registered"] and registered["script"] else None
+        directory = str(beside) if beside is not None and beside != HOOK_DIR and (beside / script).is_file() else None
+        groups.append({"hooks": [{"type": "command", **hook_handler(script, python, host, hook_dir=directory),
+                                  "statusMessage": STATUS_MESSAGES[script]}]})
+        added.append(f"{event} -> {script} (recommended)")
     return desired, added
+
+
+def written_handlers(before: dict, after: dict, host: str) -> list[tuple[str, dict]]:
+    """``(script, handler)`` for each Supreme Team handler ``after`` holds and ``before`` did not, in hook order."""
+    found = []
+    for event, script in hook_events(host):
+        old = _own_handlers(before, host, event, script) if isinstance(before.get("hooks"), dict) else []
+        found.extend((script, handler) for handler in _own_handlers(after, host, event, script) if handler not in old)
+    return found
+
+
+def probe_written(before: dict, after: dict, host: str) -> tuple[list[str], list[str]]:
+    """Start each command this change writes, the way the host will (``verify.probe``): ``(failures, notes)``.
+
+    A registration that cannot start is worse than none, because readiness would report the guard as on: with a
+    failure nothing is written. A command that could not be probed (its interpreter is not on this machine) is a note.
+    The form is the same for every hook, so the first is tried in every shell the host may use and the others in the
+    first one only."""
+    failures, notes = [], []
+    for index, (script, handler) in enumerate(written_handlers(before, after, host)):
+        results = verify.probe(handler, host, first_shell_only=index > 0, counted_only=True)
+        for result in verify.probe_failures(results, host, handler):
+            failures.append(f"{script} does not start under {result['shell']}: {result['detail']}")
+        for result in results:
+            if result["executes"] is None and f"{script}: {result['detail']}" not in notes:
+                notes.append(f"{script}: {result['detail']}")
+    return failures, notes
+
+
+def checked_start(before: dict, after: dict, host: str, skip: bool = False) -> tuple[list[str], list[str]]:
+    """``probe_written``, held to what ``host`` does with a hook that cannot start: ``(failures, notes)``.
+
+    ``skip`` (``--no-probe``) writes unprobed and is accepted for a host that fails open. On a host that fails closed
+    (``verify.FAIL_CLOSED_HOSTS``) a pre-tool command that does not start denies every tool call, so there the probe
+    is not optional, and a command that could not be probed is not written either."""
+    if host not in verify.FAIL_CLOSED_HOSTS:
+        return ([], []) if skip else probe_written(before, after, host)
+    if skip:
+        return ([f"--no-probe is not accepted for {host}: a pre-tool hook that cannot start denies every tool call "
+                 "there, so a command is written only after it has been started"], [])
+    failures, notes = probe_written(before, after, host)
+    unprobed = [f"{note}; on {host} a command that was not started is not written" for note in notes]
+    return failures + unprobed, []
+
+
+# --- files an earlier version wrote that the host does not read ------------------------------------------
+
+def _only_ours(config) -> bool:
+    """Whether a legacy hook file holds nothing but Supreme Team registrations: only ``hooks`` (and ``version``) at the
+    top, and under it only handlers that launch one of the three hook scripts."""
+    if not isinstance(config, dict) or set(config) - {"hooks", "version"}:
+        return False
+    hooks = config.get("hooks")
+    if not isinstance(hooks, dict) or not hooks:
+        return False
+    scripts = [script for _, script in verify.REQUIRED]
+    for groups in hooks.values():
+        if not isinstance(groups, list) or not groups:
+            return False
+        for group in groups:
+            handlers = group.get("hooks") if isinstance(group, dict) else None
+            if not isinstance(handlers, list) or not handlers or set(group) - {"hooks", "matcher"}:
+                return False
+            for handler in handlers:
+                command = handler.get("command") if isinstance(handler, dict) else None
+                if not isinstance(command, str) or not any(
+                        verify.analyse(command, script, verify.handler_tokens(handler))["configured"] for script in scripts):
+                    return False
+    return True
+
+
+def legacy_files(host: str, scope: str) -> list[tuple[Path, bool]]:
+    """``(path, only_ours)`` for each file an earlier version registered ``host`` in at ``scope`` that is still there.
+    Copilot reads neither ``~/.config/github-copilot/hooks.json`` nor ``.github/hooks.json``."""
+    legacy = verify.legacy_paths(host)
+    if not legacy:
+        return []
+    path = legacy[0] if scope == "user" else legacy[1]
+    if not verify._exists(path) or path.is_symlink() or not path.is_file():
+        return []
+    return [(path, _only_ours(verify._read(path)))]
+
+
+def set_legacy_aside(host: str, scope: str, apply: bool) -> list[str]:
+    """Move a legacy hook file that holds nothing but our entries out of the way, beside itself under the name a
+    registration backup gets, and say so; leave any other legacy file and say that. With ``apply`` false nothing
+    moves and the note says what would."""
+    notes = []
+    for path, ours in legacy_files(host, scope):
+        if not ours:
+            notes.append(f"{path} is where an earlier version registered {host} hooks, and {host} does not read it. It holds "
+                         "entries that are not Supreme Team's (or that this copy cannot recognise), so it is left as it is")
+            continue
+        target = path.with_name(path.name + ".bak-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
+        if not apply:
+            notes.append(f"{path} holds only Supreme Team entries and {host} does not read it: it would be moved to {target.name}")
+            continue
+        try:
+            os.replace(path, target)
+            notes.append(f"{path} held only Supreme Team entries and {host} does not read it: moved to {target}")
+        except OSError as exc:
+            notes.append(f"{path} holds only Supreme Team entries and {host} does not read it; it could not be moved "
+                         f"({type(exc).__name__}) and can be deleted")
+    return notes
+
+
+def double_run_note(host: str) -> "str | None":
+    """Copilot CLI also runs the hooks of a repository's ``.claude/settings.json`` and ``.claude/settings.local.json``.
+    When Supreme Team hooks are registered there, each tool call runs them twice: once in the shape Copilot reads and
+    once in Claude Code's."""
+    if host != "copilot":
+        return None
+    project = _state.project_root()
+    files = [path for path in (project / ".claude/settings.json", project / ".claude/settings.local.json")
+             if isinstance(verify._read(path), dict)
+             and any(state["registered"] for state in verify.hook_states([verify._read(path)], "claude").values())]
+    if not files:
+        return None
+    return (f"{' and '.join(str(path) for path in files)} registers the hooks for Claude Code, and Copilot CLI runs a "
+            "repository's Claude Code hooks as well: in this project each tool call starts them twice. The guard decides "
+            "the same both times and the post-tool hook records the call once")
+
+
+# --- the status-line sidecar (context_statusline.py) --------------------------------------------------------
+
+STATUSLINE_SCRIPT = "context_statusline.py"
+STATUSLINE_HOST = "claude"
+
+
+def plan_statusline(config: dict, host: str, python: str) -> tuple[dict, list[str], list[str]]:
+    """``(config, changes, notes)`` for ``--statusline``: register the sidecar as the host's status line.
+
+    Only Claude Code has one, and a settings file holds one status line. So it is set when none is configured, left
+    alone when it is this script already, and never replaced: for a status line that is somebody's own, the note
+    gives the command that keeps it and records usage as well."""
+    if host != STATUSLINE_HOST:
+        return config, [], [f"--statusline does nothing for {host}: only Claude Code hands a status line the context usage"]
+    try:
+        command = command_for(STATUSLINE_SCRIPT, python, host)
+    except CommandRefused as exc:
+        return config, [], [f"the status line was not set: {exc}"]
+    current = config.get("statusLine")
+    text = current.get("command") if isinstance(current, dict) else None
+    if current in (None, {}, ""):
+        return {**config, "statusLine": {"type": "command", "command": command, "padding": 0}}, [f"statusLine -> {STATUSLINE_SCRIPT}"], []
+    if isinstance(text, str) and STATUSLINE_SCRIPT in text:
+        return config, [], []
+    keep = f"{command} -- {text}" if isinstance(text, str) and text.strip() else command
+    return config, [], ["a status line is already configured and is left as it is. To keep it and record context usage as "
+                        f"well, set statusLine.command to: {keep}  (a command that needs a shell goes after -- as "
+                        "sh -c '<command>')"]
+
+
+CODEX_TRUST_NOTE = ("Codex skips a new or changed hook until it is trusted: start Codex and run /hooks once. Until then the "
+                    "guard does not run there, and readiness cannot see whether a hook is trusted")
+PARTS_NOTE = ("the interpreter path holds a space and no py launcher starts that interpreter, so the hook is registered as a "
+              "command with separate arguments, which the host starts without a shell. A host version that does not read "
+              "'args' would start the interpreter alone; check_readiness.py --probe shows whether the hooks start")
+CODEX_INLINE_NOTE = ("config.toml beside this file has inline [hooks] tables. Codex reads both files and merges them with a "
+                     "warning; a hook already registered there is not written here a second time")
 
 
 def resolve_config(path: Path, through_links: bool) -> Path:
@@ -289,7 +879,7 @@ def record_hashes(states: dict, host: str) -> Path:
 
 def _record_current(host: str) -> int:
     """``--record-hashes``: record the scripts the host's existing registration launches."""
-    objects = [value for value in (verify._read(path) for path in verify._paths(host)) if isinstance(value, dict)]
+    objects = [value for _, value in verify._loaded(host) if isinstance(value, dict)]
     states = verify.hook_states(objects, host)
     missing = [script for key, script in verify.REQUIRED if not states[key]["registered"]]
     if missing:
@@ -301,7 +891,7 @@ def _record_current(host: str) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Preview or apply a scoped Supreme Team hook registration repair.")
-    parser.add_argument("--host", choices=["claude", "codex", "copilot"], required=True)
+    parser.add_argument("--host", choices=list(verify.HOSTS), required=True)
     parser.add_argument("--scope", choices=["user", "project", "local"], default="project")
     parser.add_argument("--python", default=sys.executable or "python",
                         help="interpreter to register: a path, or a launcher with arguments such as 'py -3.13' "
@@ -309,6 +899,17 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true", help="write the change (default is a dry run)")
     parser.add_argument("--record-hashes", action="store_true",
                         help="record the sha256 of the registered hook scripts and change no host config")
+    parser.add_argument("--no-probe", action="store_true",
+                        help="with --apply, write without first starting each new command the way the host will "
+                             "(the default refuses to write a command that does not start; not accepted for copilot, "
+                             "where a hook that cannot start denies every tool call)")
+    parser.add_argument("--statusline", action="store_true",
+                        help="claude: also register context_statusline.py as the status line, when none is configured, so "
+                             "that a run in flight is advised as the context window fills (a configured one is left alone "
+                             "and the command that keeps it is printed)")
+    parser.add_argument(ALLOW_ABSOLUTE, action="store_true",
+                        help="write a copilot project-scope file although it holds this machine's absolute paths "
+                             "(refused by default: where those paths do not exist, every tool call is denied)")
     args = parser.parse_args()
     if args.record_hashes:
         return _record_current(args.host)
@@ -339,18 +940,50 @@ def main() -> int:
         if not isinstance(config, dict):
             print(json.dumps({"ok": False, "path": str(path), "error": "existing config root is not an object"}))
             return 2
+    refusal = absolute_refusal(args.host, args.scope, link, args.allow_absolute)
+    if refusal:
+        print(json.dumps({"ok": False, "path": str(link), "error": refusal}))
+        return 2
+    others = verify.other_registrations(args.host, path)
+    inline = others if args.host == "codex" else []
     try:
-        desired, added = plan(json.loads(json.dumps(config)), args.host, args.python)
+        desired, added = plan(json.loads(json.dumps(config)), args.host, args.python, others or None)
     except ValueError as exc:
         print(json.dumps({"ok": False, "path": str(path), "error": str(exc)}))
         return 2
+    status_notes: list[str] = []
+    if args.statusline:
+        desired, status_added, status_notes = plan_statusline(desired, args.host, args.python)
+        added = added + status_added
     after_text = json.dumps(desired, indent=2) + "\n"
     if not added:
-        print(json.dumps({"ok": True, "path": str(path), "changes": [], "applied": False, "note": "no changes: every required hook is already registered and executable"}))
+        legacy = set_legacy_aside(args.host, args.scope, args.apply) + status_notes
+        if args.host == "antigravity" and args.scope == "user":
+            legacy = legacy + sync_antigravity_skills(args.apply)
+        for note in legacy:
+            print(f"warning: {note}", file=sys.stderr)
+        print(json.dumps({"ok": True, "path": str(path), "changes": [], "applied": False, "warnings": legacy,
+                          "note": "no changes: every required hook is already registered and executable"}))
         return 0
     warnings = scope_warnings(args.host, args.scope, link)
     if path != link:
         warnings.append(link_warning(link, path))
+    if inline:
+        warnings.append(CODEX_INLINE_NOTE)
+    if args.host == "codex":
+        warnings.append(CODEX_TRUST_NOTE)
+    twice = double_run_note(args.host)
+    if twice:
+        warnings.append(twice)
+    warnings.extend(status_notes)
+    if replaces_legacy_bridge(config, desired):
+        warnings.append(LEGACY_BRIDGE_NOTE)
+    if args.host == "antigravity" and args.scope == "user" and not args.apply:
+        warnings.extend(sync_antigravity_skills(False))
+    if not args.apply:
+        warnings.extend(set_legacy_aside(args.host, args.scope, False))
+    if any("args" in handler for _, handler in written_handlers(config, desired, args.host)):
+        warnings.append(PARTS_NOTE)
     for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
     diff = "".join(difflib.unified_diff(before_text.splitlines(True), after_text.splitlines(True), fromfile=str(path), tofile=str(path) + " (proposed)"))
@@ -358,14 +991,27 @@ def main() -> int:
         print(diff)
         print(json.dumps({"ok": True, "path": str(path), "changes": added, "applied": False, "warnings": warnings, "note": "dry run; re-run with --apply to write"}))
         return 1
+    failures, probe_notes = checked_start(config, desired, args.host, skip=args.no_probe)
+    if failures:
+        print(json.dumps({"ok": False, "path": str(path), "changes": added, "applied": False,
+                          "error": "refusing to write a registration that cannot start: " + "; ".join(failures)}))
+        return 2
     try:
         backup = write_with_backup(path, after_text, private=args.scope == "user")
-        record = record_hashes(verify.hook_states([desired], args.host), args.host)
+        record = record_hashes(verify.hook_states([desired, *others], args.host), args.host)
     except OSError as exc:
         print(json.dumps({"ok": False, "path": str(path), "error": f"write failed: {exc}"}))
         return 2
+    moved = set_legacy_aside(args.host, args.scope, True)
+    if args.host == "antigravity" and args.scope == "user":
+        # The skills list decides whether Antigravity sees the catalog at all; it is written with the hooks.
+        moved = moved + sync_antigravity_skills(True)
+    for note in moved:
+        print(f"warning: {note}", file=sys.stderr)
+    warnings = warnings + moved
     print(json.dumps({"ok": True, "path": str(path), "changes": added, "applied": True, "backup": str(backup) if backup else None,
-                      "hash_record": str(record), "warnings": warnings}))
+                      "hash_record": str(record), "warnings": warnings, "probe": "skipped" if args.no_probe else "started",
+                      "probe_notes": probe_notes}))
     return 0
 
 

@@ -223,6 +223,17 @@ Preserve superseded artifacts, hashes, verdicts, and evidence paths. A handoff
 may reference only its own revision or an explicitly named predecessor. Mixed,
 missing, or stale revisions invalidate dependent verdicts.
 
+A phase directory holds one revision's submission, so a preserved file of an
+earlier revision is set aside, not left beside the current one: `python
+skills/scripts/run_files.py supersede --run-id <run> --phase <phase> --path <file>
+--by-revision <n>` moves it to `<phase>/_superseded/rev-<n>/<original path>` and
+lists it, with its digest, in `<phase>/_superseded/index.json`. That is the only
+form: there is no in-place marker, and a copy kept under another name or in
+another folder is still read as part of the package. The gate reads the current
+files only, holds every file under `_superseded/` to the index, and refuses a
+package that mixes revisions (`MIXED_REVISIONS`, whose message names the command).
+The layout is defined in `../save-protocol.md` §1.
+
 ## Rewind rules
 
 When an upstream artifact or evidence item changes, find the earliest boundary

@@ -72,6 +72,7 @@ conversation history — all required inputs must be serialized in the prompt.
 Copilot agent mode uses the workspace file system for all state:
 
 1. **Save location**: `{workspace}/skillset-saves/runs/{run-id}/`
+   The Save Context block carries the absolute `Project root` and `Save path` of the main checkout. A delegate that works in another directory (a linked git worktree, a sandbox copy) writes its report with `python skills/scripts/run_files.py write --run-id <run> --phase <phase> --kind reports|artifacts|evidence --name <file>` (content on standard input or `--from FILE`), never to a relative path or to one built when the command runs.
 2. **State reads**: Use `read_file` to inspect the run-state and lock records.
 3. **State writes**: Publish the run-state, lock, pointer, and audit trail only through `run_in_terminal` running `python skills/harness/hooks/save_run.py <create|checkpoint|heartbeat|complete|block|release|recover> ...`. Never use `create_file`, `replace_string_in_file`, or `apply_patch` on `_state.md`, `_lock.md`, `_audit-trail.md`, `_latest.md`, `_journal.json`, or `_history/`: they are the `core-run-record` class of `../../../save-ownership.yaml`, and `pre_tool_use.py` Rule C denies a direct write. `create_file` is for package artifacts only.
 4. **Heartbeat**: Refresh the lock with `python skills/harness/hooks/save_run.py heartbeat --run-id {run-id} --owner admiral` whenever a stage transition or long-running delegation completes.

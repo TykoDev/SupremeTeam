@@ -22,6 +22,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import _bootstrap
 import _testkit as kit
 
 HOOK_DIR = Path(__file__).resolve().parent
@@ -563,6 +564,121 @@ class RunIdTests(Project):
         self.assertFalse((self.root / "skillset-saves" / "escape").exists())
         self.assertFalse((self.root / "escape").exists())
         self.assertEqual(sorted(p.name for p in (self.root / "skillset-saves" / "runs").glob("*")) if (self.root / "skillset-saves" / "runs").is_dir() else [], [])
+
+
+
+PAYLOADS = {"PreToolUse": {"tool_name": "Bash", "tool_input": {"command": "ls"}},
+            "PostToolUse": {"tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_response": {"stdout": "x"}},
+            "UserPromptSubmit": {"prompt": "build the thing"}}
+
+
+class MissingModuleTests(unittest.TestCase):
+    """WP-06 (issue 4): a registered hook with one of its modules missing fails open, readably, every time.
+
+    With one module removed from a copy of the catalog, ``post_tool_use.py`` ended in a traceback and exit 1 for five
+    modules and ``user_prompt_submit.py`` for four, where the contract for a registered hook is exit 0 with the fault
+    counted. ``pre_tool_use.py`` already did that. Every file a registered hook runs (``_bootstrap.HOOK_FILES`` and
+    ``SCRIPT_FILES``) is hidden in turn, in one copy of the catalog."""
+
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        import tempfile
+
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls._tmp.cleanup)
+        base = Path(cls._tmp.name).resolve()
+        cls.hooks = base / "skills" / "harness" / "hooks"
+        cls.scripts = base / "skills" / "scripts"
+        ignore = shutil.ignore_patterns("__pycache__", "test_*.py", "_testkit.py")
+        shutil.copytree(HOOK_DIR, cls.hooks, ignore=ignore)
+        shutil.copytree(_bootstrap.SCRIPTS, cls.scripts, ignore=ignore)
+        for name in ("runtime-manifest.yaml", "save-ownership.yaml", "gates.yaml", "pipelines.yaml"):
+            shutil.copy2(HOOK_DIR.parents[1] / name, base / "skills" / name)
+        cls.project = base / "project"
+        (cls.project / ".git").mkdir(parents=True)
+
+    def run_hook(self, event: str, *args: str) -> subprocess.CompletedProcess:
+        payload = {**PAYLOADS[event], "hook_event_name": event, "session_id": "s1", "cwd": str(self.project)}
+        env = kit.clean_env(self.project, PYTHONDONTWRITEBYTECODE="1")
+        return subprocess.run([sys.executable, str(self.hooks / SCRIPTS[event]), *args], input=json.dumps(payload),
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, check=False)
+
+    def faults(self, event: str) -> int:
+        path = self.project / ".harness-state" / "observations" / f"{event}.json"
+        try:
+            return int(json.loads(path.read_text(encoding="utf-8")).get("faults", 0))
+        except (OSError, ValueError):
+            return 0
+
+    def modules(self) -> list:
+        return [*(self.hooks / name for name in _bootstrap.HOOK_FILES), *(self.scripts / name for name in _bootstrap.SCRIPT_FILES)]
+
+    def test_the_copy_runs_every_hook_cleanly_with_nothing_missing(self):
+        for event in SCRIPTS:
+            with self.subTest(hook=event):
+                done = self.run_hook(event)
+                self.assertEqual((done.returncode, done.stderr), (0, ""))
+
+    def test_every_hook_exits_zero_with_no_traceback_whichever_module_is_missing(self):
+        for module in self.modules():
+            aside = module.with_name(module.name + ".hidden")
+            module.rename(aside)
+            try:
+                for event, script in SCRIPTS.items():
+                    if script == module.name:
+                        continue  # the hook's own file: there is nothing left to start
+                    with self.subTest(hook=event, missing=module.name):
+                        before = self.faults(event)
+                        done = self.run_hook(event)
+                        self.assertEqual(done.returncode, 0, done.stderr)
+                        self.assertNotIn("Traceback", done.stderr + done.stdout)
+                        # A fault leaves a trace: counted where _state still loads, said on stderr where it does not.
+                        if done.stderr:
+                            self.assertIn("supremeteam", done.stderr)
+                            self.assertNotIn("\n\n", done.stderr.strip(), "one line, not a report")
+                        else:
+                            self.assertGreaterEqual(self.faults(event), before)
+            finally:
+                aside.rename(module)
+
+    def test_the_five_modules_that_used_to_crash_the_post_tool_hook_are_counted_or_said(self):
+        """The cases that ended in a traceback: each is now a counted fault, or one stderr line when the module that
+        counts faults is the one that cannot load."""
+        cannot_count = {"_bootstrap.py", "_fsutil.py", "_state.py"}
+        for event, names in (("PostToolUse", ("_bootstrap.py", "_fsutil.py", "_paths.py", "_state.py", "run_heartbeat.py")),
+                             ("UserPromptSubmit", ("_bootstrap.py", "_fsutil.py", "_state.py", "run_heartbeat.py"))):
+            for name in names:
+                module = self.hooks / name
+                aside = module.with_name(name + ".hidden")
+                before = self.faults(event)
+                module.rename(aside)
+                try:
+                    done = self.run_hook(event)
+                finally:
+                    aside.rename(module)
+                with self.subTest(hook=event, missing=name):
+                    self.assertEqual(done.returncode, 0, done.stderr)
+                    self.assertEqual(done.stdout, "", "a hook that could not load says nothing to the model")
+                    if name in cannot_count:
+                        self.assertIn(f"supremeteam {event} hook: a module it imports is missing", done.stderr)
+                        self.assertIn(name.removesuffix(".py"), done.stderr)
+                    else:
+                        self.assertEqual(self.faults(event), before + 1, done.stderr)
+
+    def test_a_self_test_with_a_module_missing_fails_loudly(self):
+        """``--selftest`` is not a host event: the probe needs the exit status, so nothing fails open there."""
+        module = self.hooks / "_paths.py"
+        aside = module.with_name("_paths.py.hidden")
+        module.rename(aside)
+        try:
+            for event in SCRIPTS:
+                with self.subTest(hook=event):
+                    done = self.run_hook(event, "--selftest")
+                    self.assertNotEqual(done.returncode, 0)
+                    self.assertNotIn("ok", done.stdout.split())
+        finally:
+            aside.rename(module)
 
 
 if __name__ == "__main__":

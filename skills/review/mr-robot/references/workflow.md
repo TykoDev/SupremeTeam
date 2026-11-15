@@ -59,7 +59,7 @@ into a single sentence. Expanded:
 `../SKILL.md` states the contracts; this section records only where each one
 lands in the sequence above, so the two documents do not restate each other.
 
-- Read-only over the reviewed surface — binds from step 1 through packaging; the containment written at step 3 is the deliverable, and hardening applied here would destroy the boundary state step 4 must probe.
+- Read-only over the reviewed surface — binds from step 1 through packaging; the containment written at step 3 is the deliverable, and hardening applied here would destroy the boundary state step 4 must probe. The packet itself is written into the run with `run_files.py write` or to the literal `Save path` (SKILL.md, Read-only over the reviewed surface), never to a path built when the command runs.
 - Before/After Evidence — the "before" is the boundary behavior observed at step 4, which is what a later claim that hardening closed the chain is re-probed against.
 - Shared severity — assigned at step 3 on reachability and blast radius, and an `allowed` probe row at step 4 is graded Critical regardless of how narrow the request looked.
 - Save-Protocol Adherence — the step 5 packet is what the save path receives, under the filename `../SKILL.md` mandates, with the redacted probe log stored as hashed evidence beside it.

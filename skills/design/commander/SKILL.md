@@ -9,7 +9,7 @@ description: >-
   and architect this project, even when Admiral is never named. Defers to
   `admiral` when reached cold; reworking an existing UI starts at
   `design/redesign`.
-version: 1.3.0
+version: 1.4.0
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, Task
 ---
 
@@ -86,7 +86,7 @@ Three decisions live here; `references/gate-evidence.md` carries the full
 per-key table with the must-contain, artifact-backing, typed-record, and fallback
 columns.
 
-- **What Commander authors**: `stack_lock` only — the `tech-stacks/registry.yaml` slug, the locked versions, and the overlay sha256, validated so the slug exists, the overlay digest matches both registry and file, and every declared version is one the registry entry offers. Its one sanctioned fallback is `no new runtime or framework - existing stack unchanged`.
+- **What Commander authors**: `stack_lock` only — the `tech-stacks/registry.yaml` slug, the versions the project uses, and the overlay sha256, validated so the slug exists, the overlay digest matches both registry and file, and every component the registry entry names is recorded at one version in use. `versions` is a mapping of component to version, as text: `{"node": "26.1.0", "typescript": "6.0.3"}`. The registry states a minimum per component (`min_versions`), not a pin: any release at or above it locks without a warning. A component left out, or a value that is a range, a wildcard, a tag or a number (`^19`, `24.x`, `latest`, `19`), fails the gate. A version below its minimum, or past the release the overlay was read against (`verified_through`), passes with a warning that `gatekeeper-design` has to address, so decide it before submitting: move to a supported release, or record the acceptance in `residual_risk`. Its one sanctioned fallback is `no new runtime or framework - existing stack unchanged`.
 - **Which keys may be waived**: exactly three — `stack_lock`, `taste_snapshot` (`no saved Taste profile available`), and `ui_evidence` (`no user-facing surface - design system not engaged`). Each waiver is an applicability record at manifest schema 2 naming reason, scope, and decider, never a bare string.
 - **Which may not**: `decisions`, `architecture`, `interfaces`, `plan`, `acceptance`, and `security_seed`. `../../gates.yaml` `fallback_values` carries no entry for `security_seed`, so a design with no trust boundary states the recorded determination rather than waiving the key.
 

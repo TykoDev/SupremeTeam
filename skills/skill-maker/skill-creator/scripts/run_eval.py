@@ -28,7 +28,13 @@ import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
-from scripts.utils import ProjectRootError, find_project_root, parse_skill_md
+try:
+    from scripts.utils import ProjectRootError, find_project_root, parse_skill_md
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    sys.stderr.write(f"ERROR: run_eval.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog.\n")
+    raise SystemExit(2) from exc
 
 EVAL_COMMAND_PREFIX = "zz-skilleval-"
 

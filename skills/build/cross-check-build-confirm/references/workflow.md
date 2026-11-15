@@ -123,6 +123,22 @@ quietly changes.
 
 ## Resubmission Handling
 
+The certificate lives at one path, `build/reports/report_completeness.md`, and
+declares the revision it certifies in its frontmatter (`revision: <n>`). The build
+gate reads it from that path only and fails a certificate whose revision is not the
+package's (`COMPLETENESS_REVISION_MISMATCH`). So before writing the certificate for a
+new revision, set the previous one aside:
+
+```bash
+python skills/scripts/run_files.py supersede --run-id <run-id> --phase build \
+    --path reports/report_completeness.md --by-revision <n>
+```
+
+That moves it to `build/_superseded/rev-<n-1>/reports/report_completeness.md` and
+records its digest in `build/_superseded/index.json`. Do not keep it as
+`report_completeness.r1.md` or in an `archive/` folder: either is still read as part
+of the package, and two revisions in one package fail lineage (`MIXED_REVISIONS`).
+
 When the phase resubmits after a `REVISE`, re-run the matrix but re-judge only
 the rows whose bound artifacts changed. Carry the prior status on unchanged
 rows, mirroring how the gate treats `changed_evidence` with `--prior`

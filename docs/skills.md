@@ -131,7 +131,7 @@ Directly callable at any time. `qa` and `ship` also own a gated pipeline when
 | `ownership.yaml`, `save-ownership.yaml` | One writer per artifact; one writer per save path class |
 | `team-manifest.yaml` | The roster everything is checked against |
 | `runtime-manifest.yaml`, `package-manifest.yaml` | Runtime floor and commands; packaging and delivery contract |
-| `tech-stacks/registry.yaml` | 14 stack overlays with pinned versions and digests |
+| `tech-stacks/registry.yaml` | 14 stack overlays with a minimum version per component and digests |
 | `execution-contract.md` | The six preamble clauses and the tier table |
 | `routing-doctrine.md`, `grill-me-doctrine.md` | Entry routing and session pin; intake interview and ceremony scaling |
 | `design-doctrine.md`, `taste-doctrine.md`, `performance-doctrine.md` | Design system; preferences; measured optimization |

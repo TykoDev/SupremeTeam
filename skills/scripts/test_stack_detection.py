@@ -12,6 +12,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
 from _runtime_fixtures import (
@@ -24,6 +25,7 @@ from _runtime_fixtures import (
     slugs,
     symlink_or_skip,
 )
+import stack_versions
 from data_formats import load_data, normalize_line_endings
 
 REGISTRY = load_data(CATALOG_SOURCE / "tech-stacks" / "registry.yaml")
@@ -119,7 +121,9 @@ class RegisteredStackTests(FixtureTreeCase):
                 self.assertEqual(evidence(inspection, slug), expected)
                 stack = inspection["stacks"][0]
                 self.assertEqual(stack["framework"], rows[slug]["framework"])
-                self.assertEqual(stack["versions"], rows[slug]["versions"])
+                # WP-13: the registry's minimums for the stack, by component, in the form a lock records its versions.
+                self.assertEqual(stack["min_versions"], rows[slug]["min_versions"])
+                self.assertNotIn("versions", stack)
 
     def test_detection_does_not_run_without_the_flag(self):
         inspection = self.inspect_tree(STACK_FIXTURES["vite-spa"][0], detect=False, start=True)
@@ -489,9 +493,28 @@ class RegistryTests(FixtureTreeCase):
             "extra field": (lambda row: row.update(extra=1), "overlay row {index} has unexpected fields ['extra']"),
             "wrong path": (lambda row: row.update(path="tech-stacks/other.md"), "vite-spa path must be tech-stacks/vite-spa.md"),
             "blank framework": (lambda row: row.update(framework=" "), "vite-spa framework must be a string"),
-            "empty versions": (lambda row: row.update(versions=[]), "vite-spa versions must be a non-empty finite number list"),
-            "boolean version": (lambda row: row.update(versions=[True]), "vite-spa versions must be a non-empty finite number list"),
-            "text version": (lambda row: row.update(versions=["8"]), "vite-spa versions must be a non-empty finite number list"),
+            # WP-13, registry schema 2: a minimum is named by component and given as text.
+            "no minimums": (lambda row: row.pop("min_versions"), "overlay row {index} missing fields ['min_versions']"),
+            "empty minimums": (lambda row: row.update(min_versions={}),
+                               "vite-spa min_versions must be a non-empty mapping of component to version"),
+            "the list of schema 1": (lambda row: row.update(versions=[8]), "overlay row {index} has unexpected fields ['versions']"),
+            "a number for a version": (lambda row: row.update(min_versions={"vite": 8}),
+                                       "vite-spa min_versions gives vite as 8, which is not text; at schema 2 a version is a "
+                                       "string, because the number 3.10 is 3.1"),
+            "a float for a version": (lambda row: row.update(min_versions={"vite": 3.10}),
+                                      "vite-spa min_versions gives vite as 3.1, which is not text; at schema 2 a version is a "
+                                      "string, because the number 3.10 is 3.1"),
+            "a range for a version": (lambda row: row.update(min_versions={"vite": "^8"}),
+                                      "vite-spa min_versions gives vite as '^8', which is not one version"),
+            "a component that is not a name": (lambda row: row.update(min_versions={"Vite JS": "8"}),
+                                               "vite-spa min_versions names a component that is not lower-case letters, digits "
+                                               "and dashes: 'Vite JS'"),
+            "a limit for another component": (lambda row: row.update(verified_through={"react": "19"}),
+                                              "vite-spa verified_through names 'react', which min_versions does not"),
+            "a support end that is not a day": (lambda row: row.update(support_ends={"vite": "next year"}),
+                                                "vite-spa support_ends must map a component of min_versions to a YYYY-MM-DD "
+                                                "date or a YYYY-MM month"),
+            "a blank reason": (lambda row: row.update(floor_reason=" "), "vite-spa floor_reason must be one line of text"),
             "wrong source": (
                 lambda row: row.update(source="_refs/other.md"),
                 "vite-spa source must be _refs/global/tech-stacks/vite-spa.md",
@@ -508,6 +531,42 @@ class RegistryTests(FixtureTreeCase):
                 self.assertIn("detected stack vite-spa has no registry entry", inspection["errors"])
                 self.assertEqual(slugs(inspection), ["angular"])
                 self.assertFalse(inspection["ok"])
+
+    def test_the_optional_fields_of_a_row_are_accepted(self):
+        def fill(registry):
+            self.vite_row(registry).update(verified_through={"vite": "8"}, support_ends={"vite": "2028-06"},
+                                           floor_reason="Vite publishes no end date for 8.")
+
+        inspection = self.with_registry(fill)
+        self.assertClean(inspection)
+        self.assertEqual(inspection["stacks"][0]["min_versions"], {"vite": "8"})
+
+    def test_every_shipped_minimum_is_text_named_by_component_and_has_a_reason_where_upstream_gives_no_date(self):
+        """WP-13: `react-tanstack: [19, 8]` meant React 19 and Vite 8, and nothing said so."""
+        self.assertEqual(REGISTRY["schema_version"], 2)
+        self.assertIn("oldest release", REGISTRY["floor_rule"])
+        for row in REGISTRY["overlays"]:
+            with self.subTest(slug=row["slug"]):
+                self.assertNotIn("versions", row)
+                for component, minimum in row["min_versions"].items():
+                    self.assertIsInstance(minimum, str)
+                    self.assertTrue(stack_versions.is_version(minimum), minimum)
+                    self.assertTrue(stack_versions.is_component(component), component)
+                undated = set(row["min_versions"]) - set(row.get("support_ends") or {})
+                if undated:
+                    self.assertTrue(str(row.get("floor_reason") or "").strip(),
+                                    f"{sorted(undated)} have no support_ends, so the row has to say why the minimum stands")
+        self.assertNotIn("support_ends", REGISTRY, "the dates are per component, inside each overlay")
+
+    def test_no_shipped_minimum_is_past_its_end_of_support_on_the_day_it_was_verified(self):
+        verified = date.fromisoformat(REGISTRY["verified_at"])
+        window_end = verified + timedelta(days=REGISTRY["verification_ttl_days"])
+        for row in REGISTRY["overlays"]:
+            for component, day in (row.get("support_ends") or {}).items():
+                with self.subTest(slug=row["slug"], component=component):
+                    year, month = int(day[:4]), int(day[5:7])
+                    last = date.fromisoformat(day) if len(day) == 10 else date(year + (month == 12), month % 12 + 1, 1) - timedelta(days=1)
+                    self.assertGreaterEqual(last, window_end, "the floor rule: supported through verified_at plus the window")
 
     def test_invalid_slugs_and_duplicates_are_rejected(self):
         def bad_slug(registry):
@@ -533,7 +592,8 @@ class RegistryTests(FixtureTreeCase):
 
     def test_registry_level_defects_reject_every_row(self):
         cases = {
-            "schema version": (lambda registry: registry.update(schema_version=2), "schema_version must be 1"),
+            "schema version": (lambda registry: registry.update(schema_version=1), "schema_version must be 2"),
+            "no floor rule": (lambda registry: registry.pop("floor_rule"), "floor_rule must say how a minimum is chosen"),
             "kind": (lambda registry: registry.update(kind="other"), "kind is invalid"),
             "overlays": (lambda registry: registry.update(overlays={}), "overlays must be a list"),
         }

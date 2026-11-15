@@ -321,7 +321,9 @@ class SaveContextParityTests(unittest.TestCase):
         text = path.read_text(encoding="utf-8")
         best = set()
         for match in re.finditer(r"Save Context", text):
-            block = text[match.end():match.end() + 3000]
+            # Wide enough for a prose mention, a table and the whole block after it: at 3000 the block's last fields
+            # fell outside the window of an earlier mention once the block gained `Project root`.
+            block = text[match.end():match.end() + 4000]
             fields = set(re.findall(r"^-\s*([A-Z][A-Za-z ]+?):", block, re.M))
             fields |= {m.strip(" `") for m in
                        re.findall(r"^\|\s*`?([A-Z][A-Za-z ]+?)`?\s*\|", block, re.M)}

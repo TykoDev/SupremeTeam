@@ -46,10 +46,35 @@ import sys
 import time
 from pathlib import Path
 
-import _bootstrap
-import _paths
-import _state
-import run_heartbeat
+
+def _missing_module(event: str, exc: BaseException) -> None:
+    """A module this hook imports is not there. A registered hook fails open: the action already ran, so exit 0, with
+    the fault counted when ``_state`` still loads and said on stderr when it does not. ``--selftest`` and an import of
+    this file by another program are not host events, so they get the error itself."""
+    if __name__ != "__main__" or "--selftest" in sys.argv[1:]:
+        return
+    try:
+        import _state as state
+
+        state.record_fault(event, exc)
+    except BaseException:
+        try:
+            sys.stderr.write("supremeteam %s hook: a module it imports is missing (%s) and the fault could not be "
+                             "recorded; the hook did nothing. Reinstall the catalog and run "
+                             "skills/harness/hooks/check_readiness.py.\n" % (event, exc))
+        except Exception:
+            pass
+    sys.exit(0)
+
+
+try:
+    import _bootstrap
+    import _paths
+    import _state
+    import run_heartbeat
+except ImportError as _exc:  # a catalog file this hook imports is missing
+    _missing_module("PostToolUse", _exc)
+    raise
 
 _REPEAT_FAIL_THRESHOLD = 3
 _EMPTY_STREAK_THRESHOLD = 3
@@ -99,12 +124,23 @@ def _signature(tool_name: str, tool_input: dict) -> str:
     return hashlib.sha256(key.encode("utf-8", "ignore")).hexdigest()[:16]
 
 
+def _response(data: dict):
+    """What the tool returned: ``tool_response`` (Claude Code, Codex), else GitHub Copilot's ``tool_result``."""
+    resp = data.get("tool_response")
+    return data.get("tool_result") if resp in (None, "") else resp
+
+
+# GitHub Copilot's result types: the one it documents for a call that worked, and the ones that say it did not.
+_RESULT_FAILED = {"success": False, "failure": True, "error": True, "failed": True}
+
+
 def _response_text(data: dict) -> str:
-    resp = data.get("tool_response", "")
+    resp = _response(data)
     if isinstance(resp, dict):
-        # Common shapes: {"stdout":..,"stderr":..} or {"output":..} or {"content":..}
+        # Common shapes: {"stdout":..,"stderr":..} or {"output":..} or {"content":..}; Copilot: {"text_result_for_llm":..}
         return " ".join(
-            str(resp.get(k, "")) for k in ("stdout", "stderr", "output", "content", "error")
+            str(resp.get(k, "")) for k in ("stdout", "stderr", "output", "content", "error", "text_result_for_llm",
+                                           "textResultForLlm") if resp.get(k) not in (None, "")
         )
     return str(resp or "")
 
@@ -117,9 +153,13 @@ def _explicit_failure(data: dict):
     This is the doctrine's "mechanically certain" Principles path: when the host reports an
     exit code or success flag, trust it instead of guessing from output text.
     """
-    resp = data.get("tool_response")
+    resp = _response(data)
     if not isinstance(resp, dict):
         return None
+    for k in ("result_type", "resultType"):
+        kind = resp.get(k)
+        if isinstance(kind, str) and kind.strip().lower() in _RESULT_FAILED:
+            return _RESULT_FAILED[kind.strip().lower()]
     for k in ("exit_code", "exitCode", "returncode", "returnCode", "code", "status"):
         v = resp.get(k)
         if isinstance(v, bool):
@@ -160,12 +200,8 @@ def _looks_failed(text: str) -> bool:
 
 
 def _envelope(context: str) -> str:
-    return json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PostToolUse",
-            "additionalContext": context,
-        }
-    })
+    """The context in the shape the host reads (``_state.context_output``: the command line's ``--host``)."""
+    return json.dumps(_state.context_output("PostToolUse", context))
 
 
 # Set by main() before the trajectory patterns are evaluated, so a sweep hint is
@@ -400,6 +436,9 @@ def _sweep_coverage_residue(tool_name: str) -> "str | None":
         return None
     try:
         root = _state.project_root().resolve()
+        # The residue is in the tree the command ran in; the run and the scratch class it is filed under, and the allow
+        # list of a read-only run, are the main checkout's when that tree is a linked worktree.
+        home = _state.state_root().resolve()
         entries, truncated = _scan_root(root)
         if not entries:
             return None
@@ -409,9 +448,9 @@ def _sweep_coverage_residue(tool_name: str) -> "str | None":
         movable = [e for e in entries if e not in protected]
         if not movable:
             return None
-        dest, label, scoped = _destination(root)
+        dest, label, scoped = _destination(home)
         records = guard.get("read_only") or []
-        held = _held_by_read_only(movable, dest, records, root) if records else []
+        held = _held_by_read_only(movable, dest, records, home) if records else []
         movable = [e for e in movable if e not in held]
         if not movable:
             return (f"[harness:coverage-residue] Found {len(held)} project-root coverage "
@@ -467,6 +506,19 @@ def _sweep_coverage_residue(tool_name: str) -> "str | None":
         return None
 
 
+def _agent_fields(data: dict) -> dict:
+    """Which sub-agent made the call, as the host says: Claude Code puts ``agent_id`` and ``agent_type`` on every tool
+    event inside a sub-agent and on none outside one. They are recorded so that a trajectory can be read per agent.
+    They are the host's word, copied from the payload, and nothing is decided on them: a sub-agent is under the same
+    boundaries as the session that started it."""
+    found = {}
+    for key in ("agent_id", "agent_type"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            found[key] = _state.safe_text(value.strip(), 80)
+    return found
+
+
 def main() -> None:
     global _pending_coverage_hint, _pending_maintenance_hints
 
@@ -501,15 +553,42 @@ def main() -> None:
     except Exception as exc:
         _state.record_fault("PostToolUse", exc)
 
+    # A compaction this session went through that nothing has told the model about yet (context_events.py).
+    try:
+        import context_events
+
+        resume = context_events.pending_note(data)
+        if resume:
+            _pending_maintenance_hints.insert(0, resume)
+    except Exception as exc:
+        _state.record_fault("PostToolUse", exc)
+    # How full the context is, for a run in flight: one note per threshold crossed (context_watch.py).
+    try:
+        import context_watch
+
+        pressure = context_watch.advice(data, "PostToolUse")
+        if pressure:
+            _pending_maintenance_hints.append(pressure)
+    except Exception as exc:
+        _state.record_fault("PostToolUse", exc)
+
     text = _response_text(data)
     explicit = _explicit_failure(data)
     failed = explicit if explicit is not None else _looks_failed(text)
     empty = len(text.strip()) == 0
 
     sig = _signature(tool_name, tool_input)
-    history = _state.append_trajectory(
-        session_id, {"sig": sig, "failed": failed, "empty": empty}
-    )
+    entry = {"sig": sig, "failed": failed, "empty": empty, **_agent_fields(data)}
+    event = _state.event_key(data)
+    if event:
+        entry["event"] = event
+    history = _state.append_trajectory(session_id, entry)
+    if history is None:
+        # The same tool event, delivered a second time: a host that reads two registrations of this hook (GitHub
+        # Copilot CLI reads `.github/hooks/*.json` and the project's `.claude/settings.json`) runs it once for each.
+        # The first run recorded the step and said what there was to say; a second record would count one failure
+        # as two and bring the repeat hint a call early.
+        return
 
     # Pattern 1: same command failing repeatedly.
     recent_same = [h for h in history[-_REPEAT_FAIL_THRESHOLD:] if h.get("sig") == sig]
@@ -566,5 +645,11 @@ def run() -> None:
 
 
 if __name__ == "__main__":
+    if "--selftest" in sys.argv[1:]:
+        # Not a host event: prove the registered command starts and every module a hook runs imports, and fail
+        # loud when one does not (verify_registration.probe reads the exit status and the "ok"). The argument is
+        # looked for anywhere on the line: a command registered with `--host <name>` is probed with it in place.
+        _bootstrap.selftest()
+        sys.exit(0)
     run()
     sys.exit(0)

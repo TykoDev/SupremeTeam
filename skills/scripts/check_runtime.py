@@ -11,11 +11,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from data_formats import DataFormatError, load_data
-from project_files import is_reparse_point
-from project_inspection import inspect_project
-from redaction import add_error
-from redaction import redact_value as _redact_value
+try:
+    from data_formats import DataFormatError, load_data
+    from project_files import is_reparse_point
+    from project_inspection import inspect_project
+    from redaction import add_error
+    from redaction import redact_value as _redact_value
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    print(f"ERROR: check_runtime.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog.")
+    print("Ready: no")
+    raise SystemExit(2) from exc
 
 
 OPTIONAL_MODULES = {"PyYAML": "yaml"}
@@ -124,6 +131,25 @@ def _probe_optional_dependencies(
     return rows
 
 
+def _missing_catalog_modules(catalog_root: Path) -> tuple[dict, list[str]]:
+    """``(report, errors)`` for the catalog files the catalog's own scripts import and cannot find.
+
+    A copy with one module missing used to read ``Ready: yes`` here while the script that needs the module ended in a
+    traceback. The modules are found by reading every entry point's imports (``catalog_imports.py``), so nothing is
+    listed by hand; the walk itself being absent is reported the same way."""
+    try:
+        import catalog_imports
+    except ImportError as exc:
+        return {}, [f"catalog file missing: catalog_imports.py ({exc}); the catalog's scripts cannot be checked for missing modules. Reinstall the catalog."]
+    try:
+        missing = catalog_imports.missing_modules(catalog_root)
+    except (OSError, ValueError, RecursionError) as exc:
+        return {}, [f"the catalog's scripts could not be read for missing modules: {type(exc).__name__}: {exc}"]
+    errors = [f"catalog file missing: {entry['module']}.py, needed by {script}. Reinstall the catalog."
+              for script, entries in sorted(missing.items()) for entry in entries]
+    return missing, errors
+
+
 def check(
     catalog_root: Path,
     *,
@@ -160,10 +186,13 @@ def check(
         )
     current = (sys.version_info.major, sys.version_info.minor)
     python_ok = current >= minimum
+    missing_modules, missing_errors = _missing_catalog_modules(catalog_root)
+    errors = errors + missing_errors
     report = {
         "python": {"current": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}", "minimum": minimum_value, "status": "ok" if python_ok else "too_old"},
         "optional_dependencies": optional,
         "launchers": launchers,
+        "missing_modules": missing_modules,
         "ok": python_ok and not errors,
         "errors": sorted(set(errors + ([] if python_ok else [f"Python {sys.version_info.major}.{sys.version_info.minor} is below required {minimum_value}"]))),
     }

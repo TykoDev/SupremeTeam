@@ -1,7 +1,7 @@
-# .NET 9 and ASP.NET Core
+# .NET 10+ and ASP.NET Core
 
 ## Baseline
-- Use .NET 9 with C# 13, nullable reference types enabled, and ASP.NET Core as the HTTP host.
+- .NET 10 or newer with the C# version it ships (C# 14 with .NET 10), nullable reference types enabled, and ASP.NET Core as the HTTP host.
 - Prefer Minimal APIs for a small new service and controller-based APIs when the application needs the additional structure of attributes and controllers.
 - Use async/await with Task-based APIs and the built-in dependency injection container; use `Channel<T>` when producer and consumer work must be coordinated.
 - Keep shared MSBuild settings in `Directory.Build.props` and treat the solution file as the application boundary.
@@ -25,7 +25,7 @@
 - Recheck nullable warnings, options validation, and JSON source-generation output when moving between .NET major versions.
 
 ## Deployment
-- Build and publish a release artifact with MSBuild, then use a multi-stage image with the .NET 9 ASP.NET runtime for hosted services.
+- Build and publish a release artifact with MSBuild, then use a multi-stage image with the ASP.NET runtime of the locked .NET release for hosted services.
 - Run the service as a non-root process, expose the configured HTTP port, and inject production configuration through a managed secret source or environment.
 - Keep health checks, structured `ILogger<T>` output, and OpenTelemetry instrumentation aligned with the hosting environment.
 - Use Roslyn analyzers and `.editorconfig` as part of the same verification contract as the release build.

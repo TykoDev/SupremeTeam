@@ -32,6 +32,7 @@ SKILLS = ENGINE_DIR.parents[1]
 REPO = SKILLS.parent
 sys.path.insert(0, str(ENGINE_DIR))
 
+import _fixtures as fixtures  # noqa: E402
 import _gatecheck as gc  # noqa: E402
 
 # A lens packet in the shape review/*/SKILL.md fixes, fenced the way the review
@@ -58,9 +59,14 @@ def _review(pkg: Path, full: bool) -> None:
 
 
 def _delivery(pkg: Path, full: bool) -> None:
+    """A delivery ledger with one pending record, and the manifest of the review package it hands over: the record
+    names a phase directory of its own run and that package's revision and submission id."""
+    run = pkg.parent
+    _write(run / "review" / "manifest.json",
+           json.dumps({"schema_version": 2, "boundary": "review-to-delivery", "revision": 1, "submission_id": "review-1"}))
     _write(pkg / "reports" / "handoff_review-to-delivery.md",
-           "---\nsubmission_id: S1\nrevision: 1\npackage_path: skillset-saves/runs/r-1/review\n"
-           "verdict: PENDING\n---\n# Handoff\n")
+           f"---\nsubmission_id: S1\nrevision: 1\npackage_path: skillset-saves/runs/{run.name}/review\n"
+           "manifest_submission_id: review-1\nsubmission_status: PENDING\nverdict: PENDING\n---\n# Handoff\n")
     if full:
         _write(pkg / "reports" / "delivery-package.md", "# Delivery package\n")
 
@@ -559,6 +565,472 @@ class WrapperManifestTests(unittest.TestCase):
                     required = self.contracts.gates["boundaries"][boundary]["required_evidence"]
                     if spec.evidence_key:
                         self.assertIn(spec.evidence_key, required)
+
+
+
+def _fm(revision, body: str) -> str:
+    return f"---\nrevision: {revision}\nsubmission_id: build-{revision}\n---\n{body}"
+
+
+def _build_at(pkg: Path, revision=2, certificate: bool = True) -> None:
+    """A build package whose files all declare ``revision``."""
+    _write(pkg / "reports" / "report_implementation.md", _fm(revision, "# Implementation\nChanged files: app.py; the module was updated.\n"))
+    _write(pkg / "reports" / "report_tests.md", _fm(revision, "# Test results\nThe suite passed: 12 tests, coverage recorded.\n"))
+    if certificate:
+        _write(pkg / "reports" / "report_completeness.md", _fm(revision, "# Completeness\nThe build is complete and certified.\n"))
+
+
+class BuildGateCase(unittest.TestCase):
+    """The build gate wrapper run on a package in a scratch project, with the supersede command at hand."""
+
+    SCRIPT = SKILLS / "build" / "gatekeeper-build" / "scripts" / "check.py"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.project = Path(self._tmp.name).resolve()
+        (self.project / ".git").mkdir()
+        self.package = self.project / "skillset-saves" / "runs" / "r-1" / "build"
+        scripts = str(SKILLS / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import run_files
+        self.run_files = run_files
+
+    def check(self) -> tuple:
+        done = _run(self.SCRIPT, str(self.package), "--json", cwd=self.project)
+        self.assertIn(done.returncode, (0, 1), done.stderr + done.stdout)
+        report = json.loads(done.stdout)
+        return done.returncode, report, [f["code"] for f in report["findings"]]
+
+    def finding(self, report: dict, code: str) -> dict:
+        return next(f for f in report["findings"] if f["code"] == code)
+
+    def supersede(self, path: str, by=2, **more) -> None:
+        self.run_files.supersede(self.project, "r-1", "build", path, by, **more)
+
+
+class SupersededCopiesTests(BuildGateCase):
+    """WP-04 (issue 2): a preserved copy of an earlier revision is neither a lineage defect nor evidence.
+
+    The contracts tell every owner to preserve superseded artifacts, and the engine read every file of the package.
+    Reproduced against the build gate before the change: a kept ``report_completeness.r1.md`` beside the current
+    certificate gave MIXED_REVISIONS; with no current certificate an old copy at ``archive/report_completeness.md``
+    filled the completeness slot; and so did an unrelated ``reports/deploy-confirmation.md``."""
+
+    def test_a_kept_copy_fails_lineage_until_it_is_superseded_and_passes_afterwards(self):
+        _build_at(self.package, 2)
+        _write(self.package / "reports" / "report_completeness.r1.md", _fm(1, "# Completeness\nComplete and certified at r1.\n"))
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("MIXED_REVISIONS", codes)
+        self.assertIn("run_files.py supersede", self.finding(report, "MIXED_REVISIONS")["message"])
+        self.supersede("reports/report_completeness.r1.md")
+        code, report, codes = self.check()
+        self.assertEqual(code, 0, report)
+        self.assertNotIn("MIXED_REVISIONS", codes)
+        self.assertIn("REVISION_COHERENT", codes)
+        self.assertEqual(codes.count("SUPERSEDED_COPIES"), 1)
+        copies = self.finding(report, "SUPERSEDED_COPIES")
+        self.assertEqual(copies["status"], "PASS")
+        self.assertIn("_superseded/rev-1/reports/report_completeness.r1.md", copies["message"])
+        self.assertEqual(report["gate_status"], "NEEDS_JUDGMENT", "only the optional slots are left to the model")
+
+    def test_a_resubmission_that_kept_its_previous_certificate_passes(self):
+        """The ordinary sequence: supersede the r1 certificate, then write the r2 one at the same path."""
+        _build_at(self.package, 1)
+        self.supersede("reports/report_completeness.md")
+        _build_at(self.package, 2)
+        code, report, codes = self.check()
+        self.assertEqual(code, 0, report)
+        self.assertEqual([c for c in codes if c in ("MIXED_REVISIONS", "MIXED_SUBMISSION_IDS", "ARTIFACT_MISSING")], [])
+        self.assertIn("COMPLETENESS_REVISION_OK", codes)
+        self.assertEqual(self.finding(report, "ARTIFACT_PRESENT")["status"], "PASS")
+
+    def test_an_old_copy_elsewhere_does_not_fill_the_completeness_slot(self):
+        _build_at(self.package, 2, certificate=False)
+        _write(self.package / "archive" / "report_completeness.md", _fm(2, "# Completeness\nComplete and certified.\n"))
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("ARTIFACT_MISSING", codes)
+        missing = self.finding(report, "ARTIFACT_MISSING")
+        self.assertIn("completeness certification", missing["message"])
+        self.assertIn("expected at: reports/report_completeness.md", missing["message"])
+        stray = self.finding(report, "ARTIFACT_NOT_CANONICAL")
+        self.assertEqual((stray["status"], stray["location"]), ("UNCHECKED", "archive/report_completeness.md"))
+        self.assertIn("reports/report_completeness.md", stray["message"])
+
+    def test_an_unrelated_file_whose_name_matched_does_not_fill_it_either(self):
+        _build_at(self.package, 2, certificate=False)
+        _write(self.package / "reports" / "deploy-confirmation.md", _fm(2, "# Deploy\nThe deploy was confirmed and is complete.\n"))
+        _write(self.package / "reports" / "cross-check-notes.md", _fm(2, "# Notes\nCross-check complete, certified.\n"))
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("ARTIFACT_MISSING", codes)
+        self.assertNotIn("ARTIFACT_NOT_CANONICAL", codes)
+
+    def test_a_superseded_copy_fills_no_slot(self):
+        _build_at(self.package, 1)
+        self.supersede("reports/report_completeness.md")
+        _write(self.package / "reports" / "report_implementation.md", _fm(2, "# Implementation\nChanged files: app.py; the module.\n"))
+        _write(self.package / "reports" / "report_tests.md", _fm(2, "# Test results\nThe suite passed: 12 tests.\n"))
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("ARTIFACT_MISSING", codes)
+        self.assertIn("SUPERSEDED_COPIES", codes)
+
+    def test_a_file_placed_under_superseded_by_hand_is_unindexed(self):
+        _build_at(self.package, 2)
+        _write(self.package / "_superseded" / "rev-1" / "reports" / "report_completeness.md", _fm(1, "# Completeness\nComplete.\n"))
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        finding = self.finding(report, "SUPERSEDED_UNINDEXED")
+        self.assertEqual(finding["location"], "_superseded/rev-1/reports/report_completeness.md")
+        self.assertIn("run_files.py supersede", finding["message"])
+        self.assertNotIn("MIXED_REVISIONS", codes, "the planted copy is not read as part of the package either")
+
+    def test_a_superseded_folder_deeper_in_the_package_is_unindexed_too(self):
+        _build_at(self.package, 2)
+        _write(self.package / "reports" / "_Superseded" / "old.md", _fm(1, "# Old\n"))
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertEqual(self.finding(report, "SUPERSEDED_UNINDEXED")["location"], "reports/_Superseded/old.md")
+
+    def test_a_copy_changed_after_it_was_superseded_and_an_entry_with_no_file_fail(self):
+        _build_at(self.package, 1)
+        self.supersede("reports/report_completeness.md")
+        _build_at(self.package, 2)
+        copy = self.package / "_superseded" / "rev-1" / "reports" / "report_completeness.md"
+        copy.write_text(copy.read_text(encoding="utf-8") + "edited afterwards\n", encoding="utf-8")
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("changed afterwards", self.finding(report, "SUPERSEDED_INDEX_MISMATCH")["message"])
+        copy.unlink()
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("which is not there", self.finding(report, "SUPERSEDED_INDEX_MISMATCH")["message"])
+
+    def test_an_index_that_cannot_be_read_fails(self):
+        _build_at(self.package, 2)
+        for text in ("{ not json", "[]", '{"entries": {}}'):
+            _write(self.package / "_superseded" / "index.json", text)
+            with self.subTest(index=text):
+                code, report, codes = self.check()
+                self.assertEqual(code, 1)
+                self.assertIn("cannot be read as the index", self.finding(report, "SUPERSEDED_INDEX_MISMATCH")["message"])
+
+    def test_a_blocked_phrase_in_a_superseded_copy_is_not_the_current_packages(self):
+        _build_at(self.package, 1)
+        _write(self.package / "reports" / "report_tests.md", _fm(1, "# Test results\nTODO: the suite passed, 12 tests.\n"))
+        self.assertIn("BLOCKED_PHRASE", self.check()[2])
+        self.supersede("reports/report_tests.md")
+        self.supersede("reports/report_implementation.md")
+        self.supersede("reports/report_completeness.md")
+        _build_at(self.package, 2)
+        code, report, codes = self.check()
+        self.assertEqual(code, 0, report)
+        self.assertNotIn("BLOCKED_PHRASE", codes)
+
+    def test_a_package_with_no_superseded_folder_says_nothing_about_one(self):
+        _build_at(self.package, 2)
+        code, report, codes = self.check()
+        self.assertEqual(code, 0)
+        self.assertEqual([c for c in codes if c.startswith("SUPERSEDED")], [])
+        self.assertIn("superseded_copies", report["checks_run"])
+
+    def test_a_package_holding_only_superseded_copies_is_empty(self):
+        _build_at(self.package, 1)
+        for name in ("report_implementation.md", "report_tests.md", "report_completeness.md"):
+            self.supersede(f"reports/{name}")
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("PACKAGE_EMPTY", codes)
+
+
+class CompletenessRevisionTests(BuildGateCase):
+    """The certificate certifies one revision: the package's."""
+
+    def manifest(self, revision) -> None:
+        _write(self.package / "manifest.json", json.dumps({"schema_version": 2, "boundary": "build-to-review", "revision": revision,
+                                                           "submission_id": f"build-{revision}"}))
+
+    def test_a_certificate_from_the_previous_revision_is_a_mismatch(self):
+        _build_at(self.package, 2, certificate=False)
+        _write(self.package / "reports" / "report_completeness.md", "# Completeness\nComplete and certified.\n")
+        self.manifest(2)
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        finding = self.finding(report, "COMPLETENESS_REVISION_MISMATCH")
+        self.assertIn("declares no revision", finding["message"])
+        self.assertIn("revision 2 (manifest.json)", finding["message"])
+        _write(self.package / "reports" / "report_completeness.md", _fm(1, "# Completeness\nComplete and certified.\n"))
+        code, report, codes = self.check()
+        self.assertIn("declares revision 1", self.finding(report, "COMPLETENESS_REVISION_MISMATCH")["message"])
+        self.assertIn("run_files.py supersede", self.finding(report, "COMPLETENESS_REVISION_MISMATCH")["message"])
+
+    def test_the_manifest_and_the_certificate_may_spell_the_same_revision_differently(self):
+        for in_manifest, in_certificate in ((2, 2), ("r2", "r2"), (2, "r2")):
+            with self.subTest(manifest=in_manifest, certificate=in_certificate):
+                _write(self.package / "reports" / "report_implementation.md", "# Implementation\nChanged files: app.py; the module.\n")
+                _write(self.package / "reports" / "report_tests.md", "# Test results\nThe suite passed: 12 tests.\n")
+                _write(self.package / "reports" / "report_completeness.md", _fm(in_certificate, "# Completeness\nComplete and certified.\n"))
+                self.manifest(in_manifest)
+                code, report, codes = self.check()
+                self.assertIn("COMPLETENESS_REVISION_OK", codes)
+                self.assertNotIn("COMPLETENESS_REVISION_MISMATCH", codes)
+
+    def test_without_a_manifest_the_other_artifacts_give_the_revision(self):
+        _build_at(self.package, 3, certificate=False)
+        _write(self.package / "reports" / "report_completeness.md", "# Completeness\nComplete and certified.\n")
+        code, report, codes = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("revision 3 (the other artifacts)", self.finding(report, "COMPLETENESS_REVISION_MISMATCH")["message"])
+
+    def test_a_package_that_declares_no_revision_anywhere_is_left_to_lineage(self):
+        _build(self.package, True)
+        code, report, codes = self.check()
+        self.assertEqual(code, 0)
+        self.assertIn("REVISION_ABSENT", codes)
+        self.assertEqual([c for c in codes if c.startswith("COMPLETENESS_REVISION")], [])
+
+
+
+class DeliveryLedgerTests(unittest.TestCase):
+    """WP-05 (issue 1): admiral's ``delivery/reports/`` holds one handoff record per boundary, and the gate reads it
+    as a ledger.
+
+    Each record has its own submission id and revision, so the engine's rule of one revision and one submission id
+    per package failed any directory with two records (MIXED_REVISIONS and MIXED_SUBMISSION_IDS, exit 1): no run with
+    more than one boundary could pass the cross-stage shape check. The wrapper took no boundary either, so it could
+    not tell the record being judged from the earlier ones."""
+
+    SCRIPT = SKILLS / "gatekeeper-admiral" / "scripts" / "check.py"
+    RUN = "r-1"
+    DONE = [{"boundary": "design-to-build", "revision": 1}, {"boundary": "build-to-review", "revision": 2},
+            {"boundary": "review-to-delivery", "revision": 3}]
+    PENDING = {"boundary": "deploy-readiness", "revision": 4, "status": "PENDING"}
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.project = Path(self._tmp.name).resolve()
+        (self.project / ".git").mkdir()
+        sys.path.insert(0, str(SKILLS / "scripts"))
+        import run_files
+        self.run_files = run_files
+
+    def ledger(self, entries, package: bool = True) -> Path:
+        delivery = fixtures.ledger(self.project, self.RUN, [dict(entry) for entry in entries])
+        if package:
+            _write(delivery / "reports" / "delivery-package.md", "# Delivery package\nWhat was approved and what is next.\n")
+        return delivery
+
+    def run_check(self, delivery: Path, *args: str) -> subprocess.CompletedProcess:
+        return _run(self.SCRIPT, str(delivery), "--json", *args, cwd=self.project)
+
+    def check(self, delivery: Path, *args: str) -> tuple:
+        done = self.run_check(delivery, *args)
+        self.assertIn(done.returncode, (0, 1), done.stderr + done.stdout)
+        report = json.loads(done.stdout)
+        return done.returncode, report, [f["code"] for f in report["findings"]]
+
+    def finding(self, report: dict, code: str) -> dict:
+        return next(f for f in report["findings"] if f["code"] == code)
+
+    def test_a_run_with_four_boundaries_passes_at_the_one_being_judged(self):
+        delivery = self.ledger([*self.DONE, self.PENDING])
+        code, report, codes = self.check(delivery, "--boundary", "deploy-readiness")
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["gate_status"], "STRUCTURE_OK", [f for f in report["findings"] if f["status"] != "PASS"])
+        self.assertEqual([c for c in codes if c in ("MIXED_REVISIONS", "MIXED_SUBMISSION_IDS")], [])
+        self.assertIn("the record being judged is deploy-readiness", self.finding(report, "HANDOFF_LEDGER_OK")["message"])
+        present = [f["location"] for f in report["findings"] if f["code"] == "ARTIFACT_PRESENT"]
+        self.assertEqual(sorted(present), ["reports/delivery-package.md", "reports/handoff_deploy-readiness.md"])
+
+    def test_every_boundary_of_a_run_passes_in_turn(self):
+        """Design, build, review and delivery: the ledger grows by one record at a time and passes each time."""
+        entries = []
+        for entry in [*self.DONE, {"boundary": "deploy-readiness", "revision": 4}]:
+            delivery = self.ledger([*entries, {**entry, "status": "PENDING"}])
+            with self.subTest(judged=entry["boundary"], records=len(entries) + 1):
+                code, report, codes = self.check(delivery, "--boundary", entry["boundary"])
+                self.assertEqual((code, report["gate_status"]), (0, "STRUCTURE_OK"), report)
+            entries.append(entry)
+
+    def test_the_one_pending_record_is_judged_without_being_named(self):
+        delivery = self.ledger([*self.DONE, self.PENDING])
+        code, report, codes = self.check(delivery)
+        self.assertEqual((code, report["gate_status"]), (0, "STRUCTURE_OK"), report)
+        self.assertIn("the record being judged is deploy-readiness", self.finding(report, "HANDOFF_LEDGER_OK")["message"])
+
+    def test_two_pending_records_and_no_boundary_have_no_answer(self):
+        delivery = self.ledger([self.DONE[0], {"boundary": "build-to-review", "revision": 2, "status": "PENDING"},
+                                {"boundary": "review-to-delivery", "revision": 3, "status": "PENDING"}])
+        done = self.run_check(delivery)
+        self.assertEqual(done.returncode, 2, done.stdout)
+        self.assertEqual(done.stdout, "")
+        for name in ("reports/handoff_build-to-review.md", "reports/handoff_review-to-delivery.md", "--boundary"):
+            self.assertIn(name, done.stderr)
+        named = self.check(delivery, "--boundary", "review-to-delivery")
+        self.assertIn("HANDOFF_STATUS", named[2], "named, the other pending record is an earlier one that was never recorded")
+
+    def test_no_pending_record_among_several_has_no_answer_either(self):
+        done = self.run_check(self.ledger(self.DONE))
+        self.assertEqual(done.returncode, 2, done.stdout)
+        self.assertIn("Pass --boundary", done.stderr)
+
+    def test_a_boundary_that_is_not_in_the_gate_spec_is_refused(self):
+        done = self.run_check(self.ledger([self.PENDING]), "--boundary", "deploy-readyness")
+        self.assertEqual(done.returncode, 2, done.stdout)
+        self.assertIn("is not a boundary in gates.yaml", done.stderr)
+        self.assertIn("deploy-readiness", done.stderr)
+
+    def test_a_boundary_with_no_record_is_a_missing_artifact(self):
+        delivery = self.ledger(self.DONE)
+        code, report, codes = self.check(delivery, "--boundary", "deploy-readiness")
+        self.assertEqual(code, 1)
+        self.assertIn("expected at: reports/handoff_deploy-readiness.md", self.finding(report, "ARTIFACT_MISSING")["message"])
+
+    def test_an_earlier_record_that_disagrees_with_its_verdict_record_names_the_file_and_the_field(self):
+        cases = (({"recorded": {"judgment": {"gate": "gatekeeper-admiral", "verdict": "REVISE", "valid": True}}}, "verdict ("),
+                 ({"record": {"verdict_id": "vid-forged"}}, "verdict_id ("),
+                 ({"recorded": {"revision": 9}}, "revision ("),
+                 ({"record": {"verdict_id": None}}, "verdict_id ("))
+        for override, field in cases:
+            entries = [self.DONE[0], {**self.DONE[1], **override}, self.DONE[2], self.PENDING]
+            with self.subTest(field=field, override=override):
+                code, report, codes = self.check(self.ledger(entries), "--boundary", "deploy-readiness")
+                self.assertEqual(code, 1)
+                finding = self.finding(report, "HANDOFF_VERDICT_MISMATCH")
+                self.assertEqual(finding["location"], "reports/handoff_build-to-review.md")
+                self.assertIn("build/verdict_build-to-review.cross-stage.json", finding["message"])
+                self.assertIn(field, finding["message"])
+
+    def test_a_recorded_verdict_with_no_verdict_record_is_a_mismatch(self):
+        delivery = self.ledger([*self.DONE, self.PENDING])
+        (self.project / "skillset-saves" / "runs" / self.RUN / "build" / "verdict_build-to-review.cross-stage.json").unlink()
+        code, report, codes = self.check(delivery, "--boundary", "deploy-readiness")
+        self.assertIn("does not exist", self.finding(report, "HANDOFF_VERDICT_MISMATCH")["message"])
+
+    def test_an_earlier_record_that_was_not_approved_stops_the_run(self):
+        for verdict in ("REVISE", "ESCALATE"):
+            entries = [self.DONE[0], {**self.DONE[1], "verdict": verdict}, self.DONE[2], self.PENDING]
+            with self.subTest(verdict=verdict):
+                code, report, codes = self.check(self.ledger(entries), "--boundary", "deploy-readiness")
+                self.assertEqual(code, 1)
+                self.assertEqual(self.finding(report, "HANDOFF_NOT_APPROVED")["location"], "reports/handoff_build-to-review.md")
+                self.assertNotIn("HANDOFF_VERDICT_MISMATCH", codes, "the record agrees with the gate; the verdict is the defect")
+
+    def test_a_package_path_in_another_run_or_outside_the_run_is_refused(self):
+        other = self.project / "skillset-saves" / "runs" / "r-2" / "build"
+        other.mkdir(parents=True)
+        for path in ("skillset-saves/runs/r-2/build", "skillset-saves/runs/r-1/nowhere", "skillset-saves/runs/r-1", "src",
+                     "skillset-saves/runs/r-1/build/reports", str(other)):
+            entries = [self.DONE[0], {**self.DONE[1], "record": {"package_path": path}}, self.DONE[2], self.PENDING]
+            with self.subTest(package_path=path):
+                code, report, codes = self.check(self.ledger(entries), "--boundary", "deploy-readiness")
+                self.assertEqual(code, 1)
+                self.assertEqual(self.finding(report, "HANDOFF_PACKAGE_PATH")["location"], "reports/handoff_build-to-review.md")
+
+    def test_a_record_left_behind_by_a_rewind_is_stale_until_it_is_superseded(self):
+        """The run rewound to design and build was judged again at revision 5 and 6; review's record is still revision 3."""
+        entries = [{"boundary": "design-to-build", "revision": 5}, {"boundary": "build-to-review", "revision": 6, "status": "PENDING"},
+                   self.DONE[2]]
+        delivery = self.ledger(entries)
+        code, report, codes = self.check(delivery, "--boundary", "build-to-review")
+        self.assertEqual(code, 1)
+        stale = self.finding(report, "HANDOFF_STALE_AFTER_REWIND")
+        self.assertEqual(stale["location"], "reports/handoff_review-to-delivery.md")
+        self.assertIn("run_files.py supersede", stale["message"])
+        self.run_files.supersede(self.project, self.RUN, "delivery", "reports/handoff_review-to-delivery.md", 6)
+        code, report, codes = self.check(delivery, "--boundary", "build-to-review")
+        self.assertEqual((code, report["gate_status"]), (0, "STRUCTURE_OK"), report)
+        self.assertIn("SUPERSEDED_COPIES", codes)
+
+    def test_a_second_attempt_supersedes_the_first_record_of_its_boundary(self):
+        delivery = self.ledger([self.DONE[0], {"boundary": "build-to-review", "revision": 2, "verdict": "REVISE"}])
+        self.run_files.supersede(self.project, self.RUN, "delivery", "reports/handoff_build-to-review.md", 3)
+        self.ledger([self.DONE[0], {"boundary": "build-to-review", "revision": 3, "status": "PENDING"}])
+        code, report, codes = self.check(delivery, "--boundary", "build-to-review")
+        self.assertEqual((code, report["gate_status"]), (0, "STRUCTURE_OK"), report)
+
+    def test_a_boundary_whose_verdict_is_already_recorded_can_be_checked_again(self):
+        delivery = self.ledger([*self.DONE, {"boundary": "deploy-readiness", "revision": 4}])
+        code, report, codes = self.check(delivery, "--boundary", "deploy-readiness")
+        self.assertEqual((code, report["gate_status"]), (0, "STRUCTURE_OK"), report)
+
+    def test_a_prior_verdict_of_an_earlier_boundary_is_not_reusable_for_this_one(self):
+        delivery = self.ledger([*self.DONE, self.PENDING])
+        earlier = self.project / "skillset-saves" / "runs" / self.RUN / "build" / "verdict_build-to-review.cross-stage.json"
+        prior = self.project / "prior.md"
+        _write(prior, f"---\nsubmission_id: {self.RUN}_handoff-2_attempt-1\nrevision: 2\nverdict: APPROVED\n---\n")
+        for record in (prior, earlier):
+            with self.subTest(prior=record.name):
+                code, report, codes = self.check(delivery, "--boundary", "deploy-readiness", "--prior", str(record))
+                self.assertNotIn("VERDICT_REUSABLE", codes)
+        own = self.project / "own.md"
+        _write(own, f"---\nsubmission_id: {self.RUN}_handoff-4_attempt-1\nrevision: 4\nverdict: APPROVED\n---\n")
+        self.assertIn("VERDICT_REUSABLE", self.check(delivery, "--boundary", "deploy-readiness", "--prior", str(own))[2])
+
+    def test_the_record_being_judged_has_to_match_the_package_it_hands_over(self):
+        cases = (({"manifest": {"revision": 9}}, "revision"),
+                 ({"record": {"manifest_submission_id": "release-0"}}, "manifest_submission_id"))
+        for override, field in cases:
+            with self.subTest(field=field):
+                code, report, codes = self.check(self.ledger([*self.DONE, {**self.PENDING, **override}]), "--boundary", "deploy-readiness")
+                self.assertEqual(code, 1)
+                self.assertIn(field, self.finding(report, "HANDOFF_MANIFEST_MISMATCH")["message"])
+        delivery = self.ledger([*self.DONE, self.PENDING])
+        (self.project / "skillset-saves" / "runs" / self.RUN / "release" / "manifest.json").unlink()
+        code, report, codes = self.check(delivery, "--boundary", "deploy-readiness")
+        self.assertIn("manifest.json does not exist", self.finding(report, "HANDOFF_MANIFEST_MISMATCH")["message"])
+
+    def test_a_record_without_the_manifest_submission_id_is_unchecked_for_one_release(self):
+        delivery = self.ledger([*self.DONE, {**self.PENDING, "record": {"manifest_submission_id": None}}])
+        code, report, codes = self.check(delivery, "--boundary", "deploy-readiness")
+        self.assertEqual((code, report["gate_status"]), (0, "NEEDS_JUDGMENT"), report)
+        missing = self.finding(report, "HANDOFF_FIELD_MISSING")
+        self.assertEqual((missing["status"], missing["location"]), ("UNCHECKED", "reports/handoff_deploy-readiness.md"))
+
+    def test_a_record_that_lacks_a_field_or_shares_a_submission_id_fails(self):
+        for field in ("submission_id", "revision", "package_path", "submission_status", "verdict"):
+            entries = [self.DONE[0], {**self.DONE[1], "record": {field: None}}, self.PENDING]
+            with self.subTest(missing=field):
+                code, report, codes = self.check(self.ledger(entries), "--boundary", "deploy-readiness")
+                self.assertEqual(code, 1)
+                self.assertIn(field, self.finding(report, "HANDOFF_RECORD_INCOMPLETE")["message"])
+        entries = [self.DONE[0], {**self.DONE[1], "record": {"submission_id": f"{self.RUN}_handoff-1_attempt-1"}}, self.PENDING]
+        code, report, codes = self.check(self.ledger(entries), "--boundary", "deploy-readiness")
+        self.assertEqual(code, 1)
+        self.assertIn("handoff_build-to-review.md", self.finding(report, "HANDOFF_DUPLICATE_SUBMISSION")["message"])
+
+    def test_a_status_the_record_cannot_have(self):
+        entries = [self.DONE[0], {**self.DONE[1], "status": "PENDING"}, self.PENDING]
+        code, report, codes = self.check(self.ledger(entries), "--boundary", "deploy-readiness")
+        self.assertEqual(self.finding(report, "HANDOFF_STATUS")["location"], "reports/handoff_build-to-review.md")
+        entries = [*self.DONE, {**self.PENDING, "record": {"submission_status": "DRAFT"}}]
+        code, report, codes = self.check(self.ledger(entries), "--boundary", "deploy-readiness")
+        self.assertEqual(self.finding(report, "HANDOFF_STATUS")["location"], "reports/handoff_deploy-readiness.md")
+
+    def test_a_run_may_start_from_an_approved_package_with_no_upstream_record(self):
+        delivery = self.ledger([self.DONE[2], self.PENDING])
+        code, report, codes = self.check(delivery, "--boundary", "deploy-readiness")
+        self.assertEqual((code, report["gate_status"]), (0, "STRUCTURE_OK"), report)
+
+    def test_outside_the_save_layout_the_path_checks_are_unchecked(self):
+        delivery = self.ledger([*self.DONE, self.PENDING])
+        loose = self.project / "loose" / "delivery"
+        shutil.copytree(delivery, loose)
+        code, report, codes = self.check(loose, "--boundary", "deploy-readiness")
+        self.assertEqual(code, 0, report)
+        self.assertEqual(self.finding(report, "HANDOFF_PATHS_UNCHECKED")["status"], "UNCHECKED")
+        self.assertNotIn("HANDOFF_PACKAGE_PATH", codes)
+
+    def test_the_other_wrappers_take_no_boundary(self):
+        done = _run(SKILLS / "build" / "gatekeeper-build" / "scripts" / "check.py", str(self.project), "--boundary", "build-to-review",
+                    cwd=self.project)
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("unrecognized arguments", done.stderr)
 
 
 if __name__ == "__main__":

@@ -158,7 +158,7 @@ class NewFailureRoutingTests(EngineCase):
     def test_a_missing_overlay_goes_to_the_stack_lock_owner(self):
         digest = StackLockTests.registry(self, overlay_file=False)
         package = self.package("design-to-build")
-        package.check_stack_lock("stack_lock", {"slug": "demo", "versions": [19], "overlay_sha256": digest})
+        package.check_stack_lock("stack_lock", {"slug": "demo", "versions": StackLockTests.IN_USE, "overlay_sha256": digest})
         self.assertEqual(list(self.route("design-to-build", package)["by_owner"]), ["commander"])
 
     def test_the_run_schema_failure_names_no_key_so_it_goes_to_the_submitter(self):
@@ -358,23 +358,29 @@ class ResultRecordConsistencyTests(EngineCase):
 
 
 class StackLockTests(EngineCase):
-    """A stack lock names an overlay the registry offers, at versions it offers, with the file present."""
+    """A stack lock names an overlay of the registry, with the file present, and records the versions the project
+    uses by component. The registry states minimums (WP-13): a component left out or a value that is not one version
+    fails, and a version below its minimum passes with a warning."""
 
-    def registry(self, *, overlay_file: bool = True, versions: object = (19, 15), extra: dict | None = None) -> str:
+    MINIMUMS = {"react": "19", "next": "16"}
+    IN_USE = {"react": "19.2.0", "next": "16.0.1"}
+
+    def registry(self, *, overlay_file: bool = True, minimums: object = MINIMUMS, entry: dict | None = None,
+                 extra: dict | None = None) -> str:
         """A one-overlay registry under the scratch directory; returns the overlay's real digest."""
         tech_stacks = self.root / "catalog" / "tech-stacks"
         tech_stacks.mkdir(parents=True, exist_ok=True)
         overlay = tech_stacks / "demo.md"
-        overlay.write_text("# Demo overlay\n\nPinned guidance.\n", encoding="utf-8")
+        overlay.write_text("# Demo overlay\n\nGuidance.\n", encoding="utf-8")
         digest = content_sha256(overlay)
         if not overlay_file:
             overlay.unlink()
-        entry = {"slug": "demo", "path": "tech-stacks/demo.md", "framework": "Demo", "sha256": digest}
-        if versions is not None:
-            entry["versions"] = list(versions)
+        row = {"slug": "demo", "path": "tech-stacks/demo.md", "framework": "Demo", "sha256": digest, **(entry or {})}
+        if minimums is not None:
+            row["min_versions"] = dict(minimums)
         registry = tech_stacks / "registry.yaml"
-        registry.write_text(json.dumps({"schema_version": 1, "kind": "supremeteam-tech-stack-registry",
-                                        "overlays": [entry], **(extra or {})}), encoding="utf-8")
+        registry.write_text(json.dumps({"schema_version": 2, "kind": "supremeteam-tech-stack-registry",
+                                        "overlays": [row], **(extra or {})}), encoding="utf-8")
         self.spec["_registry_path"] = str(registry)
         return digest
 
@@ -386,42 +392,102 @@ class StackLockTests(EngineCase):
     def failures(self, record: dict) -> list[str]:
         return self.checked(record).failures
 
-    def test_a_lock_on_an_offered_overlay_and_versions_passes(self):
-        digest = self.registry()
-        for versions in ([19], [19, 15], ["19"], [15, "19"]):
-            with self.subTest(versions=versions):
-                self.assertEqual(self.failures({"slug": "demo", "versions": versions, "overlay_sha256": digest}), [])
+    def locked(self, versions: object, **registry) -> object:
+        digest = self.registry(**registry)
+        return self.checked({"slug": "demo", "versions": versions, "overlay_sha256": digest})
 
-    def test_every_declared_version_must_be_offered_not_just_one(self):
-        digest = self.registry()
-        for versions, unoffered in (([19, 99], [99]), ([99, 19], [99]), (["18", 19, "17"], ["18", "17"]), ([99], [99])):
+    def test_a_lock_at_or_above_every_minimum_passes_with_no_warning(self):
+        for versions in (self.IN_USE, {"react": "19", "next": "16"}, {"react": "v19.0.0", "next": "17.2.1"},
+                         {"react": "20.0.0-rc.1", "next": "16.0.0+build.7"}, {"react": "19", "next": "16.0", "node": "26.1.0"}):
             with self.subTest(versions=versions):
-                self.assertEqual(
-                    self.failures({"slug": "demo", "versions": versions, "overlay_sha256": digest}),
-                    [f"stack_lock versions {unoffered} not offered by registry entry demo"])
+                package = self.locked(versions)
+                self.assertEqual((package.failures, package.warnings), ([], []))
 
-    def test_a_registry_entry_that_offers_no_versions_cannot_vouch_for_any(self):
-        digest = self.registry(versions=None)
-        self.assertEqual(self.failures({"slug": "demo", "versions": [19], "overlay_sha256": digest}),
-                         ["stack_lock versions [19] not offered by registry entry demo"])
+    def test_a_version_below_its_minimum_passes_with_a_warning_that_names_both(self):
+        """D1: locks on releases that passed before would otherwise all fail; the design gatekeeper addresses the warning."""
+        package = self.locked({"react": "19.1.0", "next": "15.4.2"})
+        self.assertEqual(package.failures, [])
+        self.assertEqual(package.warnings, ["stack_lock: next 15.4.2 is below 16, the minimum of the demo stack; the lock passes, "
+                                            "and the design gatekeeper has to address it in its judgment"])
+        both = self.locked({"react": "18.3.1", "next": "15"})
+        self.assertEqual((both.failures, len(both.warnings)), ([], 2))
+
+    def test_a_pre_release_orders_below_its_release(self):
+        minimums = {"react": "19.0.0"}
+        self.assertEqual(len(self.locked({"react": "19.0.0-rc.1"}, minimums=minimums).warnings), 1)
+        self.assertEqual(self.locked({"react": "19.0.0"}, minimums=minimums).warnings, [])
+        self.assertEqual(self.locked({"react": "19"}, minimums=minimums).warnings, [], "19 is 19.0.0")
+
+    def test_a_component_the_registry_names_has_to_be_in_the_lock(self):
+        self.assertEqual(self.locked({"react": "19.2.0"}).failures,
+                         ["stack_lock versions names no next, which registry entry demo gives a minimum for"])
+        self.assertEqual(self.locked({"node": "26"}).failures,
+                         ["stack_lock versions names no react, next, which registry entry demo gives a minimum for"])
+
+    def test_a_value_that_is_not_one_version_fails_and_is_named(self):
+        """A lock records the version in use: a range, a wildcard or a tag says which would do."""
+        for value in ("^19", "24.x", ">=3.11", "latest", "19 || 20", "~19.1", "", "19.*"):
+            with self.subTest(value=value):
+                failures = self.locked({"react": value, "next": "16"}).failures
+                self.assertEqual(len(failures), 1, failures)
+                self.assertIn(f"stack_lock versions.react: {value!r} is not one version", failures[0])
+        for value in (19, 3.10, None, ["19"]):
+            with self.subTest(value=value):
+                failures = self.locked({"react": value, "next": "16"}).failures
+                self.assertEqual(len(failures), 1, failures)
+                self.assertIn("is not text", failures[0])
+        self.assertIn("stack_lock versions.node:", self.locked({**self.IN_USE, "node": "lts"}).failures[0],
+                      "a component the registry does not name is allowed, and still has to be a version")
+
+    def test_a_version_past_the_release_the_overlay_was_read_against_passes_with_a_warning(self):
+        limits = {"entry": {"verified_through": {"next": "16"}}}
+        self.assertEqual(self.locked({"react": "19", "next": "16.9.3"}, **limits).warnings, [])
+        package = self.locked({"react": "19", "next": "17.0.0"}, **limits)
+        self.assertEqual(package.failures, [])
+        self.assertEqual(package.warnings, ["stack_lock: next 17.0.0 is past 16, the newest release the demo overlay was read "
+                                            "against; its guidance is not known to hold there"])
+
+    def test_a_list_form_lock_passes_for_this_release_with_the_labelled_form_named(self):
+        for versions in ([19, 15], ["19"], [99]):
+            with self.subTest(versions=versions):
+                package = self.locked(versions)
+                self.assertEqual(package.failures, [])
+                self.assertEqual(len(package.warnings), 1, package.warnings)
+                self.assertIn("versions is a list, the form from before the registry named its components", package.warnings[0])
+                self.assertIn('{"react": "<version in use>", "next": "<version in use>"}', package.warnings[0])
+
+    def test_a_lock_with_no_versions_or_another_shape_is_refused(self):
+        digest = self.registry()
+        for versions in (None, [], {}, "19", 19):
+            with self.subTest(versions=versions):
+                self.assertEqual(self.failures({"slug": "demo", "versions": versions, "overlay_sha256": digest}),
+                                 ["stack_lock record requires slug, versions, and overlay_sha256"])
+
+    def test_a_registry_entry_that_states_no_minimums_cannot_vouch_for_any(self):
+        for minimums in (None, {}):
+            with self.subTest(minimums=minimums):
+                self.assertEqual(self.locked(self.IN_USE, minimums=minimums).failures,
+                                 ["stack_lock registry entry demo states no min_versions, so nothing can vouch for a lock on it"])
+
+    def test_a_registry_minimum_that_is_not_a_version_is_an_engine_error_not_a_verdict(self):
+        with self.assertRaises(engine.Engine):
+            self.locked(self.IN_USE, minimums={"react": "nineteen", "next": "16"})
 
     def test_a_missing_overlay_file_fails_instead_of_verifying_only_the_registry_string(self):
-        digest = self.registry(overlay_file=False)
-        self.assertEqual(self.failures({"slug": "demo", "versions": [19], "overlay_sha256": digest}),
+        self.assertEqual(self.locked(self.IN_USE, overlay_file=False).failures,
                          ["stack_lock overlay file for demo is missing: tech-stacks/demo.md"])
 
     def test_an_overlay_file_changed_since_the_registry_recorded_it_still_fails(self):
         digest = self.registry()
         (self.root / "catalog" / "tech-stacks" / "demo.md").write_text("# Edited\n", encoding="utf-8")
-        self.assertEqual(self.failures({"slug": "demo", "versions": [19], "overlay_sha256": digest}),
+        self.assertEqual(self.failures({"slug": "demo", "versions": self.IN_USE, "overlay_sha256": digest}),
                          ["stack_lock overlay file digest does not match declared overlay_sha256"])
 
+    # QR-13: the registry recorded `support_ends` and `verified_at`, and nothing read them. A lock on a stack whose
+    # minimum is past its date still passes (picking a supported version is the owner's decision, not the gate's),
+    # so the only way the reader hears of it is the result's warnings. The dates are per component since WP-13.
 
-    # QR-13: the registry recorded `support_ends` and `verified_at`, and nothing read them. A lock on
-    # a stack past its date still passes (picking a supported version is the owner's decision, not
-    # the gate's), so the only way the reader hears of it is the result's warnings.
-
-    TODAY = date(2026, 10, 1)
+    TODAY = date(2026, 11, 12)
 
     def setUp(self):
         super().setUp()
@@ -430,35 +496,41 @@ class StackLockTests(EngineCase):
         patch.start()
         self.addCleanup(patch.stop)
 
-    def lock(self, **extra) -> object:
-        digest = self.registry(extra=extra)
-        return self.checked({"slug": "demo", "versions": [19], "overlay_sha256": digest})
+    def lock(self, ends: dict | None = None, **extra) -> object:
+        return self.locked(self.IN_USE, entry={"support_ends": ends} if ends is not None else None, extra=extra)
 
     def days_ago(self, days: int) -> str:
         return (self.TODAY - timedelta(days=days)).isoformat()
 
-    def test_a_lock_on_a_stack_past_its_end_of_support_passes_with_a_warning(self):
-        package = self.lock(support_ends={"demo": "2000-01-01"})
+    def test_a_lock_on_a_stack_whose_minimum_is_past_its_end_of_support_passes_with_a_warning(self):
+        package = self.lock({"next": "2000-01-01"})
         self.assertEqual(package.failures, [])
         self.assertEqual(len(package.warnings), 1, package.warnings)
-        self.assertIn("support for the demo stack ended on 2000-01-01", package.warnings[0])
+        self.assertIn("upstream support for next 16 of the demo stack ended on 2000-01-01", package.warnings[0])
+        self.assertIn("the registry's minimum is past its end of life", package.warnings[0])
 
-    def test_a_stack_still_in_support_or_another_stacks_date_is_not_a_warning(self):
-        for extra in ({"support_ends": {"demo": "2999-12-31"}}, {"support_ends": {"other": "2000-01-01"}}, {}):
-            with self.subTest(extra=extra):
-                package = self.lock(**extra)
+    def test_a_component_still_in_support_is_not_a_warning(self):
+        for ends in ({"react": "2999-12-31"}, {"react": "2999-12", "next": "2999-01"}, {}, None):
+            with self.subTest(ends=ends):
+                package = self.lock(ends)
                 self.assertEqual((package.failures, package.warnings), ([], []))
 
-    def test_the_last_day_of_support_is_not_yet_past(self):
-        self.assertEqual(self.lock(support_ends={"demo": self.TODAY.isoformat()}).warnings, [])
-        self.assertEqual(len(self.lock(support_ends={"demo": self.days_ago(1)}).warnings), 1)
+    def test_the_last_day_of_support_is_not_yet_past_and_a_month_runs_to_its_last_day(self):
+        self.assertEqual(self.lock({"react": self.TODAY.isoformat()}).warnings, [])
+        self.assertEqual(len(self.lock({"react": self.days_ago(1)}).warnings), 1)
+        self.assertEqual(self.lock({"react": "2026-11"}).warnings, [], "November runs to the 30th")
+        ended = self.lock({"react": "2026-10"}).warnings
+        self.assertEqual(len(ended), 1)
+        self.assertIn("ended on 2026-10-31", ended[0])
+        self.assertIn("ended on 2025-12-31", self.lock({"react": "2025-12"}).warnings[0])
 
     def test_an_end_of_support_that_is_not_a_date_is_reported_not_ignored(self):
-        for value in ("soon", "2026-13-40", "31/07/2026", 20260731):
+        for value in ("soon", "2026-13-40", "31/07/2026", 20260731, "2026-13"):
             with self.subTest(value=value):
-                package = self.lock(support_ends={"demo": value})
+                package = self.lock({"react": value})
                 self.assertEqual(package.failures, [])
-                self.assertEqual([w for w in package.warnings if "is not a YYYY-MM-DD date" in w], package.warnings)
+                self.assertEqual([w for w in package.warnings if "is not a YYYY-MM-DD date or a YYYY-MM month" in w], package.warnings)
+                self.assertEqual(len(package.warnings), 1)
 
     def test_a_registry_not_verified_within_its_own_ttl_warns(self):
         package = self.lock(verified_at=self.days_ago(200), verification_ttl_days=180)
@@ -484,17 +556,36 @@ class StackLockTests(EngineCase):
                 self.assertEqual(len(package.warnings), 1, package.warnings)
                 self.assertIn("freshness was not checked", package.warnings[0])
 
-    def test_the_shipped_registry_warns_for_the_stack_whose_support_has_ended(self):
-        """vue-nuxt locks Nuxt 3, whose end of life passed on 2026-07-31; the other overlays carry no date."""
+    def test_a_project_at_the_minimums_of_any_shipped_overlay_locks_with_no_warning(self):
+        """Done when: every overlay states only minimums, and a project at or above them produces a passing lock with
+        no warning. No shipped minimum is past its end of support on the day the registry was verified."""
         shipped = engine.load_data(engine.REGISTRY_PATH)
-        by_slug = {entry["slug"]: entry for entry in shipped["overlays"]}
-        for slug, expect_warning in (("vue-nuxt", True), ("angular", False)):
-            with self.subTest(slug=slug):
-                self.spec.pop("_registry_path", None)
-                entry = by_slug[slug]
-                package = self.checked({"slug": slug, "versions": list(entry["versions"][:1]), "overlay_sha256": entry["sha256"]})
-                self.assertEqual(package.failures, [])
-                self.assertEqual(any("ended on 2026-07-31" in warning for warning in package.warnings), expect_warning)
+        self.assertEqual(shipped["schema_version"], 2)
+        verified = date.fromisoformat(str(shipped["verified_at"]))
+        with mock.patch.object(engine, "utc_today", return_value=verified):
+            for entry in shipped["overlays"]:
+                with self.subTest(slug=entry["slug"]):
+                    self.spec.pop("_registry_path", None)
+                    at_minimum = self.checked({"slug": entry["slug"], "versions": dict(entry["min_versions"]),
+                                               "overlay_sha256": entry["sha256"]})
+                    self.assertEqual((at_minimum.failures, at_minimum.warnings), ([], []))
+                    newer = {name: f"{int(version.split('.')[0])}.{int((version.split('.') + ['0'])[1]) + 1}.3"
+                             for name, version in entry["min_versions"].items()}
+                    above = self.checked({"slug": entry["slug"], "versions": newer, "overlay_sha256": entry["sha256"]})
+                    self.assertEqual((above.failures, above.warnings), ([], []), newer)
+
+    def test_the_shipped_registry_warns_for_a_release_the_overlay_was_not_read_against(self):
+        shipped = {entry["slug"]: entry for entry in engine.load_data(engine.REGISTRY_PATH)["overlays"]}
+        entry = shipped["node-typescript"]
+        self.spec.pop("_registry_path", None)
+        package = self.checked({"slug": "node-typescript", "versions": {"node": "26.1.0", "typescript": "7.0.2"},
+                                "overlay_sha256": entry["sha256"]})
+        self.assertEqual(package.failures, [])
+        self.assertEqual(len(package.warnings), 1, package.warnings)
+        self.assertIn("typescript 7.0.2 is past 6", package.warnings[0])
+        old = self.checked({"slug": "node-typescript", "versions": {"node": "22.11.0", "typescript": "5.9.3"},
+                            "overlay_sha256": entry["sha256"]})
+        self.assertEqual((old.failures, len(old.warnings)), ([], 2), "a lock that passed before still passes, with two warnings")
 
 
 class ConsumerHandoffBindingTests(EngineCase):

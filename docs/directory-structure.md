@@ -65,6 +65,7 @@ SupremeTeam/
     │   ├── check_runtime.py              # Runtime contract check and the command line
     │   ├── project_inspection.py         # Read-only inspection behind --detect-project and friends
     │   ├── stack_detection.py            # Registry match and project classification
+    │   ├── stack_versions.py             # How a tech-stack version is read and compared: minimums, versions in use
     │   ├── language_entrypoints.py       # Python, Go and Rust entrypoints and start commands
     │   ├── script_commands.py            # Package-script and Makefile command reading
     │   ├── project_files.py              # Bounded read-only walk, text reads, path classes
@@ -73,6 +74,9 @@ SupremeTeam/
     │   ├── check_parity.py               # Redesign mock and prototype parity against the inventory
     │   ├── content_hash.py               # The catalog's sha256 (text folded to LF) for evidence files
     │   ├── save_taxonomy.py              # Shared save constants and phase-to-protocol state mapping
+    │   ├── checkout.py                   # Maps a linked git worktree to the main checkout that holds its runtime state
+    │   ├── run_files.py                  # Sanctioned writer for phase files: write puts a report, artifact or evidence file into the run (from a worktree too); supersede moves an earlier revision's file to _superseded/
+    │   ├── catalog_imports.py            # Reads each entry point's imports; names a catalog module that is missing
     │   ├── contract_floor.py             # Independent safety floor for the shipped gate spec
     │   ├── mcp_registry.py               # Read-only project MCP freshness/identity diagnostic
     │   ├── validate_manifests.py         # Manifest and cross-reference contracts
@@ -88,13 +92,17 @@ SupremeTeam/
     ├── harness/
     │   ├── hooks/                        # Lifecycle hooks, the guard, the record writers, diagnostics
     │   │   ├── pre_tool_use.py           # PreToolUse entry point; forwards to guard_hook.py
-    │   │   ├── guard_hook.py             # The guard engine: Rules A to G, one function per rule
+    │   │   ├── guard_hook.py             # The guard engine: Rules A to H, one function per rule
     │   │   ├── _cmdscan.py               # Shell command analyser: wrappers, redirects, write targets
     │   │   ├── _paths.py                 # Path and glob canonicaliser
     │   │   ├── _program_paths.py         # Bounded literal Python I/O targets; never evaluates code
     │   │   ├── guard_state.py            # Sole guard writer; legacy adoption preserves protection
     │   │   ├── post_tool_use.py          # PostToolUse: trajectory, heartbeat, coverage sweep
     │   │   ├── user_prompt_submit.py     # UserPromptSubmit: routing and session-pin reminder
+    │   │   ├── context_events.py         # PreCompact and SessionStart: a context dump before a compaction, a resume note after it
+    │   │   ├── antigravity_bridge.py     # Google Antigravity: its events carried to the three hooks, and their answers back
+    │   │   ├── context_watch.py          # Advice at the context-pressure thresholds, from the status line or the transcript
+    │   │   ├── context_statusline.py     # Claude Code status-line command that records context usage for context_watch.py
     │   │   ├── save_run.py               # The only writer of the run record
     │   │   ├── _saves.py                 # Reader that classifies saved state
     │   │   ├── _state.py                 # Project root, hook input, guard state, fault counting
@@ -147,10 +155,14 @@ are in [CONTRIBUTING.md](../CONTRIBUTING.md#run-the-suites).
     `test_guard_harness_files.py`, `test_guard_state.py`, `test_pre_tool_entry.py`,
     `test_hooks_robustness.py`, `test_program_paths.py`
   - the hooks and their state: `test_post_tool_use.py`, `test_user_prompt_submit.py`,
-    `test_run_heartbeat.py`, `test_state_hardening.py`, `test_fsutil.py`
+    `test_run_heartbeat.py`, `test_context_events.py`, `test_context_watch.py`, `test_state_hardening.py`,
+    `test_fsutil.py`
   - the run record and its reader: `test_run_state.py`, `test_saves_reader.py`
   - registration and readiness: `test_registration_contract.py`,
-    `test_registration_hardening.py`, `test_installer_hooks.py`, `test_documented_flags.py`
+    `test_registration_hardening.py`, `test_registration_shells.py`, `test_copilot_registration.py`,
+    `test_antigravity_bridge.py`,
+    `test_installer_hooks.py`,
+    `test_documented_flags.py`
   - maintenance audits: `test_size_audit.py`, `test_audit_improve.py`,
     `test_audit_improve_parts.py`, `test_gate_watch.py`
 - **Gates**, `skills/harness/gatekeeper/`: `test_gatecheck.py`, `test_gate_engine.py`,
@@ -164,10 +176,12 @@ are in [CONTRIBUTING.md](../CONTRIBUTING.md#run-the-suites).
   `test_lint_config.py`, `test_stdlib_only.py`, `test_contract_mirrors.py`
 - **Scripts**, `skills/scripts/`: `test_check_runtime_contract.py`,
   `test_check_runtime_layout.py`, `test_check_runtime_redaction.py`,
-  `test_stack_detection.py`, `test_project_classification.py`, `test_start_commands.py`,
+  `test_stack_detection.py`, `test_stack_versions.py`, `test_project_classification.py`,
+  `test_start_commands.py`,
   `test_project_walk.py`, `test_check_parity.py`, `test_data_formats.py`,
   `test_output_paths.py`, `test_package_check.py`, `test_scan_record.py`,
-  `test_validate_manifests.py`, `test_contract_floor.py`, `test_mcp_registry.py`
+  `test_validate_manifests.py`, `test_contract_floor.py`, `test_mcp_registry.py`,
+  `test_checkout.py`, `test_run_files.py`, `test_missing_modules.py`
 - **Taste**, `skills/taste/`: `test_taste_prefs.py`, `test_taste_store.py`, `test_lock_contracts.py`
 - **Installers**, `scripts/`: `test_install.py`
 - **Skill-creator**, `skills/skill-maker/skill-creator/scripts/`: `test_aggregate_benchmark.py`,

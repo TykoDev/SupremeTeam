@@ -7,6 +7,9 @@
   "purpose": "Machine-readable definition of every Supreme Team pipeline, including Taste: ordered stages, stage owners, the gate boundary that closes the pipeline, and the pipeline-level deterministic scripts it must run itself. Owners must exist in team-manifest.yaml, boundaries in gates.yaml, and every declared script path on disk; validation/test_pipeline_contracts.py and scripts/validate_manifests.py enforce all three. An empty scripts list is a declaration, not an omission: see scripts_rule. The gate is modelled two ways across these ten pipelines: see gate_model. The prose workflows in the owning SKILL.md files elaborate these stages and must not contradict them.",
   "scripts_rule": "scripts lists only the deterministic scripts a pipeline must run itself, as project-relative paths that test_pipeline_contracts.py resolves on disk. Five pipelines declare an empty list - build, review, investigation, qa, and release - and that is a positive statement: those pipelines mandate no pipeline-level script of their own. Their determinism comes from the boundary instead, judged by skills/harness/gatekeeper/check.py, which the gatekeeper invokes and the pipeline does not. An empty list never means no tooling runs; the stage owners' own SKILL.md files name the commands they run, and those commands are not declared here.",
   "gate_model": "All ten pipelines declare a boundary and every boundary is closed by a gatekeeper, but only four model the gate as a stage. design, redesign, build, and review carry an explicit phase-gate stage owned by a phase gatekeeper that validates inside the pipeline before gatekeeper-admiral validates the same boundary as the cross-stage handoff. security, investigation, qa, taste, skill-creation, and release carry no phase-gate stage because they have no phase gatekeeper: their boundary is judged once, by gatekeeper-admiral. The missing stage is a statement about validation depth, not a gap in the stage list. Explicit after_boundary stages separate approved follow-through from pre-approval evidence: release rollout/documentation and investigation handoff run after, never before, this declared boundary. Mirrored in prose by contracts/responsibility-matrix.md. At those four phase-gated boundaries the cross-stage pass is bounded by gates.yaml revise_policy.cross_stage_scope: with an APPROVED phase verdict and no changed evidence it judges the crossing and carries the phase gate's adequacy judgment, so one package is not reviewed twice for the same question.",
+  "pipeline_fields": {
+    "upstream_boundary": "Optional. The boundary whose approval this pipeline starts from: build names design-to-build, review names build-to-review, release names review-to-delivery. It is the one declared source of boundary order. scripts/validate_manifests.py and validation/test_pipeline_contracts.py require it to be a gates.yaml boundary other than the pipeline's own, to form no cycle, and to equal evidence_type_params.<key>.upstream_boundary in gates.yaml wherever the pipeline's boundary requires a revision_ref key (approved_design_revision at build-to-review, approved_delivery at deploy-readiness). The admiral delivery ledger reads it (harness/gatekeeper/_gatecheck.py check_handoff_records): a handoff record older than the record of the boundary upstream of it is stale after a rewind. A pipeline that declares none can start a run by itself."
+  },
   "stage_fields": {
     "step": "Required. Stage id, unique within the pipeline.",
     "owner": "Required. Must be a team-manifest.yaml member. When the stage declares an artifact, the owner must equal that artifact's writer in ownership.yaml; test_pipeline_contracts.py StageArtifactOwnershipTests enforces it.",
@@ -263,6 +266,7 @@
     "build": {
       "owner": "build-management",
       "boundary": "build-to-review",
+      "upstream_boundary": "design-to-build",
       "external_inputs": ["approved-design", "security-seed"],
       "dependency_graph": {
         "implementation": {"requires": ["approved-design"], "produces": ["implementation"]},
@@ -319,6 +323,7 @@
     "review": {
       "owner": "code-chief",
       "boundary": "review-to-delivery",
+      "upstream_boundary": "build-to-review",
       "external_inputs": ["approved-build"],
       "dependency_graph": {
         "correctness-review": {"requires": ["approved-build"], "produces": ["bug-findings"]},
@@ -587,6 +592,7 @@
     "release": {
       "owner": "ship",
       "boundary": "deploy-readiness",
+      "upstream_boundary": "review-to-delivery",
       "external_inputs": ["approved-delivery"],
       "dependency_graph": {
         "readiness": {"requires": ["approved-delivery"], "produces": ["verification-plan", "human-go-record"]},

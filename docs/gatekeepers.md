@@ -80,7 +80,7 @@ approving it.
 | `render` | `rendered_verification`, `mock_rendering` | Hashed captures, breakpoints and themes, `inputs` bound to the rendered source, pass or `inferred` with a stated limitation |
 | `findings` | `findings`, `security_evidence`, `defects`, `accessibility_evidence` | Items with id, severity, status. Critical verified or not-applicable with a reason; Major verified, not-applicable, or deferred with owner and reopen trigger |
 | `verdict` | `review_verdict` | APPROVED, or REVISE/ESCALATE with a challenge record naming `by` and `reason` |
-| `stack_lock` | `stack_lock` | Registry slug, versions, overlay sha256, checked against the registry and the overlay file |
+| `stack_lock` | `stack_lock` | Registry slug, the versions in use by component, overlay sha256, checked against the registry's minimums and the overlay file |
 | `revision_ref` | `approved_design_revision`, `approved_delivery` | `{revision, verdict}`: the hashed upstream cross-stage verdict holds `gatekeeper-admiral`'s valid APPROVED judgment for that revision in this run, and the approved package still fingerprints and hashes as approved |
 | `decision_log` | `decisions` | The intake grilling log's four fixed tables: every cell filled, unique `D-<n>` ids, sanctioned sources |
 | `acceptance_table` | `acceptance` | The plan's `Acceptance criteria` table with unique `AC-<n>` ids and every cell filled |
@@ -108,7 +108,7 @@ approving it.
 | Validator | Input | Settles |
 |---|---|---|
 | `skills/harness/gatekeeper/check.py` | a gate manifest | Required keys present and artifact-backed, typed records shaped, hashes and inputs bound, one revision, the right submitter, blocked phrases and broken links, drift against `--prior` |
-| `gatekeeper-*/scripts/check.py` (`_gatecheck.py`) | a phase package directory | Deliverables present with their marker fields, single-revision lineage, skip records, blocked phrases, links that stay inside the package |
+| `gatekeeper-*/scripts/check.py` (`_gatecheck.py`) | a phase package directory | Deliverables present with their marker fields, single-revision lineage, superseded copies held to their index, skip records, blocked phrases, links that stay inside the package. For `gatekeeper-admiral` the package is the delivery ledger: `--boundary <name>` names the handoff record being judged, and every earlier record has to be a recorded `APPROVED` that agrees with its cross-stage verdict record and is not older than the record upstream of it |
 
 Both report facts and fail loud: package defect exit 1, engine error exit 2,
 never a pass. The gatekeeper adds judgment: whether an artifact is adequate,

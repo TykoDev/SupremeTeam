@@ -7,6 +7,420 @@ release tags yet, so everything sits under Unreleased; each skill carries its ow
 
 ## [Unreleased]
 
+### Remediation of the nine audited issues
+
+Each package below was reproduced against this tree first, several of them in real sessions
+of Claude Code 2.1.322, Codex CLI 0.166.0 and Antigravity CLI 1.4.12 on Windows.
+
+- Codex file edits bypassed the guard (WP-00): Codex reports every file edit as
+  `apply_patch` and puts the patch text in `tool_input.command`. The guard read a patch only
+  from `patch`, `input` and `content`, found no path and let the edit through, so in two real
+  Codex sessions a patch wrote into a frozen folder while shell writes into it were blocked.
+  Every path rule was affected: frozen and blocked globs, read-only runs, the single-writer
+  records and the hook files. `guard_hook._written_paths` now reads the file headers of a
+  patch from every string of the tool input, whatever key holds it and whether it is text or
+  a list of arguments. A patch tool call with no header the guard can read is a write with no
+  target: Rule G denies it while a boundary is recorded, a record directory holds a record or
+  a run is pinned, and allows it otherwise. `guard_hook.py` is a hashed hook file: re-record
+  the hook hashes after upgrading (see the upgrade notes below).
+- Safety floor (WP-01, issue 4): `contract_floor.py` exists so that weakening `gates.yaml`
+  cannot weaken a gate, and three documents say it rejects a weakened typed kind or artifact
+  backing. It did not pin the typed kinds of `decisions`, `acceptance`, `interfaces`,
+  `implementation` and `traceability`, the artifact backing of `acceptance` and `interfaces`
+  (design-to-build), `approved_design_revision` and `implementation` (build-to-review) and
+  `approved_delivery` (deploy-readiness), or the upstream boundary either `revision_ref` key
+  binds to: deleting all of them from a copy of the spec gave no floor error. The floor now
+  names every key the shipped spec types or backs, both upstream links, the REVISE cycle cap
+  of 3 (`_gatecycle.py` acts on it at gate time) and an owner for every required key, and
+  `test_contract_floor.py` compares floor and spec in both directions, so a key added to
+  `gates.yaml` without a floor entry fails the suite. `gates.yaml` is unchanged.
+- Hook commands that start on Windows (WP-02, issue 6): `install.ps1 -RegisterHooks` wrote
+  `<interpreter> -X utf8 "<hook path>"` with backslashes. Claude Code runs hooks through
+  Git Bash, which consumes the backslashes of the unquoted interpreter path, so in a real
+  session that registration ran zero times while the tool calls went ahead, and
+  `check_readiness.py` reported every hook registered and executable and enforcement `live`:
+  the verifier split the command without shell rules. No test ran `install.ps1`, and
+  `install.sh` under Git Bash found no interpreter, because `python3` and `python` are the
+  Microsoft Store stubs there.
+  - `repair_registration.hook_handler` writes, on Windows, one form that starts in Git Bash,
+    PowerShell 7, Windows PowerShell 5.1 and `cmd`: forward slashes, the interpreter
+    unquoted, the hook path quoted. Its first word cannot hold a space, so a spaced
+    interpreter is named through `py -<major>.<minor>` when that launcher starts the same
+    interpreter; otherwise Claude Code gets `command` and `args`, which it starts without a
+    shell, Copilot the PowerShell call form, and Codex and Cursor a refusal that names the
+    two ways out. Nothing changes on POSIX.
+  - `verify_registration.shell_defects` reads a registered command against the rules of
+    each shell its host can use on this platform, and a command with a defect is configured
+    and resolvable but not executable, so readiness no longer reports it as registered or
+    enforcement as live. A handler with `args` is read as one interpreter word.
+  - `check_readiness.py --probe` and `verify_registration.py --probe` start each registered
+    command the way its host does, with `--selftest` appended, and report `executes: yes` or
+    `no` per host, hook and shell. Every registered hook script accepts `--selftest`: it
+    imports every file a registered hook runs, prints `ok`, reads no input and writes no
+    state, and fails loud when a module does not import.
+  - `repair_registration.py --apply` and `install_hooks.py` start each command they are
+    about to write and write nothing when one does not start (`--no-probe` skips this). A
+    Supreme Team entry whose command cannot start is replaced in place and keeps its matcher;
+    before, a second group was appended and the broken one stayed.
+  - Codex: the output of a rewrite says that Codex skips a changed hook until it is trusted
+    with `/hooks`, readiness says it cannot see trust, and inline `[hooks]` tables in
+    `config.toml` count as registered and are not written a second time.
+  - `install.sh` tries `py -3` first under Git Bash, MSYS2 and Cygwin and hands the registrar
+    Windows paths. `scripts/test_install.py` now runs `install.ps1` under each PowerShell
+    found and `install.sh` under Git Bash, into a scratch home, and then probes what they
+    registered; `test_registration_shells.py` runs every form through every shell on the
+    machine. Three tests that pinned the quoted form of a spaced interpreter now pin it for
+    POSIX and pin the launcher and the no-shell form for Windows, and the fixtures that
+    registered an unquoted backslash path now spell it with forward slashes.
+- Guard state in a linked git worktree (WP-03, issue 7): `.harness-state/` and
+  `skillset-saves/` are git-ignored, so a linked worktree has neither. A session started with
+  `claude --worktree` reports the worktree as the project, and `_state.project_root()` took
+  it as one, because a worktree's `.git` file is a root marker: the guard found no record
+  there and enforced no frozen, blocked or read-only boundary (all 15 write shapes tried were
+  allowed, a product file under a read-only run included), and the hooks created a second
+  `.harness-state/` inside the worktree. A worktree-isolated sub-agent was not affected; its
+  project directory stays at the session's root.
+  - New `skills/scripts/checkout.py`: `checkout_root(root)` maps a linked worktree to its
+    main checkout by reading the `.git` file, its `commondir` and the `gitdir` back-link, and
+    never starts `git`. A submodule, the worktree of a bare repository and a directory with a
+    copied `.git` file are not mapped. It is one of the script modules the hooks import, so
+    it is hashed at registration and protected by Rule F.
+  - `_state.state_root()` is `checkout_root(project_root())`. The guard record, the run
+    records, the heartbeat, the trajectories, the observation counters, the routing reminder
+    and the maintenance audits read and write under it; `save_run.py` and `guard_state.py`
+    run from a worktree session write the main checkout's records. `project_root()` keeps its
+    meaning, the tree a call acts in.
+  - The guard judges a call from such a session against the main checkout, and reads Rule B
+    and Rule F a second time against the worktree, so a project-relative glob
+    (`src/payments/**`) and the worktree's own registration files are protected in both
+    trees. Every row of the write table gives the same decision whichever of the two
+    directories the host reports.
+- Superseded copies and exact-path slots (WP-04, issue 2): the protocol tells every owner to
+  preserve superseded artifacts, and the shape engine read every file of a package. Against
+  the build gate, a kept `reports/report_completeness.r1.md` beside the current certificate
+  gave `MIXED_REVISIONS`; with no current certificate an old copy at
+  `archive/report_completeness.md` filled the completeness slot; and so did an unrelated
+  `reports/deploy-confirmation.md`, because the slot accepted `*confirm*.md` anywhere.
+  - One convention, defined in `save-protocol.md` and mirrored in
+    `contracts/workflow-protocol.md`: a superseded file lives at
+    `<phase>/_superseded/rev-<n>/<original path>` and is listed in
+    `<phase>/_superseded/index.json` with its digest. There is no in-place marker.
+  - One writer, new `skills/scripts/run_files.py supersede`, which moves the file and adds
+    the entry and refuses a path outside the phase, a file already superseded, a verdict
+    record, a file reached through a link and a revision that is not higher than the file's
+    own. `save-ownership.yaml` gains the class `phase-superseded`, and the guard's Rule C
+    denies every other write into the folder.
+  - The engine reads the current files only for slots, lineage, declared identity, skip
+    records and the blocked-phrase scan (`iter_current_files`), holds every file under
+    `_superseded/` to the index (`SUPERSEDED_UNINDEXED`, `SUPERSEDED_INDEX_MISMATCH`) and
+    names the copies once (`SUPERSEDED_COPIES`). `ArtifactSpec.exact_paths` restricts a slot
+    to named package-relative paths; a name match elsewhere is `ARTIFACT_NOT_CANONICAL`.
+    The `MIXED_REVISIONS` message names the command.
+  - The build gate reads the completeness certificate from `reports/report_completeness.md`
+    only, no longer accepts `*confirm*.md` or `*cross-check*.md`, and fails a certificate
+    whose frontmatter revision is not the package's (`COMPLETENESS_REVISION_MISMATCH`).
+- Delivery ledger (WP-05, issue 1): admiral's `delivery/reports/` holds one
+  `handoff_<boundary>.md` per boundary, each with its own submission id and revision. The
+  engine's rule of one revision and one submission id per package failed any directory with
+  two records (`MIXED_REVISIONS`, `MIXED_SUBMISSION_IDS`, exit 1), so no run with more than
+  one boundary passed the cross-stage shape check, and the wrapper took no boundary, so it
+  could not tell the record being judged from the earlier ones.
+  - `gatekeeper-admiral/scripts/check.py` takes `--boundary <name>`, checked against
+    `gates.yaml`. Without it a single record is the current one, and among several the one
+    still `PENDING`; anything else exits 2 and names the records. It never picks one.
+  - The records are left out of the lineage check and held to `check_handoff_records`: the
+    current record has to match the manifest of the package it hands over; every other
+    record has to be `VERDICT_RECORDED` and `APPROVED`, which an `ESCALATE` is not; every
+    recorded one has to agree with the gate's own `verdict_<boundary>.cross-stage.json` on
+    verdict, verdict id and revision; `package_path` has to be a phase directory of the run;
+    and a record older than the record upstream of it is stale after a rewind.
+  - The order has a source: `pipelines.yaml` gains `upstream_boundary` on `build`, `review`
+    and `release`, and `validate_manifests.py` holds it to a declared boundary other than
+    the pipeline's own, to no cycle, and to the upstream link `gates.yaml` gives the two
+    `revision_ref` keys.
+  - Admiral supersedes a boundary's record with `run_files.py supersede` before it writes a
+    new attempt's, and on a rewind supersedes the records of every boundary downstream. The
+    handoff record gains `manifest_submission_id`. `--prior` is compared with the current
+    record only, so an earlier boundary's verdict is no longer read as reusable.
+  - The wrapper tests' delivery fixture named a package in another run and carried no
+    `submission_status`; it now writes a record that is true of its package, which is what
+    the new checks require.
+- A missing module never crashes, and documents cannot drift (WP-06, issue 4): with one
+  module removed from a copy of the catalog, `harness/gatekeeper/check.py` and
+  `validate_manifests.py` ended in a traceback with exit 1, which for both means "defects
+  found"; `check_runtime.py` still printed `Ready: yes`; and `post_tool_use.py` crashed for
+  five modules and `user_prompt_submit.py` for four, where a registered hook has to fail open.
+  - Every entry point guards the catalog modules it imports and names the missing file in its
+    own error shape: `engine_error` JSON and exit 2 for the gate validator, the script's own
+    report and exit 2 for the validators, one `ERROR:` line and exit 2 for the command-line
+    tools, exit 3 for `save_run.py`. The two hooks exit 0 with the fault counted, or said on
+    stderr when `_state` cannot load. There is no shared helper: it would be the next file
+    that can go missing. `_gatecheck.Contracts.load()` reports a missing floor module as
+    `CONTRACTS_UNREADABLE`, and `_state.py` raises an import error, not `FileNotFoundError`,
+    when `_bootstrap.py` is gone.
+  - New `skills/scripts/catalog_imports.py` reads each entry point's imports from its syntax
+    tree. `check_runtime.py` prints `Ready: no` and names a module one of the catalog's
+    scripts needs and cannot find (`missing_modules` in `--json`), and `package_check.py`
+    fails a package that leaves one out. `runtime-manifest.yaml` gives the optional PyYAML
+    dependency its import name, so a script that needs it is not read as a broken catalog.
+  - `test_missing_modules.py` discovers every entry point and hides each module it loads, in
+    one copy of the catalog; `test_hooks_robustness.py` does the same for the three hooks; a
+    scan fails any entry point with an unguarded top-level catalog import.
+  - Document drift: `GateProseTests` compares the owner tables of the gatekeeper skills, the
+    admiral's table of delegated keys and the key-by-key tables of the three
+    `references/boundary-evidence.md` with `gates.yaml`, and `test_documented_flags.py` reads
+    the command lines of the gatekeeper documents. No drift was found; the engine docstring
+    now says what exit 2 and `CONTRACTS_UNREADABLE` mean.
+  - `validate_manifests.py` gains exit 2 (could not run). `check_runtime.py` takes about a
+    second longer, the cost of reading the scripts' imports.
+- Evidence has to cite the current file by its own path (WP-07, issue 3):
+  `Package.contain()` decided on the spelling of a path and on whether it left the evidence
+  root, and never asked which file the path reaches. On Windows a junction inside the package
+  that pointed at an old copy passed with `pass: true`, and so did a direct citation of
+  `_history/rev-1/...` and an upper-case spelling; the trailing-dot, `::$DATA` and short-name
+  spellings were refused as evidence values only because the path pattern rejects them, and
+  were accepted as `artifact_hashes` keys.
+  - A path that resolves into a `_superseded/` or `_history/` directory fails at once,
+    however it is spelled or linked (`cites a superseded copy: <path> (resolves to <file>)`),
+    for artifacts and for the `inputs` of typed records under `skillset-saves/`.
+  - An artifact whose digest is that of a superseded copy fails (`artifact content matches
+    superseded copy rev <n>`), unless it is the file at the path the copy was superseded
+    from: a log or a JSON record can be byte-identical across revisions.
+  - `_gatecheck.spelling_defects` compares each component of a cited path with the listing
+    of its parent directory, so one rule covers a different letter case, a trailing dot, a
+    short name, a stream, a symlink and a junction on every platform. A path that is not
+    the on-disk spelling, or that passes through a link to a current file, is a warning for
+    one release and a failure after it: schema 2 is mandatory inside a run, so an immediate
+    failure would break manifests that pass today.
+  - The shape engine fails a link inside the package to a superseded copy
+    (`LINK_TO_SUPERSEDED`).
+  - `gates.yaml` states both rules in `evidence_rules.evidence_root` and is at
+    `spec_revision` 10. This changes the spec digest (see the upgrade notes).
+- pi is an installer target (WP-09, issue 5): `install_hooks.py --target pi` wrote the guard
+  extension, and neither installer let the name through (`install.sh` refused it as an
+  unknown target, `install.ps1` at parameter binding), so the extension could only be
+  installed by calling the helper by hand.
+  - `--target pi` / `-Target Pi` are accepted, with `--pi-extension PATH` / `-PiExtension`
+    passed on to the helper. pi has no mirror (it reads the common skills folder), so the
+    target takes part in `--register-hooks` only, and a dry run names the extension file a
+    real run would write.
+  - `auto` picks pi when `~/.pi/agent` exists or `PI_CODING_AGENT_DIR` is set. A program
+    named `pi` on `PATH` is not evidence: the name is generic, and a false match would write
+    an extension into the home directory.
+  - `check_readiness.py` names the plugin hosts whose registration file is present (pi,
+    Cursor, OpenCode) as `Plugin host: ... not inspected here`, with how each host reports
+    its own state, and lists them under `plugin_hosts` in the JSON report. It claims
+    presence only; `Ready` and the enforcement line are unchanged.
+- Sub-agents can write their reports (WP-10, issue 7): under the read-only record every
+  review lens is told to create, four of nine ways a delegate wrote its packet were denied.
+  Two built the destination when the command ran (`cat > "$(output_paths.py ...)"`), which
+  the guard cannot place and which never worked, because the script prints JSON. Two were
+  writes from a worktree-isolated sub-agent, resolved against the worktree, where no run
+  is. Claude Code also refuses that sub-agent's edit tool on a path in the main checkout, so
+  an absolute save path alone would not have been enough.
+  - `scripts/run_files.py write --run-id R --phase P --kind reports|artifacts|evidence
+    --name X [--from FILE]` writes the content it is given (standard input by default) to
+    the destination `output_paths.resolve()` gives, against the main checkout from either
+    tree, in one step, and prints the JSON `output_paths.py` prints with the digest. The
+    guard reads a script's arguments as arguments, so the command holds itself to the
+    record: it refuses a kind with a writer of its own, a path `save-ownership.yaml` gives
+    no delegated specialist, a run with no directory, a destination through a link, and a
+    destination a frozen or blocked glob covers or a read-only record's allow list leaves
+    out.
+  - The Save Context block carries `Project root` and an absolute `Save path` in all ten
+    copies, and says how a delegate writes a run file.
+  - `output_paths.py` resolves every kind but `product` against the main checkout when the
+    project root, given or defaulted, is a linked worktree, and says so in a `worktree` key.
+  - Guard Rule H: a write under the `skillset-saves/` of a linked worktree is denied, with
+    or without a read-only record, and the reason gives the path in the main checkout and
+    the `run_files.py write` command. Removing or moving a file left there is not refused.
+  - A Rule D denial of a run file or of a destination built at run time, and the generic
+    Rule G denial, end with the two sanctioned ways to write a run file. Rule G no longer
+    says "use a path tool", which was the shape it denied.
+  - The post-tool hook records the `agent_id` and `agent_type` Claude Code puts on a tool
+    event inside a sub-agent. They are the host's word and grant nothing.
+- GitHub Copilot is registered where it looks, in its shape, and answered in its shape
+  (WP-08, issue 9). The registrar wrote `~/.config/github-copilot/hooks.json` and
+  `.github/hooks.json` in the nested shape Claude Code reads, and the guard answered under
+  `hookSpecificOutput`. Copilot reads `*.json` inside `~/.copilot/hooks/` and
+  `.github/hooks/`, as `{"version": 1, "hooks": {event: [handler]}}` with the command in a
+  `bash` or `powershell` field, and documents the decision at the top level. The hooks were
+  never started there. **Not run in a Copilot session: Copilot CLI is not installed on the
+  machine this was written on. It follows Copilot's hooks reference.**
+  - The registrar writes its own file, `supremeteam.json`, in Copilot's hook directory
+    (`$COPILOT_HOME/hooks/` when that is set), in Copilot's shape, with PascalCase events and
+    an explicit `timeoutSec`. The verifier reads every `*.json` of both directories.
+  - Each command ends in `--host copilot`. With it the guard prints a top-level
+    `permissionDecision` and the other hooks a top-level `additionalContext`; without it the
+    output is unchanged. A Copilot registration without the argument is reported as not
+    registered. The shape is chosen by the argument, never by emitting both.
+  - The routing reminder is registered on `SessionStart`, once per session: Copilot drops
+    what a command hook prints for a prompt.
+  - Copilot denies a tool call when a pre-tool hook exits with anything but 0, so a command
+    is written only after it has been started: `--no-probe` and an interpreter that is not
+    on this machine are refused for this host.
+  - A project-scope file is refused unless `--allow-absolute` is given: it would carry this
+    machine's paths to wherever the repository is checked out, and deny every tool call there.
+  - A file an earlier version wrote is moved beside itself as `hooks.json.bak-<time>` when
+    it holds only Supreme Team entries, and left and named otherwise.
+  - Copilot CLI also runs a repository's `.claude/settings.json` hooks. The registrar says
+    when that will happen, and `post_tool_use.py` records a tool event once (by
+    `tool_use_id`, else by a digest of a payload that carries a `timestamp`).
+  - The guard reads Copilot's own tool names `create` and `str_replace_editor`, the
+    post-tool hook reads Copilot's `tool_result`, Rule F covers Copilot's hook directories,
+    and `output_paths.py --kind product` refuses a path under `.github/hooks/`.
+  - `Install.md` no longer says Copilot has no skills: Copilot CLI reads `~/.agents/skills`.
+- A run in flight survives a context compaction (WP-11, issue 8). Nothing in the harness
+  reacted when the host compacted the conversation; the only trigger was "Context tier 3+
+  escalations", and a context tier is how much a delegation carries, not usage.
+  - `save_run.py dump` writes `skillset-saves/runs/<run>/_context/dump-<n>.md` from the run
+    state and leaves the revision unchanged, as `heartbeat` does, so the checkpoint an agent
+    makes next with the revision it knows is not refused. `--narrative-from FILE` (`-` for
+    standard input) adds the agent's own section. `_context/` is beside `_history/`, outside
+    every phase directory, so no gate reads a dump as part of a package.
+  - `save-ownership.yaml` declares the class (`run-context-dumps`, twenty classes), and guard
+    Rule C gives `_context/` its one writer.
+  - New hook `context_events.py` (in `_bootstrap.HOOK_FILES`). Before a compaction during a
+    run it has the dump written with no agent involved, leaves a marker, and on Claude Code
+    prints instructions for the summary. After it, the model is given the next action and
+    the dump to read: by the session-start hook, and otherwise by the next post-tool or
+    prompt hook that sees the marker. The note is given once. Outside a run nothing is
+    written, and the hook exits 0 whatever happens (exit 2 would block the compaction).
+  - `PreCompact` and `SessionStart` are recommended registrations for Claude Code and Codex:
+    the registrar writes them, `verify_registration.py` shows them, readiness warns when one
+    is missing, and neither is ever what makes a host unregistered. Copilot gets neither.
+  - `session-memory`, `admiral` and `save-protocol.md` name the trigger as "a pre-compaction
+    event or context pressure at the dump threshold", define the dump and give the resume
+    steps.
+  - Checked in Claude Code 2.1.322: a prompt, `/compact`, a question. The dump was written by
+    the hook at the unchanged revision, and the answer named the run, the revision, the next
+    action and the dump. Codex was not checked.
+- A run in flight is advised as the context window fills (WP-12, issue 8). The request was
+  a context dump at 90 %. Claude Code's tool and prompt payloads carry no usage figure, and
+  no other host documents one, so the figure comes from elsewhere.
+  - `runtime-manifest.yaml` gains `context_pressure` (`warn` 0.80, `dump` 0.90, `handoff`
+    0.95, `check_every_s` 30, `window_tokens` empty), as numbers: the file is JSON.
+  - New `context_watch.py`, called by the post-tool and prompt hooks. It reads the
+    status-line sidecar when that is fresh, else the last assistant line of the transcript
+    against a window that somebody stated (`SUPREMETEAM_CONTEXT_WINDOW`, the sidecar, or
+    `window_tokens` for the exact model id). With no figure it says nothing and guesses
+    nothing. Crossing a threshold gives one note per session; nothing is ever denied. Only
+    while a run holds the pin, never inside a sub-agent, at most every `check_every_s`.
+  - New `context_statusline.py`, a Claude Code status-line command that records
+    `context_window.used_percentage` and `context_window.context_window_size` for the
+    hooks, and runs a status line of your own behind `--`. `--statusline` on
+    `repair_registration.py` and `install_hooks.py` (`--hooks-statusline`,
+    `-HooksStatusline` on the installers) sets it only when no status line is configured.
+  - The dump command in the note is the interpreter the hook runs under and the
+    `save_run.py` beside it, by path: in a real session the model could not run a
+    checkout-relative command from a project that only uses an installed copy.
+  - `verify_registration.py` says, for Claude Code, which source the advice would use.
+  - Checked in Claude Code 2.1.322 with the transcript source and a declared window: one
+    note, and the dump written with the command it gave. **The status-line fields are the
+    documented ones and were not captured from a live session** (plan item E-10: a status
+    line runs only in an interactive session). Out of the box, with no sidecar and no
+    stated window, there is no advice.
+- Tech stacks state minimums, not pins (WP-13, issue 5). `tech-stacks/registry.yaml` pinned
+  exact majors and the gate failed any lock whose versions were not literally in the list, so
+  a project on a newer supported release could not pass. Five of the fourteen overlays pinned
+  a release upstream no longer supports (Angular 19, Astro 5, .NET 9, Go 1.23, Nuxt 3), and
+  the numbers were unlabelled: `react-tanstack: [19, 8]` meant React 19 and Vite 8.
+  - Registry schema 2: `min_versions` names each component and gives its minimum as text,
+    with optional `verified_through`, per-component `support_ends` (a date, or a month where
+    that is all upstream publishes) and a one-line `floor_reason`. `floor_rule` states how a
+    minimum is chosen, so the next update is mechanical. `versions` and the top-level
+    `support_ends` are gone. Data of 2026-11-12.
+  - A lock records what the project uses: `versions: {"node": "26.1.0", "typescript":
+    "6.0.3"}`. A component the entry names that the lock leaves out fails. A version below
+    its minimum passes with a warning that names both (a lock on Node 22 or Next.js 15, which
+    passed before, would otherwise fail); so does a version past `verified_through`.
+    Components the registry does not name are allowed.
+  - New `scripts/stack_versions.py`: a leading `v` is dropped, the dotted numbers compare as
+    a tuple (`6` equals `6.0`), a pre-release orders below its release, and a range, a
+    wildcard, a tag or a number is refused as not one version in use.
+  - A list-form lock passes for this release with a warning that gives the labelled form.
+  - `stack_detection.py` and `check_runtime.py --detect-project` read schema 2 and report a
+    detected stack's `min_versions` by component. They do not read the project's own versions.
+  - The fourteen overlays are retitled with their minimums and restated as "N or newer"; the
+    Nuxt, Astro and Deno overlays are rewritten (Nuxt 4's `app/` layout, Astro 7, Deno marked
+    as ending), and every digest is recomputed.
+  - `gates.yaml` states the rule and is at `spec_revision` 11 (see the upgrade notes).
+- Google Antigravity is a supported host (WP-14, issue 9). The repository had no Antigravity
+  support. A maintainer's machine had a bridge made by hand outside it, which enforced the
+  guard in real sessions but was written by no installer, covered by no hash record,
+  protected by no rule and exercised by no test. The skills were missing there for one
+  character: Antigravity ignores a `skills.json` entry that is not an absolute path.
+  - New `antigravity_bridge.py`, in `_bootstrap.HOOK_FILES`: registered for `PreToolUse`,
+    `PostToolUse` and `PreInvocation` with the event as its argument, it translates
+    Antigravity's payload, runs the three hooks as child processes with a reduced
+    environment, maps a guard deny to `{"decision": "deny", "reason"}`, answers an allowed
+    call `{"decision": "allow"}` explicitly, and queues what the hooks say for the next model
+    call. It reads the tool names the CLI uses and the ones its documentation gives, drops
+    the `/plan` marker before the prompt is routed, and gives the reminder once per prompt.
+  - `antigravity` is a host of `verify_registration.py`, `repair_registration.py`,
+    `check_readiness.py` and `install_hooks.py`. The group `supremeteam` is written into
+    `~/.gemini/config/hooks.json` or `.agents/hooks.json`, every other group is kept, the
+    command is the bare form (a path with a space is refused), and each command is started
+    through `cmd /C` before it is written.
+  - `~/.gemini/config/skills.json` gets the common install by its absolute path; a `~` entry
+    for it is replaced, other entries are kept, and the verifier reports an entry that is not
+    absolute as a defect.
+  - A registration of the hand-installed bridge is replaced; its folder is left in place.
+  - Both installers take `antigravity` (`-Target Antigravity`), detected by `~/.gemini/config`
+    or `agy`. Rule F covers the two hook files.
+  - Checked in Antigravity CLI 1.5.6 with a workspace registration: writes into a frozen
+    folder were blocked through the edit tool and the shell, a write outside it was allowed,
+    and the transcript shows the routing reminder injected. The hand-made bridge was still
+    registered globally on that machine and ran beside it; the global files were not changed.
+
+Upgrade notes for this section:
+
+- Build packages with hand-preserved copies (`*.r1.md`, an `archive/` folder) still fail
+  `MIXED_REVISIONS`. Run `python skills/scripts/run_files.py supersede` on each copy once;
+  the message names the command. A completeness certificate has to sit at
+  `build/reports/report_completeness.md` and declare the package's revision.
+- Delivery ledgers: run the admiral shape check with `--boundary <boundary>`. A handoff
+  record without `manifest_submission_id` is reported as unchecked
+  (`HANDOFF_FIELD_MISSING`) for one release, then as a failure. A record has to carry
+  `submission_status`, and its `package_path` has to be a phase directory of its own run.
+- Stack locks: the registry is at schema 2 and every overlay digest changed, so a
+  `stack_lock` recorded before carries a stale `overlay_sha256` and fails until it is recorded
+  again, with `versions` as a mapping of component to the version in use. A list-form
+  `versions` is accepted for this release with a warning and is malformed after it.
+- Runs in flight: `gates.yaml` changed (`spec_revision` 10, then 11 with the stack-lock rule), and a stored verdict carries the
+  spec digest, so afterwards a `--prior` record reads as not produced against the shipped
+  spec. Finish the open boundary before upgrading, or accept one fresh judgment for it.
+- Evidence spelling: a cited path that is not the on-disk spelling, or that is reached
+  through a link, is a warning for one release, then a failure. A citation of a superseded
+  copy (`_superseded/`, `_history/`) fails from the start.
+- Worktree sessions: a `.harness-state/` folder that an earlier version created inside a
+  linked worktree is no longer read. It can be deleted.
+- Delegations: the Save Context block has a new field, `Project root`, and `Save path` is
+  absolute. A sub-orchestrator that builds the block from an older copy still works in the
+  main checkout; a delegate in a linked worktree is refused a relative save path (Rule H)
+  and told where the file belongs.
+- Antigravity: a machine with the hand-installed bridge keeps working until it is
+  registered again. `install_hooks.py --target antigravity` (or `repair_registration.py --host
+  antigravity --scope user --apply`) replaces that registration with the catalog's bridge and
+  writes the skills entry; the folder `~/.agents/supremeteam-agy` can then be deleted.
+- Copilot: a registration written by an earlier version was never read by Copilot. Register
+  again (`install_hooks.py --target copilot`, or `repair_registration.py --host copilot
+  --scope user --apply`); a legacy file holding only Supreme Team entries is moved to
+  `hooks.json.bak-<time>` beside itself. A project-scope registration now needs
+  `--allow-absolute`.
+- Compaction hooks: an existing registration does not have `PreCompact` and `SessionStart`.
+  Readiness warns; `repair_registration.py --host <host> --scope <scope> --apply` adds them.
+  Until then a compaction during a run leaves no dump and gives no resume note.
+- Hook hashes: the packages that change a file hashed at registration (WP-00, WP-02, WP-03,
+  WP-04, WP-06, WP-08, WP-10, WP-11, WP-12 and WP-14; WP-11, WP-12 and WP-14 add `context_events.py`, `context_watch.py` and `antigravity_bridge.py` to the record; WP-03 also adds `scripts/checkout.py` to the record) make readiness report
+  the hook files as changed. After upgrading, re-record them for
+  each host with `python skills/harness/hooks/repair_registration.py --host <host>
+  --record-hashes`, or reinstall with hook registration.
+- Windows registrations: a registration written by an earlier version does not start in
+  Claude Code, and readiness now says so. Run `repair_registration.py --host <host> --scope
+  user --apply` once per host to replace the commands in place. Codex then needs the hooks
+  trusted again with `/hooks`.
+
 ### Third audit report, findings 1 to 4
 
 Each finding was reproduced against this tree first. Findings 1 and 4 held in part and are
@@ -1248,12 +1662,12 @@ bump for new behaviour, a patch for a fix. Skills not listed are unchanged at 1.
 test compares this list with the `version:` of every `SKILL.md`, so a bump that is not
 recorded here, or a record the skill does not carry, fails it.
 
-- `admiral` 2.5.0: quotes the `Enforcement:` line `check_readiness.py` prints above `Ready` to the user at intake and on every resume, so `Ready: yes` with no hooks registered is never taken for a guard that is on; previously the cross-stage `check.py` command passes `--judgment`, without which `--verdict-out` writes a mechanical record and no verdict; previously Review discipline and mandatory third-REVISE user escalation; previously escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second, and startup names `status --run-id` as the only form that reports `interrupted`, an `access_denied` record and a held run with a fresh lock, whatever the pointer says (`held_runs`), as holding the session pin, and `recover --reason` as reclaiming a stale lock only once it is the only held run; previously the intake log is parsed as four fixed tables, and the verdict is read from the gate's own record; previously ceremony scaled to the change and a bounded cross-stage pass; previously native delegation grants and non-blocking MCP template intake; previously startup classification and shared-cap clarification; previously how its commands read in an installed copy, the eleven save-directory
+- `admiral` 2.6.0: the handoff record carries `manifest_submission_id`, the cross-stage shape check is run with `--boundary`, and a record is superseded with `run_files.py supersede` before a second attempt and, for every downstream boundary, on a rewind; previously quotes the `Enforcement:` line `check_readiness.py` prints above `Ready` to the user at intake and on every resume, so `Ready: yes` with no hooks registered is never taken for a guard that is on; previously the cross-stage `check.py` command passes `--judgment`, without which `--verdict-out` writes a mechanical record and no verdict; previously Review discipline and mandatory third-REVISE user escalation; previously escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second, and startup names `status --run-id` as the only form that reports `interrupted`, an `access_denied` record and a held run with a fresh lock, whatever the pointer says (`held_runs`), as holding the session pin, and `recover --reason` as reclaiming a stale lock only once it is the only held run; previously the intake log is parsed as four fixed tables, and the verdict is read from the gate's own record; previously ceremony scaled to the change and a bounded cross-stage pass; previously native delegation grants and non-blocking MCP template intake; previously startup classification and shared-cap clarification; previously how its commands read in an installed copy, the eleven save-directory
   classes, and what `create` carries.
 - `design/architect` 1.1.1: the Taste snapshot is not a start condition, because `pipelines.yaml` runs `taste-snapshot` beside research and requires it only at the design `phase-gate`; a snapshot that has not arrived yet is not the absent-snapshot failure; previously `interfaces` is a typed `interface_set` with `IF-<n>` ids that stand in the hashed artifact; previously directions use the reports destination; previously works from the stack the project already fixes, not a lock
   that comes later in the pipeline.
 - `design/engineer` 1.0.2: key-owner REVISE corrections arrive through commander; previously works from the detected stack, not a lock that comes later.
-- `design/commander` 1.3.0: Review discipline and mandatory third-REVISE user escalation; previously escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second; previously `decisions`, `interfaces` and `acceptance` are typed source-of-truth records, and the verdict is read from the gate's own record; previously both validators in the self-check, concurrent taste/research and seed/plan stages, rerun scope on REVISE; previously native delegation grants; previously confirmed Admiral intake, explicit Taste snapshot and unconditional security assessment; previously states the stack-lock rule the engine enforces (every
+- `design/commander` 1.4.0: `stack_lock.versions` records the versions in use by component, against the registry's minimums, and a version below one passes with a warning to decide before submitting; previously Review discipline and mandatory third-REVISE user escalation; previously escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second; previously `decisions`, `interfaces` and `acceptance` are typed source-of-truth records, and the verdict is read from the gate's own record; previously both validators in the self-check, concurrent taste/research and seed/plan stages, rerun scope on REVISE; previously native delegation grants; previously confirmed Admiral intake, explicit Taste snapshot and unconditional security assessment; previously states the stack-lock rule the engine enforces (every
   declared version is one the registry offers), and its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
 - `design/planner` 1.1.0: every acceptance row carries a stable `AC-<n>` id that gate findings cite, and `acceptance` is a typed `acceptance_table` read from the hashed plan.
 - `design/design-mapper` 1.0.2: parity examples use real run paths; previously states what `check_parity.py` now refuses in an inventory.
@@ -1263,7 +1677,7 @@ recorded here, or a record the skill does not carry, fails it.
   lacks), a warning for a leading-slash glob outside the project that names a directory that
   exists, relative globs anchored at the project root, a writer lock, and what an
   unreadable record means.
-- `guard` 1.8.0: Rule A also denies an inline program's own delete of a root or home (`python3 -c 'shutil.rmtree("/")'`, `node -e 'fs.rmSync(os.homedir(), ...)'`) and a wipe spelled in base64 and decoded by a `base64 -d` of a literal into a shell (`echo cm0gLXJmIC8K | base64 -d | sh`, `sh -c "$(echo ... | base64 -d)"`); previously Rule C also protects the REVISE cycle history (`verdict_<boundary>.cycles.json`) and its lock, and refuses removing or moving a phase directory; previously gate verdict records have a single writer, `check.py --verdict-out` (Rule C); previously a grant is capped at 8 hours, the hook scripts are protected (Rule F,
+- `guard` 1.10.1: Rule F also covers the directories GitHub Copilot reads hook files from (`.github/hooks/`, `~/.copilot/hooks/`), and the write tools include Copilot's `create` and `str_replace_editor`; previously Rule H denies a write under the `skillset-saves/` of a linked git worktree and names the path in the main checkout, and a Rule D or Rule G denial of a run file says how one is written (`run_files.py write`); previously Rule C also gives a phase's `_superseded/` folder and its `index.json` a single writer, `run_files.py supersede`; previously from a linked git worktree the guard enforces the main checkout's record, a frozen or blocked glob and the registration files hold for the worktree's copy too, and Rule F also covers `skills/scripts/checkout.py`; previously an `apply_patch` call is judged wherever the host puts the patch text (Codex sends it as `command`), and one that names no file the guard can read is denied by Rule G while anything is protected; previously Rule A also denies an inline program's own delete of a root or home (`python3 -c 'shutil.rmtree("/")'`, `node -e 'fs.rmSync(os.homedir(), ...)'`) and a wipe spelled in base64 and decoded by a `base64 -d` of a literal into a shell (`echo cm0gLXJmIC8K | base64 -d | sh`, `sh -c "$(echo ... | base64 -d)"`); previously Rule C also protects the REVISE cycle history (`verdict_<boundary>.cycles.json`) and its lock, and refuses removing or moving a phase directory; previously gate verdict records have a single writer, `check.py --verdict-out` (Rule C); previously a grant is capped at 8 hours, the hook scripts are protected (Rule F,
   advisory, whole registration file), a write after an unfollowable directory chain is
   denied (Rule G, with its own failure-mode row), a read-only run denies writes with no
   named target (pipes, launchers, PowerShell blocks, diffs), an unreadable record is counted
@@ -1271,15 +1685,15 @@ recorded here, or a record the skill does not carry, fails it.
   modules the hooks import, and Rule C reads a command aimed at the project root by what
   it would put into or remove from the record directories.
 - `unfreeze` 1.1.1: explicit legacy adoption keeps protection active; previously releases by the normalised glob and records the cap on a grant.
-- `gatekeeper-admiral` 2.0.1: the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously a schema-1 result is read as checking applicability records while still letting a bare sanctioned wording stand in for one, and no fallback map names `mock_rendering`; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; carries the phase judgment from the phase gate's own record; previously bounded cross-stage scope, severity threshold and resubmission batch rule; previously independent spec floor and typed security/human-go records; previously audit fixes for input containment, BOM manifests and confirmation-id consistency; previously a REVISE row for a schema-1 result, the typed-record
+- `gatekeeper-admiral` 2.1.0: `scripts/check.py` reads `delivery/` as a ledger of handoff records, takes `--boundary`, and holds every earlier record to a recorded `APPROVED` that agrees with its cross-stage verdict record; previously the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously a schema-1 result is read as checking applicability records while still letting a bare sanctioned wording stand in for one, and no fallback map names `mock_rendering`; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; carries the phase judgment from the phase gate's own record; previously bounded cross-stage scope, severity threshold and resubmission batch rule; previously independent spec floor and typed security/human-go records; previously audit fixes for input containment, BOM manifests and confirmation-id consistency; previously a REVISE row for a schema-1 result, the typed-record
   roster and what a typed record leaves unchecked.
-- `design/gatekeeper-design` 2.0.1: the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously no fallback map, global or boundary, sanctions a wording for `mock_rendering`, and a schema-1 result is read as checking applicability records while still letting a bare sanctioned wording stand in for one; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously no invented mock-rendering fallback; previously spec floor, exact layer citation and corrected research/UI slots; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, and the stack-lock and
+- `design/gatekeeper-design` 2.1.0: the stack-lock warning row covers a version below the registry minimum, one past `verified_through`, and a list-form lock; previously the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously no fallback map, global or boundary, sanctions a wording for `mock_rendering`, and a schema-1 result is read as checking applicability records while still letting a bare sanctioned wording stand in for one; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously no invented mock-rendering fallback; previously spec floor, exact layer citation and corrected research/UI slots; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, and the stack-lock and
   selection rules the engine now enforces.
-- `build/gatekeeper-build` 2.0.1: the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously shared gate safety floor and layer-citation correction; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, with its package guard and
+- `build/gatekeeper-build` 2.1.0: the completeness certificate is read from `reports/report_completeness.md` only and has to declare the package's revision, and superseded copies under `_superseded/` are left out of the package and held to their index; previously the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously shared gate safety floor and layer-citation correction; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, with its package guard and
   optional slots.
 - `review/gatekeeper-code` 2.0.1: the judgment-rejection row names the Intake binding, the four feedback fields and table-row citations, and a requirement in no source of truth escalates to the user through `admiral`; previously Review discipline and mandatory third-REVISE user escalation; previously a schema-1 result is read as checking applicability records while still letting a bare sanctioned wording stand in for one; previously judgment findings grounded in the source of truth and checked by `check.py --judgment`, plus the typed source-of-truth records and bound upstream approvals; previously severity threshold and resubmission batch rule; previously selection-dependent redesign render applicability; previously safety floor and corrected CSO/security attribution; previously shared gate-engine audit fixes; previously as `gatekeeper-admiral`, with its package guard and
   optional slots.
-- `session-memory` 1.1.2: records are owner-only on POSIX only (on Windows they keep the directory's access list), a `degraded` result can follow a published revision, only `status --run-id` reports `interrupted`, an `access_denied` record also holds the session pin, so does a held run whatever the pointer says (`held_runs`, which `create` refuses beside and the hooks keep alive), a directory where a record belongs is damage and never `access_denied`, `recover --reason` publishes before it appends its audit event, and no audit line is written when the audit append itself fails; previously the writer lock, `checkpoint --drop-evidence`, the
+- `session-memory` 1.2.1: says when to write the context dump (the `[harness:context-pressure]` note at the dump and handoff thresholds, and what to do where no usage figure exists); previously defines the context dump (`save_run.py dump`, which leaves the revision unchanged), names its trigger as a pre-compaction event or context pressure at the dump threshold in place of "context tier 3+", and gives the steps after a compaction; previously records are owner-only on POSIX only (on Windows they keep the directory's access list), a `degraded` result can follow a published revision, only `status --run-id` reports `interrupted`, an `access_denied` record also holds the session pin, so does a held run whatever the pointer says (`held_runs`, which `create` refuses beside and the hooks keep alive), a directory where a record belongs is damage and never `access_denied`, `recover --reason` publishes before it appends its audit event, and no audit line is written when the audit append itself fails; previously the writer lock, `checkpoint --drop-evidence`, the
   `uninitialized` class, the refusal reasons and the `access_denied` mark; its checkpoint
   example names the lock holder as `--owner` and a project-relative evidence path.
 - `taste` 1.3.0: hashes the run's Intake log into every package it submits so the gatekeeper's judgment can bind `intake.artifact`; previously Review discipline and mandatory third-REVISE user escalation; previously structured set examples and native delegation grants; previously unconditional design snapshot producer; previously `propose` validation, redaction by shape, lock reclaim and the error codes.
@@ -1292,7 +1706,7 @@ recorded here, or a record the skill does not carry, fails it.
   parent of the `path` that `output_paths.py` prints, and leaves it out outside a run.
 - `skill-maker/skill-creator` 1.1.2: `run_eval.py` starts `claude -p` with stdin closed, so a parent whose stdin is an open pipe no longer holds every query until its deadline; previously absolute optimizer input paths; previously the packager takes an absolute output directory and
   refuses symlinks, secrets and run state; failed eval runs are not scored.
-- `review/security-review` 1.2.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the findings template offers only statuses `check.py` accepts (`blocking` was not one); previously finding status and canonical rule references; previously `scan_record.py` names its output relative to the
+- `review/security-review` 1.2.1: the packet is written into the run with `run_files.py write`, which works from a worktree-isolated sub-agent, or to the literal absolute `Save path`, never to a destination built when the command runs; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the findings template offers only statuses `check.py` accepts (`blocking` was not one); previously finding status and canonical rule references; previously `scan_record.py` names its output relative to the
   manifest and gains `--fail-on-output` and `--manifest-root`.
 - `review/cso` 1.2.0: hashes the run's Intake log into every package it submits so the gatekeeper's judgment can bind `intake.artifact`, and the third cycle is the gate's own ESCALATE to the user; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the description keeps its `even when` cue within the 600-character budget; previously the verdict is read from the gate's own record; previously single-validator verdict naming and delegation grants; previously the waiver reason must be the sanctioned wording, scan output
   paths follow the manifest, and its checkpoint command passes `--owner admiral`, the run's lock holder, and records itself with `--set delegated_to=`; `--owner <self>` was refused at every checkpoint.
@@ -1304,19 +1718,19 @@ recorded here, or a record the skill does not carry, fails it.
 - `build/test-builder` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously explicit report deliverable and canonical hashing; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
 - `build/debugger` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously candidate teardown preserves implementation ownership; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
 - `build/health-check` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously authorized library consumption smoke and canonical hashing; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
-- `build/cross-check-build-confirm` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously `traceability` is now a checked `trace_map`; the proven/unproven column stays an ownership contract; previously no-code decisions still owe non-waivable proof; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
+- `build/cross-check-build-confirm` 1.2.0: one certificate per revision at `reports/report_completeness.md`, the previous one set aside with `run_files.py supersede` before the new one is written; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously `traceability` is now a checked `trace_map`; the proven/unproven column stays an ownership contract; previously no-code decisions still owe non-waivable proof; previously its checkpoint command passes `--owner admiral`, the run's lock holder; `--owner <self>` was refused.
 - `qa-only` 1.1.1: the third REVISE is the gate's own ESCALATE to the user, handed on through `qa`; previously Review discipline and mandatory third-REVISE user escalation; previously escalation comes at the third `REVISE`, with all three packets, under the `cycle_cap` of 3 that `gates.yaml` declares, not at the second; previously dual-mode routing and session-pin admission; previously the read-only boundary reference states what the hook now denies,
   including index-only git commands, package-manager installs and writes with no named
   target.
 - `design/prototyper` 1.0.1: exact gate file-field scope and executable run-path self-checks.
 - `design/researcher` 1.0.1: Admiral-owned intake, all required architecture inputs and commander-routed corrections.
-- `review/bug-review` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously canonical filename is not a uniqueness guarantee.
-- `review/quality-review` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously matcher limits and canonical findings rule reference.
-- `review/design-qa` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the findings template offers only statuses `check.py` accepts (`blocking` was not one); previously accepted finding statuses in packet and example.
-- `review/mr-robot` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the findings template offers only statuses `check.py` accepts (`blocking` was not one); previously finding statuses and same-pipeline delta review.
+- `review/bug-review` 1.1.1: the packet is written into the run with `run_files.py write`, which works from a worktree-isolated sub-agent, or to the literal absolute `Save path`, never to a destination built when the command runs; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously canonical filename is not a uniqueness guarantee.
+- `review/quality-review` 1.1.1: the packet is written into the run with `run_files.py write`, which works from a worktree-isolated sub-agent, or to the literal absolute `Save path`, never to a destination built when the command runs; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2; previously matcher limits and canonical findings rule reference.
+- `review/design-qa` 1.1.1: the packet is written into the run with `run_files.py write`, which works from a worktree-isolated sub-agent, or to the literal absolute `Save path`, never to a destination built when the command runs; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the findings template offers only statuses `check.py` accepts (`blocking` was not one); previously accepted finding statuses in packet and example.
+- `review/mr-robot` 1.1.1: the packet is written into the run with `run_files.py write`, which works from a worktree-isolated sub-agent, or to the literal absolute `Save path`, never to a destination built when the command runs; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2, and the findings template offers only statuses `check.py` accepts (`blocking` was not one); previously finding statuses and same-pipeline delta review.
 - `setup-browser-cookies` 1.0.1: Linux, macOS and Windows are peer platforms.
 - `taste/taste-review` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously review follows persistence and precedes gate approval.
-- `review/code-review` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2.
+- `review/code-review` 1.1.1: the packet is written into the run with `run_files.py write`, which works from a worktree-isolated sub-agent, or to the literal absolute `Save path`, never to a destination built when the command runs; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2.
 - `review/devex-review` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2.
-- `review/frontier` 1.1.0: Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2.
+- `review/frontier` 1.1.1: the packet is written into the run with `run_files.py write`, which works from a worktree-isolated sub-agent, or to the literal absolute `Save path`, never to a destination built when the command runs; previously Review discipline and mandatory third-REVISE user escalation; previously states the `cycle_cap` of 3 `REVISE` rounds that `gates.yaml` declares, not 2.
 - `audit-improve` 1.1.0: follow-up audits run `tools/run-audit/run_audit.py --run-id/--phase/--artifact` on the changed evidence and carry the initial collector report; previously 1.0.0.

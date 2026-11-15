@@ -40,14 +40,21 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _saves import ACCESS_DENIED_STEP, inspect_saves, next_step, refused_detail
-import _state
-from verify_registration import HOSTS, MATCHERS, REQUIRED, declared_minimum, enforcement, interpreter_warning, repair_command
+try:
+    from _saves import ACCESS_DENIED_STEP, inspect_saves, next_step, refused_detail
+    import _state
+    from verify_registration import (HOSTS, MATCHERS, REQUIRED, declared_minimum, enforcement, interpreter_warning, plugin_hosts,
+                                     repair_command)
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    print(f"check_readiness: error ({exc}). A catalog file it imports is missing; reinstall the catalog.")
+    raise SystemExit(2) from exc
 
 
-def run_hook_verifier(host: str, project_root: Path) -> tuple[str, int, str, dict]:
+def run_hook_verifier(host: str, project_root: Path, probe: bool = False) -> tuple[str, int, str, dict]:
     verifier = Path(__file__).resolve().with_name("verify_registration.py")
-    command = [sys.executable, str(verifier), "--host", host, "--json"]
+    command = [sys.executable, str(verifier), "--host", host, "--json", *(["--probe"] if probe else [])]
     # The verifier resolves the project from its environment, so it is handed the
     # root readiness was asked about, and its output is read as UTF-8 on any platform.
     env = {**os.environ, "SUPREMETEAM_PROJECT_DIR": str(project_root), "PYTHONUTF8": "1"}
@@ -165,7 +172,38 @@ def _hook_warnings(hook_states: dict, hash_record: "str | None") -> list[str]:
         warnings.append(f"{host}: the hook files have no record in {hash_record}, so an edit of them is not noticed from "
                         f"this project (a registration records them in the project it ran from); record them here with "
                         f"{repair_command(host, '--record-hashes')}")
+    for name, state in hook_states.items():
+        # A command the host's shell cannot start is the difference between a guard that is on and one that only reads so.
+        if state["configured"] and not state["registered"] and (state["shell_defects"] or state["probe"]):
+            warnings.append(f"{name}: registered, but the command does not start: {state['reason']}. Replace it with "
+                            f"{repair_command(name.split(':', 1)[0], '--scope', '<scope>', '--apply')}")
+    if any(name.startswith("codex:") and state["registered"] for name, state in hook_states.items()):
+        warnings.append("codex: readiness cannot see whether Codex trusts these hooks. Codex skips a new or changed hook "
+                        "until it is trusted with /hooks, and the guard does not run there until then")
     return warnings
+
+
+def _probe_lines(hook_states: dict) -> list[str]:
+    """What ``--probe`` found, one line per hook: the shells its command was started in and whether it ran."""
+    lines = []
+    for name, state in hook_states.items():
+        results = state["probe"] or []
+        if results:
+            said = "; ".join(entry["detail"] if entry["executes"] is None else
+                             f"{entry['shell']} {'yes' if entry['executes'] else 'no (' + entry['detail'] + ')'}" for entry in results)
+            lines.append(f"{name}: {said}")
+    return lines
+
+
+def _probe_summary(hook_states: dict, requested: bool) -> str:
+    """``not_run``, or over every probed hook: ``yes`` when each started somewhere and none failed, ``no`` when one
+    failed, ``not_probed`` when none could be started."""
+    if not requested:
+        return "not_run"
+    results = [entry for state in hook_states.values() for entry in state["probe"] or []]
+    if any(entry["executes"] is False for entry in results):
+        return "no"
+    return "yes" if any(entry["executes"] for entry in results) else "not_probed"
 
 
 def main() -> int:
@@ -178,6 +216,10 @@ def main() -> int:
     parser.add_argument("--require-active-run", action="store_true", help="Fail when skillset-saves has no active pinned run.")
     parser.add_argument("--require-hooks", action="store_true",
                         help="Fail unless the hooks are registered with full matcher coverage and a usable interpreter (default: hooks are optional).")
+    parser.add_argument("--probe", action="store_true",
+                        help="Start each registered hook command the way its host does, with --selftest appended, and report "
+                             "per host, hook and shell whether it ran. This runs the registered commands; the self-test "
+                             "reads no input and writes no state.")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     args = parser.parse_args()
 
@@ -189,8 +231,10 @@ def main() -> int:
 
     project_root = (Path(args.project_root).expanduser() if args.project_root else _state.project_root()).resolve()
     py_status, py_detail = python_status(min_major, min_minor)
-    hook_status, hook_code, hook_output, hook_report = run_hook_verifier(args.host, project_root)
-    saves = inspect_saves(project_root)
+    hook_status, hook_code, hook_output, hook_report = run_hook_verifier(args.host, project_root, args.probe)
+    # Saved runs and the hooks' own records are the main checkout's when the project is a linked git worktree.
+    state_root = Path(_state.checkout_root(project_root))
+    saves = inspect_saves(state_root)
     saves_status, saves_detail = str(saves["status"]), str(saves["detail"])
     # A record this account cannot read is named whatever the classification says: it is not damage, and may hold the pin.
     access_denied = list(saves.get("access_denied") or [])
@@ -202,6 +246,13 @@ def main() -> int:
     # enforcement; it does not remove the ability to read saves or run the
     # validators. Reporting them apart keeps "hooks missing" from being read as
     # "cannot do any work".
+    # Hooks a host should also run (context_events.py around a compaction): missing ones are warned about, below.
+    unrecommended = [f"{host_name}: {entry['event']} -> {entry['hook']} is not registered (recommended): a context "
+                     f"compaction during a run then writes no dump and gives no resume note. Add it with "
+                     f"{repair_command(host_name, '--scope', '<scope>', '--apply')}"
+                     for host_name, host_report in hook_report.items()
+                     for entry in (host_report.get("recommended") or {}).values()
+                     if isinstance(entry, dict) and not entry.get("registered") and host_report.get("status") == "registered"]
     hook_states = {}
     for host_name, host_report in hook_report.items():
         for key, state in (host_report.get("hooks") or {}).items():
@@ -217,10 +268,13 @@ def main() -> int:
                 "changed_files": state.get("changed_files") or [],
                 "interpreter": state.get("interpreter"),
                 "observed": state.get("observed", "unverified"),
+                "reason": str(state.get("reason") or ""),
+                "shell_defects": state.get("shell_defects") or [],
+                "probe": state.get("probe"),
             }
     # One record per project, so every host's report names the same file.
     hash_record = next((host_report["hash_record"] for host_report in hook_report.values() if host_report.get("hash_record")), None)
-    observations = _observations_for(project_root, hook_states)
+    observations = _observations_for(state_root, hook_states)
     registered = [s for s in hook_states.values() if s["registered"]]
     interpreters = [s["interpreter"] for s in registered if s["interpreter"]]
     # Coverage is the tool surface the hooks that need tools reach. The prompt hook has no matcher, so counting it as
@@ -245,6 +299,7 @@ def main() -> int:
         "hooks_executable": hook_status == "registered",
         "hooks_coverage": coverage,
         "hooks_interpreter": interpreter,
+        "hooks_probed": _probe_summary(hook_states, args.probe),
         "hooks_observed": observations["summary"],
         "hooks_faults": observations["faults"],
         # Readable means neither `missing` nor `unreadable`, and no `access_denied`: a record this account cannot read makes
@@ -254,7 +309,7 @@ def main() -> int:
         "deterministic_validators": True,
     }
 
-    warnings = _hook_warnings(hook_states, hash_record) + _firing_lines(observations["events"])
+    warnings = _hook_warnings(hook_states, hash_record) + unrecommended + _firing_lines(observations["events"])
     repair_host = args.host if args.host in HOSTS else next(iter(hook_report)) if len(hook_report) == 1 else "<host>"
     needs_repair = hook_status != "registered" or coverage == "partial"
     repair_hint = (f"{repair_command(repair_host, '--scope', 'project')} "
@@ -288,12 +343,14 @@ def main() -> int:
                   "selected_hosts": list(hook_report), "states": hook_states, "observations": observations["events"],
                   "hash_record": hash_record},
         "saves": {"status": saves_status, "detail": saves_detail, "next_step": saves_next, "project_root": str(project_root),
+                  "state_root": str(state_root),
                   "access_denied": access_denied},
         "capabilities": capabilities,
         "warnings": warnings,
         "blockers": blockers,
         "repair_hint": repair_hint,
         "enforcement": enforced,
+        "plugin_hosts": plugin_hosts(),
         "ready": ready,
     }
 
@@ -305,12 +362,18 @@ def main() -> int:
         print(f"Python: {py_status} - {py_detail}")
         print(f"Hooks: {hook_status} - verifier exit {hook_code} (hosts: {hosts}; {'required' if args.require_hooks else 'optional'})")
         print(f"Saves: {saves_status} - {saves_detail}")
+        if state_root != project_root:
+            print(f"  state: {project_root} is a linked git worktree; its runs and hook records are read from {state_root}")
         if saves_next:
             print(f"  next: {saves_next}")
         print("Capabilities: " + ", ".join(f"{key}={value}" for key, value in capabilities.items()))
         if hook_status != "registered":
             print("\nHook verifier output:")
             print(hook_output)
+        if args.probe:
+            print("\nProbe (each registered command started with --selftest, the way its host starts it):")
+            for line in _probe_lines(hook_states) or ["no registered command to start"]:
+                print(f"  - executes: {line}")
         if warnings:
             print("\nWarnings:")
             for warning in warnings:
@@ -321,6 +384,9 @@ def main() -> int:
             print("\nNot ready because:")
             for blocker in blockers:
                 print(f"  - {blocker}")
+        for host, entry in report["plugin_hosts"].items():
+            # Present, not inspected: such a host says for itself whether the guard is running.
+            print(f"Plugin host: {host} - {entry['kind']} at {entry['path']}; not inspected here: {entry['reports']}")
         print(f"\nEnforcement: {enforced['status']} - {enforced['detail']}")
         print(f"Ready: {'yes' if ready else 'no'}")
 

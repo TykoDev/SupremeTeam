@@ -1,10 +1,10 @@
-# React 19 and Next.js 15
+# React 19+ and Next.js 16+
 
 ## Baseline
-- Use React 19 with the Next.js 15 App model and Node.js 22+ for a server-rendered or full-stack web application.
+- React 19 or newer with Next.js 16 or newer (the App Router) on a Node.js release Next.js supports, for a server-rendered or full-stack web application. Next.js 15 leaves support on 2027-01-31, so it is below this overlay's minimum.
 - Treat Server Components as the default and mark Client Components explicitly when browser state, event handlers, or browser APIs are required.
 - Distinguish static generation, time-based revalidation, and request-time rendering; do not let a data-fetching change silently alter cache behavior.
-- Use Turbopack for development and preserve the production bundler configuration actually exercised by the repository.
+- Turbopack is the default bundler from Next.js 16; preserve whatever bundler configuration the repository actually exercises.
 
 ## Project shape
 - Keep layouts and pages under `app`, reusable primitives under `components/ui`, and product-specific components under `components/features`.

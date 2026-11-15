@@ -36,8 +36,18 @@ class SharedDefinitionTests(unittest.TestCase):
         # a Codex file edit past the Layer 3 guard entirely.
         self.assertIn("apply_patch", repair.matcher_for("pre_tool_use.py", "codex"))
         self.assertIn("apply_patch", repair.matcher_for("post_tool_use.py", "codex"))
-        for host in ("claude", "copilot"):
-            self.assertNotIn("apply_patch", repair.matcher_for("pre_tool_use.py", host))
+        self.assertNotIn("apply_patch", repair.matcher_for("pre_tool_use.py", "claude"))
+
+    def test_copilot_is_required_to_select_the_names_it_documents_and_is_written_its_own_names_too(self):
+        """WP-08: with PascalCase events Copilot reports its tools as Bash, Write and Edit; the registrar also writes
+        Copilot's own names, in case a tool arrives untranslated, and the verifier does not require them."""
+        self.assertEqual(verify.required_tools("pre_tool_use.py", "copilot"), ["Bash", "Edit", "Write"])
+        self.assertEqual(verify.required_tools("post_tool_use.py", "copilot"), ["Bash"])
+        self.assertEqual(repair.matcher_for("pre_tool_use.py", "copilot"),
+                         "Bash|Edit|Write|bash|powershell|create|edit|str_replace_editor|apply_patch")
+        self.assertEqual(repair.matcher_for("post_tool_use.py", "copilot"), "Bash|bash|powershell")
+        for tool in ("Bash", "Write", "Edit", "bash", "powershell", "create", "edit", "str_replace_editor", "apply_patch"):
+            self.assertTrue(verify.matcher_selects(repair.matcher_for("pre_tool_use.py", "copilot"), tool), tool)
 
     def test_the_prompt_hook_has_no_matcher_on_any_host(self):
         for host in ("claude", "codex", "copilot"):
@@ -82,6 +92,16 @@ class LauncherQuotingTests(unittest.TestCase):
         command = repair.command_for("pre_tool_use.py", sys.executable)
         self.assertTrue(verify.analyse(command, "pre_tool_use.py")["executable"], command)
 
+    def test_the_command_written_for_this_interpreter_starts_in_the_hosts_shell(self):
+        """The tokenizer agreeing with the command proved nothing about a shell: the command the installer wrote on
+        Windows passed every test above and never started in Git Bash. This one starts it (WP-02)."""
+        for host in ("claude", "codex", "copilot"):
+            entry = repair.hook_handler("pre_tool_use.py", sys.executable, host)
+            with self.subTest(host=host):
+                self.assertEqual(verify.handler_defects(entry, host), [])
+                results = verify.probe(entry, host)
+                self.assertTrue(results and all(result["executes"] for result in results), results)
+
 
 class SpacedLauncherTests(unittest.TestCase):
     """``launcher_parts`` on the shapes a host machine actually holds."""
@@ -113,7 +133,9 @@ class SpacedLauncherTests(unittest.TestCase):
 class PlanTests(unittest.TestCase):
     def test_plan_adds_every_required_hook_to_an_empty_config(self):
         _, added = repair.plan({}, "claude", sys.executable)
-        self.assertEqual(len(added), len(verify.REQUIRED))
+        self.assertEqual(len(added), len(verify.REQUIRED) + len(verify.recommended("claude")))
+        self.assertEqual([change for change in added if "(recommended)" in change],
+                         ["PreCompact -> context_events.py (recommended)", "SessionStart -> context_events.py (recommended)"])
 
     def test_plan_is_idempotent(self):
         desired, _ = repair.plan({}, "claude", sys.executable)

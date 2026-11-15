@@ -25,7 +25,7 @@ Submitter `commander`. Nine required keys; six artifact-backed.
 | `architecture` | artifact | untyped | a path in `artifact_hashes` |
 | `plan` | artifact | untyped | a path in `artifact_hashes` |
 | `taste_snapshot` | artifact | untyped | a path in `artifact_hashes`, or a sanctioned applicability record |
-| `stack_lock` | claim | `stack_lock` | `{slug, versions, overlay_sha256}` checked against `../../../tech-stacks/registry.yaml`: the slug exists, the overlay digest matches both the registry and the file, and every declared version is one the registry entry offers |
+| `stack_lock` | claim | `stack_lock` | `{slug, versions, overlay_sha256}` checked against `../../../tech-stacks/registry.yaml`: the slug exists, the overlay digest matches both the registry and the file, and every component the registry entry names is recorded at one version in use (`versions` maps component to version, as text). A missing component or a value that is not one version fails; a version below the entry's `min_versions`, or past its `verified_through`, passes with a warning |
 | `interfaces` | artifact | `interface_set` | `{artifacts, change: changed\|none, items: [{id: IF-<n>, kind, name}]}`; every id stands in a named hashed artifact |
 | `acceptance` | artifact | `acceptance_table` | the hashed plan's `Acceptance criteria` table: ID, Slice, Observable condition, Check that proves it, Acceptor; every cell filled; unique `AC-<n>` ids. Build's `traceability` must later cover every id |
 | `security_seed` | claim | `security_seed` | typed scoped assessment from `security-builder`: architecture revision, applicability and boundaries with controls; a no-boundary assessment names scope, decider and reason explicitly |

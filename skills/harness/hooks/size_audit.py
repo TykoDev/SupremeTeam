@@ -22,8 +22,14 @@ import sys
 import time
 from pathlib import Path
 
-import _fsutil
-import _state
+try:
+    import _fsutil
+    import _state
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    sys.stderr.write(f"ERROR: size_audit.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog.\n")
+    raise SystemExit(2) from exc
 
 DEFAULT_THRESHOLD_BYTES = 256 * 1024 * 1024
 DEFAULT_INTERVAL_SECONDS = 6 * 60 * 60
@@ -72,7 +78,7 @@ def _protected(relative: str, guard_globs: tuple[str, ...]) -> bool:
         return True
     parts = relative.split("/")
     if len(parts) >= 4 and parts[:2] == ["skillset-saves", "runs"]:
-        if parts[3] in _RUN_CORE_NAMES or "_history" in parts[3:]:
+        if parts[3] in _RUN_CORE_NAMES or "_history" in parts[3:] or "_context" in parts[3:]:
             return True
     if parts[:2] == ["skillset-saves", "preferences"] and "_history" in parts[2:]:
         return True
@@ -178,7 +184,7 @@ def maybe_scan(
 ) -> dict | None:
     """Scan when due, returning a result or None; all runtime faults fail open."""
     try:
-        root = Path(root) if root is not None else _state.project_root()
+        root = Path(root) if root is not None else _state.state_root()
         if not any(not (root / name).is_symlink() and (root / name).is_dir()
                    for name in (".harness-state", "skillset-saves")):
             return None

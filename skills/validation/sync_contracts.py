@@ -21,7 +21,13 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-import _catalog
+try:
+    import _catalog
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    sys.stderr.write(f"ERROR: sync_contracts.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog.\n")
+    raise SystemExit(2) from exc
 
 CONTRACT = _catalog.SKILLS / "execution-contract.md"
 SECTION = "Execution Contract"

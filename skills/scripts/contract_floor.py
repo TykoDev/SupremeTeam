@@ -4,6 +4,12 @@ This is intentionally not derived from gates.yaml: weakening that input must
 not redefine a validator's acceptance criterion. Stronger requirements may be
 added in the spec; changing this floor requires a reviewed code change too.
 Explicit --gates experiments are reported as non-shipped and are not authority.
+
+It names every key the shipped spec requires, backs with an artifact or types
+(test_contract_floor.py compares the two in both directions), the upstream
+boundary each revision_ref key binds to, the REVISE cycle cap and an owner per
+required key. Owner names are not pinned: validate_manifests.py checks them
+against the roster.
 """
 from __future__ import annotations
 
@@ -20,13 +26,15 @@ REQUIRED = {
     "deploy-readiness": "approved_delivery deploy_config verification_plan rollback_plan human_go_required",
 }
 ARTIFACTS = {
-    "design-to-build": "decisions architecture plan taste_snapshot",
+    "design-to-build": "decisions architecture interfaces plan acceptance taste_snapshot",
     "redesign-review": "design_inventory taste_grilling taste_snapshot design_directions mock_set mock_parity mock_rendering selection selected_variant parity_evidence rendered_verification",
-    "build-to-review": "tests runtime", "review-to-delivery": "executed_probes rendered_verification",
+    "build-to-review": "approved_design_revision implementation tests runtime",
+    "review-to-delivery": "executed_probes rendered_verification",
     "security-review": "threat_model denial_path_evidence", "investigation-review": "reproduction evidence_chain",
     "qa-review": "test_matrix executed_probes",
     "taste-review": "preference_diff confirmation conflict_analysis persistence_result effective_profile taste_review_record",
-    "skill-maker-to-delivery": "link_report validation_report", "deploy-readiness": "deploy_config verification_plan rollback_plan",
+    "skill-maker-to-delivery": "link_report validation_report",
+    "deploy-readiness": "approved_delivery deploy_config verification_plan rollback_plan",
 }
 SUBMITTERS = dict(zip(REQUIRED, ("commander", "redesign", "build-management", "code-chief", "cso",
                                   "investigate", "qa", "taste", "skill-maker", "ship"), strict=True))
@@ -64,7 +72,18 @@ TYPES = {
     "approved_design_revision": "revision_ref", "approved_delivery": "revision_ref",
     **{name: name for name in "preference_diff confirmation conflict_analysis persistence_result effective_profile consumer_handoff selection security_seed".split()},
     "human_go_required": "human_go", "mock_set": "variant_set", "selected_variant": "variant_set",
+    "decisions": "decision_log", "acceptance": "acceptance_table", "interfaces": "interface_set",
+    "implementation": "change_set", "traceability": "trace_map",
 }
+#: What each ``revision_ref`` key binds to (gates.yaml evidence_type_params). A build is checked against the design
+#: verdict and its acceptance rows, and a release against the review verdict: with the link changed or removed the key
+#: would bind to another boundary's record, or to none.
+REVISION_LINKS = {
+    "approved_design_revision": {"upstream_boundary": "design-to-build", "acceptance_key": "acceptance"},
+    "approved_delivery": {"upstream_boundary": "review-to-delivery"},
+}
+#: The REVISE round at which every gate escalates to the user. `_gatecycle.py` acts on it at gate time.
+CYCLE_CAP = 3
 
 
 def gate_floor_errors(spec: dict) -> list[str]:
@@ -122,4 +141,20 @@ def gate_floor_errors(spec: dict) -> list[str]:
                 "fallback_by_decision": SELECTION_FALLBACKS}
     if not isinstance(selection, dict) or any(selection.get(key) != value for key, value in expected.items()):
         errors.append("gate safety floor: selection binding weakened")
+    for key, link in REVISION_LINKS.items():
+        record = params.get(key, {})
+        if not isinstance(record, dict) or any(record.get(field) != value for field, value in link.items()):
+            errors.append(f"gate safety floor: {key} upstream link changed")
+    revise = spec.get("revise_policy", {})
+    if not isinstance(revise, dict) or revise.get("cycle_cap") != CYCLE_CAP:
+        errors.append(f"gate safety floor: revise_policy.cycle_cap must be {CYCLE_CAP}")
+    owners = spec.get("evidence_owners", {})
+    if not isinstance(owners, dict):
+        return errors + ["gate safety floor: evidence_owners must be a mapping"]
+    for name, keys in REQUIRED.items():
+        table = owners.get(name)
+        # Every key the floor requires has an owner. A spec that requires more names more owners, which is stronger,
+        # not weaker; who the owner is stays the roster's to check (validate_manifests.py).
+        if not isinstance(table, dict) or any(not isinstance(table.get(key), str) or not table[key].strip() for key in keys.split()):
+            errors.append(f"gate safety floor: {name} evidence_owners does not name an owner for every required key")
     return errors

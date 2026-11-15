@@ -64,7 +64,8 @@ other carries.
 ### Save Context
 - Run ID: {run-id}
 - Phase: design
-- Save path: skillset-saves/runs/{run-id}/design/
+- Project root: {absolute path of the main checkout}
+- Save path: {project-root}/skillset-saves/runs/{run-id}/design/
 - Persistence active: {yes|no}
 - Persistence probe result: {ok|reason}
 - Context tier: {1|2|3}

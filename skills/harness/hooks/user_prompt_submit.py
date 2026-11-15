@@ -35,8 +35,33 @@ import json
 import sys
 from pathlib import Path
 
-import _state
-import run_heartbeat
+
+def _missing_module(event: str, exc: BaseException) -> None:
+    """A module this hook imports is not there. A registered hook fails open: exit 0 and no reminder, with the fault
+    counted when ``_state`` still loads and said on stderr when it does not. ``--selftest`` and an import of this file
+    by another program are not host events, so they get the error itself."""
+    if __name__ != "__main__" or "--selftest" in sys.argv[1:]:
+        return
+    try:
+        import _state as state
+
+        state.record_fault(event, exc)
+    except BaseException:
+        try:
+            sys.stderr.write("supremeteam %s hook: a module it imports is missing (%s) and the fault could not be "
+                             "recorded; the hook did nothing. Reinstall the catalog and run "
+                             "skills/harness/hooks/check_readiness.py.\n" % (event, exc))
+        except Exception:
+            pass
+    sys.exit(0)
+
+
+try:
+    import _state
+    import run_heartbeat
+except ImportError as _exc:  # a catalog file this hook imports is missing
+    _missing_module("UserPromptSubmit", _exc)
+    raise
 
 _ROUTE_REMINDER = (
     "Supreme Team entry routing: no active run detected. `admiral` is the "
@@ -60,19 +85,49 @@ _ACTIVE_REMINDER = (
 )
 
 
-def _emit(context: str) -> None:
-    out = {
-        "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
-            "additionalContext": context,
-        }
-    }
-    print(json.dumps(out))
+# Set by main(): the note for a session that was compacted during a run and has not been told (context_events.py).
+# It goes out with whatever this hook says, and alone when the hook would have stayed silent.
+_resume_note: "str | None" = None
+
+
+def _emit(context: str, event: str = "UserPromptSubmit") -> None:
+    """Print the context in the shape the host reads (``_state.context_output``: the command line's ``--host``)."""
+    if _resume_note:
+        context = _resume_note + "\n" + context if context else _resume_note
+    print(json.dumps(_state.context_output(event, context)))
     sys.exit(0)
 
 
+def _pending_resume(data: dict) -> "str | None":
+    """What the context hooks have to say with this prompt: the resume note after a compaction (context_events.py)
+    and the advice for a threshold of context usage just crossed (context_watch.py), one line each."""
+    notes = []
+    try:
+        import context_events
+
+        notes.append(context_events.pending_note(data))
+    except Exception as exc:
+        _state.record_fault("UserPromptSubmit", exc)
+    try:
+        import context_watch
+
+        notes.append(context_watch.advice(data, "UserPromptSubmit"))
+    except Exception as exc:
+        _state.record_fault("UserPromptSubmit", exc)
+    return "\n".join(note for note in notes if note) or None
+
+
+def _session_start(data: dict) -> bool:
+    """Whether the host ran this hook for the start of a session and not for a prompt.
+
+    GitHub Copilot drops what a command hook prints for a prompt, so the registrar puts this hook on its
+    ``SessionStart`` event, whose context it does read: the reminder is given once per session there, not once per
+    prompt. The payload names the event; it carries no prompt to route."""
+    return str(data.get("hook_event_name") or data.get("hookEventName") or "").strip().lower() == "sessionstart"
+
+
 def _saves_root() -> Path:
-    return _state.project_root() / "skillset-saves"
+    return _state.state_root() / "skillset-saves"
 
 
 def _active_run() -> bool:
@@ -95,9 +150,17 @@ def main() -> None:
     _state.record_observation("UserPromptSubmit", data)
     run_heartbeat.refresh(data, "UserPromptSubmit")
     prompt = str(data.get("prompt", "") or "")
+    global _resume_note
+    _resume_note = _pending_resume(data)
+
+    if _session_start(data):
+        # No prompt to read and no second chance: say which of the two states the session starts in.
+        _emit(_ACTIVE_REMINDER if _active_run() else _ROUTE_REMINDER, "SessionStart")
 
     # Empty prompt: nothing to route.
     if not prompt.strip():
+        if _resume_note:
+            _emit("")
         return
 
     if prompt.strip().split(maxsplit=1)[0] == "/audit-improve":
@@ -113,6 +176,8 @@ def main() -> None:
     # Explicit slash command: deterministic host routing. Stay silent and let the
     # target skill's own Entry Routing check (routing-doctrine.md sec 3) apply.
     if prompt.lstrip().startswith("/"):
+        if _resume_note:
+            _emit("")
         return
 
     if _active_run():
@@ -130,5 +195,13 @@ def run() -> None:
 
 
 if __name__ == "__main__":
+    if "--selftest" in sys.argv[1:]:
+        # Not a host event: prove the registered command starts and every module a hook runs imports, and fail
+        # loud when one does not (verify_registration.probe reads the exit status and the "ok"). The argument is
+        # looked for anywhere on the line: a command registered with `--host <name>` is probed with it in place.
+        import _bootstrap
+
+        _bootstrap.selftest()
+        sys.exit(0)
     run()
     sys.exit(0)

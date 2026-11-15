@@ -46,10 +46,18 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import _cmdscan
-import _paths
-import _state
-import run_heartbeat
+try:
+    import _cmdscan
+    import _paths
+    import _state
+    import run_heartbeat
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    # Run as the hook itself: a guard that cannot load fails open, and says so where the host shows it.
+    sys.stderr.write(f"supremeteam guard hook: the guard could not load ({exc}); the guard is NOT enforcing this "
+                     "call. Reinstall the catalog and run skills/harness/hooks/check_readiness.py.\n")
+    raise SystemExit(0) from exc
 
 HOOK_DIR = Path(__file__).resolve().parent
 
@@ -367,7 +375,9 @@ def rule_dangerous(call: "Call") -> "str | None":
 # --- the call a rule inspects ----------------------------------------------------------------
 
 _SHELL_TOOLS = frozenset({"bash", "powershell", "pwsh", "shell"})
-_WRITE_TOOLS = frozenset({"edit", "write", "notebookedit", "multiedit", "apply_patch"})
+# `create` and `str_replace_editor` are GitHub Copilot's own names for its file tools. With the PascalCase events the
+# registrar writes, Copilot documents that it reports them as `Write` and `Edit`; they are listed in case it does not.
+_WRITE_TOOLS = frozenset({"edit", "write", "notebookedit", "multiedit", "apply_patch", "create", "str_replace_editor"})
 # Tools whose input names a filesystem path we can match against a boundary.
 _PATH_KEYS = ("file_path", "filePath", "path", "notebook_path", "target_file")
 _PATCH_FILE = re.compile(r"^\*\*\* (?:Update File|Add File|Delete File|Move to):\s*(.+?)\s*$", re.MULTILINE)
@@ -396,28 +406,48 @@ _RECORD_TREE_VIA = _REMOVE_VIA | _DEPOSIT_VIA | frozenset({"git clean"})
 _EXTRACT_VIA = frozenset({"tar", "unzip", "7z", "archive-extract"})
 
 
+_PATCH_DEPTH = 4
+
+
+def _strings(value, depth: int = 0):
+    """Every string inside a tool input, down to ``_PATCH_DEPTH`` levels of dict and list."""
+    if isinstance(value, str):
+        yield value
+    elif depth < _PATCH_DEPTH and isinstance(value, dict):
+        for item in value.values():
+            yield from _strings(item, depth + 1)
+    elif depth < _PATCH_DEPTH and isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _strings(item, depth + 1)
+
+
 def _written_paths(tool_input: dict, *, include_patch: bool = False) -> list:
+    """The paths a write tool names. For a patch tool (``include_patch``) the file headers of the patch are read from
+    every string of the input, whatever key holds it: Codex sends the patch as ``command``, a string or a list of
+    arguments, and a reader that knew only ``patch``, ``input`` and ``content`` found no path there and let every
+    Codex file edit through."""
     paths = []
     for key in _PATH_KEYS:
         value = tool_input.get(key)
         if isinstance(value, str) and value:
             paths.append(value)
     if include_patch:
-        for key in ("patch", "input", "content"):
-            patch = tool_input.get(key)
-            if isinstance(patch, str):
-                paths.extend(match.group(1) for match in _PATCH_FILE.finditer(patch))
-    return paths
+        for text in _strings(tool_input):
+            paths.extend(match.group(1) for match in _PATCH_FILE.finditer(text))
+    return list(dict.fromkeys(paths))
 
 
 class Call:
     """One tool call and everything a rule may ask about it, each computed once."""
 
-    def __init__(self, tool_name, tool_input, guard: dict, root, cwd=None) -> None:
+    def __init__(self, tool_name, tool_input, guard: dict, root, cwd=None, state_root=None) -> None:
         self.tool = str(tool_name or "").strip().lower()
         self.input = tool_input if isinstance(tool_input, dict) else {}
         self.guard = guard
         self.root = Path(root)
+        # Where the runs and the guard record are. It differs from ``root`` only in the second reading of a call
+        # made from a linked worktree, whose paths are judged against the worktree (``main()``).
+        self.state_root = Path(state_root) if state_root is not None else self.root
         self.shell = self.tool in _SHELL_TOOLS
         self.writer = self.tool in _WRITE_TOOLS
         self.powershell = self.tool in ("powershell", "pwsh")
@@ -430,6 +460,20 @@ class Call:
         # Rule C's reading of a root-aimed ``find``: the record paths listed once per call, and how many it has tested.
         self.record_paths: dict = {}
         self.find_spent = 0
+        self._checkouts: dict = {}
+
+    def main_checkout(self, directory: str) -> "str | None":
+        """The main checkout of ``directory`` when that is the root of a linked git worktree, else None (Rule H)."""
+        if directory not in self._checkouts:
+            main = None
+            try:
+                found = _state.checkout_root(directory)
+                if os.path.realpath(found) != os.path.realpath(directory):
+                    main = _paths.posix(Path(found))
+            except (OSError, ValueError):
+                main = None
+            self._checkouts[directory] = main
+        return self._checkouts[directory]
 
     @functools.cached_property
     def command(self) -> str:
@@ -698,6 +742,25 @@ def _read_only_reason(records) -> str:
     )
 
 
+# What a denial adds when the refused write was aimed at a run's files, or at a destination built when the command
+# runs: the two ways such a file is written. A review lens under a read-only record was told to resolve its packet's
+# path with output_paths.py and write there; `cat > "$(output_paths.py ...)"` is a destination the guard cannot place
+# (and the script prints JSON, not a path), so the lens was refused with no word on what would have worked.
+_RUN_WRITE_WAYS = (
+    " To write a report, an artifact or an evidence file into a run, pipe the content to "
+    "'python skills/scripts/run_files.py write --run-id <run> --phase <phase> --kind reports|artifacts|evidence "
+    "--name <file>' (or give it --from FILE), or name the literal path under the run's save path to an edit tool or a "
+    "redirect. A destination built when the command runs ('$(...)', a variable, the output of output_paths.py) is "
+    "one the guard cannot place and never allows."
+)
+_RUN_FILE = re.compile(r"(?:^|/)skillset-saves/runs/[^/]+(?:/|$)", re.I)
+
+
+def _in_a_run(target: "_paths.Target") -> bool:
+    """Whether a located path is a run's file, in any checkout: the write that ``_RUN_WRITE_WAYS`` is advice for."""
+    return any(_RUN_FILE.search(form) for form in target.abs)
+
+
 # A write the command names no target for is not inside the run's paths whatever it writes: the contract is that every
 # target lies inside, and one the analyser cannot place cannot satisfy it.
 _UNNAMED_REASON = (
@@ -791,8 +854,9 @@ def rule_read_only(call: "Call") -> "str | None":
     allow = _state.read_only_allow(records)
     fold = _paths.case_insensitive_fs()
     if call.writer:
-        if any(not _paths.inside_allowed(target, allow, call.root, fold=fold) for target in call.edit_targets):
-            return _read_only_reason(records)
+        outside = [target for target in call.edit_targets if not _paths.inside_allowed(target, allow, call.root, fold=fold)]
+        if outside:
+            return _read_only_reason(records) + (_RUN_WRITE_WAYS if any(_in_a_run(target) for target in outside) else "")
         return None
     if not call.shell:
         return None
@@ -809,8 +873,9 @@ def rule_read_only(call: "Call") -> "str | None":
         for write, targets in call.shell_targets(strict=True, analysis=analysis):
             if write.via in dry:
                 continue
-            if write.unresolved or any(not _paths.inside_allowed(target, allow, call.root, fold=fold) for target in targets):
-                return reason
+            outside = [target for target in targets if not _paths.inside_allowed(target, allow, call.root, fold=fold)]
+            if write.unresolved or outside:
+                return reason + (_RUN_WRITE_WAYS if write.unresolved or any(_in_a_run(target) for target in outside) else "")
         if _unscoped_git(analysis) or _installs_packages(analysis):
             return reason
     return reason if any(analysis.unnamed for analysis in analyses) else None
@@ -821,12 +886,12 @@ def rule_read_only(call: "Call") -> "str | None":
 # Core save-protocol files with a single sanctioned writer (save_run.py). `_write.lock` is the writer mutex: a hand edit
 # that replaces or removes it while a writer holds it gives the next writer another file to lock.
 _CORE_SAVE_FILE = re.compile(
-    r"(?:^|/)skillset-saves/(?:_latest\.md|_write\.lock|runs/[^/]+/(?:_state\.md|_lock\.md|_audit-trail\.md|_journal\.json|_history/[^/]+))$", re.I
+    r"(?:^|/)skillset-saves/(?:_latest\.md|_write\.lock|runs/[^/]+/(?:_state\.md|_lock\.md|_audit-trail\.md|_journal\.json|_history/[^/]+|_context/[^/]+))$", re.I
 )
 _CORE_SAVE_REASON = (
     "Blocked by harness Action Realization layer: core save files are written only by "
-    "skills/harness/hooks/save_run.py (create/checkpoint/heartbeat/complete/release/recover) "
-    "so revision lineage, history snapshots, and the audit trail stay coherent."
+    "skills/harness/hooks/save_run.py (create/checkpoint/heartbeat/dump/complete/release/recover) "
+    "so revision lineage, history snapshots, context dumps and the audit trail stay coherent."
 )
 # Durable project Taste state has one sanctioned writer.
 _TASTE_SAVE_PATH = re.compile(
@@ -865,6 +930,16 @@ _VERDICT_REASON = (
     "which checks the package and the gatekeeper's judgment before it writes one and counts the REVISE rounds that "
     "escalate to the user. Write the judgment draft as verdict_<boundary>.judgment.json and pass it with --judgment."
 )
+# A phase's superseded copies and the index that lists them. The gate leaves `_superseded/` out of the current package
+# and holds every file in it to `index.json`, so a hand write there could plant a copy and an index entry to match, or
+# edit the entry of a real one. One writer (run_files.py supersede) moves a file in and records its digest.
+_SUPERSEDED_PATH = re.compile(r"(?:^|/)skillset-saves/runs/[^/]+/[^/]+/_superseded(?:/.*)?$", re.I)
+_SUPERSEDED_REASON = (
+    "Blocked by harness Action Realization layer: a phase's _superseded/ folder and its index.json are written only by "
+    "'python skills/scripts/run_files.py supersede --run-id <run> --phase <phase> --path <file> --by-revision <n>', "
+    "which moves a file of an earlier revision there and records its digest. The gate holds every file under "
+    "_superseded/ to that index, so a copy placed or edited by hand fails it."
+)
 # A phase directory is the only place those records live. Removing or moving the directory itself (`rm -r`, `mv`,
 # `shutil.rmtree`, `shutil.move`, `find -delete` aimed at it, `rsync --delete` over it) takes every verdict record and
 # the cycle history with it, so a boundary held for the user would reopen with no history at all. The files inside it
@@ -885,10 +960,10 @@ _PHASE_DIR_REASON = (
 )
 # The same files named anywhere inside a command that could not be tokenised.
 _CORE_SAVE_TOKEN = re.compile(
-    r"skillset-saves/(?:_latest\.md|_write\.lock|runs/[^\s\"'/]+/(?:_state\.md|_lock\.md|_audit-trail\.md|_journal\.json|_history/))", re.I
+    r"skillset-saves/(?:_latest\.md|_write\.lock|runs/[^\s\"'/]+/(?:_state\.md|_lock\.md|_audit-trail\.md|_journal\.json|_history/|_context/))", re.I
 )
 # The directories above a protected file: removing or moving one removes the file.
-_PROTECTED_DIRS = re.compile(r"(?:^|/)\.harness-state/?$|(?:^|/)skillset-saves(?:/runs(?:/[^/]+(?:/_history)?)?|/preferences)?/?$", re.I)
+_PROTECTED_DIRS = re.compile(r"(?:^|/)\.harness-state/?$|(?:^|/)skillset-saves(?:/runs(?:/[^/]+(?:/_history|/_context)?)?|/preferences)?/?$", re.I)
 _PROTECTED_FRAGMENTS = ("skillset-saves", ".harness-state")
 
 
@@ -903,6 +978,8 @@ def _protected_reason(target: "_paths.Target", above: bool = False, removes: boo
             return _GUARD_STATE_REASON
         if _VERDICT_RECORD.search(form):
             return _VERDICT_REASON
+        if _SUPERSEDED_PATH.search(form):
+            return _SUPERSEDED_REASON
     if above:
         for form in forms:
             if _PROTECTED_DIRS.search(form):
@@ -1170,7 +1247,7 @@ def _git_ignores(root: Path, home: str) -> bool:
 
 
 # What a record directory holds, below it: the files each single writer owns and the directories above them.
-_RUN_FILES = ("_state.md", "_lock.md", "_audit-trail.md", "_journal.json", "_history")
+_RUN_FILES = ("_state.md", "_lock.md", "_audit-trail.md", "_journal.json", "_history", "_context")
 _PREFERENCE_FILES = ("taste.json", "taste.md", "taste.journal.jsonl", "taste.lock", "_history")
 _LISTING_LIMIT = 256
 
@@ -1579,12 +1656,20 @@ def rule_single_writer(call: "Call") -> "str | None":
 # them inside a run starts the host with SUPREMETEAM_HARNESS_DEV=1, which only the human who launches the
 # host can set. The sanctioned registration writers (repair_registration.py, install_hooks.py) are
 # scripts, so their arguments are never write targets and they keep working.
-_REGISTRATION = (".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".github/hooks.json")
+# Google Antigravity reads its hooks from `~/.gemini/config/hooks.json` and a workspace's `.agents/hooks.json`.
+# GitHub Copilot reads every `*.json` under `.github/hooks/` and `~/.copilot/hooks/` (`$COPILOT_HOME/hooks/` when
+# that is set), so the whole directory is a registration: a second file there adds a hook as surely as an edit to
+# ours. `.github/hooks.json` and `~/.config/github-copilot/hooks.json` are where earlier versions wrote.
+_REGISTRATION = (".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".github/hooks.json",
+                 ".github/hooks/**", ".agents/hooks.json")
 _USER_REGISTRATION = ("~/.claude/settings.json", "~/.claude/settings.local.json", "~/.codex/hooks.json",
-                      "~/.config/github-copilot/hooks.json", "~/.cursor/plugins/local/supremeteam-hooks/**",
+                      "~/.config/github-copilot/hooks.json", "~/.copilot/hooks/**", "~/.gemini/config/hooks.json",
+                      "~/.cursor/plugins/local/supremeteam-hooks/**",
                       "~/.config/opencode/plugins/supremeteam-hooks.js", "~/.pi/agent/extensions/supremeteam-guard.ts")
-# pi reads its agent directory from this variable when it is set (install_hooks.pi_extension_path).
+# pi reads its agent directory from this variable when it is set (install_hooks.pi_extension_path), and Copilot its
+# home directory from this one.
 _PI_AGENT_ENV = "PI_CODING_AGENT_DIR"
+_COPILOT_HOME_ENV = "COPILOT_HOME"
 _HARNESS_REASON = (
     "Blocked by harness Action Realization layer: the hook scripts and the host files that register them are not "
     "edited while a run is pinned or a boundary is recorded, because an edit there would switch the guard off. "
@@ -1605,6 +1690,8 @@ def _harness_boundaries(root) -> list:
              *scripts, *_REGISTRATION, *(os.path.expanduser(p) for p in _USER_REGISTRATION)]
     if os.environ.get(_PI_AGENT_ENV):
         globs.append(os.path.join(os.path.expanduser(os.environ[_PI_AGENT_ENV]), "extensions", "supremeteam-guard.ts"))
+    if os.environ.get(_COPILOT_HOME_ENV):
+        globs.append(os.path.join(os.path.expanduser(os.environ[_COPILOT_HOME_ENV]), "hooks").replace("\\", "/") + "/**")
     return [_paths.Boundary(glob, root) for glob in globs]
 
 
@@ -1615,7 +1702,7 @@ def _run_active(call: "Call") -> bool:
     _bootstrap.ensure_paths()
     from _saves import has_active_run
 
-    return has_active_run(call.root)
+    return has_active_run(call.state_root)
 
 
 def _protection_engaged(call: "Call") -> bool:
@@ -1664,8 +1751,28 @@ _UNPLACED_REASON = (
 )
 
 
+# A patch tool whose input carries no file header the guard can read. The patch still writes somewhere, so while
+# anything is protected the call is refused instead of being let through with no path to judge.
+_UNPLACED_PATCH_REASON = (
+    "Blocked by harness Action Realization layer: this apply_patch call names no file the guard can read (its input "
+    "has no '*** Add File:', '*** Update File:', '*** Delete File:' or '*** Move to:' line), so the write cannot be "
+    "shown to stay outside an active boundary or single-writer record. Send the patch in the standard patch format, "
+    "or write the file with a tool that names its path."
+)
+
+
+def _unplaced_patch(call: "Call") -> "str | None":
+    """Rule G for a patch tool: denied when no target was found and a boundary, a record directory or a run exists."""
+    if call.edit_targets:
+        return None
+    engaged = (_frozen_boundaries(call) or call.guard.get("read_only") or _homes_present(call.root) or _run_active(call))
+    return _UNPLACED_PATCH_REASON if engaged else None
+
+
 def rule_unplaced_write(call: "Call") -> "str | None":
     """Rule G: recognized mutations must have placed targets at a protected boundary."""
+    if call.tool == "apply_patch":
+        return _unplaced_patch(call)
     if not call.shell:
         return None
     if any(analysis.lost_directory and analysis.writes for analysis in _analyses(call.analysis)):
@@ -1693,8 +1800,60 @@ def rule_unplaced_write(call: "Call") -> "str | None":
         return harness_reason
     return ("Blocked by harness Action Realization layer: an unplaced write target could reach an active "
             "boundary or single-writer record. Runtime-built destinations and stdin/diff/program writes "
-            "without proven targets are not allowed here. Use a path tool or name literal destinations; "
-            "use save_run.py, taste_prefs.py or guard_state.py for their owned records.")
+            "without proven targets are not allowed here. Name literal destinations; "
+            "use save_run.py, taste_prefs.py or guard_state.py for their owned records." + _RUN_WRITE_WAYS)
+
+
+# --- Rule H: run state in a linked worktree --------------------------------------------------------------
+#
+# `skillset-saves/` is git-ignored, so a linked git worktree has none: the runs are in the main checkout, and that is
+# where every gate, the path tool and the run writer look. A relative save path, written from a session or a
+# sub-agent whose working directory is a worktree, makes a second `skillset-saves/` there. The write "succeeds", no
+# gate ever reads the file, and the host deletes it with the worktree. So a write under the `skillset-saves/` of a
+# linked worktree is refused, with or without a read-only record, and the reason gives the path the file belongs at.
+# Removing or moving what an earlier version left there is not refused: that is how such a file is rescued.
+_SAVES_SEGMENT = re.compile(r"/skillset-saves(?=/|$)", re.I)
+_WORKTREE_SAVES_REASON = (
+    "Blocked by harness Action Realization layer: {path} is under the skillset-saves/ of a linked git worktree "
+    "({worktree}). A run's files are in the main checkout only: no gate reads a file written here, and it is deleted "
+    "with the worktree. It belongs at {main}. Pipe the content to 'python skills/scripts/run_files.py write --run-id "
+    "<run> --phase <phase> --kind reports|artifacts|evidence --name <file>' (or give it --from FILE), which writes "
+    "there from a worktree, or name that absolute path to an edit tool or a redirect where the host allows one."
+)
+
+
+def _worktree_saves(call: "Call", target: "_paths.Target") -> "tuple | None":
+    """``(path, worktree, path in the main checkout)`` when a form of ``target`` lies under the ``skillset-saves/`` of
+    a linked worktree, else None."""
+    for form in target.abs:
+        for match in _SAVES_SEGMENT.finditer(form):
+            holder = form[:match.start()] or "/"
+            main = call.main_checkout(holder)
+            if main is not None:
+                return form, holder, main.rstrip("/") + form[match.start():]
+    return None
+
+
+def rule_worktree_saves(call: "Call") -> "str | None":
+    """Rule H: a write under a linked worktree's own ``skillset-saves/`` is denied and pointed at the main checkout."""
+    if call.writer:
+        paths = _written_paths(call.input, include_patch=call.tool == "apply_patch")
+        if not any("skillset-saves" in str(path).lower() for path in paths):
+            return None
+        # An edit tool resolves a relative path against the working directory and nowhere else.
+        targets = [call.locate(path, call.starts[:1]) for path in paths]
+    elif call.shell and "skillset-saves" in call.command.lower() and call.analysis.ok:
+        targets = [target for analysis in _analyses(call.analysis)
+                   for write, found in call.shell_targets(strict=True, analysis=analysis)
+                   if not write.unresolved and write.via not in _REMOVE_VIA for target in found]
+    else:
+        return None
+    for target in targets:
+        hit = _worktree_saves(call, target)
+        if hit:
+            path, worktree, main = (_state.safe_text(text, 300) for text in hit)
+            return _WORKTREE_SAVES_REASON.format(path=path, worktree=worktree, main=main)
+    return None
 
 
 # --- Rule E: coverage destination advisory --------------------------------------------------------------
@@ -1759,20 +1918,15 @@ def rule_coverage(call: "Call") -> "str | None":
 
 # Rules run in this order; the first reason wins. A rule that faults is counted and skipped, so one
 # defect never turns off the rest. Rule G is a flag the analyser set, so it goes before the rules that
-# would spend their time locating every write of a command it denies anyway.
-RULES = [("A", rule_dangerous), ("G", rule_unplaced_write), ("B", rule_frozen), ("D", rule_read_only), ("C", rule_single_writer),
-         ("F", rule_harness_files)]
+# would spend their time locating every write of a command it denies anyway. Rule H goes before the read-only
+# rule, which would refuse the same write and say only that the run is read-only, not where the file belongs.
+RULES = [("A", rule_dangerous), ("G", rule_unplaced_write), ("H", rule_worktree_saves), ("B", rule_frozen), ("D", rule_read_only),
+         ("C", rule_single_writer), ("F", rule_harness_files)]
 
 
 def _deny(reason: str) -> None:
-    out = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason,
-        }
-    }
-    print(json.dumps(out))
+    """Print the deny in the shape the host reads (``_state.deny_output``: the command line's ``--host``) and exit."""
+    print(json.dumps(_state.deny_output(reason)))
     _exit()
 
 
@@ -1797,13 +1951,16 @@ def _advise(notes: list) -> None:
     cannot be read is the owner's to repair, and the call is not the place to
     stop work the rules that still run have no objection to.
     """
-    out = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "additionalContext": "\n".join(notes),
-        }
-    }
-    print(json.dumps(out))
+    if _state.output_host() in _state.TOP_LEVEL_OUTPUT_HOSTS:
+        # GitHub Copilot documents no context channel for a pre-tool hook: its output is a decision or nothing, and
+        # an object it does not expect is not worth trying on a host that fails closed. The note goes to stderr,
+        # which the host logs, and the call is allowed.
+        try:
+            sys.stderr.write("\n".join(notes) + "\n")
+        except Exception:
+            pass
+        _exit()
+    print(json.dumps(_state.context_output("PreToolUse", "\n".join(notes))))
     _exit()
 
 
@@ -1835,6 +1992,29 @@ def _project_root() -> Path:
         return Path(".")
 
 
+def _state_root(project: Path) -> Path:
+    """The checkout that holds the guard record and the runs (``_state.state_root``), or the project when it cannot be found."""
+    try:
+        return Path(_state.checkout_root(project))
+    except Exception as exc:
+        _state.record_fault("PreToolUse", exc)
+        return project
+
+
+def _same_directory(first: Path, second: Path) -> bool:
+    try:
+        return os.path.realpath(first) == os.path.realpath(second)
+    except (OSError, ValueError):
+        return str(first) == str(second)
+
+
+# The rules read a second time against the worktree when the host calls a linked worktree the project. A frozen or
+# blocked glob is relative to the tree the session works in (`src/payments/**`), and so are the registration files
+# (`.claude/settings.json`), so both hold for the worktree's copy as well as the main checkout's. The single-writer
+# records, a read-only run's allow list and the unplaced-write rule are about the state, which is in one place.
+_WORKTREE_RULES = frozenset({"B", "F"})
+
+
 def main() -> None:
     data = _state.read_hook_input("PreToolUse")
     _state.record_observation("PreToolUse", data)
@@ -1843,14 +2023,28 @@ def main() -> None:
     run_heartbeat.refresh(data, "PreToolUse")
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {}) or {}
-    if str(tool_name).lower() == "apply_patch" and isinstance(tool_input, str):
+    if str(tool_name).strip().lower() == "apply_patch" and isinstance(tool_input, (str, list)):
+        # A patch tool's input may be the patch itself, as text or as a list of arguments.
         tool_input = {"patch": tool_input}
     if not isinstance(tool_input, dict):
         return
-    call = Call(tool_name, tool_input, _guard_state(), _project_root(), data.get("cwd"))
-    for _label, rule in RULES:
+    project = _project_root()
+    root = _state_root(project)
+    cwd = data.get("cwd")
+    guard = _guard_state()
+    local = None
+    if not _same_directory(project, root):
+        # The host calls a linked worktree the project. Its guard record and its runs are the main checkout's, so the
+        # call is judged there; a relative path with no working directory in the payload means a path in the worktree.
+        if not (isinstance(cwd, str) and cwd.strip()):
+            cwd = str(project)
+        local = Call(tool_name, tool_input, guard, project, cwd, state_root=root)
+    call = Call(tool_name, tool_input, guard, root, cwd)
+    for label, rule in RULES:
         try:
             reason = rule(call)
+            if not reason and local is not None and label in _WORKTREE_RULES:
+                reason = rule(local)
         except BaseException as exc:
             # No rule exits: a `SystemExit` here came from a module a rule imported, so it is a fault like any other
             # and the remaining rules still run.

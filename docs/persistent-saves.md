@@ -20,6 +20,7 @@ skillset-saves/
     _audit-trail.md                # append-only events
     _journal.json                  # exists only mid-publish
     _history/                      # rev-<n>.state.json / rev-<n>.lock.json
+    _context/                      # dump-<n>.md: where the run stood, written before a context compaction
     intake/report_grilling.md      # the hashed decisions artifact
     design/                        # one directory per phase
       manifest.json                #   the gate submission
@@ -29,6 +30,9 @@ skillset-saves/
       verdict_design-to-build.cross-stage.json  # gatekeeper-admiral's, beside it
       verdict_design-to-build.cycles.json       # the boundary's REVISE streaks; check.py --judgment --verdict-out
       verdict_design-to-build.cycles.lock       # its mutex
+      _superseded/                 #   files of earlier revisions, moved here by run_files.py supersede
+        index.json                 #   and listed here with their digests
+        rev-1/reports/...          #   each at the path it had inside the phase
     build/  review/  security/  investigation/  qa/  taste/  redesign/  skill-creation/  release/
     delivery/reports/              # handoff_<boundary>.md and delivery-package.md
 ```

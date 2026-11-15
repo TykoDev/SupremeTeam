@@ -1,7 +1,7 @@
-# React 19 and TanStack Start
+# React 19+ and TanStack Start 1.0+
 
 ## Baseline
-- Use React 19 with TanStack Start and Vite 8 with Rolldown for a type-safe full-stack application.
+- React 19 or newer with TanStack Start 1.0 or newer (the stable release of 2026-10-13; its packages carry 1.x version numbers) and Vite 8 or newer with Rolldown, for a type-safe full-stack application.
 - Treat end-to-end TypeScript inference across URL definitions, data loaders, forms, and server functions as the primary framework benefit.
 - Preserve server rendering and client hydration boundaries explicitly while keeping the deployment target portable.
 - Keep vendor-neutral runtime support as an assumption to verify, not as permission to ignore adapter-specific behavior.
@@ -19,7 +19,7 @@
 - Keep Zustand or React Context limited to client UI state and keep persistence or external service calls behind `app/lib/api` boundaries.
 
 ## Migration and versioning
-- Keep Vite 8, Rolldown, TanStack Start, and React versions aligned because their generated types and SSR adapters interact.
+- Keep Vite, Rolldown, TanStack Start, and React versions aligned because their generated types and SSR adapters interact.
 - Review generated URL-tree changes as source changes; update lazy components and search-parameter schemas together with their consuming screens.
 - Preserve query-key factories and stale-time policy during data-library upgrades so cache identity does not drift silently.
 - Recheck server-function serialization and hydration behavior when changing the target runtime from Node.js to Deno, Bun, or an edge host.
@@ -37,6 +37,6 @@
 - Use Playwright for browser flows and run a build against the production adapter before treating portability as proven.
 
 ## Known uncertainty
-- TanStack Start and Vite 8 are fast-moving; generated URL types, server functions, and adapter behavior need version-pinned verification.
+- TanStack Start and Vite are fast-moving; generated URL types, server functions, and adapter behavior need version-pinned verification.
 - Runtime portability does not guarantee identical streaming, environment, or edge API behavior across Node.js, Deno, Bun, and Cloudflare.
 - TanStack Query, Form, Table, and Virtual each add different cache or rendering contracts; include only the packages the product actually exercises.

@@ -54,8 +54,14 @@ import fnmatch
 import sys
 import zipfile
 from pathlib import Path
-from scripts.quick_validate import validate_skill
-from scripts.utils import ProjectRootError, configure_stdout, find_project_root, is_link, load_residue_classes
+try:
+    from scripts.quick_validate import validate_skill
+    from scripts.utils import ProjectRootError, configure_stdout, find_project_root, is_link, load_residue_classes
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    sys.stderr.write(f"ERROR: package_skill.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog.\n")
+    raise SystemExit(2) from exc
 
 # Skipped without comment: regenerable, or owned by another tool.
 EXCLUDE_DIRS = {"__pycache__", "node_modules", ".git"}

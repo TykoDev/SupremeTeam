@@ -61,8 +61,8 @@ are read for blocked phrases and local links only), and a probe record that bind
 listed in ``warnings`` as attested rather than tied to the source it describes.
 
 Output: a JSON report on stdout. On engine error, including any fault inside the
-engine itself, a JSON object carrying "engine_error" is written to stderr and
-nothing is printed to stdout. The report names every input that was not the
+engine itself and a catalog module this script imports being absent, a JSON object
+carrying "engine_error" is written to stderr and nothing is printed to stdout. The report names every input that was not the
 shipped one (``gate_spec_is_shipped``, ``registry_is_shipped``, ``prior_record``);
 its digests are unkeyed, so a stored verdict is not authority by itself and the
 reader re-runs this script against the shipped spec.
@@ -89,10 +89,18 @@ for _path in (SKILLS_ROOT / "scripts", Path(__file__).resolve().parent):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from _gatecheck import DEFAULT_BLOCKED_PHRASES, compile_blocked_phrases, is_blank_file  # noqa: E402
-from data_formats import DataFormatError, content_sha256, load_data  # noqa: E402
-from contract_floor import gate_floor_errors  # noqa: E402
-from _gatecycle import write_mechanical, write_verdict  # noqa: E402
+try:
+    from _gatecheck import (DEFAULT_BLOCKED_PHRASES, compile_blocked_phrases, in_superseded_location, is_blank_file,
+                            spelling_defects)
+    from data_formats import DataFormatError, content_sha256, load_data
+    from contract_floor import gate_floor_errors
+    from stack_versions import VersionError, below, beyond, parse as parse_version
+    from _gatecycle import write_mechanical, write_verdict
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    print(json.dumps({"engine_error": f"check.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog."}, indent=2), file=sys.stderr)
+    raise SystemExit(2) from exc
 
 SUPPORTED_MANIFEST_SCHEMAS = {1, 2}
 #: The schema a manifest inside skillset-saves/runs/<run>/<phase>/ must declare.
@@ -294,6 +302,19 @@ def parse_date(value: object) -> date | None:
         return None
 
 
+def parse_last_day(value: object) -> date | None:
+    """The last day a ``support_ends`` value covers: a ``YYYY-MM-DD`` date, or the last day of a ``YYYY-MM`` month,
+    which is all some upstreams publish. None for anything else."""
+    exact = parse_date(value)
+    if exact is not None or not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}", value):
+        return exact
+    year, month = int(value[:4]), int(value[5:])
+    if not 1 <= month <= 12:
+        return None
+    following = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    return date.fromordinal(following.toordinal() - 1)
+
+
 def timestamp_valid(value: object) -> bool:
     if not isinstance(value, str) or not value.strip():
         return False
@@ -465,6 +486,7 @@ class Package:
                 "required to be hashed; a non-string run_id was not refused; declare schema_version 2")
         self.root, self.root_kind, self.run_dir, self.project_root = self._evidence_root()
         self.artifact_hashes: dict[str, str] = {}
+        self._superseded: "list | None" = None
         self.hashed_ok: set[str] = set()
         #: Hashed artifacts that are zero bytes or whitespace only.
         self.blank_artifacts: set[str] = set()
@@ -560,11 +582,32 @@ class Package:
             real = Path(os.path.realpath(candidate))
             real_root = Path(os.path.realpath(root))
             try:
-                real.relative_to(real_root)
+                inside = real.relative_to(real_root)
             except ValueError:
                 self.failures.append(f"{label} escapes evidence root via link: {relative}")
                 return None
+            # Which file the path reaches, not only how it is spelled: a superseded copy is never evidence, whether it
+            # is cited directly, through a link or under another spelling.
+            if in_superseded_location(inside.parts[:-1]):
+                self.failures.append(f"{label} cites a superseded copy: {relative} (resolves to {inside.as_posix()})")
+                return None
+            self._warn_spelling(raw, label, inside.as_posix())
         return candidate
+
+    def _warn_spelling(self, cited: str, label: str, resolved: str) -> None:
+        """Say when a cited path is not the spelling the directory gives, or is reached through a link.
+
+        Either lets two different strings name one file, or one string name different files over time, so the path
+        in a manifest stops identifying its evidence. A warning for one release, because schema 2 is mandatory inside
+        a run and manifests that pass today would fail at once; a failure after it."""
+        for kind, part, detail in spelling_defects(self.base, cited):
+            if kind == "link":
+                note = f"{label} reached through a link: {cited} (resolves to {resolved})"
+            else:
+                note = f"{label} is not the on-disk spelling: {cited} (on disk: {detail or 'no entry spelled ' + repr(part)})"
+            note += "; this becomes a failure in the next release"
+            if note not in self.warnings:
+                self.warnings.append(note)
 
     def project_path(self, relative: str, label: str) -> Path | None:
         """Resolve a project-root-relative *input* reference (binding, not evidence)."""
@@ -583,11 +626,47 @@ class Package:
         # Resolve even a missing leaf: a parent symlink/junction can already
         # leave the project. Hashing an external file is not input containment.
         try:
-            Path(os.path.realpath(candidate)).relative_to(Path(os.path.realpath(self.project_root)))
+            inside = Path(os.path.realpath(candidate)).relative_to(Path(os.path.realpath(self.project_root)))
         except ValueError:
             self.failures.append(f"{label} input path escapes project root via link: {relative}")
             return None
+        # A superseded copy in the save tree is no more an input than it is evidence. A product directory that
+        # happens to be called _history is the project's own and is left alone.
+        if inside.parts[:1] == ("skillset-saves",) and in_superseded_location(inside.parts[:-1]):
+            self.failures.append(f"{label} cites a superseded copy: {relative} (resolves to {inside.as_posix()})")
+            return None
         return candidate
+
+    def _superseded_entries(self) -> list:
+        """``(phase directory, index entry)`` for every superseded copy recorded inside the evidence root."""
+        if self._superseded is None:
+            found = []
+            for index in (*self.root.glob("_superseded/index.json"), *self.root.glob("*/_superseded/index.json")):
+                try:
+                    listed = json.loads(index.read_text(encoding="utf-8-sig")).get("entries")
+                except (OSError, ValueError, AttributeError):
+                    continue
+                found.extend((index.parent.parent, entry) for entry in listed if isinstance(entry, dict)) \
+                    if isinstance(listed, list) else None
+            self._superseded = found
+        return self._superseded
+
+    def superseded_copy_of(self, candidate: Path, actual: str) -> "object | None":
+        """The revision of a superseded copy whose content ``candidate`` repeats, or None.
+
+        A file copied out of ``_superseded/`` under a new name is the old evidence again. The one exception is the
+        file at the path the superseded copy came from: a log or a JSON record can be byte-identical from one
+        revision to the next, and that file is the current one."""
+        for phase, entry in self._superseded_entries():
+            if str(entry.get("sha256", "")).lower() != actual:
+                continue
+            try:
+                if os.path.realpath(phase / str(entry.get("path", ""))) == os.path.realpath(candidate):
+                    continue
+            except OSError:
+                pass
+            return entry.get("from_revision", "?")
+        return None
 
     # ------------------------------------------------------------ artifacts
     def check_artifacts(self) -> list[Path]:
@@ -606,9 +685,13 @@ class Package:
                 continue
             if is_blank_file(candidate):
                 self.blank_artifacts.add(relative)
+            actual = digest(candidate)
+            copied = self.superseded_copy_of(candidate, actual)
+            if copied is not None:
+                self.failures.append(f"artifact content matches superseded copy rev {copied}: {relative}")
             if not is_sha256(expected):
                 self.failures.append(f"invalid artifact digest: {relative}")
-            elif digest(candidate) != expected.lower():
+            elif actual != expected.lower():
                 self.failures.append(f"artifact hash mismatch: {relative}")
             else:
                 self.hashed_ok.add(relative)
@@ -1500,7 +1583,7 @@ class Package:
         overlay = value.get("overlay_sha256")
         overlay = overlay.strip() if isinstance(overlay, str) else overlay
         versions = value.get("versions")
-        if not filled(slug) or not is_sha256(overlay) or not isinstance(versions, list) or not versions:
+        if not filled(slug) or not is_sha256(overlay) or not isinstance(versions, (list, dict)) or not versions:
             self.failures.append(f"{key} record requires slug, versions, and overlay_sha256")
             return
         slug, overlay = slug.strip(), overlay.lower()
@@ -1523,34 +1606,80 @@ class Package:
             self.failures.append(f"{key} overlay file for {slug} is missing: {entry.get('path')}")
         elif overlay_digest(overlay_file) != overlay:
             self.failures.append(f"{key} overlay file digest does not match declared overlay_sha256")
-        offered = {str(v) for v in (entry.get("versions") or [])}
-        unoffered = [v for v in versions if str(v) not in offered]
-        if unoffered:
-            self.failures.append(f"{key} versions {unoffered} not offered by registry entry {slug}")
-        self.warn_registry_freshness(key, slug, registry)
+        self.check_lock_versions(key, slug, versions, entry)
+        self.warn_registry_freshness(key, slug, registry, entry)
 
-    def warn_registry_freshness(self, key: str, slug: str, registry: object) -> None:
-        """Say when a lock rests on pins the registry itself marks as past their date.
+    def check_lock_versions(self, key: str, slug: str, versions: object, entry: dict) -> None:
+        """Hold the versions a lock records to the minimums the registry entry states.
 
-        A lock on an overlay whose ``support_ends`` has passed, or against a
-        registry not re-read within its own ``verification_ttl_days``, still
-        passes: choosing a supported version is the owner's decision and the
-        gate makes none. The reader of the result is told, because the lock is
-        then a statement about versions nobody has confirmed are current.
+        A lock says what the project uses, component by component (``{"node": "26.1.0", "typescript": "6.0.3"}``),
+        and the registry says the least the overlay's guidance holds for (``min_versions``). A component the entry
+        names has to be in the lock, and every value has to be one version (``stack_versions``): those are
+        failures, because without them nothing was compared. A version below its minimum passes with a warning that
+        names both, which the design gatekeeper has to address in its judgment: locks on releases that passed
+        before this rule would otherwise all fail. A version past ``verified_through`` passes with a warning that
+        the overlay was not read against that release. Components the entry does not name are allowed.
+
+        The list form (``[19, 15]``) is what a lock was before the registry named its components. Nothing in it
+        can be compared, so it passes for one release with a warning that gives the labelled form, and is
+        malformed after that."""
+        minimums = entry.get("min_versions")
+        if not isinstance(minimums, dict) or not minimums:
+            self.failures.append(f"{key} registry entry {slug} states no min_versions, so nothing can vouch for a lock on it")
+            return
+        if isinstance(versions, list):
+            example = ", ".join(f'"{name}": "<version in use>"' for name in minimums)
+            self.warnings.append(
+                f"{key}: versions is a list, the form from before the registry named its components. It passes for this "
+                f"release and nothing in it was compared with the minimums of {slug}. Record what the project uses "
+                f"by component: {{{example}}}")
+            return
+        missing = [name for name in minimums if name not in versions]
+        if missing:
+            self.failures.append(f"{key} versions names no {', '.join(missing)}, which registry entry {slug} gives a minimum for")
+        limits = entry.get("verified_through") if isinstance(entry.get("verified_through"), dict) else {}
+        for name, version in versions.items():
+            try:
+                parse_version(version)
+            except VersionError as exc:
+                self.failures.append(f"{key} versions.{name}: {exc}")
+                continue
+            try:
+                if name in minimums and below(version, minimums[name]):
+                    self.warnings.append(
+                        f"{key}: {name} {version} is below {minimums[name]}, the minimum of the {slug} stack; the lock "
+                        "passes, and the design gatekeeper has to address it in its judgment")
+                if name in limits and beyond(version, limits[name]):
+                    self.warnings.append(
+                        f"{key}: {name} {version} is past {limits[name]}, the newest release the {slug} overlay was read "
+                        "against; its guidance is not known to hold there")
+            except VersionError as exc:
+                raise Engine(f"tech-stack registry entry {slug} states a version that is not one: {exc}") from exc
+
+    def warn_registry_freshness(self, key: str, slug: str, registry: object, entry: "dict | None" = None) -> None:
+        """Say when a lock rests on minimums the registry itself marks as past their date.
+
+        An entry gives ``support_ends`` per component: the day upstream stops supporting the release its minimum
+        names. A lock on an overlay with such a day behind it, or against a registry not re-read within its own
+        ``verification_ttl_days``, still passes: choosing a supported version is the owner's decision and the gate
+        makes none. The reader of the result is told, because the registry's minimum is then no longer one, and a
+        project at it is past its end of life.
         """
         if not isinstance(registry, dict):
             return
         today = utc_today()
-        support_ends = registry.get("support_ends")
-        ended = support_ends.get(slug) if isinstance(support_ends, dict) else None
-        if ended is not None:
-            last_day = parse_date(ended)
+        support_ends = entry.get("support_ends") if isinstance(entry, dict) else None
+        minimums = entry.get("min_versions") if isinstance(entry, dict) and isinstance(entry.get("min_versions"), dict) else {}
+        for component, ended in (support_ends.items() if isinstance(support_ends, dict) else ()):
+            last_day = parse_last_day(ended)
             if last_day is None:
-                self.warnings.append(f"{key}: support_ends for {slug} is not a YYYY-MM-DD date: {ended!r}")
+                self.warnings.append(f"{key}: support_ends for {component} of {slug} is not a YYYY-MM-DD date or a YYYY-MM "
+                                     f"month: {ended!r}")
             elif last_day < today:
                 self.warnings.append(
-                    f"{key}: support for the {slug} stack ended on {last_day.isoformat()}; the lock passes, "
-                    "but its pinned versions are past their end of life")
+                    f"{key}: upstream support for {component} {minimums.get(component, '')} of the {slug} stack ended on "
+                    f"{last_day.isoformat()}; the lock passes, but the registry's minimum is past its end of life and a "
+                    "project at it is too")
         ttl = registry.get("verification_ttl_days")
         if ttl is None:
             return
@@ -1562,7 +1691,7 @@ class Package:
         elif (today - verified).days > ttl:
             self.warnings.append(
                 f"{key}: the tech-stack registry was last verified on {verified.isoformat()}, more than {ttl} days ago; "
-                "its pins are not known to be current")
+                "its minimums are not known to be current")
 
     # ------------------------------------------------------------- lineage
     def check_identity(self) -> tuple[bool, set[str]]:

@@ -43,7 +43,7 @@ file by hand and never creates a path outside its declared classes.
 
 **On package return** from a sub-orchestrator:
 1. Generate a `submission_id` in the format `{run-id}_handoff-{N}_attempt-{M}_{ISO-timestamp}`.
-2. Write the cross-stage handoff record at `skillset-saves/runs/{run-id}/delivery/reports/handoff_{boundary}.md` (frontmatter: `submission_id`, `revision`, `package_path`, `submission_status: PENDING`, `verdict: PENDING`). `delivery/` is admiral's own phase directory.
+2. Write the cross-stage handoff record at `skillset-saves/runs/{run-id}/delivery/reports/handoff_{boundary}.md` (frontmatter: `submission_id`, `revision`, `package_path`, `manifest_submission_id`, `submission_status: PENDING`, `verdict: PENDING`). `revision` is the `revision` of the returned package's `manifest.json`, `manifest_submission_id` its `submission_id`, and `package_path` the phase directory of this run that holds it: the gate compares all three with the package. `delivery/` is admiral's own phase directory, and `delivery/reports/` is a ledger with one record per boundary the run has reached. When a record for this boundary already exists (a second attempt after a `REVISE`), set it aside first with `python skills/scripts/run_files.py supersede --run-id {run-id} --phase delivery --path reports/handoff_{boundary}.md --by-revision <new revision>`; never overwrite it and never keep it under another name.
 3. Checkpoint through `session-memory` with `--set phase_state=<PHASE>_GATE_PENDING --evidence <that record>` before the gate submission.
 
 **On gatekeeper-admiral verdict**:
@@ -56,13 +56,14 @@ file by hand and never creates a path outside its declared classes.
 
 ### Save Context Delegation Template
 
-Include this block in every sub-orchestrator delegation with values copied from the current run state. It is the canonical field set from `../../contracts/handoff-templates.md` (mirrored in `../../save-protocol.md`); neither file may drop a field the other carries. When persistence is inactive or read-only resume is in effect, keep the block but set `Persistence active: no` so downstream skills return inline and skip writes.
+Include this block in every sub-orchestrator delegation with values copied from the current run state. It is the canonical field set from `../../contracts/handoff-templates.md` (mirrored in `../../save-protocol.md`); neither file may drop a field the other carries. When persistence is inactive or read-only resume is in effect, keep the block but set `Persistence active: no` so downstream skills return inline and skip writes. `Project root` and `Save path` are absolute paths in the main checkout (`output_paths.py` prints them, also from a linked git worktree): a sub-agent resolves a relative path against its own working directory, and one the host isolates in a worktree has no run there. Tell a delegate to write its report with `python skills/scripts/run_files.py write --run-id {run-id} --phase {phase} --kind reports|artifacts|evidence --name <file>`, content on standard input or `--from FILE`; it works from either tree, and `../../contracts/handoff-templates.md` has the rule in full.
 
 ```markdown
 ### Save Context
 - Run ID: {run-id}
 - Phase: {phase}
-- Save path: skillset-saves/runs/{run-id}/{phase}/
+- Project root: {absolute path of the main checkout}
+- Save path: {project-root}/skillset-saves/runs/{run-id}/{phase}/
 - Persistence active: {yes|no}
 - Persistence probe result: {ok|reason}
 - Context tier: {1|2|3}
@@ -83,7 +84,7 @@ Include this block in every sub-orchestrator delegation with values copied from 
 ## Rewind And Idempotency Rules
 
 - Reuse an existing verdict only when the package revision and boundary scope are unchanged.
-- Rewind when upstream approvals drift, artifacts are mixed across revisions, or a saved package loses mandatory deliverables.
+- Rewind when upstream approvals drift, artifacts are mixed across revisions, or a saved package loses mandatory deliverables. On a rewind to a boundary, supersede the handoff record of every boundary downstream of it (`run_files.py supersede --phase delivery --path reports/handoff_<boundary>.md --by-revision <the rewound revision>`; the order is `upstream_boundary` in `../../pipelines.yaml`): each describes a package that no longer follows from its input, and the ledger check fails a record older than its upstream one (`HANDOFF_STALE_AFTER_REWIND`).
 - Preserve superseded packages and verdicts as evidence; do not overwrite them into a false single history.
 - Route every remediation cycle back to the same owning sub-orchestrator and escalate on the third REVISE round (`../../gates.yaml` `revise_policy.cycle_cap` of 3) instead of resubmitting a fourth time.
 - A REVISE is one packet fixed as one revision per owner; the owner re-runs only the stages the packet names or that depend on changed evidence (`../../gates.yaml` `revise_policy.rerun_scope`), and a gate returns REVISE only for a mechanical failure, a Critical, or an unresolved Major (`revise_threshold`); Minor and Info ride along on APPROVED.
@@ -111,4 +112,4 @@ The stage owners this workflow delegates to are listed in `../SKILL.md` § Deleg
 - `build/build-management` owns build package assembly and implementation-stage revisions.
 - `review/code-chief` owns review package assembly and specialist review routing.
 - `gatekeeper-admiral` owns cross-boundary acceptance decisions.
-- `session-memory` is re-engaged after the mandatory intake checkpoint at context tier 3+, before gate submissions, at session end, and on error recovery.
+- `session-memory` is re-engaged after the mandatory intake checkpoint at a pre-compaction event or context pressure at the dump threshold (a context dump: `save_run.py dump --run-id {run-id} --narrative-from -`, which leaves the revision unchanged), before gate submissions, at session end, and on error recovery. After a compaction, follow the `[harness:context-resume]` note: read the dump it names, then `_state.md`, then continue inside the same run.

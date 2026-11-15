@@ -1,7 +1,8 @@
-# Deno 2 and TypeScript
+# Deno 2.9+ and TypeScript
 
 ## Baseline
-- Use Deno 2.x with native TypeScript, ESM imports, and secure-by-default permissions.
+- Deno 2.9 or newer, with native TypeScript, ESM imports, and secure-by-default permissions.
+- This overlay is ending. Deno announced on 2026-10-09 that it supports the runtime for another year, with monthly fix releases, and then stops developing it (`support_ends` in the registry). A new project should weigh that before locking this stack, and an existing one needs a plan for what follows.
 - Keep runtime, imports, tasks, compiler settings, and permission declarations in `deno.json`; use npm compatibility only at explicit dependency boundaries.
 - Use Fresh for a full-stack island application, Oak for a middleware-oriented service, or Hono for a portable edge API.
 - Document the minimum network, file, and environment access for each execution context rather than granting broad access by default.

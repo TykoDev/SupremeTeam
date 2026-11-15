@@ -8,7 +8,7 @@ description: >-
   the phase gate already passed, challenge the package boundary itself, or whether
   this can advance to the next stage. A single phase's own gate is its phase
   gatekeeper's. Reached cold, hand off to `admiral` first.
-version: 2.0.1
+version: 2.1.0
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -178,12 +178,15 @@ true` is the expected result, since the phase gate judged this same package; it 
 directory itself:
 
 ```bash
-python scripts/check.py skillset-saves/runs/<run>/delivery [--prior <prior-verdict-file>] [--json]
+python scripts/check.py skillset-saves/runs/<run>/delivery --boundary <boundary> [--prior <prior-verdict-file>] [--json]
 ```
 
 Pass admiral's `delivery/` phase directory as `<package-dir>`: it holds the
-cross-stage handoff record (`reports/handoff_<boundary>.md`) for every boundary,
-and, at the four boundaries that have a phase gatekeeper, the originating phase
+cross-stage handoff record (`reports/handoff_<boundary>.md`) for every boundary
+the run has reached, so it is a ledger, and `--boundary` names the record being
+judged. Without `--boundary` a single record is that record, and among several the
+one still `submission_status: PENDING`; anything else exits 2 and names the
+records it found, because the gate never picks one. At the four boundaries that have a phase gatekeeper, the originating phase
 directory was already shape-checked by that gatekeeper's own `scripts/check.py`.
 Only `design`, `redesign`, `build`, and `review` model the gate as a stage
 (`../pipelines.yaml` `gate_model`); at `security-review`, `investigation-review`,
@@ -195,9 +198,29 @@ reader of the package, not the second. The script declares this gate's
 required-artifact manifest and calls the shared engine at
 `../harness/gatekeeper/_gatecheck.py`, which mechanizes:
 
-- package shape, single-revision lineage, and one submission id; the handoff
-  record is a file of its own that carries `submission_id` and `verdict`, and a
-  file that also fits the delivery-summary slot fills only one of the two
+- package shape; the handoff record being judged is read from
+  `reports/handoff_<boundary>.md` and carries `submission_id` and `verdict`, and
+  the other records fill no slot
+- the ledger, record by record. Each record has its own submission id and
+  revision, so the one-revision rule of a phase package applies to the other
+  files of `delivery/` and not to the records. Every record carries
+  `submission_id`, `revision`, `package_path`, `submission_status` and `verdict`
+  (`HANDOFF_RECORD_INCOMPLETE`), no two share a submission id
+  (`HANDOFF_DUPLICATE_SUBMISSION`), and `package_path` is an existing phase
+  directory of this run (`HANDOFF_PACKAGE_PATH`). The record being judged is
+  `PENDING` or `VERDICT_RECORDED` and matches the package it hands over: its
+  `revision` and `manifest_submission_id` are those of `<package_path>/manifest.json`
+  (`HANDOFF_MANIFEST_MISMATCH`; a record without `manifest_submission_id` is
+  `UNCHECKED` as `HANDOFF_FIELD_MISSING` for one release). Every other record is
+  history: `VERDICT_RECORDED` (`HANDOFF_STATUS`) and `APPROVED`
+  (`HANDOFF_NOT_APPROVED`, which an `ESCALATE` is too). Every recorded record
+  agrees with this gate's own `<package_path>/verdict_<boundary>.cross-stage.json`
+  on `verdict`, `verdict_id` and `revision` (`HANDOFF_VERDICT_MISMATCH`, naming the
+  file and the field). A record at a lower revision than the record of the
+  boundary upstream of it (`../pipelines.yaml` `upstream_boundary`) was left behind
+  by a rewind (`HANDOFF_STALE_AFTER_REWIND`); admiral sets it aside with
+  `run_files.py supersede`. An upstream record does not have to be present: a run
+  may start from an approved package
 - skip-record completeness
 - the blocked-phrase scan — this gate **owns** it
 - idempotency drift against `--prior` (Markdown frontmatter or the JSON record

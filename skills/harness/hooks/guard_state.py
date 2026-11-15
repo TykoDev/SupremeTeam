@@ -56,12 +56,18 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import _bootstrap
+try:
+    import _bootstrap
 
-_bootstrap.ensure_paths()
-import _fsutil  # noqa: E402
-import _paths  # noqa: E402
-import _state  # noqa: E402
+    _bootstrap.ensure_paths()
+    import _fsutil
+    import _paths
+    import _state
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    print(f"refused: guard_state.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog.", file=sys.stderr)
+    raise SystemExit(2) from exc
 
 RECORD = "guard-state.json"
 DEFAULT_DANGEROUS_MINUTES = 30

@@ -1,7 +1,7 @@
-# Go 1.23+ and Gin
+# Go 1.27+ and Gin
 
 ## Baseline
-- Use Go 1.23+ with Go Modules, explicit error returns, and goroutines or channels only where concurrency ownership is clear.
+- Go 1.27 or newer, with Go Modules, explicit error returns, and goroutines or channels only where concurrency ownership is clear. Go supports its two newest releases, so the minimum moves with them.
 - Use Gin as the default HTTP framework for this overlay; consider Chi or Echo only when their different middleware and composition model is an explicit decision.
 - Keep handlers thin, keep business logic in services, and wrap errors with context while preserving `errors.Is` behavior.
 - Treat the compiled static binary and the standard library concurrency model as the runtime baseline.

@@ -57,6 +57,20 @@ def project():
         yield Path(tmp).resolve()
 
 
+def linked_worktree(main: Path, worktree: Path, name: "str | None" = None) -> Path:
+    """Make ``worktree`` a linked git worktree of ``main`` by writing the files ``git worktree add`` writes, so no test
+    needs git: the entry under ``main/.git/worktrees/<name>`` (``commondir``, the ``gitdir`` back-link) and the
+    ``.git`` file in the worktree that names it. ``main`` gets a ``.git`` directory when it has none."""
+    name = name or worktree.name
+    entry = main / ".git" / "worktrees" / name
+    entry.mkdir(parents=True, exist_ok=True)
+    worktree.mkdir(parents=True, exist_ok=True)
+    (entry / "commondir").write_text("../..\n", encoding="utf-8")
+    (entry / "gitdir").write_text(f"{(worktree / '.git').as_posix()}\n", encoding="utf-8")
+    (worktree / ".git").write_text(f"gitdir: {entry.as_posix()}\n", encoding="utf-8")
+    return worktree
+
+
 def write_guard(root: Path, state: dict) -> None:
     directory = root / ".harness-state"
     directory.mkdir(parents=True, exist_ok=True)
@@ -95,12 +109,13 @@ def encode(payload) -> bytes:
 
 
 def run_hook(script: str, payload, root: Path, *, python: "str | None" = None, text: bool = False,
-             **env_extra: str) -> subprocess.CompletedProcess:
+             args: tuple = (), **env_extra: str) -> subprocess.CompletedProcess:
     """Run a registered hook script as a subprocess; ``payload`` may be bytes to send undecodable input.
 
     ``python`` names another interpreter than the one running the tests (see ``older_interpreters``); ``text`` gives
-    stdout and stderr as text, read as the UTF-8 the hooks write."""
-    proc = subprocess.run([python or sys.executable, str(HOOK_DIR / script)], input=encode(payload), capture_output=True,
+    stdout and stderr as text, read as the UTF-8 the hooks write; ``args`` are the words a registration puts after
+    the script (``("--host", "copilot")``)."""
+    proc = subprocess.run([python or sys.executable, str(HOOK_DIR / script), *args], input=encode(payload), capture_output=True,
                           env=clean_env(root, **env_extra), check=False)
     if text:
         return subprocess.CompletedProcess(proc.args, proc.returncode, proc.stdout.decode("utf-8", "replace"),

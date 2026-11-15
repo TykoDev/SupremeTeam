@@ -1,8 +1,8 @@
-# Vite 8 single-page application
+# Vite 8+ single-page application
 
 ## Baseline
-- Use Vite 8 with Rolldown for a client-rendered single-page application and treat SSR as outside this baseline.
-- Use React 19 or Vue 3.5 according to the product's component model, with Vite's native ESM development server and fast refresh support.
+- Vite 8 or newer with Rolldown, for a client-rendered single-page application; SSR is outside this baseline. Vite 8 needs Node.js 20.19, or 22.12 and newer.
+- React 19 or newer, or Vue 3.5 or newer, according to the product's component model, with Vite's native ESM development server and fast refresh support.
 - Keep the browser bundle responsible for UI state and API calls, while preserving a clear boundary for any server-backed data.
 - Use Vite plugins only for capabilities the selected UI library and verification tools actually require.
 
@@ -19,7 +19,7 @@
 - Use TanStack Query or VueQuery for server state and Zustand, Pinia, or an equally narrow store for client UI state.
 
 ## Migration and versioning
-- Keep the React or Vue plugin aligned with Vite 8 and Rolldown, and review plugin compatibility before changing the bundler path.
+- Keep the React or Vue plugin aligned with Vite and Rolldown, and review plugin compatibility before changing the bundler path.
 - Preserve alias and proxy behavior in `vite.config.ts` when reorganizing source directories or API environments.
 - Treat manual chunks and bundle analysis as measured optimizations; remove them when they no longer reflect actual dependency cost.
 - If the product requires SSR, treat that as a new rendering baseline rather than silently extending the SPA assumptions.

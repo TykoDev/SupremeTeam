@@ -41,7 +41,7 @@ example assumes an active Admiral handoff; a cold invocation hands off to
 **Output:**
 - Skipped stage: the interface-and-design-system stage produces no component template, so `ui_evidence` carries the sanctioned fallback `no user-facing surface - design system not engaged` as an applicability record naming reason, scope, and decider — not an omitted key and not a bare string.
 - Not skipped: `security_seed`. The service terminates an external ingest connection, so `build/security-builder` states the boundary and its controls. Even with no boundary movement the key would still be required, because `../../../gates.yaml` `fallback_values` carries no entry for it.
-- Stack lock: `check_runtime.py --detect-project` matches an existing registry slug, so `stack_lock` names the slug, the locked versions, and the overlay sha256 rather than the no-new-runtime fallback.
+- Stack lock: `check_runtime.py --detect-project` matches an existing registry slug, so `stack_lock` names the slug, the versions the project uses by component (the report lists the components and their registry minimums under `min_versions`), and the overlay sha256 rather than the no-new-runtime fallback.
 - Package shape: requirements, architecture, interfaces, plan, acceptance, implementation specification, `security_seed`, `stack_lock`, `taste_snapshot`, `ui_evidence` applicability record, and the approval record for every executed phase.
 
 ## Example 4 — No saved Taste profile

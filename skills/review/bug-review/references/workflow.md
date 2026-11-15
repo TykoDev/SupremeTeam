@@ -41,7 +41,7 @@ rules; this file holds the sequence and the judgment calls inside it.
 `../SKILL.md` states the contracts; this section records only where each one
 lands in the sequence above, so the two documents do not restate each other.
 
-- Read-only over the reviewed surface — applies from step 1 to the last line of the packet; the fix direction captured at step 3 is the deliverable, and no step of this sequence writes into the reviewed tree.
+- Read-only over the reviewed surface — applies from step 1 to the last line of the packet; the fix direction captured at step 3 is the deliverable, and no step of this sequence writes into the reviewed tree. The packet itself is written into the run with `run_files.py write` or to the literal `Save path` (SKILL.md, Read-only over the reviewed surface), never to a path built when the command runs.
 - Before/After Evidence — the "before" is captured at step 1, before any claim is written, so a later assertion that state changed has a baseline to be measured against.
 - Shared severity — assigned at step 3, once trigger and impact are known, and not re-sorted while packaging at step 4.
 - Save-Protocol Adherence — the step 4 packet is what the save path receives, under the filename `../SKILL.md` mandates for the gate slot.

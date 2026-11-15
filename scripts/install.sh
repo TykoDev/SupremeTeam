@@ -11,10 +11,12 @@ codex_destination="${HOME:-}/.codex/skills"
 claude_destination="${HOME:-}/.claude/skills"
 cursor_destination="${HOME:-}/.cursor/skills"
 opencode_destination="${HOME:-}/.config/opencode/skills"
+pi_extension=""
 install_claude=0
 register_hooks=0
 hooks_scope=user
 hooks_yes=0
+hooks_statusline=0
 hooks_declined=0
 hooks_failed=0
 dry_run=0
@@ -64,9 +66,14 @@ Options:
                               design, build, review,
                               browser, release, safety, testing
   --target NAME             Install host-native support for one host. Repeatable.
-                              One of: auto, codex, claude, cursor, opencode, copilot.
-                              Default: auto. copilot has no skills folder, so it only
-                              takes part in --register-hooks, and auto never picks it.
+                              One of: auto, codex, claude, cursor, opencode, copilot, pi, antigravity.
+                              Default: auto. copilot, pi and antigravity
+                              have no skills folder of their own (they read the common
+                              one), so they only take part in --register-hooks. auto
+                              never picks copilot; it picks pi when ~/.pi/agent exists
+                              or PI_CODING_AGENT_DIR is set (a pi program on PATH is
+                              not enough), and antigravity when ~/.gemini/config exists
+                              or agy is on PATH.
   --destination PATH        Override the default agent skill path.
   --codex-destination PATH  Override the Codex skill path.
   --register-hooks          Register runtime harness hooks for selected hosts. This edits
@@ -76,10 +83,15 @@ Options:
                             project or local. The last two belong to the project around
                             the directory you run this from.
   --hooks-yes               Do not ask before --register-hooks writes.
+  --hooks-statusline        With --register-hooks for Claude Code: also set the status
+                            line to the context-usage sidecar, when none is configured.
   --install-claude          Mirror the install into ~/.claude/skills.
   --claude-destination PATH Override the Claude Code skill path.
   --cursor-destination PATH Override the Cursor skill path.
   --opencode-destination PATH Override the OpenCode skill path.
+  --pi-extension PATH       Override where --register-hooks writes the pi extension
+                            (default: $PI_CODING_AGENT_DIR/extensions, else
+                            ~/.pi/agent/extensions, /supremeteam-guard.ts).
   --dry-run                 Show what would change and write nothing.
   -h, --help                Show this help message.
 
@@ -726,10 +738,27 @@ host_detected() {
         opencode)
             command -v opencode >/dev/null 2>&1 || [[ -d "$HOME/.config/opencode" ]]
             ;;
+        antigravity)
+            command -v agy >/dev/null 2>&1 || [[ -d "$HOME/.gemini/config" ]]
+            ;;
+        pi)
+            # The agent directory, or the variable that moves it. A program named pi on PATH proves nothing: the
+            # name is generic, and a false match would write an extension into the home directory.
+            [[ -d "$HOME/.pi/agent" ]] || [[ -n "${PI_CODING_AGENT_DIR:-}" ]]
+            ;;
         *)
             return 1
             ;;
     esac
+}
+
+# Where --register-hooks puts the pi extension: the override, else the agent directory pi itself reads.
+pi_extension_path() {
+    if [[ -n "$pi_extension" ]]; then
+        printf '%s' "$pi_extension"
+    else
+        printf '%s/extensions/supremeteam-guard.ts' "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+    fi
 }
 
 add_selected_target() {
@@ -757,13 +786,13 @@ resolve_targets() {
         normalized="$(printf '%s' "$target" | tr '[:upper:]' '[:lower:]')"
         case "$normalized" in
             auto)
-                for detected in codex claude cursor opencode; do
+                for detected in codex claude cursor opencode pi antigravity; do
                     if host_detected "$detected"; then
                         add_selected_target "$detected"
                     fi
                 done
                 ;;
-            codex|claude|cursor|opencode|copilot)
+            codex|claude|cursor|opencode|copilot|pi|antigravity)
                 if [[ "$normalized" == codex ]]; then
                     codex_target_explicit=1
                 fi
@@ -773,7 +802,7 @@ resolve_targets() {
                 add_selected_target "$normalized"
                 ;;
             *)
-                die "Unknown target '$target'. Use auto, codex, claude, cursor, opencode, or copilot."
+                die "Unknown target '$target'. Use auto, codex, claude, cursor, opencode, copilot, pi, or antigravity."
                 ;;
         esac
     done
@@ -798,16 +827,41 @@ minimum_python_version() {
     printf '3.13'
 }
 
+# Git Bash, MSYS2 and Cygwin: a POSIX shell on Windows, where the programs it starts are Windows programs.
+on_windows_bash() {
+    case "$(uname -s 2>/dev/null || true)" in
+        MINGW*|MSYS*|CYGWIN*) return 0 ;;
+    esac
+    return 1
+}
+
+# A path as a Windows program reads it (C:/Users/...). MSYS converts most arguments by itself; saying it removes the
+# guess, and the hook registrar writes this path into the host's configuration.
+native_path() {
+    if on_windows_bash && command -v cygpath >/dev/null 2>&1; then
+        cygpath -m -- "$1"
+    else
+        printf '%s' "$1"
+    fi
+}
+
+# The interpreter command and any arguments it needs (py -3), as separate words.
 python_satisfies_minimum() {
-    local candidate="$1" minimum major minor
+    local minimum major minor
     minimum="$(minimum_python_version)"
     major="${minimum%%.*}"
     minor="${minimum##*.}"
-    "$candidate" -c "import sys; raise SystemExit(0 if sys.version_info >= ($major, $minor) else 1)" >/dev/null 2>&1
+    "$@" -c "import sys; raise SystemExit(0 if sys.version_info >= ($major, $minor) else 1)" >/dev/null 2>&1
 }
 
 find_compatible_python() {
     local candidate
+    # On Windows the names python3 and python are often the Microsoft Store stubs, which start nothing, while the py
+    # launcher that a python.org install puts on PATH does: try it first there, as install.ps1 does.
+    if on_windows_bash && command -v py >/dev/null 2>&1 && python_satisfies_minimum py -3; then
+        printf '%s' "py -3"
+        return 0
+    fi
     for candidate in python3 python python3.14 python3.13; do
         if command -v "$candidate" >/dev/null 2>&1 && python_satisfies_minimum "$candidate"; then
             printf '%s' "$candidate"
@@ -826,7 +880,7 @@ warn_python_readiness() {
 
 register_harness_hooks() {
     if [[ ${#selected_targets[@]} -eq 0 ]]; then
-        printf 'Hook registration skipped: no host targets were detected. Pass --target codex, --target claude, --target cursor, --target opencode, or --target copilot to choose explicitly.\n'
+        printf 'Hook registration skipped: no host targets were detected. Pass --target codex, --target claude, --target cursor, --target opencode, --target copilot, --target pi, or --target antigravity to choose explicitly.\n'
         return
     fi
 
@@ -839,19 +893,30 @@ register_harness_hooks() {
         hooks_failed=1
         return
     fi
-    hook_args=("$repo_root/scripts/install_hooks.py" --hook-root "$destination/harness/hooks")
+    hook_args=("$(native_path "$repo_root/scripts/install_hooks.py")" --hook-root "$(native_path "$destination/harness/hooks")")
 
     for target in "${selected_targets[@]}"; do
         hook_args+=(--target "$target")
     done
     hook_args+=(--scope "$hooks_scope")
+    if [[ -n "$pi_extension" ]]; then
+        hook_args+=(--pi-extension "$(native_path "$pi_extension")")
+    fi
     if [[ $hooks_yes -eq 1 ]]; then
         hook_args+=(--yes)
+    fi
+    if [[ $hooks_statusline -eq 1 ]]; then
+        hook_args+=(--statusline)
     fi
 
     # Exit 3 is the operator answering no at the preview: nothing was written.
     local status=0
-    "$python" "${hook_args[@]}" || status=$?
+    # "py -3" is two words; every other candidate is one.
+    if [[ "$python" == "py -3" ]]; then
+        py -3 "${hook_args[@]}" || status=$?
+    else
+        "$python" "${hook_args[@]}" || status=$?
+    fi
     if [[ $status -eq 3 ]]; then
         hooks_declined=1
     elif [[ $status -ne 0 ]]; then
@@ -903,6 +968,10 @@ while [[ $# -gt 0 ]]; do
             hooks_yes=1
             shift
             ;;
+        --hooks-statusline)
+            hooks_statusline=1
+            shift
+            ;;
         --install-claude)
             install_claude=1
             shift
@@ -920,6 +989,11 @@ while [[ $# -gt 0 ]]; do
         --opencode-destination)
             [[ $# -ge 2 ]] || die "Missing value for --opencode-destination."
             opencode_destination="$2"
+            shift 2
+            ;;
+        --pi-extension)
+            [[ $# -ge 2 ]] || die "Missing value for --pi-extension."
+            pi_extension="$2"
             shift 2
             ;;
         --dry-run)
@@ -989,6 +1063,10 @@ for ((i = 0; i < ${#install_roots[@]}; i++)); do
 done
 
 if [[ $dry_run -eq 1 ]]; then
+    if [[ $register_hooks -eq 1 ]] && has_target pi; then
+        # pi has no skills folder to mirror into, so its extension is the one file a real run would add for it.
+        printf '  pi: would write the guard extension %s\n' "$(pi_extension_path)"
+    fi
     printf '\nDry run complete: nothing was written.\n'
     exit 0
 fi

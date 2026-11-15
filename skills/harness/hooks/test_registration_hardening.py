@@ -64,9 +64,9 @@ class VerifyRegistrationTests(Scratch):
 
     BLOCK = {
         "hooks": {
-            "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"python {HOOK_DIR / 'pre_tool_use.py'}"}]}],
-            "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"python {HOOK_DIR / 'post_tool_use.py'}"}]}],
-            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": f"python {HOOK_DIR / 'user_prompt_submit.py'}"}]}],
+            "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"python {(HOOK_DIR / 'pre_tool_use.py').as_posix()}"}]}],
+            "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"python {(HOOK_DIR / 'post_tool_use.py').as_posix()}"}]}],
+            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": f"python {(HOOK_DIR / 'user_prompt_submit.py').as_posix()}"}]}],
         }
     }
 
@@ -137,9 +137,9 @@ class VerifyRegistrationTests(Scratch):
             (explicit / name).write_text("# relocated hook\n", encoding="utf-8")
         self.claude_settings({
             "hooks": {
-                "PreToolUse": [{"hooks": [{"command": f"python {explicit / 'pre_tool_use.py'}"}]}],
-                "PostToolUse": [{"hooks": [{"command": f"python {explicit / 'post_tool_use.py'}"}]}],
-                "UserPromptSubmit": [{"hooks": [{"command": f"python {explicit / 'user_prompt_submit.py'}"}]}],
+                "PreToolUse": [{"hooks": [{"command": f"python {(explicit / 'pre_tool_use.py').as_posix()}"}]}],
+                "PostToolUse": [{"hooks": [{"command": f"python {(explicit / 'post_tool_use.py').as_posix()}"}]}],
+                "UserPromptSubmit": [{"hooks": [{"command": f"python {(explicit / 'user_prompt_submit.py').as_posix()}"}]}],
             }
         })
         result = self.verify(SUPREMETEAM_HOOK_ROOT=str(explicit))
@@ -162,10 +162,19 @@ class VerifyRegistrationTests(Scratch):
                 self.assertIn("[MISSING] PreToolUse", result.stdout)
 
     def test_copilot_native_config_is_detected(self):
-        self.write_json(self.project / ".github" / "hooks.json", self.BLOCK)
+        self.write_json(self.project / ".github" / "hooks" / "supremeteam.json", repair.plan({}, "copilot", sys.executable)[0])
         result = self.verify("copilot")
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("status: REGISTERED", result.stdout)
+
+    def test_the_file_an_earlier_version_wrote_for_copilot_is_not_a_registration(self):
+        """WP-08: Copilot reads `*.json` inside `.github/hooks/`, never `.github/hooks.json`, and not this shape."""
+        self.write_json(self.project / ".github" / "hooks.json", self.BLOCK)
+        result = self.run_tool("verify_registration.py", "--host", "auto")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("[copilot]", result.stdout)
+        self.assertIn("status: MISSING", result.stdout)
+        self.assertIn("is where an earlier version registered Copilot hooks, and Copilot does not read it", result.stdout)
 
 
 class RegistrationAnalysisTests(unittest.TestCase):
@@ -803,7 +812,7 @@ class InterpreterTests(Scratch):
         config = json.loads((self.project / ".claude" / "settings.json").read_text(encoding="utf-8"))
         for event, groups in config["hooks"].items():
             command = groups[0]["hooks"][0]["command"]
-            self.assertTrue(command.startswith(repair.launcher_token(sys.executable)), (event, command))
+            self.assertTrue(os.path.samefile(verify._tokens(command)[0], sys.executable), (event, command))
 
     def test_the_command_starts_python_in_utf8_mode_once(self):
         self.assertIn(" -X utf8 ", repair.command_for("pre_tool_use.py", "python"))
@@ -816,8 +825,15 @@ class InterpreterTests(Scratch):
         self.assertTrue(verify.analyse(command, "pre_tool_use.py")["executable"], command)
 
     def test_the_utf8_flag_survives_a_spaced_interpreter_path(self):
-        command = repair.command_for("pre_tool_use.py", "C:/Program Files/Python313/python.exe")
-        self.assertTrue(command.startswith('"C:/Program Files/Python313/python.exe" -X utf8 "'), command)
+        """On POSIX the spaced path is quoted. On Windows a command may not begin with a quote (PowerShell reads it as a
+        string), so the path is not quoted there: the py launcher stands in for it, or the hook is started without a shell."""
+        command = repair.command_for("pre_tool_use.py", "/opt/my python/bin/python3", windows=False)
+        self.assertTrue(command.startswith('"/opt/my python/bin/python3" -X utf8 "'), command)
+        spaced = "C:/Program Files/Python313/python.exe"
+        launched = repair.command_for("pre_tool_use.py", spaced, windows=True, py_launcher=lambda path: "py -3.13")
+        self.assertTrue(launched.startswith('py -3.13 -X utf8 "'), launched)
+        direct = repair.hook_handler("pre_tool_use.py", spaced, "claude", windows=True, py_launcher=lambda path: None)
+        self.assertEqual((direct["command"], direct["args"][:2]), (spaced, ["-X", "utf8"]))
 
     def test_launcher_parts_split_the_command_from_its_arguments(self):
         for launcher, parts in (
@@ -835,9 +851,12 @@ class InterpreterTests(Scratch):
                 self.assertEqual(repair.launcher_parts(launcher), parts)
 
     def test_a_spaced_interpreter_path_with_options_quotes_only_the_path_and_verifies(self):
-        command = repair.command_for("pre_tool_use.py", "C:/Program Files/Python313/python.exe -X dev")
+        command = repair.command_for("pre_tool_use.py", "C:/Program Files/Python313/python.exe -X dev", windows=False)
         self.assertTrue(command.startswith('"C:/Program Files/Python313/python.exe" -X dev -X utf8 "'), command)
         self.assertEqual(verify._tokens(command)[:3], ["C:/Program Files/Python313/python.exe", "-X", "dev"])
+        direct = repair.hook_handler("pre_tool_use.py", "C:/Program Files/Python313/python.exe -X dev", "claude", windows=True,
+                                     py_launcher=lambda path: None)
+        self.assertEqual((direct["command"], direct["args"][:4]), ("C:/Program Files/Python313/python.exe", ["-X", "dev", "-X", "utf8"]))
         self.assertEqual(repair.launcher_token("/usr/bin/env python3 -E"), "/usr/bin/env python3 -E")
 
     def test_the_running_interpreter_is_read_without_being_launched(self):
@@ -881,6 +900,7 @@ class InterpreterTests(Scratch):
         marker = self.tmp / "ran"
         planted = self.fake_interpreter(self.project / "tools", "python", f'echo ran > "{marker}"; echo "3 13 0"')
         self.claude_settings(self.registered_with(str(planted)))
+        self.assertFalse(marker.exists(), "planning a registration started the interpreter it registers")
         verified = self.run_tool("verify_registration.py", "--host", "claude", "--json")
         self.assertFalse(marker.exists(), "the verifier launched a binary that lives in the project")
         report = json.loads(verified.stdout.split("JSON_REPORT: ", 1)[1])
@@ -927,7 +947,7 @@ class ProjectRootTests(Scratch):
         sub.mkdir()
         code = ("import sys; sys.path.insert(0, %r); import repair_registration as r, verify_registration as v; "
                 "print(all(r.target_path(h, s) in v._paths(h) for h in v.HOSTS for s in ('project', 'local') "
-                "if (h, s) != ('codex', 'local') and (h, s) != ('copilot', 'local')))" % str(HOOK_DIR))
+                "if (h, s) not in (('codex', 'local'), ('copilot', 'local'), ('antigravity', 'local'))))" % str(HOOK_DIR))
         out = subprocess.run([sys.executable, "-c", code], cwd=str(sub), env=kit.plain_env(self.home), text=True, capture_output=True, check=False)
         self.assertEqual(out.stdout.strip(), "True", out.stderr)
 
@@ -943,7 +963,7 @@ class ScopeWarningTests(Scratch):
         self.assertEqual(len(payload["warnings"]), 1)
 
     def test_other_hosts_are_told_to_keep_the_file_out_of_the_commit(self):
-        result = self.run_tool("repair_registration.py", "--host", "copilot", "--scope", "project")
+        result = self.run_tool("repair_registration.py", "--host", "codex", "--scope", "project")
         self.assertIn("keep it out of the commit", result.stderr)
 
     def test_local_scope_has_nothing_to_warn_about(self):
@@ -1024,7 +1044,7 @@ class ConfigLinkTests(Scratch):
         self.assertTrue(settings.is_symlink(), "the link is still a link")
         written = json.loads(target.read_text(encoding="utf-8"))
         self.assertEqual(written["theme"], "dark")
-        self.assertEqual(sorted(written["hooks"]), ["PostToolUse", "PreToolUse", "UserPromptSubmit"])
+        self.assertEqual(sorted(written["hooks"]), ["PostToolUse", "PreCompact", "PreToolUse", "SessionStart", "UserPromptSubmit"])
         self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o640, "the target keeps its own mode")
         self.assertIn("symbolic link", out.stderr)
         self.assertIn("machine-absolute", out.stderr, "a file synced to other machines needs its own registration there")
@@ -1424,7 +1444,10 @@ class EnforcementRecordTests(Scratch):
             entry["files"] = {name: digest for name, digest in entry["files"].items() if not name.startswith("scripts/")}
         self.write_json(self.project / ".harness-state" / verify.HASH_RECORD, record)
         reported = self.verify_json(**env)
-        self.assertEqual({tuple(h["changed_files"]) for h in reported.values()}, {("scripts/data_formats.py", "scripts/save_taxonomy.py")})
+        # Every script module the hooks import (`_bootstrap.SCRIPT_FILES`; WP-03 added checkout.py), and nothing else.
+        self.assertEqual({tuple(h["changed_files"]) for h in reported.values()},
+                         {tuple(sorted(f"scripts/{name}" for name in _bootstrap.SCRIPT_FILES))})
+        self.assertIn("scripts/checkout.py", next(iter(reported.values()))["changed_files"])
         self.run_tool("repair_registration.py", "--host", "claude", "--record-hashes", **env)
         self.assertEqual({h["integrity"] for h in self.verify_json(**env).values()}, {"unchanged"})
 
@@ -1460,8 +1483,9 @@ class MirrorRootTests(Scratch):
     def test_the_repair_preview_adds_nothing_when_an_install_root_is_already_registered(self):
         self.register_at(self.install_root(".agents/skills"))
         out = self.run_tool("repair_registration.py", "--host", "claude", "--scope", "user")
-        self.assertEqual(out.returncode, 0, out.stdout)
-        self.assertEqual(json.loads(out.stdout)["changes"], [])
+        changes = json.loads(out.stdout.strip().splitlines()[-1])["changes"]
+        self.assertEqual([change for change in changes if "(recommended)" not in change], [],
+                         "the three required hooks are recognised where they are registered; only the recommended ones are offered")
 
     def test_a_mirror_registered_instead_is_recognised_from_the_checkout_as_well(self):
         self.register_at(self.install_root(".claude/skills"))

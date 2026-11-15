@@ -1,7 +1,7 @@
-# Node.js 22+ and TypeScript
+# Node.js 24+ and TypeScript 6.0+
 
 ## Baseline
-- Use Node.js 22+ LTS with TypeScript 5.x in strict mode and native ESM as the default module model.
+- Node.js 24 or newer (a long-term-support line) with TypeScript 6.0 or newer in strict mode, and native ESM as the default module model. This overlay was read through TypeScript 6: TypeScript 7.0 ships no programmatic API, so tooling that depends on one needs its own check there.
 - Use `module: NodeNext` semantics with explicit `.js` import extensions in emitted-module source, and use Worker Threads only for measured CPU-bound work.
 - Prefer Fastify 5 for a typed service, Express 5 for an established middleware ecosystem, or Hono for a portable edge service.
 - Keep the event loop responsible for I/O and make backpressure, cancellation, and shutdown behavior explicit for long-lived work.
@@ -26,7 +26,7 @@
 
 ## Deployment
 - Use pnpm or the repository's existing lockfile, type-check with TypeScript, and bundle with esbuild or tsup only when the deployment target benefits from it.
-- Use a multi-stage Node 22 image, copy only the release artifact and required dependencies, and run the process without root privileges.
+- Use a multi-stage image of the locked Node.js release, copy only the release artifact and required dependencies, and run the process without root privileges.
 - Inject production secrets through a managed source and retain structured Pino logging with trace context.
 - Keep CI actions pinned and cloud identity permissions narrow when the repository owns its deployment workflow.
 

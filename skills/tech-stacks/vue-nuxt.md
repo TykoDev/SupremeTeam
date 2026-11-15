@@ -1,15 +1,15 @@
-# Vue 3 and Nuxt 3
+# Vue 3.5+ and Nuxt 4+
 
 ## Baseline
-- Use Vue 3.5 with the Composition API and `<script setup lang="ts">` as the component standard.
-- Use Nuxt 3.14+ for server rendering, file-based pages, auto-imports, server endpoints, and Nitro deployment targets.
-- Let the selected Nuxt release own the Vite version: Nuxt 3.14 resolves Vite 5.4.10, so do not independently force Vite 8; keep SSR, hydration, and static generation as explicit output choices.
+- Vue 3.5 or newer with the Composition API and `<script setup lang="ts">` as the component standard.
+- Nuxt 4 or newer for server rendering, file-based pages, auto-imports, server endpoints, and Nitro deployment targets.
+- Let the selected Nuxt release own the Vite version: take the one its lockfile resolves and do not force another; keep SSR, hydration, and static generation as explicit output choices.
 - Use Pinia for shared client state and reserve composables for independently scoped behavior.
 
 ## Project shape
-- Keep the Nuxt 3 application directories top-level: `components`, `composables`, `layouts`, `pages`, `middleware`, and `plugins`; keep `app.vue` at the project root.
+- Keep the application under `app/`, where Nuxt 4 puts it: `app/components`, `app/composables`, `app/layouts`, `app/pages`, `app/middleware`, `app/plugins`, and `app/app.vue`.
 - Keep server endpoints, middleware, and utilities under `server`; keep shared validators under `shared` for use by Vue and Nitro.
-- Keep Pinia stores under `stores`, public assets under `public`, and the Nuxt/Vite configuration at the root.
+- Keep Pinia stores under `app/stores`, public assets under `public`, and the Nuxt/Vite configuration at the root.
 - Follow Nuxt auto-import conventions while keeping high-risk dependencies explicit when auto-import would hide a boundary.
 
 ## Data and API boundaries
@@ -19,7 +19,7 @@
 - Use setup stores for intentional cross-component state and keep composables independent per consumer.
 
 ## Migration and versioning
-- Treat Nuxt 3 as the legacy baseline: its end of life is 31 July 2026 (`support_ends` in the registry), which is already past at the registry's `verified_at`, so a new project should not lock it and an existing one needs a migration plan; while it stays locked, keep Vue 3.5, Nuxt 3.14+, its lockfile-selected Vite version, and the Nitro version aligned.
+- Nuxt 3 reached its end of life on 31 July 2026, so a project on it is below this overlay's minimum and needs a migration plan to Nuxt 4: the application moves under `app/`, and the data-fetching and shared-directory defaults change. Nuxt 4 is supported until six months after Nuxt 5 ships. Keep Vue, Nuxt, its lockfile-selected Vite version, and the Nitro version aligned.
 - Move older component patterns toward Composition API and `<script setup>` in slices that preserve page and hydration behavior.
 - Review auto-import additions, shared schema changes, and server endpoint serialization together when moving files across Nuxt directories.
 - Treat SSR, static generation, and adapter changes as different deployment contracts even when page source stays the same.

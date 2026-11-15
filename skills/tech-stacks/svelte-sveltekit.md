@@ -1,7 +1,8 @@
-# Svelte 5 and SvelteKit
+# Svelte 5+ and SvelteKit 2+
 
 ## Baseline
-- Use Svelte 5 runes, including `$state`, `$derived`, and `$effect`, for fine-grained component reactivity.
+- Svelte 5 or newer, with runes, including `$state`, `$derived`, and `$effect`, for fine-grained component reactivity.
+- SvelteKit 2 or newer. This overlay was read through SvelteKit 2: SvelteKit 3 is stable and needs Vite 8, Node.js 22.17 and TypeScript 6, and its guidance has not been checked against this text.
 - Use SvelteKit for file-based page handling, server rendering by default, API endpoints, client hydration, and adapter-selected deployment.
 - Use the Vite-based toolchain and keep static generation an explicit choice through the static adapter.
 - Keep shared state, server data, and component state separate so hydration does not become an accidental persistence mechanism.

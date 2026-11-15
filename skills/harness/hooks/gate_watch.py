@@ -97,7 +97,7 @@ def check(path: Path, root: Path) -> "str | None":
 
 def advisory(root: "Path | None" = None) -> "str | None":
     """Check what changed since the last call; return the hint, or None when everything passed."""
-    root = Path(root) if root is not None else _state.project_root()
+    root = Path(root) if root is not None else _state.state_root()
     if not CHECK.is_file():
         return None
     files = watched(root)

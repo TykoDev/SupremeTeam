@@ -86,7 +86,7 @@ published defaults; report the absence and let the owner set one.
 `../SKILL.md` states the contracts; this section records only where each one
 lands in the sequence above, so the two documents do not restate each other.
 
-- Read-only over the reviewed surface — binds from step 1 through packaging; the root cause written at step 3 is the deliverable, and a mid-pass patch would break the attribution of every measurement taken after it.
+- Read-only over the reviewed surface — binds from step 1 through packaging; the root cause written at step 3 is the deliverable, and a mid-pass patch would break the attribution of every measurement taken after it. The packet itself is written into the run with `run_files.py write` or to the literal `Save path` (SKILL.md, Read-only over the reviewed surface), never to a path built when the command runs.
 - Digest-bound Taste conformance — enforced at step 1, before any flow is exercised, because a run judged against the wrong baseline cannot be re-attributed afterwards. Behavior and accessibility findings recorded at step 3 carry the effective preference ids and the design-time digest they answer for; later Taste changes are reported as drift.
 - Shared severity — assigned at step 3 on user impact, so an accessibility barrier is graded by what it costs a user rather than filed under a category label.
 - Save-Protocol Adherence — the step 4 packet is what the save path receives, under the filename `../SKILL.md` mandates, with traces stored as evidence beside it.

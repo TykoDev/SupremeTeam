@@ -62,6 +62,16 @@ the run instead of accumulating as `.coverage*` residue at the project root.
 Project paths are validated for project containment; global preferences are
 validated separately to remain outside the checkout. Exit 0 with a JSON object;
 exit 1 on an unsafe or unknown request.
+
+A linked git worktree has no skillset-saves/ and no .harness-state/ (both are
+git-ignored, so they are in the main checkout only). When the project root, given
+or defaulted to the working directory, is a linked worktree, every kind but
+`product` resolves against its main checkout, which is where a gate looks; the
+JSON then carries "worktree" with the directory that was mapped. `product` stays
+in the tree it was asked about: a session in a worktree edits the worktree's
+source. The command prints a JSON object, never a bare path, so it is not a
+destination for `cat > "$(...)"`; a report, an artifact or an evidence file is
+written with `run_files.py write`, which resolves the same destination itself.
 """
 from __future__ import annotations
 
@@ -73,7 +83,14 @@ import re
 import sys
 from pathlib import Path
 
-import save_taxonomy as taxonomy
+try:
+    import save_taxonomy as taxonomy
+    from checkout import checkout_root
+except ImportError as exc:  # a catalog file this script imports is missing: say which, never a traceback
+    if __name__ != "__main__":
+        raise
+    sys.stderr.write(f"ERROR: output_paths.py cannot run: {exc}. A catalog file it imports is missing; reinstall the catalog.\n")
+    raise SystemExit(2) from exc
 
 # Every generated kind resolves under one of these project-relative roots except
 # `product`, which is the application's own source layout, and
@@ -85,7 +102,7 @@ PHASES = set(taxonomy.PHASE_DIRECTORIES)
 SAFE_SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 # Project-relative paths a `product` name may not point at or below.
 PRODUCT_DENIED = (".git", *GENERATED_ROOTS, "skills/harness", ".claude/settings.json", ".claude/settings.local.json",
-                  ".codex/hooks.json", ".github/hooks.json")
+                  ".codex/hooks.json", ".github/hooks.json", ".github/hooks", ".agents/hooks.json")
 
 
 def denied_product_path(relative: Path) -> str | None:
@@ -212,10 +229,18 @@ def resolve(project_root: Path, kind: str, *, run_id: str = "", phase: str = "",
     return target
 
 
+def state_root(project_root: Path, kind: str) -> Path:
+    """The directory a kind resolves against: the main checkout for run and harness state when ``project_root`` is a
+    linked worktree of it, and ``project_root`` itself for ``product`` and everywhere else."""
+    return project_root if kind == "product" else Path(checkout_root(project_root))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Resolve a governed output destination.", epilog=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--project-root", default=".")
+    parser.add_argument("--project-root", default=".",
+                        help="the project (default: the working directory); a linked git worktree is read as its main "
+                             "checkout for every kind but product")
     parser.add_argument("--kind", required=True, choices=sorted(KINDS))
     parser.add_argument("--run-id", default="")
     parser.add_argument("--phase", default="")
@@ -224,19 +249,22 @@ def main() -> int:
     parser.add_argument("--session", default="")
     parser.add_argument("--mkdir", action="store_true", help="create the parent directory")
     args = parser.parse_args()
+    given = Path(args.project_root)
+    root = state_root(given, args.kind)
+    mapped = {} if root == given else {"worktree": str(given.resolve())}
     try:
-        target = resolve(Path(args.project_root), args.kind, run_id=args.run_id, phase=args.phase, name=args.name, boundary=args.boundary, session=args.session)
+        target = resolve(root, args.kind, run_id=args.run_id, phase=args.phase, name=args.name, boundary=args.boundary, session=args.session)
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 1
     if isinstance(target, tuple):
         if args.mkdir:
             target[0].parent.mkdir(parents=True, exist_ok=True)
-        print(json.dumps({"ok": True, "kind": args.kind, "canonical": str(target[0]), "rendered": str(target[1])}))
+        print(json.dumps({"ok": True, "kind": args.kind, "canonical": str(target[0]), "rendered": str(target[1]), **mapped}))
     else:
         if args.mkdir:
             target.parent.mkdir(parents=True, exist_ok=True)
-        print(json.dumps({"ok": True, "kind": args.kind, "path": str(target), "relative": target.resolve().relative_to(Path(args.project_root).resolve()).as_posix()}))
+        print(json.dumps({"ok": True, "kind": args.kind, "path": str(target), "relative": target.resolve().relative_to(root.resolve()).as_posix(), **mapped}))
     return 0
 
 

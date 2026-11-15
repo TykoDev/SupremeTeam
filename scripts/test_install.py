@@ -7,10 +7,12 @@ skill tree, so their tests live beside them. The behavioural tests run the real
 touches the real home directory, and PATH is rebuilt from a shim directory so a
 host CLI on the developer's machine cannot change what auto-detection sees.
 
-`install.ps1` cannot run in this suite. Its behaviour is pinned by parity checks
-against `install.sh` (the item file, the record names, the flags, the refusals,
-the one recursive delete), and no test here proves it runs under PowerShell.
-Likewise the bash 3.2 rule is a static check: it fails on an unguarded
+`install.ps1` runs here only on Windows (`WindowsInstallerRunTests`: an install
+with hook registration into a scratch home, under each PowerShell found, and
+`install.sh` under Git Bash, each followed by a probe that starts what was
+registered). Everywhere else its behaviour is pinned by parity checks against
+`install.sh` (the item file, the record names, the flags, the refusals, the one
+recursive delete). The bash 3.2 rule is a static check: it fails on an unguarded
 possibly-empty array expansion or a bash 4 construct. The behavioural tests run
 under whatever bash `BASH` names, so they execute under bash 3.2 only on a Mac
 (or with SUPREMETEAM_TEST_BASH set); on Linux and in CI images with bash 5 they do not.
@@ -930,12 +932,101 @@ class InstallerBehaviourTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, listing(result))
         self.assertIn("Host targets: none detected", result.stdout)
 
-    def test_the_target_help_and_the_unknown_target_message_name_copilot(self):
+    def test_the_target_help_and_the_unknown_target_message_name_copilot_and_pi(self):
         box = Sandbox(self)
-        self.assertIn("opencode, copilot", box.run("--help").stdout)
+        self.assertIn("opencode, copilot, pi, antigravity.", box.run("--help").stdout)
         refused = box.install("--target", "windsurf")
         self.assertEqual(refused.returncode, 1, listing(refused))
-        self.assertIn("opencode, or copilot", refused.stderr)
+        self.assertIn("opencode, copilot, pi, or antigravity", refused.stderr)
+
+    def test_antigravity_is_a_target_that_registers_hooks_and_installs_no_mirror(self):
+        """WP-14: Antigravity reads the common skills folder through its skills.json, which the hook helper writes."""
+        box = Sandbox(self)
+        record = self.stub_hook_helper(box)
+        result = box.install("--target", "Antigravity", "--register-hooks", "--hooks-yes")
+        self.assertEqual(result.returncode, 0, listing(result))
+        self.assertIn("--target antigravity", record.read_text(encoding="utf-8"))
+        for line in ("Host targets: antigravity", "Host mirrors: none", "Hook registration: completed"):
+            self.assertIn(line, result.stdout)
+        self.assertEqual([entry.name for entry in box.home.iterdir()], [".agents"])
+
+    def test_auto_selects_antigravity_by_its_config_directory_or_its_program(self):
+        box = Sandbox(self)
+        self.assertIn("Host targets: none detected", box.install().stdout)
+        (box.home / ".gemini" / "config").mkdir(parents=True)
+        self.assertIn("Host targets: antigravity", box.install().stdout)
+        other = Sandbox(self)
+        program = other.bin / "agy"
+        program.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        program.chmod(0o755)
+        found = other.install()
+        self.assertIn("Host targets: antigravity", found.stdout)
+        self.assertIn("Host mirrors: none", found.stdout)
+
+    def test_pi_is_a_target_that_registers_hooks_and_installs_no_mirror(self):
+        """WP-09: install_hooks.py already wrote the pi extension; the installers rejected the name."""
+        box = Sandbox(self)
+        record = self.stub_hook_helper(box)
+        result = box.install("--target", "Pi", "--register-hooks", "--hooks-yes")
+        self.assertEqual(result.returncode, 0, listing(result))
+        self.assertIn("--target pi", record.read_text(encoding="utf-8"))
+        self.assertNotIn("--pi-extension", record.read_text(encoding="utf-8"))
+        for line in ("Host targets: pi", "Host mirrors: none", "Hook registration: completed"):
+            self.assertIn(line, result.stdout)
+        self.assertEqual([entry.name for entry in box.home.iterdir()], [".agents"], "pi reads the common skills folder")
+
+    def test_the_status_line_option_is_passed_to_the_hook_helper_and_only_when_asked_for(self):
+        """WP-12: --hooks-statusline has the helper set the context-usage status line for Claude Code."""
+        box = Sandbox(self)
+        record = self.stub_hook_helper(box)
+        asked = box.install("--target", "claude", "--register-hooks", "--hooks-yes", "--hooks-statusline")
+        self.assertEqual(asked.returncode, 0, listing(asked))
+        self.assertIn("--statusline", record.read_text(encoding="utf-8").split())
+        record.unlink()
+        plain = box.install("--target", "claude", "--register-hooks", "--hooks-yes")
+        self.assertEqual(plain.returncode, 0, listing(plain))
+        self.assertNotIn("--statusline", record.read_text(encoding="utf-8"))
+        self.assertIn("--hooks-statusline", box.run("--help").stdout)
+
+    def test_the_pi_extension_override_is_passed_to_the_hook_helper(self):
+        box = Sandbox(self)
+        record = self.stub_hook_helper(box)
+        extension = box.root / "elsewhere" / "supremeteam-guard.ts"
+        result = box.install("--target", "pi", "--register-hooks", "--hooks-yes", "--pi-extension", str(extension))
+        self.assertEqual(result.returncode, 0, listing(result))
+        self.assertIn(f"--pi-extension {extension}", record.read_text(encoding="utf-8"))
+        missing = box.install("--pi-extension")
+        self.assertEqual(missing.returncode, 1)
+        self.assertIn("Missing value for --pi-extension.", missing.stderr)
+
+    def test_auto_selects_pi_by_its_agent_directory_or_its_variable_and_never_by_a_program_named_pi(self):
+        box = Sandbox(self)
+        program = box.bin / "pi"
+        program.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        program.chmod(0o755)
+        result = box.install()
+        self.assertIn("Host targets: none detected", result.stdout, "a pi on PATH is a generic name, not the coding agent")
+        with_variable = box.install(env={"PI_CODING_AGENT_DIR": str(box.root / "agent")})
+        self.assertIn("Host targets: pi", with_variable.stdout)
+        (box.home / ".pi" / "agent").mkdir(parents=True)
+        with_directory = box.install()
+        self.assertEqual(with_directory.returncode, 0, listing(with_directory))
+        self.assertIn("Host targets: pi", with_directory.stdout)
+        self.assertIn("Host mirrors: none", with_directory.stdout)
+
+    def test_a_dry_run_names_the_pi_extension_it_would_write_and_writes_nothing(self):
+        box = Sandbox(self)
+        record = self.stub_hook_helper(box)
+        result = box.install("--target", "pi", "--register-hooks", "--dry-run")
+        self.assertEqual(result.returncode, 0, listing(result))
+        self.assertIn(f"pi: would write the guard extension {box.home}/.pi/agent/extensions/supremeteam-guard.ts", result.stdout)
+        self.assertFalse(record.exists(), "a dry run never runs the hook helper")
+        self.assertFalse((box.home / ".pi").exists())
+        moved = box.install("--target", "pi", "--register-hooks", "--dry-run", env={"PI_CODING_AGENT_DIR": "/opt/pi-agent"})
+        self.assertIn("pi: would write the guard extension /opt/pi-agent/extensions/supremeteam-guard.ts", moved.stdout)
+        named = box.install("--target", "pi", "--register-hooks", "--dry-run", "--pi-extension", "/tmp/x/guard.ts")
+        self.assertIn("pi: would write the guard extension /tmp/x/guard.ts", named.stdout)
+        self.assertNotIn("would write the guard extension", box.install("--target", "pi", "--dry-run").stdout)
 
     def test_a_host_whose_python_is_only_python3_13_still_registers_hooks(self):
         """DX-12: the probe tried python3 and python, so a host with only a versioned name warned and then refused."""
@@ -1255,7 +1346,7 @@ class PowerShellParityTests(unittest.TestCase):
         self.assertIn("copilot", hosts, "the hook helper supports Copilot, so both installers must let it be named")
 
     def test_both_name_every_host_where_they_tell_the_operator_which_to_pass(self):
-        hosts = ("codex", "claude", "cursor", "opencode", "copilot")
+        hosts = ("codex", "claude", "cursor", "opencode", "copilot", "pi", "antigravity")
         skipped = re.search(r'Hook registration skipped: no host targets were detected\. Pass ([^"\n]*?) to choose explicitly', self.ps).group(1)
         for host in hosts:
             self.assertIn(host, skipped.lower())
@@ -1271,6 +1362,13 @@ class PowerShellParityTests(unittest.TestCase):
         powershell = re.findall(r'Command = "(py(?:thon[\d.]*)?)"', self.ps)
         self.assertEqual(sorted(powershell), sorted(["py", *names]))
         self.assertEqual(powershell[-2:], names[-2:], "the versioned names are the last resort in both, newest first")
+        # N3: under Git Bash, MSYS2 and Cygwin `python3` and `python` are often the Microsoft Store stubs, so install.sh
+        # tries the py launcher first there, with the argument install.ps1 gives it, and nowhere else.
+        self.assertEqual(powershell[0], "py")
+        self.assertIn('@{ Command = "py"; Arguments = @("-3") }', self.ps)
+        launcher = self.sh.index("if on_windows_bash && command -v py >/dev/null 2>&1 && python_satisfies_minimum py -3; then")
+        self.assertLess(launcher, self.sh.index("for candidate in python3 python"))
+        self.assertIn("MINGW*|MSYS*|CYGWIN*) return 0 ;;", self.sh)
 
     def test_both_refuse_the_same_destinations_in_the_same_words(self):
         for message in ("Refusing to install into the filesystem root", "it is your home directory or one of its parents",
@@ -1353,6 +1451,141 @@ class PowerShellParityTests(unittest.TestCase):
             for variable in re.finditer(r"\$(\w+):(?!\w)", match.group(1)):
                 self.assertIn(variable.group(1), ("env", "script", "global", "local"),
                               f"'${variable.group(1)}:' in a string is read as a drive-qualified variable; use ${{{variable.group(1)}}}:")
+
+
+def _powershells() -> list[tuple[str, str]]:
+    """``(label, path)`` of Windows PowerShell 5.1 and PowerShell 7, whichever exist."""
+    found = []
+    for label, name in (("Windows PowerShell 5.1", "powershell"), ("PowerShell 7", "pwsh")):
+        path = shutil.which(name)
+        if path:
+            found.append((label, path))
+    return found
+
+
+@unittest.skipUnless(os.name == "nt", "runs install.ps1 under PowerShell, and install.sh under Git Bash, on Windows")
+class WindowsInstallerRunTests(unittest.TestCase):
+    """The installers run for real on Windows, into a scratch home, and what they register starts (WP-02, N2, N3, N10).
+
+    Until this class no test executed `install.ps1`, and the 44 behavioural tests of `install.sh` skip on Windows. That
+    is how a hook command that never starts in Claude Code shipped while readiness reported it live. Each case installs
+    with hook registration and then asks the installed readiness check to start every registered command the way the
+    host does (`--probe`)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name).resolve()
+        self.home = self.tmp / "home"
+        self.home.mkdir()
+        # The registrar records the hook hashes in the project around the working directory: a scratch one.
+        self.project = self.tmp / "project"
+        (self.project / ".git").mkdir(parents=True)
+
+    def env(self) -> dict:
+        """The environment of a plain terminal whose home is the scratch one: no host signal, no project variable."""
+        env = {name: value for name, value in os.environ.items()
+               if not name.upper().startswith(("CLAUDE", "CODEX_", "COPILOT", "GITHUB_COPILOT", "SUPREMETEAM_", "PI_CODING"))}
+        env["USERPROFILE"] = env["HOME"] = str(self.home)
+        env["APPDATA"] = str(self.home / "AppData" / "Roaming")
+        return env
+
+    def run_ps1(self, powershell: str, *args: str) -> subprocess.CompletedProcess:
+        # As Install.md says to run it: Windows PowerShell refuses a script under its default execution policy.
+        command = [powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(INSTALL_PS1), *args]
+        return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(self.project),
+                              env=self.env(), stdin=subprocess.DEVNULL, timeout=600, check=False)
+
+    def readiness(self, host: str) -> dict:
+        import json
+
+        script = self.home / ".agents" / "skills" / "harness" / "hooks" / "check_readiness.py"
+        done = subprocess.run([sys.executable, str(script), "--host", host, "--require-hooks", "--probe", "--json"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(self.project),
+                              env=self.env(), stdin=subprocess.DEVNULL, timeout=600, check=False)
+        self.assertTrue(done.stdout.strip().startswith("{"), done.stdout + done.stderr)
+        return json.loads(done.stdout)
+
+    def assert_registration_starts(self, host: str, config: Path) -> None:
+        import json
+
+        self.assertTrue(config.is_file(), f"{config} was not written")
+        handlers = [hook for groups in json.loads(config.read_text(encoding="utf-8"))["hooks"].values()
+                    for group in groups for hook in group["hooks"]]
+        # The three required hooks, and the two recommended ones around a context compaction (WP-11).
+        self.assertEqual(len(handlers), 5)
+        self.assertEqual(sum("context_events.py" in handler["command"] for handler in handlers), 2)
+        for handler in handlers:
+            self.assertNotIn("\\", handler["command"], "a backslash in the command is what Git Bash consumes")
+            self.assertFalse(handler["command"].startswith('"'), "a command that begins with a quote is not a call in PowerShell")
+        report = self.readiness(host)
+        self.assertTrue(report["ready"], report["blockers"])
+        self.assertEqual(report["enforcement"]["status"], "live")
+        self.assertEqual(report["capabilities"]["hooks_probed"], "yes")
+        for name, state in report["hooks"]["states"].items():
+            self.assertTrue(state["probe"], name)
+            self.assertEqual([entry for entry in state["probe"] if not entry["executes"]], [], name)
+
+    def test_install_ps1_registers_commands_that_start(self):
+        shells = _powershells()
+        if not shells:
+            self.skipTest("no PowerShell was found")
+        # `-File` takes one `-Target` value per run, so each host is its own run; with two PowerShells each runs one.
+        runs = [("Claude", shells[0]), ("Codex", shells[-1])]
+        for target, (label, powershell) in runs:
+            with self.subTest(target=target, powershell=label):
+                done = self.run_ps1(powershell, "-Target", target, "-RegisterHooks", "-HooksScope", "User", "-HooksYes")
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertIn("Hook registration: completed", done.stdout)
+        self.assert_registration_starts("claude", self.home / ".claude" / "settings.json")
+        self.assert_registration_starts("codex", self.home / ".codex" / "hooks.json")
+
+    def test_install_ps1_takes_pi_as_a_target_and_writes_its_extension(self):
+        """WP-09: `-Target Pi` was not in the ValidateSet, so the extension install_hooks.py supports was unreachable."""
+        shells = _powershells()
+        if not shells:
+            self.skipTest("no PowerShell was found")
+        env = self.env()
+        env.pop("PI_CODING_AGENT_DIR", None)
+        command = [shells[0][1], "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(INSTALL_PS1)]
+        preview = subprocess.run([*command, "-Target", "Pi", "-RegisterHooks", "-DryRun"], capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace", cwd=str(self.project), env=env, stdin=subprocess.DEVNULL,
+                                 timeout=600, check=False)
+        self.assertEqual(preview.returncode, 0, preview.stdout + preview.stderr)
+        extension = self.home / ".pi" / "agent" / "extensions" / "supremeteam-guard.ts"
+        self.assertIn(f"pi: would write the guard extension {extension}", preview.stdout)
+        self.assertFalse(extension.exists())
+        done = subprocess.run([*command, "-Target", "Pi", "-RegisterHooks", "-HooksYes"], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", cwd=str(self.project), env=env, stdin=subprocess.DEVNULL,
+                              timeout=600, check=False)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("Host targets: pi", done.stdout)
+        self.assertIn("Host mirrors: none", done.stdout)
+        self.assertIn("Hook registration: completed", done.stdout)
+        self.assertTrue(extension.is_file())
+        self.assertEqual(sorted(name for name in (".agents", ".claude", ".codex", ".pi") if (self.home / name).exists()), [".agents", ".pi"])
+
+    def test_install_ps1_dry_run_writes_nothing(self):
+        shells = _powershells()
+        if not shells:
+            self.skipTest("no PowerShell was found")
+        done = self.run_ps1(shells[0][1], "-Target", "Claude", "-RegisterHooks", "-HooksYes", "-DryRun")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("Dry run complete: nothing was written.", done.stdout)
+        # PowerShell itself may leave a cache folder under the scratch home; the installer's own folders are what count.
+        self.assertEqual([name for name in (".agents", ".claude", ".codex") if (self.home / name).exists()], [])
+
+    def test_install_sh_under_git_bash_finds_python_and_registers_commands_that_start(self):
+        if BASH is None or not os.path.exists(BASH):
+            self.skipTest("Git Bash was not found")
+        done = subprocess.run([BASH, str(INSTALL_SH), "--target", "claude", "--register-hooks", "--hooks-yes"], capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", cwd=str(self.project), env=self.env(),
+                              stdin=subprocess.DEVNULL, timeout=600, check=False)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        # N3: with only the py launcher starting Python, the script used to print this and register nothing.
+        self.assertNotIn("interpreter was found", done.stderr)
+        self.assertIn("Hook registration: completed", done.stdout)
+        self.assert_registration_starts("claude", self.home / ".claude" / "settings.json")
 
 
 class DocumentationTests(unittest.TestCase):

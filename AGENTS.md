@@ -88,7 +88,7 @@ Declared in `skills/pipelines.yaml`, gated by `skills/gates.yaml`.
 
 The UI design system belongs to **architect** per `skills/design-doctrine.md`.
 There is no separate `designer` skill. `skills/tech-stacks/` is a resource library
-of 14 overlays behind `stack_lock`, not a skill.
+of 14 overlays behind `stack_lock`, not a skill; its registry states a minimum version per component, not a pin.
 
 ### Build (8)
 
@@ -194,7 +194,7 @@ Not skills. These are the files the skills are checked against.
 | `skills/runtime-manifest.yaml` | Runtime floor, launchers, supported commands, CI matrix |
 | `skills/package-manifest.yaml` | Include, exclude, delivery contract |
 | `skills/execution-contract.md` | The six preamble clauses and the tier table |
-| `skills/tech-stacks/registry.yaml` | 14 stack overlays with pinned versions and digests |
+| `skills/tech-stacks/registry.yaml` | 14 stack overlays with a minimum version per component and digests |
 
 ## Doctrine and protocol
 
@@ -226,17 +226,21 @@ Not skills. These are the files the skills are checked against.
 | Component | Path | Purpose |
 |---|---|---|
 | **pre_tool_use.py** | `skills/harness/hooks/pre_tool_use.py` | `PreToolUse`: the registered entry point; forwards to `guard_hook.py` and fails open, readably, on a fault |
-| **guard_hook.py** | `skills/harness/hooks/guard_hook.py` | The guard engine: Rules A to G, one function per rule (destructive commands, frozen and blocked boundaries, read-only runs, single writers, the hook scripts and their registration files, a write the analysis cannot place) plus the coverage advisory |
+| **guard_hook.py** | `skills/harness/hooks/guard_hook.py` | The guard engine: Rules A to H, one function per rule (destructive commands, frozen and blocked boundaries, read-only runs, single writers, the hook scripts and their registration files, a write the analysis cannot place, run files written into a linked worktree) plus the coverage advisory |
 | **_cmdscan.py** | `skills/harness/hooks/_cmdscan.py` | Shell command analyser behind the guard: quoting, wrappers, heredocs, `cd`, and the write targets of the usual verbs |
 | **_paths.py** | `skills/harness/hooks/_paths.py` | Path and glob canonicaliser behind the guard: separators, `.` and `..`, `~`, drive letters, links and case |
 | **_program_paths.py** | `skills/harness/hooks/_program_paths.py` | Bounded literal Python I/O targets behind the guard: an AST pass over inline programs that never evaluates code; runtime values stay unplaced |
 | **guard_state.py** | `skills/harness/hooks/guard_state.py` | The only writer of the guard record (`.harness-state/guard-state.json`) that `guard`, `freeze` and `unfreeze` request |
-| **post_tool_use.py** | `skills/harness/hooks/post_tool_use.py` | `PostToolUse`: records trajectory degeneration, refreshes the run heartbeat, sweeps project-root coverage residue into the run |
+| **post_tool_use.py** | `skills/harness/hooks/post_tool_use.py` | `PostToolUse`: records trajectory degeneration (with the sub-agent the host names on the call), refreshes the run heartbeat, sweeps project-root coverage residue into the run |
 | **size_audit.py** | `skills/harness/hooks/size_audit.py` | Periodic bounded report of oversized runtime files and directories |
 | **gate_watch.py** | `skills/harness/hooks/gate_watch.py` | Re-runs `harness/gatekeeper/check.py` when a run manifest or intake log changes; advisory, bounded |
 | **audit_improve.py** | `skills/harness/hooks/audit_improve.py` | Bounded read-only audit of saved failures and a skill-maker handoff |
-| **user_prompt_submit.py** | `skills/harness/hooks/user_prompt_submit.py` | `UserPromptSubmit`: advisory entry-routing and session-pin reminder |
-| **save_run.py** | `skills/harness/hooks/save_run.py` | The only writer of the run record |
+| **user_prompt_submit.py** | `skills/harness/hooks/user_prompt_submit.py` | `UserPromptSubmit`: advisory entry-routing and session-pin reminder (registered on `SessionStart` for GitHub Copilot, which drops a prompt hook's output) |
+| **context_events.py** | `skills/harness/hooks/context_events.py` | `PreCompact` and `SessionStart` (recommended): before a context compaction during a run it has a context dump written and leaves a marker; after it the model is given the next action and the dump to read, once. Always exits 0 |
+| **antigravity_bridge.py** | `skills/harness/hooks/antigravity_bridge.py` | Google Antigravity's registered command for `PreToolUse`, `PostToolUse` and `PreInvocation`: translates its payload, runs the three hooks, maps a guard deny to Antigravity's, and queues what the hooks say for the next model call |
+| **context_watch.py** | `skills/harness/hooks/context_watch.py` | Advice for a run in flight as the context window fills: one note per threshold of `runtime-manifest.yaml` `context_pressure`, from the status-line sidecar or the session transcript; never a denial, silent when the window is not known |
+| **context_statusline.py** | `skills/harness/hooks/context_statusline.py` | Claude Code status-line command that records the context usage for `context_watch.py`; registered only with `--statusline` and only when no status line is configured |
+| **save_run.py** | `skills/harness/hooks/save_run.py` | The only writer of the run record and of its context dumps |
 | **_saves.py** | `skills/harness/hooks/_saves.py` | Shared reader that classifies saved state |
 | **_state.py** | `skills/harness/hooks/_state.py` | Fail-open state helper: project root, hook input decoding, guard state, fault counting, trajectories |
 | **run_heartbeat.py** | `skills/harness/hooks/run_heartbeat.py` | The heartbeat refresh every registered hook runs on a host event: throttled, fail-open, written only through `save_run.py` |
@@ -252,10 +256,11 @@ Not skills. These are the files the skills are checked against.
 
 Shared tooling is in `skills/scripts/`. Its command-line tools are
 `check_runtime.py`, `output_paths.py`, `scan_record.py`, `check_parity.py`,
-`content_hash.py`, `validate_manifests.py`, `package_check.py` and
-`mcp_registry.py`; `data_formats.py` is the JSON and YAML reader every script
+`content_hash.py`, `validate_manifests.py`, `package_check.py`,
+`mcp_registry.py`, `run_files.py` and `catalog_imports.py`; `data_formats.py` is the JSON and YAML reader every script
 shares, `contract_floor.py` is the independent safety floor the gate validator
-loads, and the rest are modules behind `check_runtime.py` and the save layout,
+loads, `checkout.py` maps a linked git worktree to the main checkout that holds its
+runtime state, `stack_versions.py` is how a tech-stack minimum and a version in use are read and compared, and the rest are modules behind `check_runtime.py` and the save layout,
 listed in
 [docs/directory-structure.md](docs/directory-structure.md). Contract suites are in
 `skills/validation/`; the other suites sit beside the code they test: `test_*.py` in

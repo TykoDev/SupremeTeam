@@ -117,6 +117,46 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("design/spec requires unavailable inputs ['stack-lock']", errors[0])
 
+    def test_the_boundary_order_is_declared_once_and_agrees_with_the_gate_spec(self):
+        """WP-05: pipelines.yaml declared no order, so the delivery ledger had nothing to check a rewound run against.
+        ``upstream_boundary`` is that order, and it may not contradict the upstream link gates.yaml already gives the
+        two ``revision_ref`` keys."""
+        declared = {name: pipeline.get("upstream_boundary") for name, pipeline in self.spec["pipelines"].items()
+                    if pipeline.get("upstream_boundary")}
+        self.assertEqual(declared, {"build": "design-to-build", "review": "build-to-review", "release": "review-to-delivery"})
+        params = self.gates["evidence_type_params"]
+        by_boundary = {pipeline["boundary"]: pipeline.get("upstream_boundary") for pipeline in self.spec["pipelines"].values()}
+        for key, record in params.items():
+            if "upstream_boundary" not in record:
+                continue
+            holders = [name for name, boundary in self.gates["boundaries"].items() if key in boundary["required_evidence"]]
+            self.assertTrue(holders, key)
+            for boundary in holders:
+                with self.subTest(key=key, boundary=boundary):
+                    self.assertEqual(by_boundary[boundary], record["upstream_boundary"])
+        self.assertEqual(validate_manifests.upstream_boundary_errors(self.spec["pipelines"], self.gates), [])
+
+    def test_validator_rejects_a_bad_upstream_boundary(self):
+        import copy
+
+        def errors(change) -> list:
+            pipelines = copy.deepcopy(self.spec["pipelines"])
+            change(pipelines)
+            return validate_manifests.upstream_boundary_errors(pipelines, self.gates)
+
+        self.assertIn("is not a gates.yaml boundary", errors(lambda p: p["review"].update(upstream_boundary="no-such-boundary"))[0])
+        self.assertIn("is its own boundary", errors(lambda p: p["review"].update(upstream_boundary="review-to-delivery"))[0])
+        self.assertIn("differs from the boundary gates.yaml binds", errors(lambda p: p["build"].update(upstream_boundary="qa-review"))[0])
+        self.assertIn("declares no upstream_boundary", errors(lambda p: p["release"].pop("upstream_boundary"))[0])
+        self.assertIn("is not a gates.yaml boundary", errors(lambda p: p["review"].update(upstream_boundary=["build-to-review"]))[0])
+
+        def loop(pipelines):
+            pipelines["design"]["upstream_boundary"] = "review-to-delivery"
+
+        cycle = errors(loop)
+        self.assertTrue(any("form a cycle" in error for error in cycle), cycle)
+        self.assertEqual(errors(lambda p: p["review"].pop("upstream_boundary")), [], "a pipeline may start a run by itself")
+
     def test_gate_spec_submitters_are_team_members(self):
         for name, boundary in self.gates["boundaries"].items():
             with self.subTest(boundary=name):

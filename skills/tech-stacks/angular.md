@@ -1,7 +1,7 @@
-# Angular 19+ standalone and signals
+# Angular 21+ standalone and signals
 
 ## Baseline
-- Use Angular 19+ with standalone components as the default composition unit.
+- Angular 21 or newer, with standalone components as the default composition unit.
 - Use signals for local and derived state, including `signal`, `computed`, `effect`, `input`, `output`, and `model` where their semantics fit.
 - Treat strict TypeScript as the baseline. Client-side rendering is the default; add server-side rendering and hydration only when the product needs them.
 - Prefer Angular's new control-flow syntax and `@defer` for explicit conditional, collection, and deferred work.

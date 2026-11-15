@@ -9,6 +9,10 @@ sub-command where the parser has them), and fails on any flag the parser does no
 know. The installer wrappers are held to the same rule: ``install.sh`` against its
 usage text and ``install.ps1`` against its parameter block, including the flag
 cells of the "Installer options" tables.
+
+The gatekeeper documents are scanned as well (WP-06): the four gatekeeper skills with their references, the gate
+engine's README and ``docs/gatekeepers.md``. They show a script by a path relative to the skill
+(``python scripts/check.py``), so there a path is first read from the document's own skill directory.
 """
 from __future__ import annotations
 
@@ -28,6 +32,12 @@ HOOK_DIR = Path(__file__).resolve().parent
 SKILLS = HOOK_DIR.parents[1]
 REPO = SKILLS.parent
 DOCS = [REPO / "README.md", REPO / "QUICK-START.md", REPO / "Install.md", HOOK_DIR / "README.md"]
+_GATEKEEPERS = [SKILLS / "gatekeeper-admiral", SKILLS / "design" / "gatekeeper-design", SKILLS / "build" / "gatekeeper-build",
+                SKILLS / "review" / "gatekeeper-code"]
+# Each with the directory a skill-relative script path in it is read from.
+GATE_DOCS = [(skill / "SKILL.md", skill) for skill in _GATEKEEPERS] \
+    + [(path, skill) for skill in _GATEKEEPERS for path in sorted((skill / "references").glob("*.md"))] \
+    + [(SKILLS / "harness" / "gatekeeper" / "README.md", SKILLS / "harness" / "gatekeeper"), (REPO / "docs" / "gatekeepers.md", REPO)]
 # The documents name `scripts/install*`, which an installed copy does not carry.
 CHECKOUT = (REPO / "README.md").is_file() and (REPO / "scripts" / "install_hooks.py").is_file()
 
@@ -100,7 +110,13 @@ def subcommands(script: Path) -> set[str]:
     return set(match.group(1).split(",")) if match else set()
 
 
-def resolve(documented: str, index: dict[str, list[Path]]) -> list[Path]:
+def resolve(documented: str, index: dict[str, list[Path]], base: Path | None = None) -> list[Path]:
+    """The script a documented path names. ``base`` is the directory a skill's own document is read from: a path
+    that exists below it (``scripts/check.py`` in a gatekeeper skill) is that file and no other."""
+    if base is not None:
+        local = base / documented.replace("\\", "/").strip("\"'")
+        if local.is_file():
+            return [local]
     parts = documented.replace("\\", "/").strip("\"'").split("/")
     tail = "/".join(parts[-3:])
     candidates = index.get(parts[-1], [])
@@ -123,7 +139,8 @@ def wrapper_flags() -> tuple[set[str] | None, set[str] | None]:
     return shell, powershell
 
 
-def problems_in(text: str, label: str, index: dict[str, list[Path]], shell: set[str] | None, powershell: set[str] | None) -> tuple[list[str], int]:
+def problems_in(text: str, label: str, index: dict[str, list[Path]], shell: set[str] | None, powershell: set[str] | None,
+                base: Path | None = None) -> tuple[list[str], int]:
     """Every documented flag the named parser does not define, and how many command lines were checked."""
     text = re.sub(r"\\\n\s*", " ", text)
     problems, checked = [], 0
@@ -132,7 +149,7 @@ def problems_in(text: str, label: str, index: dict[str, list[Path]], shell: set[
             script, tokens = match.group("script"), _tokens(match.group("args"))
             flags = _flags(tokens)
             where = f"{label}:{number}: `{match.group(0).strip()}`"
-            candidates = resolve(script, index)
+            candidates = resolve(script, index, base)
             if not candidates:
                 problems.append(f"{where} names {script}, which is not in the repository")
                 continue
@@ -213,6 +230,31 @@ class DocumentedFlagTests(unittest.TestCase):
     def test_the_hooks_readme_commands_are_all_found_and_checked(self):
         """Its problems are reported with the other documents' above; here, that the scan reads most of what it shows."""
         self.assertGreaterEqual(self.scan()[HOOK_DIR / "README.md"][1], 25)
+
+    def test_the_gatekeeper_documents_show_only_flags_the_gate_scripts_define(self):
+        """WP-06: these documents were outside the scan, so a gate script could lose or rename an option (as the
+        admiral wrapper gained ``--boundary``) while its skill went on showing the old command line."""
+        checked, problems = 0, []
+        for path, base in GATE_DOCS:
+            if not path.is_file():
+                continue
+            found, count = problems_in(path.read_text(encoding="utf-8"), path.relative_to(REPO if REPO in path.parents else SKILLS).as_posix(),
+                                       self.index, self.shell, self.powershell, base)
+            problems.extend(found)
+            checked += count
+        self.assertEqual(problems, [], "\n".join(problems))
+        self.assertGreaterEqual(checked, 15, "the scan found almost no gate command lines, so it proved nothing")
+
+    def test_a_skill_relative_script_path_is_read_from_the_skill(self):
+        skill = SKILLS / "gatekeeper-admiral"
+        good = "python scripts/check.py skillset-saves/runs/r/delivery --boundary qa-review --json"
+        bad = "python scripts/check.py skillset-saves/runs/r/delivery --no-such-option"
+        self.assertEqual(problems_in(good, "good", self.index, self.shell, self.powershell, skill), ([], 1))
+        problems, checked = problems_in(bad, "bad", self.index, self.shell, self.powershell, skill)
+        self.assertEqual((len(problems), checked), (1, 1), problems)
+        self.assertIn("--no-such-option is not defined by check.py", problems[0])
+        build = problems_in(good, "other wrapper", self.index, self.shell, self.powershell, SKILLS / "build" / "gatekeeper-build")[0]
+        self.assertEqual(len(build), 1, "the build wrapper takes no --boundary")
 
     @unittest.skipUnless(os.name == "nt", "only Windows puts a bash that cannot open its own paths (WSL's) on PATH")
     def test_the_installer_options_come_from_a_bash_that_can_open_the_installer(self):
